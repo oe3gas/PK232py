@@ -76,7 +76,7 @@ pk232py
 - PyQt6
 - pyserial
 - A USB-to-serial adapter if your PC has no RS-232 port
-  (the PK-232 requires 1200 baud, 7E1 for firmware v7.x)
+  (the PK-232 requires 9600 baud, 7E1 for firmware v7.x)
 
 ---
 
