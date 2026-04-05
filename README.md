@@ -7,9 +7,16 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](https://github.com/OE3GAS/pk232py)
 
 **PK232PY** is a modern, cross-platform multimode terminal program for the
-**AEA PK-232 / PK-232MBX** Terminal Node Controller (TNC). It replaces the
-legacy PCPackRatt software which no longer runs on 64-bit Windows 10/11 or Linux,
+**AEA PK-232 / PK-232MBX** Terminal Node Controller (TNC). It offers functionality 
+of the well known legacy PCPackRatt software which no longer runs on 64-bit Windows 10/11 or Linux,
 and implements the full AEA Host Mode protocol stack in Python.
+The Host Mode is the hidden gem in the PK232, which enables a higher performance in working with the
+TNC, hence there is a continous communication between TNC and host. Aside from the possibilities 
+provided by modern software development and programming languages, the PK232 still offers great 
+performance as specialized appliance for classic digital modes such as RTTY (Baudot/ASCII) and AMTOR (ARQ/FEC). 
+It also offers a build in signal analysis option which works well on RTTY signals.
+With this project I hope to support a revival of the PK232 (MBX) on the bands.
+
 
 > **Status:** Pre-Alpha — active development. Not yet suitable for production use.
 
