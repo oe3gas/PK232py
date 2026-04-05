@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "pk232py"
+version = "0.1.0"
+description = "Modern multimode terminal for AEA PK-232 / PK-232MBX TNC"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "OE3GAS", email = "oe3gas@example.com" }
+]
+keywords = [
+    "ham-radio",
+    "amateur-radio",
+    "TNC",
+    "PK-232",
+    "PK-232MBX",
+    "packet-radio",
+    "PACTOR",
+    "AMTOR",
+    "RTTY",
+    "AX25",
+    "host-mode",
+    "digital-modes",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Topic :: Communications :: Ham Radio",
+    "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Environment :: X11 Applications :: Qt",
+    "Natural Language :: English",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6>=6.4",
+    "pyserial>=3.5",
+    "pyserial-asyncio>=0.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-qt>=4.2",
+    "pytest-asyncio>=0.21",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/OE3GAS/pk232py"
+"Bug Tracker" = "https://github.com/OE3GAS/pk232py/issues"
+Documentation = "https://github.com/OE3GAS/pk232py/wiki"
+Changelog = "https://github.com/OE3GAS/pk232py/blob/main/CHANGELOG.md"
+
+[project.scripts]
+pk232py = "pk232py.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pk232py = ["*.ini", "resources/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/pk232py/tests"]
+asyncio_mode = "auto"
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true

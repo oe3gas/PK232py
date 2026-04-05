@@ -1,0 +1,6 @@
+# PK232PY runtime dependencies
+# Install with: pip install -r requirements.txt
+
+PyQt6>=6.4
+pyserial>=3.5
+pyserial-asyncio>=0.6
