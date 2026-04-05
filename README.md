@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # PK232PY
 
 [![CI](https://github.com/OE3GAS/pk232py/actions/workflows/ci.yml/badge.svg)](https://github.com/OE3GAS/pk232py/actions)
@@ -164,7 +163,3 @@ PK232PY aims to fill that gap.
 ---
 
 *73 de OE3GAS*
-=======
-# PK232py
-Modern cross-platform terminal for AEA PK-232 / PK-232MBX TNC. Full Host Mode support on Windows 10/11, Linux and macOS. Based on functionality of legacy PCPackRatt. Python 3 · PyQt6.
->>>>>>> eeb0c7fda49df5f7f6b4bfdf2b71ca752b07ca2f
