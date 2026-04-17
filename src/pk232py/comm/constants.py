@@ -1,112 +1,224 @@
+# pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
+# Copyright (C) 2026  OE3GAS  —  GPL v2
+"""Host Mode protocol constants for the AEA PK-232 / PK-232MBX.
+
+Source: AEA PK-232 Technical Reference Manual, Chapter 4 (Host Mode).
+
+IMPORTANT — This is NOT the WA8DED/DL3ECD "Hostmode" protocol used by
+other TNCs (e.g. TF/G TNC-2, Kantronics).  That protocol encodes port and
+frame-type in the nibbles of the CTL byte.  The AEA PK-232 Host Mode uses
+a completely different, range-based CTL encoding described below.
+
+CTL byte semantics (TRM Section 4.2 / 4.3)
+-------------------------------------------
+The CTL byte directly encodes BOTH the direction/type AND the channel
+number as a single hex value in a range:
+
+  Host -> TNC (outgoing):
+    $2x   data to channel x          (x = 0-9)
+    $4x   command to channel x       (CONNECT, DISCONNECT)
+    $4F   command, no channel change (all other commands)
+
+  TNC -> Host (incoming):
+    $2F   echoed TX data (Morse, Baudot, AMTOR)
+    $3x   received data from channel x
+    $3F   monitored frames (UNPROTO / traffic monitor)
+    $4x   link status from channel x (response to CONNECT)
+    $4F   response to command
+    $5x   link messages from channel x
+    $5F   status errors / data acknowledgement
+
+There is no separate "port" nibble in the AEA protocol.
 """
-pk232py.comm.constants
-======================
-Host Mode Protokoll-Konstanten für den AEA PK-232/PK-232MBX.
 
-Quelle: AEA PK-232 Technical Reference Manual, Kapitel 4 (Host Mode)
-        sowie DL3ECD Hostmode-Dokumentation.
-
-Alle numerischen Werte sind Hex-Werte wie im Manual angegeben.
-"""
+from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Frame-Delimiter
+# Frame delimiters
 # ---------------------------------------------------------------------------
 
-SOH = 0x01   # Start of Header  – beginnt jeden Frame
-ETB = 0x17   # End of Transmission Block – beendet jeden Frame
-DLE = 0x10   # Data Link Escape – Escape-Präfix für Sonderzeichen in DATA
+SOH = 0x01   # Start of Header  — begins every frame
+ETB = 0x17   # End of Transmission Block — ends every frame
+DLE = 0x10   # Data Link Escape — escape prefix for special bytes in data
 
-# Zeichen, die im DATA-Feld escaped werden müssen:
-ESCAPE_CHARS = {SOH, ETB, DLE}
+# Bytes that must be DLE-escaped when they appear in the data field
+# (TRM Section 4.1.5: applies in both directions, host->TNC and TNC->host)
+ESCAPE_CHARS: frozenset[int] = frozenset({SOH, DLE, ETB})
 
 
 # ---------------------------------------------------------------------------
-# Frame-Typen (untere 4 Bits des CTL-Bytes)
+# CTL byte values — Host -> TNC (outgoing)
 # ---------------------------------------------------------------------------
 
-class FrameType:
+# $2x: send data to channel x (x = 0-9)
+CTL_TX_DATA_BASE  = 0x20   # OR with channel number: 0x20 | ch
+
+# $4x: channel-specific commands (CONNECT, DISCONNECT) to channel x
+CTL_TX_CMD_CH_BASE = 0x40  # OR with channel number: 0x40 | ch
+
+# $4F: all other commands (no channel change)
+CTL_TX_CMD        = 0x4F
+
+
+# ---------------------------------------------------------------------------
+# CTL byte values — TNC -> Host (incoming)
+# ---------------------------------------------------------------------------
+
+# $2F: echoed TX characters (Morse, Baudot, AMTOR only)
+CTL_RX_ECHO       = 0x2F
+
+# $3x: received data from channel x (Packet ARQ data, AMTOR ARQ)
+CTL_RX_DATA_BASE  = 0x30   # OR with channel: 0x30 | ch
+
+# $3F: monitored frames (UNPROTO / traffic monitor / AMTOR FEC+SELFEC)
+CTL_RX_MONITOR    = 0x3F
+
+# $4x: link status from channel x (response to CONNECT command)
+CTL_RX_LINK_BASE  = 0x40   # OR with channel: 0x40 | ch
+
+# $4F: command response (ACK/NAK, query reply)
+CTL_RX_CMD_RESP   = 0x4F
+
+# $5x: link messages from channel x (CONNECTED, DISCONNECTED, ...)
+CTL_RX_MSG_BASE   = 0x50   # OR with channel: 0x50 | ch
+
+# $5F: status errors and data acknowledgement
+CTL_RX_STATUS     = 0x5F
+
+
+# ---------------------------------------------------------------------------
+# Command response codes  (TRM Section 4.3, third byte after mnemonic)
+# ---------------------------------------------------------------------------
+
+class CmdError:
+    """Error codes returned by the TNC in a $4F command-response frame.
+
+    Frame format:  SOH $4F <mnemonic 2 bytes> <code> ETB
+    Code $00 means success (acknowledge, no error).
     """
-    Frame-Typ-Konstanten.
-
-    Das CTL-Byte eines Host-Mode-Frames ist aufgeteilt in:
-      Bits 7-4: Port-Nummer (0 = Port 1, 1 = Port 2)
-      Bits 3-0: Frame-Typ
-
-    Beispiel: CTL = 0x20 → Port 2, Typ CONSTAT_RESPONSE
-    """
-    CMD_RESPONSE   = 0x00  # Befehl an TNC / Antwort vom TNC
-    LINK_DATA      = 0x01  # Unverbundene Monitordaten vom TNC
-    CONNECT_DATA   = 0x02  # Daten aus aktiver Verbindung
-    DISCONNECT     = 0x03  # Verbindung getrennt (Notification)
-    CONNECT_STATUS = 0x04  # Verbindungsstatus-Änderung
-    DATA_RECEIVED  = 0x05  # Daten für den Host (vom TNC gepusht)
-    CONSTAT_RESP   = 0x06  # Antwort auf CONSTAT-Kommando
-
-
-# ---------------------------------------------------------------------------
-# Port-Nummern (obere 4 Bits des CTL-Bytes, geshiftet)
-# ---------------------------------------------------------------------------
-
-class Port:
-    """TNC-Port-Nummern (Bits 7-4 im CTL-Byte)."""
-    PORT1 = 0x00   # Standard-Port (Radio 1)
-    PORT2 = 0x10   # Zweiter Port (Radio 2, falls vorhanden)
+    OK                   = 0x00  # acknowledge, no error
+    BAD                  = 0x01  # bad argument
+    TOO_MANY             = 0x02
+    NOT_ENOUGH           = 0x03
+    TOO_LONG             = 0x04
+    RANGE                = 0x05  # value out of range
+    CALLSIGN             = 0x06  # invalid callsign
+    UNKNOWN_COMMAND      = 0x07
+    VIA                  = 0x08  # digipeater path error
+    NOT_WHILE_CONNECTED  = 0x09
+    NEED_MYCALL          = 0x0A
+    NEED_MYSELCAL        = 0x0B  # AMTOR: MYSELCAL not set
+    ALREADY_CONNECTED    = 0x0C
+    NOT_WHILE_DISCONNECTED = 0x0D
+    DIFFERENT_CONNECTS   = 0x0E
+    TOO_MANY_OUTSTANDING = 0x0F  # too many unACKed packets
+    CLOCK_NOT_SET        = 0x10
+    NEED_ALL_NONE_YES_NO = 0x11
+    NOT_IN_THIS_MODE     = 0x15
 
 
 # ---------------------------------------------------------------------------
-# Häufig verwendete vollständige CTL-Werte
+# Special ready-to-send frames
 # ---------------------------------------------------------------------------
 
-CTL_CMD_PORT1  = Port.PORT1 | FrameType.CMD_RESPONSE   # 0x00
-CTL_CMD_PORT2  = Port.PORT2 | FrameType.CMD_RESPONSE   # 0x10
-CTL_DATA_PORT1 = Port.PORT1 | FrameType.CONNECT_DATA   # 0x02
-CTL_DATA_PORT2 = Port.PORT2 | FrameType.CONNECT_DATA   # 0x12
+# Poll frame: SOH $4F 'G' 'G' ETB
+# Host sends this to ask TNC for pending data (HPOLL ON mode).
+# TNC replies: SOH $4F 'G' 'G' $00 ETB  (nothing pending)
+#           or: one response block per poll when data is waiting.
+# (TRM Section 4.4.1)
+FRAME_POLL = bytes([SOH, CTL_TX_CMD, ord('G'), ord('G'), ETB])
+
+# Recovery frame: SOH SOH $4F 'G' 'G' ETB
+# Send after a serial link error to resynchronise the TNC.
+# (TRM Section 4.1.6)
+FRAME_RECOVERY = bytes([SOH, SOH, CTL_TX_CMD, ord('G'), ord('G'), ETB])
+
+# HOST OFF frame: SOH $4F 'H' 'O' 'N' ETB
+# Leaves Host Mode and returns TNC to verbose/human mode.
+# (TRM Section 4.1.4)
+FRAME_HOST_OFF = bytes([SOH, CTL_TX_CMD, ord('H'), ord('O'), ord('N'), ETB])
 
 
 # ---------------------------------------------------------------------------
-# Host Mode Ein-/Ausschalten
+# Initialisation — command sequence BEFORE entering Host Mode
+# (sent as plain ASCII text in verbose/terminal mode)
 # ---------------------------------------------------------------------------
 
-# Sequenz zum Einschalten des Host Mode (als ASCII-Text über Terminal):
-# Erst den TNC in einen definierten Zustand bringen, dann HOST Y\r
-HOSTMODE_ENTER_CMDS = [
-    b"\x13",          # XOFF: sicherstellen, dass kein Datenstrom läuft
-    b"CANLINE\r",     # laufende Eingabe abbrechen
-    b"COMMAND\r",     # sicherstellen, dass TNC im CMD-Modus ist
-    b"HOST Y\r",      # Host Mode aktivieren
+# These commands prepare the TNC for 8-bit Host Mode operation.
+# Send each line followed by CR (\r).  Wait for 'cmd:' before next line.
+# (TRM Section 4.1.3)
+HOSTMODE_INIT_CMDS: list[bytes] = [
+    b"AWLEN 8\r",     # 8-bit word length (required for Host Mode)
+    b"PARITY 0\r",    # no parity
+    b"8BITCONV ON\r", # 8-bit transparent mode
+    b"RESTART\r",     # apply AWLEN/PARITY changes
+    b"HOST Y\r",      # activate Host Mode
 ]
 
-# Frame zum Ausschalten des Host Mode (binärer Frame, nicht ASCII!):
-# SOH $4F H O N ETB  → "HON" = Host OFF
-HOSTMODE_EXIT_FRAME = bytes([SOH, 0x4F, ord('H'), ord('O'), ord('N'), ETB])
-
-# Frame für HPOLL (Daten abfragen, wenn HPOLL ON):
-# SOH $4F G G ETB
-HOSTMODE_POLL_FRAME = bytes([SOH, 0x4F, ord('G'), ord('G'), ETB])
-
-# Recovery-Frame (bei hängendem Host Mode):
-# SOH SOH $4F G G ETB
-HOSTMODE_RECOVERY_FRAME = bytes([SOH, SOH, 0x4F, ord('G'), ord('G'), ETB])
+# Optional: enable polling (TNC waits for FRAME_POLL before sending data)
+HOSTMODE_HPOLL_ON  = b"HPOLL Y\r"
+HOSTMODE_HPOLL_OFF = b"HPOLL N\r"
 
 
 # ---------------------------------------------------------------------------
-# Serielle Verbindungsparameter (Defaults)
+# Serial port defaults
 # ---------------------------------------------------------------------------
 
 class SerialDefaults:
-    """Standard-Parameter für die serielle Verbindung zum PK-232MBX."""
-    BAUDRATE    = 9600    # Typisch für Host Mode; auch 4800, 19200 möglich
-    BYTESIZE    = 8       # 8 Datenbits (im Host Mode immer 8-bit!)
-    PARITY      = 'N'     # Keine Parität (PARITY 0 am TNC)
+    """Default serial port parameters for the PK-232MBX in Host Mode.
+
+    The TNC supports 110, 300, 600, 1200, 2400, 4800, 9600 baud.
+    Host Mode requires 8-bit, no-parity (AWLEN 8, PARITY 0).
+    Hardware flow control (RTS/CTS) is recommended by the TRM.
+    XON/XOFF must be disabled in Host Mode.
+    """
+    BAUD_RATES  = [9600, 4800, 2400, 1200, 600, 300, 110]  # fastest first
+    BAUDRATE    = 9600
+    BYTESIZE    = 8
+    PARITY      = 'N'    # must match TNC PARITY 0 setting
     STOPBITS    = 1
-    TIMEOUT     = 0.1     # Sekunden – kurz halten für reaktive Read-Schleife
-    XONXOFF     = False   # Kein Software-Handshake im Host Mode
-    RTSCTS      = True    # Hardware-Handshake (RTS/CTS) wird empfohlen
+    TIMEOUT     = 0.1    # seconds — keep short for responsive read loop
+    XONXOFF     = False  # must be OFF in Host Mode
+    RTSCTS      = True   # hardware handshake recommended by TRM
 
 
 # ---------------------------------------------------------------------------
-# Maximale Frame-Größen
+# Frame size limit
 # ---------------------------------------------------------------------------
 
-MAX_DATA_LEN = 256   # Maximale Nutzdatenlänge pro Frame (MBX-Limit)
+# Maximum data payload per frame (practical limit for PK-232MBX).
+# The AX.25 I-field maximum is 256 bytes (TRM Appendix A).
+MAX_DATA_LEN = 256
+
+
+# ---------------------------------------------------------------------------
+# Convenience: channel extraction from CTL byte
+# ---------------------------------------------------------------------------
+
+def ctl_channel(ctl: int) -> int:
+    """Extract the channel number (0-9) from a TNC->host CTL byte.
+
+    For $3x, $4x, $5x frames the lower nibble is the channel.
+    For $4F, $3F, $2F, $5F frames the channel is not meaningful.
+
+    Args:
+        ctl: The raw CTL byte from a received frame.
+
+    Returns:
+        Channel number 0-15 (lower nibble of CTL).
+    """
+    return ctl & 0x0F
+
+
+def ctl_type_range(ctl: int) -> int:
+    """Return the upper nibble of CTL (the range identifier).
+
+    E.g. 0x35 -> 0x30, 0x4F -> 0x40.
+
+    Args:
+        ctl: The raw CTL byte.
+
+    Returns:
+        Upper nibble as integer (0x20, 0x30, 0x40, or 0x50).
+    """
+    return ctl & 0xF0

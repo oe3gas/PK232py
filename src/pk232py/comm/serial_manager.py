@@ -1,39 +1,57 @@
-"""
-pk232py.comm.serial_manager
-============================
-Kern-Kommunikationsschicht für den AEA PK-232/PK-232MBX.
+# pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
+# Copyright (C) 2026  OE3GAS  —  GPL v2
+"""Serial port manager for the AEA PK-232 / PK-232MBX.
 
-Verantwortlichkeiten:
-  1. Seriellen Port öffnen und schließen
-  2. Host Mode aktivieren und deaktivieren
-  3. Frames senden (build_frame + serial.write)
-  4. Frames empfangen in einem Hintergrund-Thread (serial.read → FrameParser)
-  5. Empfangene Frames über Qt-Signals an die UI weitergeben
+Responsibilities
+----------------
+  1. Open / close the serial port (via AutobaudDetector or fixed baud rate).
+  2. Manage the verbose-mode → Host Mode initialisation sequence.
+  3. Send frames (thread-safe write).
+  4. Receive frames in a background reader thread (serial.read → FrameParser).
+  5. Deliver decoded frames to the UI via Qt signals (thread-safe).
 
-Threading-Modell:
-  ┌─────────────┐    signal/slot    ┌──────────────────────┐
-  │  Qt UI      │ ←────────────── │  SerialManager       │
-  │  (Main)     │                  │  (Main Thread)       │
-  └─────────────┘                  └──────────────────────┘
-                                            ↑ emit()
-                                   ┌──────────────────────┐
-                                   │  _ReaderThread       │
-                                   │  (Hintergrund)       │
-                                   │  liest serial.read() │
-                                   │  → FrameParser       │
-                                   └──────────────────────┘
+Threading model
+---------------
+  ┌─────────────────┐   Qt signal/slot   ┌──────────────────────────┐
+  │  Qt UI / Modes  │ ←──────────────── │  SerialManager           │
+  │  (Main Thread)  │                    │  (Main Thread)           │
+  └─────────────────┘                    └──────────────────────────┘
+                                                    ↑ emit() [thread-safe]
+                                         ┌──────────────────────────┐
+                                         │  _ReaderThread (daemon)  │
+                                         │  serial.read(64)         │
+                                         │  → FrameParser           │
+                                         │  → frame_received.emit() │
+                                         └──────────────────────────┘
 
-Warum ein eigener Thread?
-  serial.read() blockiert, bis Daten ankommen. Wenn wir das im Main Thread
-  täten, würde die UI einfrieren. Der Reader-Thread läuft im Hintergrund
-  und schickt fertige Frames über Qt-Signals sicher in den Main Thread.
+Qt signal emit() from a non-main thread is safe: Qt queues the call and
+delivers it to connected slots in the main thread via the event loop.
+
+Host Mode initialisation (TRM Section 4.1.3)
+--------------------------------------------
+The TNC starts in verbose/terminal mode.  Before Host Mode can be used
+the following ASCII commands must be sent:
+
+  AWLEN 8      — 8-bit word length
+  PARITY 0     — no parity
+  8BITCONV ON  — 8-bit transparent conversion
+  RESTART      — apply AWLEN/PARITY (TNC resets, re-sends banner)
+  HOST Y       — activate Host Mode
+
+After HOST Y the TNC switches to binary Host Mode framing (SOH/CTL/ETB).
+To verify Host Mode is active, send a GG poll and wait for the ACK.
+
+Leaving Host Mode (TRM Section 4.1.4)
+--------------------------------------
+Send the binary frame:  SOH $4F 'H' 'O' 'N' ETB
+(plain ASCII "HOST OFF\\r" would NOT be understood in Host Mode.)
 """
 
 from __future__ import annotations
 
 import logging
-import time
 import threading
+import time
 from typing import Optional
 
 try:
@@ -47,159 +65,191 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from .constants import (
     SerialDefaults,
-    HOSTMODE_ENTER_CMDS,
-    HOSTMODE_EXIT_FRAME,
-    HOSTMODE_RECOVERY_FRAME,
-    Port,
-    FrameType,
+    HOSTMODE_INIT_CMDS,
+    FRAME_POLL,
+    FRAME_RECOVERY,
+    FRAME_HOST_OFF,
+    CTL_TX_DATA_BASE,
 )
-from .frame import build_frame, build_command_frame, FrameParser, HostFrame
+from .frame import (
+    HostFrame,
+    FrameKind,
+    FrameParser,
+    build_command,
+    build_ch_cmd,
+    build_data,
+)
 
 logger = logging.getLogger(__name__)
 
+# Delays used during initialisation (seconds)
+_CMD_DELAY     = 0.05   # pause between verbose-mode commands
+_RESTART_DELAY = 1.5    # wait after RESTART for TNC banner
+_HOSTMODE_DELAY = 0.3   # wait after HOST Y before sending first poll
+_POLL_TIMEOUT   = 2.0   # seconds to wait for GG poll ACK
+
 
 # ---------------------------------------------------------------------------
-# Hintergrund-Thread für das Lesen vom seriellen Port
+# Background reader thread
 # ---------------------------------------------------------------------------
 
 class _ReaderThread(threading.Thread):
+    """Reads raw bytes from the serial port and feeds them to FrameParser.
+
+    Runs as a daemon thread — terminated automatically when the main
+    process exits.  Delivers complete HostFrames via *frame_callback*.
+
+    Args:
+        port:           Open pyserial Serial instance.
+        frame_callback: Called with each decoded HostFrame.
     """
-    Interner Lese-Thread.
 
-    Läuft als Daemon-Thread, d.h. er wird automatisch beendet wenn
-    das Hauptprogramm endet – wir müssen uns nicht explizit darum kümmern.
-
-    Der Thread liest Bytes aus dem seriellen Port, gibt sie an den
-    FrameParser und ruft für jeden vollständigen Frame den callback auf.
-    """
-
-    def __init__(self, port: "serial.Serial", callback) -> None:
+    def __init__(
+        self,
+        port: "serial.Serial",
+        frame_callback,
+    ) -> None:
         super().__init__(daemon=True, name="PK232-Reader")
-        self._port = port
-        self._callback = callback
+        self._port     = port
+        self._callback = frame_callback
         self._stop_event = threading.Event()
-        self._parser = FrameParser()
+        self._parser     = FrameParser(self._on_frame)
 
     def stop(self) -> None:
-        """Signalisiert dem Thread, dass er aufhören soll."""
+        """Signal the thread to stop on its next iteration."""
         self._stop_event.set()
 
     def run(self) -> None:
-        """Läuft bis stop() aufgerufen wird."""
-        logger.debug("ReaderThread gestartet")
+        logger.debug("ReaderThread started")
         while not self._stop_event.is_set():
             try:
-                # Lese bis zu 64 Bytes auf einmal (nicht blockierend dank timeout)
-                raw = self._port.read(64)
+                raw = self._port.read(64)   # non-blocking due to port timeout
                 if raw:
-                    frames = self._parser.feed_bytes(raw)
-                    for frame in frames:
-                        try:
-                            self._callback(frame)
-                        except Exception as e:
-                            logger.error(f"Fehler im Frame-Callback: {e}")
-            except Exception as e:
+                    self._parser.feed(raw)
+            except Exception as exc:
                 if not self._stop_event.is_set():
-                    logger.error(f"Lesefehler auf Serial Port: {e}")
-                    break
-        logger.debug("ReaderThread beendet")
+                    logger.error("Serial read error: %s", exc)
+                break
+        logger.debug("ReaderThread stopped")
+
+    def _on_frame(self, frame: HostFrame) -> None:
+        try:
+            self._callback(frame)
+        except Exception as exc:
+            logger.error("Frame callback raised: %s", exc)
+
+    def reset_parser(self) -> None:
+        """Discard any partial parser state (call after port re-open)."""
+        self._parser.reset()
 
 
 # ---------------------------------------------------------------------------
-# SerialManager – die öffentliche API
+# SerialManager
 # ---------------------------------------------------------------------------
 
 class SerialManager(QObject):
-    """
-    Verwaltet die Verbindung zum PK-232/PK-232MBX über den seriellen Port.
+    """Manages the serial connection to the PK-232 / PK-232MBX.
 
-    Qt-Signals (können mit Slots in der UI verbunden werden):
-        frame_received(HostFrame)  : Ein vollständiger Frame wurde empfangen.
-        connection_changed(bool)   : True = verbunden, False = getrennt.
-        status_message(str)        : Statusmeldung für die Statusleiste.
+    Qt Signals
+    ----------
+    frame_received(HostFrame)
+        Emitted for every complete Host Mode frame received from the TNC.
+        Connected slots receive the frame in the main (UI) thread.
 
-    Typische Verwendung:
+    connection_changed(bool)
+        True  = serial port opened successfully.
+        False = port closed / disconnected.
+
+    host_mode_changed(bool)
+        True  = Host Mode is now active.
+        False = Host Mode has been left (or was never entered).
+
+    status_message(str)
+        Human-readable status string for the status bar.
+
+    Typical usage::
+
         mgr = SerialManager()
-        mgr.frame_received.connect(self.on_frame)
-        mgr.connection_changed.connect(self.update_status_bar)
+        mgr.frame_received.connect(on_frame)
+        mgr.status_message.connect(status_bar.showMessage)
 
-        mgr.connect_port("COM3", baudrate=9600)
-        mgr.enter_host_mode()
-        mgr.send_command("MYCALL OE3GAS")
-        # ... arbeiten ...
-        mgr.disconnect_port()
+        mgr.connect_port("/dev/ttyUSB0", baudrate=9600)
+        if mgr.enter_host_mode():
+            mgr.send_command(b'ML', b'OE3GAS')   # MYCALL
+            mgr.send_command(b'PA')               # PACKET
     """
 
-    # Qt-Signals
-    frame_received    = pyqtSignal(object)   # object = HostFrame
+    # Qt signals
+    frame_received    = pyqtSignal(object)   # HostFrame
     connection_changed = pyqtSignal(bool)
-    status_message    = pyqtSignal(str)
+    host_mode_changed  = pyqtSignal(bool)
+    status_message     = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
-        self._serial: Optional["serial.Serial"] = None
-        self._reader: Optional[_ReaderThread] = None
-        self._host_mode_active: bool = False
-        self._lock = threading.Lock()   # Schutz für serial.write()
+        self._serial:   Optional["serial.Serial"] = None
+        self._reader:   Optional[_ReaderThread]   = None
+        self._in_host_mode = False
+        self._write_lock   = threading.Lock()
 
-    # -----------------------------------------------------------------------
-    # Port-Verbindung
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Port management
+    # ------------------------------------------------------------------
 
     def connect_port(
         self,
         port_name: str,
-        baudrate: int = SerialDefaults.BAUDRATE,
-        rtscts: bool = SerialDefaults.RTSCTS,
+        baudrate:  int  = SerialDefaults.BAUDRATE,
+        rtscts:    bool = SerialDefaults.RTSCTS,
     ) -> bool:
-        """
-        Öffnet den seriellen Port.
+        """Open the serial port and start the reader thread.
+
+        Does NOT enter Host Mode — call :meth:`enter_host_mode` separately.
 
         Args:
-            port_name: Z.B. "COM3" (Windows) oder "/dev/ttyUSB0" (Linux)
-            baudrate : Übertragungsrate (Standard: 9600)
-            rtscts   : Hardware-Handshake (Standard: True, empfohlen)
+            port_name: e.g. ``'COM3'`` or ``'/dev/ttyUSB0'``.
+            baudrate:  Baud rate (default 9600).
+            rtscts:    Hardware RTS/CTS handshake (recommended: True).
 
         Returns:
-            True bei Erfolg, False bei Fehler.
+            True on success, False on failure.
         """
         if not PYSERIAL_AVAILABLE:
-            self.status_message.emit("Fehler: pyserial nicht installiert!")
+            self.status_message.emit("Error: pyserial not installed")
             return False
 
-        if self._serial and self._serial.is_open:
-            logger.warning("Port bereits geöffnet – erst schließen.")
+        if self.is_connected:
+            logger.warning("Port already open — disconnect first")
             return False
 
         try:
             self._serial = serial.Serial(
-                port=port_name,
-                baudrate=baudrate,
-                bytesize=SerialDefaults.BYTESIZE,
-                parity=SerialDefaults.PARITY,
-                stopbits=SerialDefaults.STOPBITS,
-                timeout=SerialDefaults.TIMEOUT,
-                xonxoff=SerialDefaults.XONXOFF,
-                rtscts=rtscts,
+                port     = port_name,
+                baudrate = baudrate,
+                bytesize = SerialDefaults.BYTESIZE,
+                parity   = SerialDefaults.PARITY,
+                stopbits = SerialDefaults.STOPBITS,
+                timeout  = SerialDefaults.TIMEOUT,
+                xonxoff  = SerialDefaults.XONXOFF,
+                rtscts   = rtscts,
             )
-            logger.info(f"Port {port_name} geöffnet ({baudrate} Bd)")
-            self.status_message.emit(f"Verbunden: {port_name} @ {baudrate} Bd")
-            self.connection_changed.emit(True)
+            logger.info("Port %s opened at %d baud", port_name, baudrate)
+            self.status_message.emit(f"Connected: {port_name} @ {baudrate} Bd")
 
-            # Reader-Thread starten
             self._reader = _ReaderThread(self._serial, self._on_frame_received)
             self._reader.start()
+            self.connection_changed.emit(True)
             return True
 
-        except Exception as e:
-            logger.error(f"Port {port_name} konnte nicht geöffnet werden: {e}")
-            self.status_message.emit(f"Verbindungsfehler: {e}")
+        except Exception as exc:
+            logger.error("Cannot open %s: %s", port_name, exc)
+            self.status_message.emit(f"Connection error: {exc}")
             self._serial = None
             return False
 
     def disconnect_port(self) -> None:
-        """Beendet den Reader-Thread und schließt den seriellen Port."""
-        if self._host_mode_active:
+        """Leave Host Mode (if active), stop reader thread, close port."""
+        if self._in_host_mode:
             self.exit_host_mode()
 
         if self._reader:
@@ -209,202 +259,251 @@ class SerialManager(QObject):
 
         if self._serial and self._serial.is_open:
             self._serial.close()
-            logger.info("Serieller Port geschlossen")
+            logger.info("Serial port closed")
 
-        self._serial = None
-        self._host_mode_active = False
+        self._serial       = None
+        self._in_host_mode = False
         self.connection_changed.emit(False)
-        self.status_message.emit("Verbindung getrennt")
+        self.status_message.emit("Disconnected")
 
     @property
     def is_connected(self) -> bool:
-        """True wenn der Port geöffnet ist."""
+        """True if the serial port is open."""
         return self._serial is not None and self._serial.is_open
 
     @property
     def is_host_mode(self) -> bool:
-        """True wenn Host Mode aktiv ist."""
-        return self._host_mode_active
+        """True if Host Mode is currently active."""
+        return self._in_host_mode
 
-    # -----------------------------------------------------------------------
-    # Host Mode Verwaltung
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Host Mode control
+    # ------------------------------------------------------------------
 
-    def enter_host_mode(self) -> bool:
-        """
-        Versetzt den PK-232 in den Host Mode.
+    def enter_host_mode(self, verify: bool = True) -> bool:
+        """Send the verbose-mode init sequence and activate Host Mode.
 
-        Ablauf:
-          1. Sende Vorbereitungs-Kommandos als ASCII (CANLINE, COMMAND)
-          2. Sende "HOST Y\\r" als ASCII
-          3. Warte kurz auf TNC-Antwort
-          4. Setze internen Flag
+        Sequence (TRM Section 4.1.3):
+          1. Send AWLEN 8, PARITY 0, 8BITCONV ON as ASCII commands.
+          2. Send RESTART — TNC resets; wait for banner.
+          3. Send HOST Y — TNC switches to binary Host Mode.
+          4. Optionally verify with a GG poll.
+
+        Args:
+            verify: If True, send a GG poll and wait for the ACK to
+                    confirm Host Mode is active (recommended).
 
         Returns:
-            True bei Erfolg.
+            True if Host Mode was successfully entered.
         """
         if not self.is_connected:
-            logger.error("Kein Port verbunden")
+            logger.error("enter_host_mode: no port connected")
             return False
-
-        if self._host_mode_active:
-            logger.warning("Host Mode bereits aktiv")
+        if self._in_host_mode:
+            logger.warning("Host Mode already active")
             return True
 
-        logger.info("Aktiviere Host Mode...")
+        logger.info("Entering Host Mode...")
         try:
-            for cmd in HOSTMODE_ENTER_CMDS:
-                with self._lock:
-                    self._serial.write(cmd)
-                time.sleep(0.05)   # kurze Pause zwischen Kommandos
+            for cmd in HOSTMODE_INIT_CMDS:
+                self._write_raw(cmd)
+                if cmd == b"RESTART\r":
+                    # Wait for TNC to reboot and re-send banner
+                    time.sleep(_RESTART_DELAY)
+                else:
+                    time.sleep(_CMD_DELAY)
 
-            # Warte auf TNC-Initialisierung
-            time.sleep(0.2)
-            self._host_mode_active = True
-            self.status_message.emit("Host Mode aktiv")
-            logger.info("Host Mode aktiviert")
+            # Give TNC time to switch modes
+            time.sleep(_HOSTMODE_DELAY)
+            self._in_host_mode = True
+            self.host_mode_changed.emit(True)
+            self.status_message.emit("Host Mode active")
+            logger.info("Host Mode activated")
+
+            if verify:
+                return self._verify_host_mode()
             return True
 
-        except Exception as e:
-            logger.error(f"Fehler beim Aktivieren des Host Mode: {e}")
-            self.status_message.emit(f"Host Mode Fehler: {e}")
+        except Exception as exc:
+            logger.error("enter_host_mode failed: %s", exc)
+            self.status_message.emit(f"Host Mode error: {exc}")
+            self._in_host_mode = False
             return False
 
     def exit_host_mode(self) -> None:
-        """
-        Beendet den Host Mode (sendet HON-Frame).
+        """Send the HOST OFF frame and return TNC to verbose mode.
 
-        Wichtig: Im Host Mode kann kein ASCII "HOST OFF\\r" gesendet werden –
-        der TNC versteht nur Binär-Frames! Daher den speziellen HON-Frame.
+        TRM Section 4.1.4:  SOH $4F 'H' 'O' 'N' ETB
+        Note: plain ASCII "HOST OFF\\r" is NOT valid in Host Mode —
+        the binary frame must be used.
         """
-        if not self.is_connected or not self._host_mode_active:
+        if not self.is_connected or not self._in_host_mode:
             return
-
         try:
-            with self._lock:
-                self._serial.write(HOSTMODE_EXIT_FRAME)
+            self._write_raw(FRAME_HOST_OFF)
             time.sleep(0.1)
-            self._host_mode_active = False
-            self.status_message.emit("Host Mode beendet")
-            logger.info("Host Mode deaktiviert")
-        except Exception as e:
-            logger.error(f"Fehler beim Beenden des Host Mode: {e}")
+            self._in_host_mode = False
+            self.host_mode_changed.emit(False)
+            self.status_message.emit("Host Mode off")
+            logger.info("Host Mode deactivated")
+        except Exception as exc:
+            logger.error("exit_host_mode: %s", exc)
 
-    def host_mode_recovery(self) -> None:
-        """
-        Notfall-Recovery bei hängendem Host Mode.
+    def recovery(self) -> None:
+        """Send the double-SOH recovery frame and then exit Host Mode.
 
-        Sendet den speziellen SOH-SOH-Recovery-Frame laut AEA Manual Kap. 4.1.6.
-        Danach HOST OFF. Erspart in vielen Fällen das Aus-/Einschalten des TNC.
+        Use when the TNC appears to be stuck.
+        TRM Section 4.1.6:  SOH SOH $4F 'G' 'G' ETB
         """
         if not self.is_connected:
             return
         try:
-            with self._lock:
-                self._serial.write(HOSTMODE_RECOVERY_FRAME)
+            self._write_raw(FRAME_RECOVERY)
             time.sleep(0.2)
             self.exit_host_mode()
-            self.status_message.emit("Recovery durchgeführt")
-            logger.info("Host Mode Recovery gesendet")
-        except Exception as e:
-            logger.error(f"Recovery fehlgeschlagen: {e}")
+            self.status_message.emit("Recovery sent")
+            logger.info("Host Mode recovery frame sent")
+        except Exception as exc:
+            logger.error("recovery: %s", exc)
 
-    # -----------------------------------------------------------------------
-    # Daten senden
-    # -----------------------------------------------------------------------
+    def _verify_host_mode(self) -> bool:
+        """Send a GG poll and wait up to _POLL_TIMEOUT s for the ACK.
 
-    def send_command(self, cmd: str, port: int = Port.PORT1) -> bool:
+        Returns True if the TNC acknowledged the poll.
         """
-        Sendet einen ASCII-Befehl an den TNC (im Host Mode).
+        logger.debug("Verifying Host Mode with GG poll...")
+        ack_event = threading.Event()
+
+        def _check(frame: HostFrame) -> None:
+            if frame.is_poll_ok:
+                ack_event.set()
+
+        # Temporarily hook a one-shot check into the callback chain.
+        # We re-use the existing reader thread; _on_frame_received already
+        # calls frame_received.emit(), so we add our check inline here by
+        # connecting to the signal momentarily.
+        self.frame_received.connect(_check)
+        try:
+            self._write_raw(FRAME_POLL)
+            got_ack = ack_event.wait(timeout=_POLL_TIMEOUT)
+        finally:
+            self.frame_received.disconnect(_check)
+
+        if got_ack:
+            logger.info("Host Mode verified (GG poll ACK received)")
+        else:
+            logger.warning(
+                "Host Mode verification timed out — TNC may not be in Host Mode"
+            )
+        return got_ack
+
+    # ------------------------------------------------------------------
+    # Sending frames
+    # ------------------------------------------------------------------
+
+    def send_command(self, mnemonic: bytes, args: bytes = b"") -> bool:
+        """Send a Host Mode command frame (CTL = $4F).
 
         Args:
-            cmd : Befehlsstring ohne \\r, z.B. "MYCALL OE3GAS"
-            port: Port.PORT1 oder Port.PORT2
+            mnemonic: 2-byte ASCII mnemonic, e.g. ``b'ML'``.
+            args:     Optional argument bytes, e.g. ``b'OE3GAS'``.
 
         Returns:
-            True bei Erfolg.
+            True if the bytes were written to the port.
+
+        Example::
+
+            mgr.send_command(b'ML', b'OE3GAS')  # MYCALL OE3GAS
+            mgr.send_command(b'HP', b'Y')        # HPOLL ON
+            mgr.send_command(b'PA')              # PACKET mode
         """
         if not self._check_ready():
             return False
+        return self._write_raw(build_command(mnemonic, args))
 
-        frame = build_command_frame(cmd, port)
-        return self._write_raw(frame)
-
-    def send_data(
-        self, data: bytes, port: int = Port.PORT1
+    def send_channel_command(
+        self, channel: int, mnemonic: bytes, args: bytes = b""
     ) -> bool:
-        """
-        Sendet Rohdaten (z.B. Packet-Nutzdaten) als Connected-Data-Frame.
+        """Send a channel-specific command frame (CTL = $4x).
+
+        Used for CONNECT and DISCONNECT (TRM Section 4.2.3).
 
         Args:
-            data: Zu sendende Bytes
-            port: Port.PORT1 oder Port.PORT2
+            channel:  Packet channel 1-9.
+            mnemonic: e.g. ``b'CO'`` or ``b'DI'``.
+            args:     e.g. destination callsign bytes.
         """
         if not self._check_ready():
             return False
+        return self._write_raw(build_ch_cmd(channel, mnemonic, args))
 
-        ctl = port | FrameType.CONNECT_DATA
-        frame = build_frame(ctl, data)
-        return self._write_raw(frame)
+    def send_data(self, data: bytes, channel: int = 0) -> bool:
+        """Send a data frame to the TNC (CTL = $2x).
 
-    def send_raw_frame(self, ctl: int, data: bytes) -> bool:
-        """
-        Sendet einen Frame mit beliebigem CTL-Byte (für fortgeschrittene Nutzung).
+        The host must wait for a data-ACK ($5F response) before sending
+        the next data block (TRM Section 4.4).
+
+        Args:
+            data:    Raw bytes to transmit.
+            channel: Packet channel 0-9.  Use 0 for non-Packet modes.
         """
         if not self._check_ready():
             return False
-        frame = build_frame(ctl, data)
-        return self._write_raw(frame)
+        return self._write_raw(build_data(channel, data))
 
-    # -----------------------------------------------------------------------
-    # Hilfsmethoden
-    # -----------------------------------------------------------------------
+    def send_poll(self) -> bool:
+        """Send the HPOLL data-poll frame (SOH $4F 'G' 'G' ETB).
+
+        Only needed when HPOLL is ON.
+        """
+        if not self._check_ready():
+            return False
+        return self._write_raw(FRAME_POLL)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _write_raw(self, data: bytes) -> bool:
-        """Thread-sicheres Schreiben auf den seriellen Port."""
+        """Thread-safe write to the serial port."""
         try:
-            with self._lock:
+            with self._write_lock:
                 self._serial.write(data)
             return True
-        except Exception as e:
-            logger.error(f"Schreibfehler: {e}")
-            self.status_message.emit(f"Sendefehler: {e}")
+        except Exception as exc:
+            logger.error("Serial write error: %s", exc)
+            self.status_message.emit(f"Send error: {exc}")
             return False
 
     def _check_ready(self) -> bool:
-        """Prüft ob Port verbunden und Host Mode aktiv ist."""
+        """Return True if port is open AND Host Mode is active."""
         if not self.is_connected:
-            logger.warning("Kein Port verbunden")
+            logger.warning("send attempted with no port open")
             return False
-        if not self._host_mode_active:
-            logger.warning("Host Mode nicht aktiv")
+        if not self._in_host_mode:
+            logger.warning("send attempted outside Host Mode")
             return False
         return True
 
     def _on_frame_received(self, frame: HostFrame) -> None:
-        """
-        Callback aus dem Reader-Thread.
+        """Called by _ReaderThread for each decoded frame."""
+        logger.debug("RX %r", frame)
+        self.frame_received.emit(frame)   # delivers to main thread via Qt
 
-        Qt-Signals sind thread-safe: emit() aus einem Nicht-Main-Thread
-        ist erlaubt – Qt sorgt dafür, dass der verbundene Slot im
-        richtigen Thread aufgerufen wird.
-        """
-        logger.debug(f"Frame empfangen: {frame}")
-        self.frame_received.emit(frame)
-
-    # -----------------------------------------------------------------------
-    # Statische Hilfsmethode: Verfügbare Ports auflisten
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Utility
+    # ------------------------------------------------------------------
 
     @staticmethod
     def list_ports() -> list[str]:
-        """
-        Gibt eine Liste aller verfügbaren seriellen Ports zurück.
+        """Return a list of available serial port names.
 
-        Verwendung in der UI für die Port-Auswahl-ComboBox:
-            ports = SerialManager.list_ports()
-            # z.B. ["COM1", "COM3", "COM7"] unter Windows
-            #      ["/dev/ttyUSB0", "/dev/ttyS0"] unter Linux
+        Suitable for populating a port-selection ComboBox in the UI.
+
+        Returns:
+            List of port name strings, e.g.
+            ``['COM1', 'COM3']`` on Windows or
+            ``['/dev/ttyUSB0', '/dev/ttyS0']`` on Linux.
         """
         if not PYSERIAL_AVAILABLE:
             return []

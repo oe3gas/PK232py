@@ -1,71 +1,75 @@
-"""
-pk232py.ui.tnc_config_dialog
-=============================
-TNC-Konfigurationsdialog.
+# pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
+# Copyright (C) 2026  OE3GAS  —  GPL v2
+"""TNC configuration dialog.
 
-Ermöglicht die Auswahl von:
-  - Seriellem Port (COM1, COM3, /dev/ttyUSB0, ...)
-  - Baudrate
-  - Hardware-Handshake (RTS/CTS)
-  - Host Mode On Exit (TNC beim Beenden in Terminal-Mode zurückversetzen)
+Allows selection of:
+  - Serial port (COM1, /dev/ttyUSB0, …)
+  - Baud rate
+  - Hardware handshake (RTS/CTS)
+  - Host Mode on exit
+  - Fast initialisation
 
-Orientiert sich am PCPackRatt "TNC Configuration"-Dialog (TNC_Config_at_Start.png),
-vereinfacht für PK232PY v0.1 auf die wesentlichen Parameter.
+Based on the PCPackRatt "TNC Configuration" dialog
+(see TNC_Config_at_Start.png in project files).
 
-Verwendung:
+Usage::
+
     dlg = TncConfigDialog(current_config, parent=self)
     if dlg.exec() == QDialog.DialogCode.Accepted:
         config = dlg.get_config()
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 
-from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QVBoxLayout, QComboBox, QCheckBox,
-    QLabel, QPushButton, QSpinBox,
-)
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+    QPushButton, QVBoxLayout,
+)
 
 from ..comm.serial_manager import SerialManager
 from ..comm.constants import SerialDefaults
 
 
 # ---------------------------------------------------------------------------
-# Konfigurationsdatenklasse
+# Configuration dataclass
 # ---------------------------------------------------------------------------
 
 @dataclass
 class TncConfig:
-    """
-    Hält alle TNC-Verbindungseinstellungen.
+    """TNC connection settings passed between dialog and MainWindow.
 
-    Wird zwischen Dialog und MainWindow übergeben und in der INI-Datei
-    gespeichert (kommt in config/settings.py).
+    Note: this covers only the connection-level settings shown in the
+    TNC Configuration dialog.  Operating-mode parameters (MYCALL, FRACK,
+    MYPTCALL, …) live in config.py / AppConfig.
     """
-    port_name:  str  = ""
-    baudrate:   int  = SerialDefaults.BAUDRATE
-    rtscts:     bool = SerialDefaults.RTSCTS
-    host_mode_on_exit: bool = True    # Host Mode beim Trennen beenden
-    fast_init:  bool = False          # Schnelle Initialisierung (kürzer warten)
+    port_name:         str  = ""
+    baudrate:          int  = SerialDefaults.BAUDRATE   # 9600
+    rtscts:            bool = SerialDefaults.RTSCTS     # True
+    host_mode_on_exit: bool = True    # send HOST OFF before closing port
+    fast_init:         bool = False   # shorter waits during Host Mode init
 
 
 # ---------------------------------------------------------------------------
-# Der Dialog
+# Dialog
 # ---------------------------------------------------------------------------
 
 class TncConfigDialog(QDialog):
-    """
-    Modaler Dialog zur TNC-Konfiguration.
+    """Modal TNC configuration dialog.
 
-    'Modal' bedeutet: Solange der Dialog offen ist, kann der Rest der
-    Anwendung nicht bedient werden. Das ist hier gewünscht – wir wollen
-    keine Verbindungsversuche während der Konfiguration.
+    Args:
+        config: Current :class:`TncConfig` (pre-fills all widgets).
+                Defaults to a fresh TncConfig() if omitted.
+        parent: Parent widget (MainWindow).
     """
 
-    # Unterstützte Baudraten für den PK-232MBX
-    BAUDRATES = [1200, 2400, 4800, 9600, 19200]
+    # Supported baud rates for the PK-232MBX.
+    # The TNC supports up to 9600 baud on the host port.
+    # 19200 is listed for future/custom firmware; SerialDefaults.BAUDRATE = 9600.
+    BAUDRATES = [1200, 2400, 4800, 9600]
 
     def __init__(
         self,
@@ -77,82 +81,81 @@ class TncConfigDialog(QDialog):
         self._build_ui()
         self._populate(self._config)
 
-    # -----------------------------------------------------------------------
-    # UI aufbauen
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("TNC Konfiguration")
+        self.setWindowTitle("TNC Configuration")
         self.setMinimumWidth(380)
         self.setModal(True)
 
         root = QVBoxLayout(self)
         root.setSpacing(12)
 
-        # ── Verbindungs-Gruppe ──────────────────────────────────────────────
-        conn_group = QGroupBox("Verbindung")
+        # ── Connection group ───────────────────────────────────────────
+        conn_group = QGroupBox("Connection")
         form = QFormLayout(conn_group)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        # Port-Auswahl (ComboBox mit Refresh-Button)
+        # Port selector with refresh button
         port_row = QHBoxLayout()
         self._port_combo = QComboBox()
         self._port_combo.setMinimumWidth(140)
-        self._port_combo.setEditable(True)   # Manuelle Eingabe erlaubt
+        self._port_combo.setEditable(True)   # allow manual entry
         port_row.addWidget(self._port_combo)
 
         refresh_btn = QPushButton("↻")
         refresh_btn.setFixedWidth(32)
-        refresh_btn.setToolTip("Verfügbare Ports neu laden")
+        refresh_btn.setToolTip("Refresh available ports")
         refresh_btn.clicked.connect(self._refresh_ports)
         port_row.addWidget(refresh_btn)
-        form.addRow("COM Port:", port_row)
+        form.addRow("Serial Port:", port_row)
 
-        # Baudrate
+        # Baud rate selector
         self._baud_combo = QComboBox()
         for br in self.BAUDRATES:
             self._baud_combo.addItem(str(br), br)
-        form.addRow("Baudrate:", self._baud_combo)
+        form.addRow("Baud Rate:", self._baud_combo)
 
         root.addWidget(conn_group)
 
-        # ── Optionen-Gruppe ─────────────────────────────────────────────────
-        opt_group = QGroupBox("Optionen")
+        # ── Options group ──────────────────────────────────────────────
+        opt_group = QGroupBox("Options")
         opt_layout = QVBoxLayout(opt_group)
 
-        self._rtscts_cb = QCheckBox("Hardware-Handshake (RTS/CTS)")
+        self._rtscts_cb = QCheckBox("Hardware handshake (RTS/CTS)")
         self._rtscts_cb.setToolTip(
-            "Empfohlen für PK-232MBX. Deaktivieren nur wenn Kabel kein RTS/CTS hat."
+            "Recommended for PK-232MBX.  Disable only if the cable "
+            "has no RTS/CTS lines."
         )
         opt_layout.addWidget(self._rtscts_cb)
 
-        self._hm_exit_cb = QCheckBox("Host Mode beim Trennen beenden")
+        self._hm_exit_cb = QCheckBox("Leave Host Mode on disconnect")
         self._hm_exit_cb.setToolTip(
-            "Sendet HON-Frame bevor der Port geschlossen wird.\n"
-            "Versetzt den TNC zurück in den Terminal-Modus."
+            "Sends HOST OFF frame before closing the port.\n"
+            "Returns the TNC to terminal/verbose mode."
         )
         opt_layout.addWidget(self._hm_exit_cb)
 
-        self._fast_init_cb = QCheckBox("Schnelle Initialisierung")
+        self._fast_init_cb = QCheckBox("Fast initialisation")
         self._fast_init_cb.setToolTip(
-            "Kürzere Wartezeiten beim Aktivieren des Host Mode.\n"
-            "Nur aktivieren wenn der TNC schnell antwortet."
+            "Use shorter wait times when activating Host Mode.\n"
+            "Enable only if the TNC responds quickly."
         )
         opt_layout.addWidget(self._fast_init_cb)
 
         root.addWidget(opt_group)
 
-        # ── Info-Label ──────────────────────────────────────────────────────
+        # ── Info label ────────────────────────────────────────────────
         info = QLabel(
-            "<small><i>TNC Modell: AEA PK-232/PK-232MBX &nbsp;|&nbsp; "
-            "Firmware: v7.1 / v7.2</i></small>"
+            "<small><i>TNC Model: AEA PK-232 / PK-232MBX &nbsp;|&nbsp;"
+            " Firmware: v7.1 / v7.2</i></small>"
         )
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(info)
 
-        # ── Buttons (OK / Abbrechen) ─────────────────────────────────────────
-        # QDialogButtonBox erstellt OK/Cancel automatisch mit der richtigen
-        # Plattform-Reihenfolge (Windows: OK links, macOS: OK rechts)
+        # ── OK / Cancel buttons ───────────────────────────────────────
         btn_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel
@@ -161,19 +164,17 @@ class TncConfigDialog(QDialog):
         btn_box.rejected.connect(self.reject)
         root.addWidget(btn_box)
 
-        # Ports initial laden
+        # Initial port scan
         self._refresh_ports()
 
     def _populate(self, cfg: TncConfig) -> None:
-        """Füllt die Widgets mit den Werten aus cfg."""
-        # Port setzen (oder manuell eintragen wenn nicht in Liste)
+        """Pre-fill widgets from *cfg*."""
         idx = self._port_combo.findText(cfg.port_name)
         if idx >= 0:
             self._port_combo.setCurrentIndex(idx)
         else:
             self._port_combo.setCurrentText(cfg.port_name)
 
-        # Baudrate setzen
         idx = self._baud_combo.findData(cfg.baudrate)
         if idx >= 0:
             self._baud_combo.setCurrentIndex(idx)
@@ -183,36 +184,34 @@ class TncConfigDialog(QDialog):
         self._fast_init_cb.setChecked(cfg.fast_init)
 
     def _refresh_ports(self) -> None:
-        """Lädt die Liste der verfügbaren seriellen Ports neu."""
+        """Re-scan available serial ports and repopulate the combo box."""
         current = self._port_combo.currentText()
         self._port_combo.clear()
 
         ports = SerialManager.list_ports()
         if ports:
             self._port_combo.addItems(ports)
-            # Vorherige Auswahl beibehalten wenn noch vorhanden
             idx = self._port_combo.findText(current)
             if idx >= 0:
                 self._port_combo.setCurrentIndex(idx)
             else:
                 self._port_combo.setCurrentText(current)
         else:
-            self._port_combo.addItem("(keine Ports gefunden)")
+            self._port_combo.addItem("(no ports found)")
 
-    # -----------------------------------------------------------------------
-    # Ergebnis abfragen
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Result
+    # ------------------------------------------------------------------
 
     def get_config(self) -> TncConfig:
-        """
-        Gibt die vom Benutzer eingestellte Konfiguration zurück.
+        """Return the user-configured :class:`TncConfig`.
 
-        Aufruf nur sinnvoll nach exec() == QDialog.DialogCode.Accepted.
+        Call only after ``exec()`` returned ``QDialog.DialogCode.Accepted``.
         """
         return TncConfig(
-            port_name  = self._port_combo.currentText(),
-            baudrate   = self._baud_combo.currentData(),
-            rtscts     = self._rtscts_cb.isChecked(),
+            port_name         = self._port_combo.currentText(),
+            baudrate          = self._baud_combo.currentData(),
+            rtscts            = self._rtscts_cb.isChecked(),
             host_mode_on_exit = self._hm_exit_cb.isChecked(),
-            fast_init  = self._fast_init_cb.isChecked(),
+            fast_init         = self._fast_init_cb.isChecked(),
         )
