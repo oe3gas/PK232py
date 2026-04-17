@@ -34,6 +34,12 @@ from ..comm.serial_manager import SerialManager
 from ..comm.frame import HostFrame, FrameKind
 from ..mode_manager import ModeManager
 from .tnc_config_dialog import TncConfigDialog, TncConfig
+from .dialogs.params_hf      import HFPacketParamsDialog
+from .dialogs.params_misc    import MiscParamsDialog
+from .dialogs.params_pactor  import PACTORParamsDialog
+from .dialogs.params_amtor   import AMTORParamsDialog
+from .dialogs.params_baudot  import BaudotParamsDialog
+from .dialogs.params_maildrop import MailDropParamsDialog
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +61,12 @@ class MainWindow(QMainWindow):
         self._config: TncConfig = TncConfig()
         self._serial = SerialManager(parent=self)
         self._modes  = ModeManager(self._serial, parent=self)
+        # Application config (parameters for all modes)
+        from pk232py.config import ConfigManager
+        self._config_mgr = ConfigManager()
+        self._config_mgr.load()
+        self._app_config = self._config_mgr.app
+        self._misc_params: dict = {}
         self._build_ui()
         self._connect_signals()
         self._update_connection_ui(False)
@@ -140,6 +152,8 @@ class MainWindow(QMainWindow):
 
         # ── Parameters ────────────────────────────────────────────────
         param_menu = mb.addMenu("&Parameters")
+        # Implemented dialogs
+        _implemented = {"HF Packet...", "Misc...", "PACTOR...", "AMTOR / NAVTEX / TDM...", "BAUDOT / ASCII / CW...", "MailDrop..."}
         for label, slot in [
             ("HF Packet...",             self._on_params_hf_packet),
             ("PACTOR...",                self._on_params_pactor),
@@ -149,7 +163,7 @@ class MainWindow(QMainWindow):
             ("MailDrop...",              self._on_params_maildrop),
         ]:
             act = QAction(label, self)
-            act.setEnabled(False)
+            act.setEnabled(label in _implemented)
             act.triggered.connect(slot)
             param_menu.addAction(act)
 
@@ -403,14 +417,61 @@ class MainWindow(QMainWindow):
         if dlg.exec() == TncConfigDialog.DialogCode.Accepted:
             self._config = dlg.get_config()
 
-    def _on_load_params(self):    self.statusBar().showMessage("Load params — not yet implemented", 3000)
-    def _on_save_params(self):    self.statusBar().showMessage("Save params — not yet implemented", 3000)
-    def _on_params_hf_packet(self): self.statusBar().showMessage("HF Packet params — coming in v0.2", 3000)
-    def _on_params_pactor(self):  self.statusBar().showMessage("PACTOR params — coming in v0.3", 3000)
-    def _on_params_amtor(self):   self.statusBar().showMessage("AMTOR params — coming in v0.3", 3000)
-    def _on_params_baudot(self):  self.statusBar().showMessage("BAUDOT params — coming in v0.3", 3000)
-    def _on_params_misc(self):    self.statusBar().showMessage("Misc params — coming in v0.2", 3000)
-    def _on_params_maildrop(self):self.statusBar().showMessage("MailDrop params — coming in v0.5", 3000)
+    def _on_load_params(self):
+        self.statusBar().showMessage("Load params — not yet implemented", 3000)
+
+    def _on_save_params(self):
+        self.statusBar().showMessage("Save params — not yet implemented", 3000)
+
+    def _on_params_hf_packet(self) -> None:
+        """Open HF Packet Parameters dialog."""
+        from pk232py.config import ConfigManager
+        dlg = HFPacketParamsDialog(self._app_config.hf_packet, parent=self)
+        if dlg.exec() == HFPacketParamsDialog.DialogCode.Accepted:
+            self._log_monitor("[SYS] HF Packet parameters updated")
+
+    def _on_params_misc(self) -> None:
+        """Open Misc Parameters dialog."""
+        dlg = MiscParamsDialog(parent=self)
+        # Pre-fill from stored values if available
+        if hasattr(self, '_misc_params'):
+            dlg.set_values(**self._misc_params)
+        if dlg.exec() == MiscParamsDialog.DialogCode.Accepted:
+            self._misc_params = dlg.get_values()
+            self._log_monitor("[SYS] Misc parameters updated")
+
+    def _on_params_pactor(self) -> None:
+        """Open PACTOR Parameters dialog."""
+        dlg = PACTORParamsDialog(self._app_config.pactor, parent=self)
+        if dlg.exec() == PACTORParamsDialog.DialogCode.Accepted:
+            self._log_monitor("[SYS] PACTOR parameters updated")
+
+    def _on_params_amtor(self) -> None:
+        """Open AMTOR / NAVTEX / TDM Parameters dialog."""
+        dlg = AMTORParamsDialog(parent=self)
+        if hasattr(self, '_amtor_params'):
+            dlg.set_values(**self._amtor_params)
+        if dlg.exec() == AMTORParamsDialog.DialogCode.Accepted:
+            self._amtor_params = dlg.get_values()
+            self._log_monitor("[SYS] AMTOR/NAVTEX/TDM parameters updated")
+
+    def _on_params_baudot(self) -> None:
+        """Open BAUDOT / ASCII / CW Parameters dialog."""
+        dlg = BaudotParamsDialog(parent=self)
+        if hasattr(self, '_baudot_params'):
+            dlg.set_values(**self._baudot_params)
+        if dlg.exec() == BaudotParamsDialog.DialogCode.Accepted:
+            self._baudot_params = dlg.get_values()
+            self._log_monitor("[SYS] BAUDOT/ASCII/CW parameters updated")
+
+    def _on_params_maildrop(self) -> None:
+        """Open MailDrop Parameters dialog."""
+        dlg = MailDropParamsDialog(parent=self)
+        if hasattr(self, '_maildrop_params'):
+            dlg.set_values(**self._maildrop_params)
+        if dlg.exec() == MailDropParamsDialog.DialogCode.Accepted:
+            self._maildrop_params = dlg.get_values()
+            self._log_monitor("[SYS] MailDrop parameters updated")
 
     def _on_toggle_monitor(self, checked: bool) -> None:
         self._monitor.setVisible(checked)
