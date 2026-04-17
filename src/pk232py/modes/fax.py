@@ -1,39 +1,39 @@
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
 # Copyright (C) 2026  OE3GAS  —  GPL v2
-"""TDM (Time Division Multiplexing) receive mode — CCIR 342 / Moore Code.
+"""FAX receive mode (HF weather-chart facsimile).
 
-TDM is a receive-only mode for monitoring Time Division Multiplexed
-signals, also known as Moore Code (CCIR recommendation 342).
+The PK-232MBX can receive HF weather-chart facsimile (WEFAX) broadcasts.
+FAX is receive-only in practice; the TNC outputs received pixel data
+which must be rendered by the host application.
 
 Key characteristics
 -------------------
-- Receive-only (no transmit in TDM mode)
-- 1-, 2-, or 4-channel multiplexed FSK signals
-- Valid baud rates depend on channel count:
-    1-channel:  48, 72, 96
-    2-channel:  86, 96, 100
-    4-channel: 171, 192, 200
-  (Other values disable error detection; outside 0-200 resets to 96)
-- TDCHAN selects which channel to display (0-3)
-- TDM stations are mostly idle — allow 1-2 hours for synchronisation
-- Use SIAM first to identify signal and determine baud rate
+- Receive-only (weather charts, satellite images)
+- Standard HF FAX frequencies: 4, 8, 12, 16, 22 MHz bands
+- FSPEED: drum speed in RPM (default varies; common: 60, 90, 120, 240)
+- ASPECT: line density control (1-6, affects image proportions)
+- FAXNEG: negative image (invert black/white)
+- GRAPHICS: print density (dot-matrix printer output, legacy)
 
 Host Mode frame types
 ---------------------
   Incoming:
-    $3F  RX_MONITOR  — decoded TDM channel data
-    $5F  STATUS_ERR  — error
+    $3F  RX_MONITOR  — FAX pixel/line data
+    $5F  STATUS_ERR  — sync lost or other error
 
   Outgoing:
-    $4F  build_command(b'TV')       — enter TDM mode (mnemonic TV)
-    $4F  build_command(b'TU', baud) — TDBAUD
-    $4F  build_command(b'TN', chan) — TDCHAN
+    $4F  build_command(b'FA')         — enter FAX mode (mnemonic FA)
+    $4F  build_command(b'FS', speed)  — FSPEED drum RPM
+    $4F  build_command(b'AY', aspect) — ASPECT line density
+    $4F  build_command(b'FN', yn)     — FAXNEG (Y/N)
 
-Host Mode mnemonics (TRM / STABO manual)
------------------------------------------
-  TV   TDm     — enter TDM receive mode
-  TU   TDBAUD  — TDM signal baud rate (0-200, default 96)
-  TN   TDCHAN  — channel selection (0-3)
+Host Mode mnemonics (TRM)
+--------------------------
+  FA   FAX     — enter FAX receive mode
+  FS   FSPEED  — drum rotation speed (RPM)
+  AY   ASPECT  — aspect ratio / line density (1-6, default 2=576 lpi)
+  FN   FAXNEG  — negative image (Y/N)
+  GR   GRAPHICS— print dot density (legacy printer output)
 """
 
 from __future__ import annotations
@@ -49,82 +49,86 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Valid baud rates per channel count
-VALID_BAUDS_1CH = (48, 72, 96)
-VALID_BAUDS_2CH = (86, 96, 100)
-VALID_BAUDS_4CH = (171, 192, 200)
-ALL_VALID_BAUDS = frozenset(VALID_BAUDS_1CH + VALID_BAUDS_2CH + VALID_BAUDS_4CH)
+# Common HF FAX drum speeds (RPM)
+FSPEED_60  = 60
+FSPEED_90  = 90
+FSPEED_120 = 120
+FSPEED_240 = 240
 
 
-class TDMMode(BaseMode):
-    """TDM (Time Division Multiplexing) receive mode — CCIR 342.
+class FAXMode(BaseMode):
+    """HF Weather-chart FAX receive mode.
 
-    Receive-only mode for monitoring multiplexed FSK signals.
-    Use SIAM (SignalMode) first to identify the signal and baud rate.
+    Receive-only mode for HF facsimile broadcasts (WEFAX).
+    Pixel data is delivered as RX_MONITOR ($3F) frames.
+
+    Note: Rendering of pixel data into an image is the responsibility
+    of the host application (not implemented in v1.2).
 
     Callbacks
     ---------
     ``on_data_received``  : ``Callable[[bytes], None]``
-        Called with decoded TDM channel data ($3F frames).
+        Called with raw FAX pixel/line data ($3F frames).
     """
 
-    name         = "TDM"
-    host_command = b'TV'
+    name         = "FAX"
+    host_command = b'FA'
 
     def __init__(
         self,
-        tdbaud: int = 96,   # TDM signal baud rate
-        tdchan: int = 0,    # channel to display (0-3)
+        fspeed: int  = 120,   # drum speed RPM
+        aspect: int  = 2,     # line density 1-6 (2=576 lpi standard)
+        faxneg: bool = False,  # negative image
     ) -> None:
         super().__init__()
-        self.tdbaud = tdbaud
-        self.tdchan = max(0, min(3, tdchan))
+        self.fspeed = fspeed
+        self.aspect = max(1, min(6, aspect))
+        self.faxneg = faxneg
 
         self.on_data_received: Optional[Callable[[bytes], None]] = None
 
     def get_activate_frames(self) -> list[bytes]:
-        return [build_command(b'TV')]
+        return [build_command(b'FA')]
 
     def get_init_frames(self) -> list[bytes]:
         return [
-            self.tdbaud_frame(self.tdbaud),
-            self.tdchan_frame(self.tdchan),
+            self.fspeed_frame(self.fspeed),
+            self.aspect_frame(self.aspect),
+            self.faxneg_frame(self.faxneg),
         ]
 
     def handle_frame(self, frame: "HostFrame") -> None:
         kind = frame.kind
         if kind == FrameKind.RX_MONITOR:
-            logger.debug("TDM RX %d bytes ch%d", len(frame.data), frame.channel)
+            logger.debug("FAX RX %d bytes", len(frame.data))
             if self.on_data_received:
                 self.on_data_received(frame.data)
         elif kind == FrameKind.STATUS_ERR:
-            logger.warning("TDM status error: %s", frame.data.hex())
+            logger.warning("FAX status error: %s", frame.data.hex())
         elif kind == FrameKind.CMD_RESP:
-            logger.debug("TDM CMD_RESP: %s", frame.data.hex())
+            logger.debug("FAX CMD_RESP: %s", frame.data.hex())
         else:
-            logger.debug("TDM: unhandled frame %r", frame)
+            logger.debug("FAX: unhandled frame %r", frame)
 
     @staticmethod
-    def tdbaud_frame(baud: int) -> bytes:
-        """TDBAUD — TDM signal baud rate (mnemonic TU, default 96).
+    def fspeed_frame(rpm: int) -> bytes:
+        """FSPEED — drum rotation speed in RPM (mnemonic FS).
 
-        Valid values: 48/72/96 (1-ch), 86/96/100 (2-ch), 171/192/200 (4-ch).
-        Other values disable error detection.
+        Common values: 60, 90, 120, 240 RPM.
+        Standard HF weather FAX uses 120 RPM.
         """
-        return build_command(b'TU', str(baud).encode('ascii'))
+        return build_command(b'FS', str(rpm).encode('ascii'))
 
     @staticmethod
-    def tdchan_frame(channel: int) -> bytes:
-        """TDCHAN — select display channel 0-3 (mnemonic TN).
+    def aspect_frame(value: int) -> bytes:
+        """ASPECT — line density / aspect ratio (mnemonic AY).
 
-        Channel mapping depends on signal type:
-          1-ch: no effect
-          2-ch: 0/2=A, 1/3=B
-          4-ch: 0=A, 1=B, 2=C, 3=D
+        Range 1-6.  Default 2 (576 lines per inch, standard WEFAX).
+        Higher values stretch the image vertically.
         """
-        return build_command(b'TN', str(max(0, min(3, channel))).encode('ascii'))
+        return build_command(b'AY', str(max(1, min(6, value))).encode('ascii'))
 
     @staticmethod
-    def is_valid_baud(baud: int) -> bool:
-        """Return True if baud rate is a known valid TDM rate."""
-        return baud in ALL_VALID_BAUDS
+    def faxneg_frame(enabled: bool) -> bytes:
+        """FAXNEG — invert image (negative), mnemonic FN."""
+        return build_command(b'FN', b'Y' if enabled else b'N')

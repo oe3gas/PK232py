@@ -1,39 +1,40 @@
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
 # Copyright (C) 2026  OE3GAS  —  GPL v2
-"""TDM (Time Division Multiplexing) receive mode — CCIR 342 / Moore Code.
+"""Signal Analysis (SIAM) mode — unknown signal identification.
 
-TDM is a receive-only mode for monitoring Time Division Multiplexed
-signals, also known as Moore Code (CCIR recommendation 342).
+SIAM (Signal Identification and Analysis Mode) is a special mode of
+the PK-232MBX that attempts to identify unknown FSK signals and report
+their characteristics: baud rate, shift, number of channels, and
+probable mode.
 
 Key characteristics
 -------------------
-- Receive-only (no transmit in TDM mode)
-- 1-, 2-, or 4-channel multiplexed FSK signals
-- Valid baud rates depend on channel count:
-    1-channel:  48, 72, 96
-    2-channel:  86, 96, 100
-    4-channel: 171, 192, 200
-  (Other values disable error detection; outside 0-200 resets to 96)
-- TDCHAN selects which channel to display (0-3)
-- TDM stations are mostly idle — allow 1-2 hours for synchronisation
-- Use SIAM first to identify signal and determine baud rate
+- Passive receive-only analysis
+- Reports: baud rate, frequency shift, channel count, mode guess
+- Useful before switching to TDM, RTTY, or other modes
+- SAMPLE parameter controls analysis duration
+- Results delivered as CMD_RESP frames (text output)
 
 Host Mode frame types
 ---------------------
   Incoming:
-    $3F  RX_MONITOR  — decoded TDM channel data
+    $4F  CMD_RESP    — SIAM analysis result text
     $5F  STATUS_ERR  — error
 
   Outgoing:
-    $4F  build_command(b'TV')       — enter TDM mode (mnemonic TV)
-    $4F  build_command(b'TU', baud) — TDBAUD
-    $4F  build_command(b'TN', chan) — TDCHAN
+    $4F  build_command(b'SI')           — enter SIGNAL mode (mnemonic SI)
+    $4F  build_command(b'SA', samples)  — SAMPLE count
 
-Host Mode mnemonics (TRM / STABO manual)
------------------------------------------
-  TV   TDm     — enter TDM receive mode
-  TU   TDBAUD  — TDM signal baud rate (0-200, default 96)
-  TN   TDCHAN  — channel selection (0-3)
+Host Mode mnemonics (TRM)
+--------------------------
+  SI   SIGNAL  — enter signal analysis (SIAM) mode
+  SA   SAMPLE  — number of samples for analysis (default varies)
+
+SIAM output format (from STABO manual Ch. 10):
+  The TNC reports findings as text, e.g.:
+    "BAUDOT 45 170"  → 45 baud Baudot, 170 Hz shift
+    "TDM ARQ-B:4"    → TDM ARQ-B, 4-character repetition
+    "UNKNOWN"        → signal not identified
 """
 
 from __future__ import annotations
@@ -49,82 +50,71 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Valid baud rates per channel count
-VALID_BAUDS_1CH = (48, 72, 96)
-VALID_BAUDS_2CH = (86, 96, 100)
-VALID_BAUDS_4CH = (171, 192, 200)
-ALL_VALID_BAUDS = frozenset(VALID_BAUDS_1CH + VALID_BAUDS_2CH + VALID_BAUDS_4CH)
 
+class SignalMode(BaseMode):
+    """Signal Analysis (SIAM) mode.
 
-class TDMMode(BaseMode):
-    """TDM (Time Division Multiplexing) receive mode — CCIR 342.
+    Passive signal identification — the TNC analyses the received signal
+    and reports baud rate, shift, channel count and probable mode as
+    CMD_RESP text frames.
 
-    Receive-only mode for monitoring multiplexed FSK signals.
-    Use SIAM (SignalMode) first to identify the signal and baud rate.
+    Typical workflow::
+
+        sm = SignalMode()
+        sm.on_result = lambda text: print("SIAM:", text)
+        mode_manager.set_mode_instance(sm)
+        # Tune to unknown signal, wait for result
 
     Callbacks
     ---------
-    ``on_data_received``  : ``Callable[[bytes], None]``
-        Called with decoded TDM channel data ($3F frames).
+    ``on_result``  : ``Callable[[str], None]``
+        Called with the SIAM analysis result string from the TNC.
     """
 
-    name         = "TDM"
-    host_command = b'TV'
+    name         = "Signal"
+    host_command = b'SI'
 
-    def __init__(
-        self,
-        tdbaud: int = 96,   # TDM signal baud rate
-        tdchan: int = 0,    # channel to display (0-3)
-    ) -> None:
+    def __init__(self, sample: int = 900) -> None:
+        """
+        Args:
+            sample: Number of samples for analysis.
+                    Range 0-65535.  Default 900 (per STABO formula:
+                    samples/second = 2000 / sample; 900 ≈ 2.2 sec).
+                    Max useful value ≈ 900 (limited by 8536 chip).
+        """
         super().__init__()
-        self.tdbaud = tdbaud
-        self.tdchan = max(0, min(3, tdchan))
+        self.sample = max(0, min(65535, sample))
 
-        self.on_data_received: Optional[Callable[[bytes], None]] = None
+        self.on_result: Optional[Callable[[str], None]] = None
 
     def get_activate_frames(self) -> list[bytes]:
-        return [build_command(b'TV')]
+        return [build_command(b'SI')]
 
     def get_init_frames(self) -> list[bytes]:
-        return [
-            self.tdbaud_frame(self.tdbaud),
-            self.tdchan_frame(self.tdchan),
-        ]
+        return [self.sample_frame(self.sample)]
 
     def handle_frame(self, frame: "HostFrame") -> None:
+        """Dispatch incoming frames.
+
+        SIAM results arrive as CMD_RESP ($4F) text frames.
+        """
         kind = frame.kind
-        if kind == FrameKind.RX_MONITOR:
-            logger.debug("TDM RX %d bytes ch%d", len(frame.data), frame.channel)
-            if self.on_data_received:
-                self.on_data_received(frame.data)
+        if kind == FrameKind.CMD_RESP:
+            text = frame.text.strip()
+            if text:
+                logger.info("SIAM result: %s", text)
+                if self.on_result:
+                    self.on_result(text)
         elif kind == FrameKind.STATUS_ERR:
-            logger.warning("TDM status error: %s", frame.data.hex())
-        elif kind == FrameKind.CMD_RESP:
-            logger.debug("TDM CMD_RESP: %s", frame.data.hex())
+            logger.warning("SIAM status error: %s", frame.data.hex())
         else:
-            logger.debug("TDM: unhandled frame %r", frame)
+            logger.debug("SIAM: unhandled frame %r", frame)
 
     @staticmethod
-    def tdbaud_frame(baud: int) -> bytes:
-        """TDBAUD — TDM signal baud rate (mnemonic TU, default 96).
+    def sample_frame(count: int) -> bytes:
+        """SAMPLE — number of analysis samples (mnemonic SA).
 
-        Valid values: 48/72/96 (1-ch), 86/96/100 (2-ch), 171/192/200 (4-ch).
-        Other values disable error detection.
+        Analysis duration = 2000 / count seconds.
+        Default 900 ≈ 2.2 seconds analysis window.
         """
-        return build_command(b'TU', str(baud).encode('ascii'))
-
-    @staticmethod
-    def tdchan_frame(channel: int) -> bytes:
-        """TDCHAN — select display channel 0-3 (mnemonic TN).
-
-        Channel mapping depends on signal type:
-          1-ch: no effect
-          2-ch: 0/2=A, 1/3=B
-          4-ch: 0=A, 1=B, 2=C, 3=D
-        """
-        return build_command(b'TN', str(max(0, min(3, channel))).encode('ascii'))
-
-    @staticmethod
-    def is_valid_baud(baud: int) -> bool:
-        """Return True if baud rate is a known valid TDM rate."""
-        return baud in ALL_VALID_BAUDS
+        return build_command(b'SA', str(max(0, min(65535, count))).encode('ascii'))
