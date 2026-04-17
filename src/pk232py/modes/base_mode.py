@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pk232py.comm.hostmode import HostFrame
+    from pk232py.comm.frame import HostFrame   # HostFrame lives in frame.py
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,14 @@ class BaseMode(ABC):
 
     The ``name`` and ``host_command`` class attributes must be set
     by each subclass.
+
+    Lifecycle
+    ---------
+    1. UI calls ``get_activate_frames()`` → sends frames to TNC.
+    2. UI calls ``get_init_frames()``     → sends parameter frames.
+    3. UI calls ``activate()``            → marks mode as active.
+    4. Incoming frames are dispatched via ``handle_frame()``.
+    5. UI calls ``deactivate()``          → marks mode as inactive.
     """
 
     #: Human-readable mode name, e.g. "HF Packet"
@@ -39,16 +47,21 @@ class BaseMode(ABC):
         return self._active
 
     def activate(self) -> None:
-        """Called when the user switches to this mode.
+        """Mark this mode as active.
 
-        Returns the Host Mode command bytes to send to the TNC.
-        Override to add mode-specific initialisation.
+        Called by the mode manager AFTER the activate and init frames
+        have been sent to the TNC and acknowledged.  Override to perform
+        any in-memory state reset needed when entering the mode.
         """
         self._active = True
         logger.info("Mode activated: %s", self.name)
 
     def deactivate(self) -> None:
-        """Called when the user switches away from this mode."""
+        """Mark this mode as inactive.
+
+        Called by the mode manager when the user switches away.
+        Override to clean up any mode-specific state.
+        """
         self._active = False
         logger.info("Mode deactivated: %s", self.name)
 
@@ -56,28 +69,38 @@ class BaseMode(ABC):
     def handle_frame(self, frame: "HostFrame") -> None:
         """Process an incoming Host Mode frame addressed to this mode.
 
+        Called by the mode manager for every frame whose CTL range
+        matches this mode (RX_DATA, LINK_MSG, ECHO, etc.).
+
         Args:
             frame: Decoded Host Mode frame from the TNC.
         """
 
     @abstractmethod
     def get_activate_frames(self) -> list[bytes]:
-        """Return the sequence of raw frame bytes needed to activate this mode.
+        """Return the frame sequence needed to switch the TNC into this mode.
+
+        Typically a single mode-switch command, e.g.::
+
+            return [build_command(b'PA')]   # PACKET
 
         Returns:
-            List of complete Host Mode frames to send to the TNC.
+            List of complete, ready-to-send Host Mode frame bytes.
         """
 
-    def get_parameter_frames(self) -> list[bytes]:
-        """Return Host Mode frames to upload mode-specific parameters.
+    def get_init_frames(self) -> list[bytes]:
+        """Return frames to upload mode-specific parameters after activation.
 
-        Override in subclasses to upload parameters after activation.
+        Sent immediately after ``get_activate_frames()`` has been
+        acknowledged.  Override in subclasses to upload parameters
+        (e.g. MYCALL, TXDELAY, FRACK, …).
+
         Default implementation returns an empty list.
 
         Returns:
-            List of complete Host Mode frames to send to the TNC.
+            List of complete, ready-to-send Host Mode frame bytes.
         """
         return []
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} active={self._active}>"
+        return f"<{self.__class__.__name__} name={self.name!r} active={self._active}>"
