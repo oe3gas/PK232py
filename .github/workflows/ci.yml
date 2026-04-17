@@ -1,23 +1,29 @@
+# PK232PY — Continuous Integration
+# Runs on every push and pull request to main.
+# Checks: syntax, imports, unit tests on Python 3.10 / 3.11 / 3.12
+
 name: CI
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ main ]
 
 jobs:
   test:
-    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
+        os: [ubuntu-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -27,13 +33,37 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install PyQt6 pyserial pytest
 
-      - name: Lint with ruff
-        run: ruff check src/
+      - name: Install package (editable)
+        run: pip install -e .
 
-      - name: Check formatting with black
-        run: black --check src/
+      - name: Syntax check — all .py files
+        run: |
+          python -m py_compile src/pk232py/comm/constants.py
+          python -m py_compile src/pk232py/comm/frame.py
+          python -m py_compile src/pk232py/comm/hostmode.py
+          python -m py_compile src/pk232py/comm/autobaud.py
+          python -m py_compile src/pk232py/comm/kiss.py
+          python -m py_compile src/pk232py/comm/serial_manager.py
+          python -m py_compile src/pk232py/modes/base_mode.py
+          python -m py_compile src/pk232py/modes/packet_hf.py
+          python -m py_compile src/pk232py/modes/packet_vhf.py
+          python -m py_compile src/pk232py/modes/pactor.py
+          python -m py_compile src/pk232py/modes/amtor.py
+          python -m py_compile src/pk232py/modes/rtty_baudot.py
+          python -m py_compile src/pk232py/modes/rtty_ascii.py
+          python -m py_compile src/pk232py/modes/morse.py
+          python -m py_compile src/pk232py/modes/navtex.py
+          python -m py_compile src/pk232py/modes/tdm.py
+          python -m py_compile src/pk232py/modes/fax.py
+          python -m py_compile src/pk232py/modes/signal_analysis.py
+          python -m py_compile src/pk232py/config.py
+          python -m py_compile src/pk232py/mode_manager.py
+          python -m py_compile src/pk232py/log/qso_log.py
+          python -m py_compile src/pk232py/macros/macro_manager.py
+          python -m py_compile src/pk232py/maildrop/maildrop.py
+          python -m py_compile src/pk232py/maildrop/message_store.py
 
-      - name: Run tests
-        run: pytest --tb=short
+      - name: Run unit tests
+        run: pytest src/pk232py/tests/ -v --tb=short

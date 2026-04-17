@@ -1,0 +1,36 @@
+# PK232PY — CodeQL Security Analysis
+# Runs weekly and on every push to main.
+# Scans Python code for security vulnerabilities.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: "0 6 * * 1"   # every Monday at 06:00 UTC
+
+jobs:
+  analyze:
+    name: Analyze Python
+    runs-on: ubuntu-latest
+
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
