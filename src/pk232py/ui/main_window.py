@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from PyQt6.QtCore import QEvent, Qt, QTimer
+from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer
 from PyQt6.QtGui import QAction, QFont
 from PyQt6.QtWidgets import (
     QComboBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
@@ -33,6 +33,7 @@ from pk232py import __version__
 from ..comm.serial_manager import SerialManager
 from ..comm.frame import HostFrame, FrameKind
 from ..mode_manager import ModeManager
+from ..comm.params_uploader import ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
 from .dialogs.params_hf      import HFPacketParamsDialog
 from .dialogs.params_misc    import MiscParamsDialog
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_central()
         self._build_statusbar()
+        self._restore_window_geometry()
 
     def _build_menubar(self) -> None:
         mb = self.menuBar()
@@ -90,14 +92,16 @@ class MainWindow(QMainWindow):
         # ── File ──────────────────────────────────────────────────────
         file_menu = mb.addMenu("&File")
 
-        act_load = QAction("Load Parameters...", self)
-        act_load.setStatusTip("Load TNC parameters from file")
-        act_load.triggered.connect(self._on_load_params)
+        act_load = QAction("&Load Settings...", self)
+        act_load.setShortcut("Ctrl+L")
+        act_load.setStatusTip("Load settings from INI file")
+        act_load.triggered.connect(self._on_load_settings)
         file_menu.addAction(act_load)
 
-        act_save = QAction("Save Parameters...", self)
-        act_save.setStatusTip("Save TNC parameters to file")
-        act_save.triggered.connect(self._on_save_params)
+        act_save = QAction("&Save Settings...", self)
+        act_save.setShortcut("Ctrl+S")
+        act_save.setStatusTip("Save settings to INI file")
+        act_save.triggered.connect(self._on_save_settings)
         file_menu.addAction(act_save)
 
         file_menu.addSeparator()
@@ -323,10 +327,10 @@ class MainWindow(QMainWindow):
         self._serial.connection_changed.connect(self._update_connection_ui)
         self._serial.host_mode_changed.connect(self._update_host_mode_ui)
         self._serial.status_message.connect(self._on_status_message)
+        self._serial.verbose_mode_ready.connect(self._on_verbose_mode_ready)
+        self._serial.params_upload_required.connect(self._on_params_upload_required)
 
         # SerialManager → ModeManager (frame dispatch)
-        # ModeManager.on_frame() handles dispatch to the active mode.
-        # MainWindow also receives frames for the monitor log.
         self._serial.frame_received.connect(self._modes.on_frame)
         self._serial.frame_received.connect(self._on_frame_received)
 
@@ -352,22 +356,38 @@ class MainWindow(QMainWindow):
         ok = self._serial.connect_port(
             self._config.port_name,
             baudrate=self._config.baudrate,
-            rtscts=self._config.rtscts,
         )
         if ok:
             self._log_monitor(
                 f"[SYS] Connected: {self._config.port_name} @ {self._config.baudrate} Bd"
             )
-            if self._serial.enter_host_mode():
-                self._log_monitor("[SYS] Host Mode active")
-            else:
-                self._log_monitor("[WARN] Host Mode could not be activated")
+            self._serial.init_tnc()
 
     def _on_disconnect(self) -> None:
         self._serial.disconnect_port()
         self._log_monitor("[SYS] Disconnected")
 
+    def _on_verbose_mode_ready(self) -> None:
+        """Called when TNC is in verbose mode — upload params then enter Host Mode."""
+        self._log_monitor("[SYS] TNC in verbose mode — uploading parameters...")
+        self._sb_mode.setText("Mode: VERBOSE")
+        # Upload parameters in background thread
+        import threading
+        def _upload():
+            uploader = ParamsUploader(self._serial, self._app_config)
+            n = uploader.upload()
+            self._log_monitor(f"[SYS] {n} parameters uploaded")
+            # Now enter Host Mode
+            self._serial.enter_host_mode()
+        threading.Thread(target=_upload, daemon=True, name="PK232-ParamUpload").start()
+
+    def _on_params_upload_required(self) -> None:
+        """Called when TNC rebooted — same as verbose_mode_ready but with log message."""
+        self._log_monitor("[SYS] TNC rebooted — re-uploading parameters...")
+        self._on_verbose_mode_ready()
+
     def _on_host_mode_enter(self) -> None:
+        """Manual Host Mode entry from menu/toolbar."""
         if self._serial.is_connected:
             self._serial.enter_host_mode()
 
@@ -417,11 +437,40 @@ class MainWindow(QMainWindow):
         if dlg.exec() == TncConfigDialog.DialogCode.Accepted:
             self._config = dlg.get_config()
 
-    def _on_load_params(self):
-        self.statusBar().showMessage("Load params — not yet implemented", 3000)
+    def _on_load_settings(self) -> None:
+        """Load settings from INI file and apply to UI."""
+        from PyQt6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Settings", str(self._config_mgr._path.parent),
+            "INI Files (*.ini);;All Files (*)"
+        )
+        if not path:
+            return
+        from pathlib import Path
+        old_path = self._config_mgr._path
+        self._config_mgr._path = Path(path)
+        self._config_mgr.load()
+        self._config_mgr._path = old_path
+        self._app_config = self._config_mgr.app
+        self.statusBar().showMessage(f"Settings loaded from {path}", 4000)
+        self._log_monitor(f"[SYS] Settings loaded: {path}")
 
-    def _on_save_params(self):
-        self.statusBar().showMessage("Save params — not yet implemented", 3000)
+    def _on_save_settings(self) -> None:
+        """Save current settings to INI file."""
+        from PyQt6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Settings", str(self._config_mgr._path),
+            "INI Files (*.ini);;All Files (*)"
+        )
+        if not path:
+            return
+        from pathlib import Path
+        old_path = self._config_mgr._path
+        self._config_mgr._path = Path(path)
+        self._config_mgr.save()
+        self._config_mgr._path = old_path
+        self.statusBar().showMessage(f"Settings saved to {path}", 4000)
+        self._log_monitor(f"[SYS] Settings saved: {path}")
 
     def _on_params_hf_packet(self) -> None:
         """Open HF Packet Parameters dialog."""
@@ -543,8 +592,10 @@ class MainWindow(QMainWindow):
     def _update_host_mode_ui(self, active: bool) -> None:
         """Enable mode selector when Host Mode is active."""
         self._mode_combo.setEnabled(active)
-        if not active:
-            self._sb_mode.setText("Mode: TERMINAL")
+        if active:
+            self._sb_mode.setText("Mode: HOST")
+        else:
+            self._sb_mode.setText("Mode: VERBOSE")
 
     # ------------------------------------------------------------------
     # Output helpers
@@ -635,4 +686,40 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self._serial.disconnect_port()
+        self._save_window_geometry()
+        # Auto-save settings on exit
+        try:
+            self._config_mgr.save()
+        except Exception:
+            pass
         event.accept()
+
+    # ------------------------------------------------------------------
+    # Window geometry persistence (QSettings)
+    # ------------------------------------------------------------------
+
+    def _save_window_geometry(self) -> None:
+        """Save window position and size to QSettings (registry/config)."""
+        s = QSettings("OE3GAS", APP_TITLE)
+        s.setValue("geometry", self.saveGeometry())
+        s.setValue("windowState", self.saveState())
+        # Save splitter position (monitor panel)
+        s.setValue("splitterSizes", self._splitter.sizes())
+        logger.debug("Window geometry saved")
+
+    def _restore_window_geometry(self) -> None:
+        """Restore window position and size from QSettings."""
+        s = QSettings("OE3GAS", APP_TITLE)
+        geom = s.value("geometry")
+        if geom:
+            self.restoreGeometry(geom)
+        state = s.value("windowState")
+        if state:
+            self.restoreState(state)
+        sizes = s.value("splitterSizes")
+        if sizes:
+            try:
+                self._splitter.setSizes([int(x) for x in sizes])
+            except Exception:
+                pass
+        logger.debug("Window geometry restored")
