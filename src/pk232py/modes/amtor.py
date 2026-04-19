@@ -446,3 +446,34 @@ class AMTORMode(BaseMode):
 
         if self.on_link_message:
             self.on_link_message(text)
+
+
+# ---------------------------------------------------------------------------
+# AMTOR FEC (Mode B / SELFEC) — convenience subclass
+# ---------------------------------------------------------------------------
+
+class AMTORFECMode(AMTORMode):
+    """AMTOR FEC (Mode B / SELFEC) — broadcast receive mode.
+
+    Identical to AMTORMode but pre-configured for FEC receive:
+    - srxall=True: receive all SELFEC broadcasts (not just own SELCAL)
+    - rfec=True:   receive FEC in ARQ standby
+
+    The TNC is switched to AMTOR standby via the same b'AM' command;
+    FEC/SELFEC reception starts automatically when a signal is detected.
+    Activating FEC transmit requires calling selfec_frame() explicitly.
+    """
+
+    name         = "AMTOR FEC"
+    host_command = b'AM'          # same as ARQ — FEC is a sub-mode
+
+    def __init__(self, **kwargs) -> None:
+        kwargs.setdefault("srxall", True)
+        kwargs.setdefault("rfec",   True)
+        super().__init__(**kwargs)
+
+    def activate_frame(self) -> bytes:
+        """Build the Host Mode frame to enter AMTOR FEC standby."""
+        # SELFEC: send SELFEC command after entering AMTOR standby
+        from .amtor import AMTORMode
+        return self.selfec_frame()

@@ -319,16 +319,58 @@ class MainWindow(QMainWindow):
         ll.addWidget(vs)
         outer.addWidget(left)
 
+        # Monitor panel with mode selector
+        monitor_container = QWidget()
+        mc_layout = QVBoxLayout(monitor_container)
+        mc_layout.setContentsMargins(0, 0, 0, 0)
+        mc_layout.setSpacing(0)
+
+        # Monitor toolbar
+        mon_tb = QWidget()
+        mon_tb.setStyleSheet("background:#161b22; border-bottom:1px solid #30363d;")
+        mon_tb_layout = QHBoxLayout(mon_tb)
+        mon_tb_layout.setContentsMargins(4, 2, 4, 2)
+        mon_tb_layout.setSpacing(4)
+
+        from PyQt6.QtWidgets import QButtonGroup, QRadioButton
+        mon_tb_layout.addWidget(QLabel("Monitor:"))
+
+        self._mon_btn_decoded = QRadioButton("Decoded")
+        self._mon_btn_raw     = QRadioButton("Raw ASCII")
+        self._mon_btn_hex     = QRadioButton("Hex")
+        self._mon_btn_decoded.setChecked(True)
+
+        for btn in [self._mon_btn_decoded, self._mon_btn_raw, self._mon_btn_hex]:
+            btn.setStyleSheet("color:#8b949e;")
+            mon_tb_layout.addWidget(btn)
+
+        self._mon_btn_clear = QPushButton("Clear")
+        self._mon_btn_clear.setFixedWidth(50)
+        self._mon_btn_clear.setStyleSheet(
+            "QPushButton{background:#21262d;color:#8b949e;border:1px solid #30363d;"
+            "border-radius:3px;padding:1px 4px;}"
+            "QPushButton:hover{background:#30363d;}"
+        )
+        self._mon_btn_clear.clicked.connect(lambda: self._monitor.clear())
+        mon_tb_layout.addWidget(self._mon_btn_clear)
+        mon_tb_layout.addStretch()
+        mc_layout.addWidget(mon_tb)
+
         self._monitor = QTextEdit()
         self._monitor.setReadOnly(True)
         self._monitor.setFont(QFont("Courier New", 9))
         self._monitor.setStyleSheet(
             "background-color:#0d1117; color:#8b949e; border:none;"
         )
-        self._monitor.setPlaceholderText("Monitor — raw frame log")
-        self._monitor.setVisible(False)
-        outer.addWidget(self._monitor)
+        self._monitor.setPlaceholderText(
+            "Monitor — decoded frames / raw / hex"
+        )
+        mc_layout.addWidget(self._monitor)
+
+        monitor_container.setVisible(False)
+        outer.addWidget(monitor_container)
         outer.setSizes([900, 0])
+        self._monitor_container = monitor_container
 
         self._splitter = outer
         self._terminal = self._rx_display
@@ -520,6 +562,11 @@ class MainWindow(QMainWindow):
         self._serial_sig_timer.setInterval(500)
         self._serial_sig_timer.timeout.connect(self._update_serial_signals)
 
+        # Timer for periodic OPMODE poll in Host Mode (5s)
+        self._opmode_timer = QTimer(self)
+        self._opmode_timer.setInterval(5000)
+        self._opmode_timer.timeout.connect(self._poll_opmode)
+
     # ------------------------------------------------------------------
     # Signal wiring
     # ------------------------------------------------------------------
@@ -654,18 +701,70 @@ class MainWindow(QMainWindow):
         if name == self._modes.current_mode_name:
             return
         logger.info("User selected mode: %s", name)
+        self._log_monitor(f"[TX] Switching to mode: {name}")
         self._modes.set_mode(name)
 
     def _on_mode_changed(self, name: str) -> None:
-        """Called by ModeManager when mode switch completes."""
+        """Called by ModeManager when mode switch completes.
+        Wires the active mode's data callbacks to the UI.
+        """
         self._sb_mode.setText(f"Mode: {name}")
-        self._log_monitor(f"[SYS] Mode: {name}")
+        self._log_monitor(f"[SYS] Mode switched to: {name}")
         # Sync ComboBox without triggering _on_mode_selected
         self._mode_combo.blockSignals(True)
         idx = self._mode_combo.findText(name)
         if idx >= 0:
             self._mode_combo.setCurrentIndex(idx)
         self._mode_combo.blockSignals(False)
+        # Wire active mode callbacks → UI
+        self._wire_mode_callbacks()
+
+    def _wire_mode_callbacks(self) -> None:
+        """Connect the active mode's data callbacks to the RX display."""
+        mode = self._modes.current_mode
+        if mode is None:
+            return
+        # Generic: on_data_received → RX display
+        if hasattr(mode, "on_data_received"):
+            mode.on_data_received = self._on_mode_data_received
+        # Echo ($2F): show in RX display too
+        if hasattr(mode, "on_echo_received"):
+            mode.on_echo_received = self._on_mode_echo_received
+        # Link messages → RX display
+        if hasattr(mode, "on_link_message"):
+            mode.on_link_message = self._on_mode_link_message
+        logger.debug("Mode callbacks wired for: %s", mode.name)
+
+    def _on_mode_data_received(self, data: bytes) -> None:
+        """Display decoded data from active mode in RX panel."""
+        try:
+            text = data.decode("ascii", errors="replace")
+        except Exception:
+            text = repr(data)
+        # Show in RX display
+        self._log_terminal(text)
+        # Show in monitor (decoded mode)
+        if self._monitor_container.isVisible():
+            if self._mon_btn_decoded.isChecked():
+                self._log_monitor(f"[DATA] {text.rstrip()}")
+            elif not self._mon_btn_decoded.isChecked():
+                self._monitor_raw("rx", data)
+
+    def _on_mode_echo_received(self, data: bytes) -> None:
+        """Display echoed TX chars ($2F) in RX panel."""
+        try:
+            text = data.decode("ascii", errors="replace")
+        except Exception:
+            text = repr(data)
+        self._log_terminal(f"[echo] {text}")
+        if self._monitor_container.isVisible():
+            if self._mon_btn_decoded.isChecked():
+                self._log_monitor(f"[ECHO] {text.rstrip()}")
+
+    def _on_mode_link_message(self, msg: str) -> None:
+        """Display link state messages in RX panel."""
+        self._log_terminal(f"*** {msg} ***")
+        self._log_monitor(f"[LINK] {msg}")
 
     def _on_mode_switch_failed(self, reason: str) -> None:
         QMessageBox.warning(self, "Mode Switch Failed",
@@ -869,6 +968,11 @@ class MainWindow(QMainWindow):
         # PTT and CON are updated via frame_received — no polling needed
         # (see _on_frame_received for PTT/CON logic)
 
+    def _poll_opmode(self) -> None:
+        """Send OPMODE query to TNC — keeps monitor alive with responses."""
+        if self._serial.is_host_mode and self._monitor_container.isVisible():
+            self._serial.send_command(b"OP")   # OPMODE query
+
     def _blink_rx(self) -> None:
         """Flash RX indicator for 150ms."""
         self._ssl_rx.setStyleSheet(self._sig_style_active())
@@ -880,8 +984,13 @@ class MainWindow(QMainWindow):
         self._tx_blink_timer.start()
 
     def _on_toggle_monitor(self, checked: bool) -> None:
-        self._monitor.setVisible(checked)
+        self._monitor_container.setVisible(checked)
         self._splitter.setSizes([630, 270] if checked else [900, 0])
+        if checked and self._serial.is_host_mode:
+            self._opmode_timer.start()
+            self._poll_opmode()   # immediate first poll
+        elif not checked:
+            self._opmode_timer.stop()
 
     def _on_appearance(self) -> None:
         """Open Appearance settings dialog."""
@@ -939,22 +1048,65 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_frame_received(self, frame: HostFrame) -> None:
-        """Log every incoming frame to the monitor panel.
+        """Log every incoming frame to monitor and terminal.
 
         Frame dispatch to the active mode is handled by ModeManager.on_frame()
         which is also connected to frame_received.
-
-        RX_DATA and RX_MONITOR frames additionally show decoded text
-        in the terminal panel.
         """
-        # Monitor: always log raw frame
-        self._log_monitor(
-            f"[RX] ctl=0x{frame.ctl:02X} kind={frame.kind.name} "
-            f"ch={frame.channel} data={frame.data!r}"
-        )
+        # RX blink
+        if self._act_serial_status.isChecked():
+            self._blink_rx()
+
+        # PTT indicator + OPMODE response display
+        if frame.kind == FrameKind.CMD_RESP:
+            if frame.mnemonic == b"OV":
+                self._set_sig(self._ssl_ptt, True)
+            elif frame.mnemonic == b"SI":
+                self._set_sig(self._ssl_ptt, False)
+            elif frame.mnemonic == b"OP":
+                # OPMODE response — show in status bar
+                try:
+                    opmode_txt = frame.data[2:].decode('ascii','replace').strip()
+                    if opmode_txt:
+                        self.statusBar().showMessage(
+                            f"TNC: {opmode_txt}", 4000
+                        )
+                except Exception:
+                    pass
+        # CON indicator
+        if frame.kind == FrameKind.LINK_MSG:
+            t = frame.text.lower()
+            if "connected" in t:
+                self._set_sig(self._ssl_con, True)
+            elif "disconnect" in t:
+                self._set_sig(self._ssl_con, False)
+                self._set_sig(self._ssl_ptt, False)
+
+        # Monitor logging — all modes
+        if self._monitor_container.isVisible():
+            if self._mon_btn_decoded.isChecked():
+                # Decoded: human-readable frame description
+                try:
+                    mn = frame.mnemonic.decode('ascii','replace')                          if frame.mnemonic else ""
+                except Exception:
+                    mn = ""
+                try:
+                    txt = frame.text.strip()[:80] if frame.text else ""
+                    if not txt and frame.data:
+                        txt = frame.data.hex(" ")[:48]
+                except Exception:
+                    txt = repr(frame.data[:20])
+                self._log_monitor(
+                    f"[RX] {frame.kind.name:12s} "
+                    f"ctl=0x{frame.ctl:02X} ch={frame.channel}"
+                    f"{' '+mn if mn else ''}"
+                    f"  {txt}" if txt else ""
+                )
+            # Raw/Hex: handled via _on_raw_data_received
 
         # Terminal: show received text for data frames
-        if frame.kind in (FrameKind.RX_DATA, FrameKind.RX_MONITOR, FrameKind.ECHO):
+        if frame.kind in (FrameKind.RX_DATA, FrameKind.RX_MONITOR,
+                          FrameKind.ECHO):
             text = frame.text.strip()
             if text:
                 self._log_terminal(text)
@@ -1012,7 +1164,10 @@ class MainWindow(QMainWindow):
             self._sb_mode.setText("Mode: VERBOSE")
             self._stack.setCurrentIndex(1)
         self._set_sig(self._ssl_host, active)
-        if not active:
+        if active:
+            self._opmode_timer.start()
+        else:
+            self._opmode_timer.stop()
             self._set_sig(self._ssl_ptt, False)
             self._set_sig(self._ssl_con, False)
 
@@ -1023,8 +1178,55 @@ class MainWindow(QMainWindow):
     def _log_terminal(self, text: str) -> None:
         self._terminal.append(text)
 
-    def _log_monitor(self, text: str) -> None:
+    def _log_monitor(self, text: str, raw: bytes = b"") -> None:
+        """Append text to monitor. If raw bytes given, show per selected mode."""
+        if raw and hasattr(self, '_mon_btn_raw'):
+            if self._mon_btn_hex.isChecked():
+                # Hex dump: offset  hex  ascii
+                lines = []
+                for i in range(0, len(raw), 16):
+                    chunk = raw[i:i+16]
+                    hex_part = " ".join(f"{b:02X}" for b in chunk)
+                    asc_part = "".join(
+                        chr(b) if 32 <= b < 127 else "." for b in chunk
+                    )
+                    lines.append(f"{i:04X}  {hex_part:<48}  {asc_part}")
+                self._monitor.append("\n".join(lines))
+                return
+            elif self._mon_btn_raw.isChecked():
+                try:
+                    decoded = raw.decode('ascii', errors='replace')
+                except Exception:
+                    decoded = repr(raw)
+                self._monitor.append(decoded)
+                return
         self._monitor.append(text)
+
+    def _monitor_raw(self, direction: str, data: bytes) -> None:
+        """Log raw serial data to monitor (TX or RX direction)."""
+        if not self._monitor_container.isVisible():
+            return
+        if self._mon_btn_hex.isChecked():
+            prefix = f"{'>>TX' if direction=='tx' else '<<RX'} "
+            lines = []
+            for i in range(0, len(data), 16):
+                chunk = data[i:i+16]
+                hex_part = " ".join(f"{b:02X}" for b in chunk)
+                asc_part = "".join(
+                    chr(b) if 32 <= b < 127 else "." for b in chunk
+                )
+                lines.append(
+                    f"{prefix}{i:04X}  {hex_part:<48}  {asc_part}"
+                )
+            self._monitor.append("\n".join(lines))
+        elif self._mon_btn_raw.isChecked():
+            try:
+                text = data.decode('ascii', errors='replace')
+            except Exception:
+                text = repr(data)
+            prefix = ">> " if direction == "tx" else "<< "
+            self._monitor.append(prefix + repr(text))
+        # In "Decoded" mode: raw serial not shown (only frames shown)
 
     def _update_utc_clock(self) -> None:
         utc = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -1035,7 +1237,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def eventFilter(self, obj, event) -> bool:
-        """Intercept Enter in TX input (Host Mode) and verbose terminal input."""
+        """Intercept keys in TX input (Host Mode) and verbose terminal."""
         if event.type() == QEvent.Type.KeyPress:
             if obj is self._tx_input:
                 if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
@@ -1043,10 +1245,44 @@ class MainWindow(QMainWindow):
                     self._on_send()
                     return True
             elif obj is self._vt_input:
-                if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                    self._on_vt_send()
+                key  = event.key()
+                mods = event.modifiers()
+                ctrl = Qt.KeyboardModifier.ControlModifier
+                # Enter: send command + CR/LF
+                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    if mods & Qt.KeyboardModifier.ShiftModifier:
+                        # Shift+Enter: bare CR only
+                        self._vt_send_raw(b"\r", echo="[CR]\n",
+                                          color="#888888")
+                    else:
+                        self._on_vt_send()
+                    return True
+                # Ctrl+C → $03: TNC back to COMMAND mode
+                if key == Qt.Key.Key_C and (mods & ctrl):
+                    self._vt_send_raw(b"\x03", echo="[CTRL-C]\n",
+                                      color="#ff9900")
+                    return True
+                # Ctrl+Z → $1A: PACTOR OVER / PTOVER char
+                if key == Qt.Key.Key_Z and (mods & ctrl):
+                    self._vt_send_raw(b"\x1a", echo="[CTRL-Z]\n",
+                                      color="#ff9900")
                     return True
         return super().eventFilter(obj, event)
+
+    def _vt_send_raw(self, data: bytes, echo: str = "",
+                     color: str = "#888888") -> None:
+        """Send raw bytes to TNC without automatic CR/LF."""
+        if echo:
+            self._vt_append(echo, color=color)
+        if self._serial.is_connected:
+            self._serial.write_verbose(data)
+            if self._act_serial_status.isChecked():
+                self._blink_tx()
+            if self._monitor_container.isVisible():
+                if not self._mon_btn_decoded.isChecked():
+                    self._monitor_raw("tx", data)
+        else:
+            self._vt_append("[ERROR] Not connected\n", color="#f44747")
 
     def _on_vt_send(self) -> None:
         """Send a command in verbose terminal mode (Enter pressed)."""
@@ -1056,9 +1292,13 @@ class MainWindow(QMainWindow):
         self._vt_input.clear()
         self._vt_append(f"cmd:{text}\n", color="#569cd6")
         if self._serial.is_connected:
-            self._serial.write_verbose(
-                f"{text}\r\n".encode('ascii', errors='replace')
-            )
+            raw_tx = f"{text}\r\n".encode('ascii', errors='replace')
+            self._serial.write_verbose(raw_tx)
+            if self._act_serial_status.isChecked():
+                self._blink_tx()
+            if self._monitor_container.isVisible():
+                if not self._mon_btn_decoded.isChecked():
+                    self._monitor_raw("tx", raw_tx)
         else:
             self._vt_append("[ERROR] Not connected\n", color="#f44747")
 

@@ -13,7 +13,7 @@ Initialisation flow (3 phases):
       Called externally after verbose_mode_ready.
 
   Phase 3 — enter_host_mode():
-      Sends HOST Y preamble (XON + CANLINE + COMMAND + HOST Y).
+      Sends HOST 3 (XON + CANLINE + COMMAND + HOST Y).
       Emits host_mode_changed(True) when complete.
 
 This separation allows running in verbose mode only (for diagnostics)
@@ -60,7 +60,9 @@ logger = logging.getLogger(__name__)
 _WAKEUP_TIMEOUT  = 3.0   # max wait for TNC response to '*'
 _CMD_DELAY       = 0.15  # pause between verbose-mode commands
 _RESTART_DELAY   = 3.0   # wait after RESTART for TNC banner + cmd:
-_HOSTMODE_DELAY  = 0.5   # wait after HOST Y before first frame
+_HOSTMODE_DELAY  = 0.8   # wait after HOST Y before GG poll
+_GG_MAX_RETRIES  = 5     # max GG poll retries
+_GG_RETRY_DELAY  = 0.5   # delay between retries
 _POLL_TIMEOUT    = 3.0   # wait for GG poll ACK
 
 # Byte sequences
@@ -69,8 +71,11 @@ _CMD_AWLEN    = b"AWLEN 8\r\n"
 _CMD_PARITY   = b"PARITY 0\r\n"
 _CMD_8BITCONV = b"8BITCONV ON\r\n"
 _CMD_RESTART  = b"RESTART\r\n"
-# HOST Y preamble: XON + CANLINE + COMMAND + "HOST Y" + CRLF
-_CMD_HOST_Y   = bytes([0x11, 0x18, 0x03]) + b"HOST Y\r\n"
+# PCPackRatt-verified: "HOST 3" activates Host Mode with poll level 3
+# (not "HOST Y" — "HOST 3" is an undocumented/expert command)
+_CMD_HOST_3   = b"HOST 3\r"
+_CMD_HPOLL_Y  = bytes([0x01, 0x4F, ord('H'), ord('P'), ord('Y'), 0x17])
+_HPOLL_ACK    = bytes([0x01, 0x4F, ord('H'), ord('P'), 0x00, 0x17])
 
 # TNC response classifiers
 _BANNER_MARKERS = (b"AEA", b"Ver.", b"PK-232", b"Copyright")
@@ -174,7 +179,7 @@ class SerialManager(QObject):
     def connect_port(self, port_name: str, baudrate: int = SerialDefaults.BAUDRATE) -> bool:
         """Open the serial port.
 
-        xonxoff=False: XON ($11) must pass through unfiltered for HOST Y preamble.
+        xonxoff=False: XON ($11) must pass through unfiltered for HOST 3.
         rtscts=False:  PK-232 uses XON/XOFF flow control, not hardware handshaking.
         """
         if not PYSERIAL_AVAILABLE:
@@ -324,7 +329,11 @@ class SerialManager(QObject):
             self._verbose_ready = False
 
     def _full_init(self) -> None:
-        """AWLEN + PARITY + 8BITCONV + RESTART + wait for cmd:"""
+        """XFLOW OFF + AWLEN + PARITY + 8BITCONV + RESTART.
+        Waits for cmd: after EACH command to prevent TNC input buffer merging."""
+        # Note: XFLOW OFF is NOT sent — it is not a standard command on
+        # PK-232MBX v7.1 and causes "?EXPERT command" response.
+        # PCPackRatt sends it but our TNC firmware does not need it.
         for cmd, label in [
             (_CMD_AWLEN,    "AWLEN 8"),
             (_CMD_PARITY,   "PARITY 0"),
@@ -332,33 +341,59 @@ class SerialManager(QObject):
         ]:
             logger.info("Init: %s", label)
             self.status_message.emit(f"TNC: {label}...")
+            with self._rx_buf_lock:
+                self._rx_buf.clear()
+            self._rx_buf_event.clear()
             self._write_raw(cmd)
-            time.sleep(_CMD_DELAY)
+            resp = self._read_raw_until(markers=(_PROMPT_MARKER,), timeout=1.0)
+            if _PROMPT_MARKER in resp:
+                logger.debug("Init: %s confirmed (cmd: seen)", label)
+            else:
+                logger.warning("Init: %s — no cmd: seen (%d B), continuing", label, len(resp))
+                time.sleep(_CMD_DELAY)
 
         logger.info("Init: RESTART — waiting for reboot...")
         self.status_message.emit("TNC: restarting...")
+        with self._rx_buf_lock:
+            self._rx_buf.clear()
+        self._rx_buf_event.clear()
         self._write_raw(_CMD_RESTART)
         response = self._read_raw_until(markers=(_PROMPT_MARKER,), timeout=_RESTART_DELAY)
         if _PROMPT_MARKER not in response:
-            logger.warning("Init: 'cmd:' not seen after RESTART (%d B) — continuing", len(response))
+            logger.warning("Init: no cmd: after RESTART (%d B)", len(response))
+        else:
+            logger.debug("RESTART response (%d B): %s", len(response), response.hex(' '))
+            time.sleep(0.3)
 
     def _short_init(self) -> None:
-        """AWLEN + PARITY + 8BITCONV (no RESTART)."""
+        """XFLOW OFF + AWLEN + PARITY + 8BITCONV (no RESTART).
+        Waits for cmd: after each command."""
         for cmd, label in [
             (_CMD_AWLEN,    "AWLEN 8"),
             (_CMD_PARITY,   "PARITY 0"),
             (_CMD_8BITCONV, "8BITCONV ON"),
         ]:
             logger.info("Init: %s", label)
+            with self._rx_buf_lock:
+                self._rx_buf.clear()
+            self._rx_buf_event.clear()
             self._write_raw(cmd)
-            time.sleep(_CMD_DELAY)
+            resp = self._read_raw_until(markers=(_PROMPT_MARKER,), timeout=1.0)
+            if _PROMPT_MARKER not in resp:
+                logger.warning("Init: %s — no cmd: seen, continuing", label)
+                time.sleep(_CMD_DELAY)
 
     # ------------------------------------------------------------------
     # Phase 3 — switch to Host Mode
     # ------------------------------------------------------------------
 
     def enter_host_mode(self) -> bool:
-        """Phase 3: Send HOST Y preamble — switch TNC to binary Host Mode.
+        """Phase 3: Send HOST 3 — switch TNC to binary Host Mode.
+
+        PCPackRatt-verified sequence:
+          1. Send "HOST 3\r" in verbose mode
+          2. Send HPOLL Y as first Host Mode frame
+          3. Wait for HPOLL ACK to confirm Host Mode is active
 
         Call after Phase 2 (parameter upload) is complete.
         Runs in a background thread.
@@ -379,16 +414,67 @@ class SerialManager(QObject):
         return True
 
     def _enter_host_mode_thread(self) -> None:
+        """Enter Host Mode.
+
+        Verified on real PK-232MBX v7.1:
+        - "HOST Y\r" switches TNC to Host Mode silently (no response)
+        - After HOST Y, send HPOLL Y frame immediately
+        - TNC responds with HPOLL ACK: 01 4F 48 50 00 17
+        """
         try:
             logger.info("Entering Host Mode...")
             self.status_message.emit("Entering Host Mode...")
-            self._write_raw(_CMD_HOST_Y)
-            time.sleep(_HOSTMODE_DELAY)
-            self._in_host_mode  = True
-            self._verbose_ready = False
-            self.host_mode_changed.emit(True)
-            self.status_message.emit("Host Mode active")
-            logger.info("Host Mode active")
+
+            # Send HOST Y — TNC switches silently, no response expected
+            with self._rx_buf_lock:
+                self._rx_buf.clear()
+            self._rx_buf_event.clear()
+
+            logger.info("Sending HOST Y...")
+            self._write_raw(b"HOST Y\r")
+
+            # Brief pause for TNC to switch modes
+            time.sleep(0.3)
+
+            # Send HPOLL Y and wait for ACK
+            with self._rx_buf_lock:
+                self._rx_buf.clear()
+            self._rx_buf_event.clear()
+
+            logger.info("Sending HPOLL Y...")
+            self._write_raw(_CMD_HPOLL_Y)
+
+            verified = False
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                self._rx_buf_event.wait(timeout=0.1)
+                self._rx_buf_event.clear()
+                with self._rx_buf_lock:
+                    buf = bytes(self._rx_buf)
+                logger.debug("RX buf (%d B): %s", len(buf), buf.hex(' ') if buf else "(empty)")
+                if _HPOLL_ACK in buf:
+                    logger.info("HPOLL ACK received — Host Mode confirmed!")
+                    verified = True
+                    break
+                # Accept any valid Host Mode frame
+                if len(buf) >= 6 and buf[0] == 0x01 and buf[1] == 0x4F and 0x17 in buf:
+                    logger.info("Host Mode frame received — confirmed!")
+                    verified = True
+                    break
+
+            if verified:
+                self._in_host_mode  = True
+                self._verbose_ready = False
+                self.host_mode_changed.emit(True)
+                self.status_message.emit("Host Mode active ✓")
+                logger.info("Host Mode active")
+            else:
+                with self._rx_buf_lock:
+                    final = bytes(self._rx_buf)
+                logger.error("No HPOLL ACK. Final buf (%d B): %s",
+                             len(final), final.hex(' ') if final else "(empty)")
+                self.status_message.emit("Host Mode error: no HPOLL ACK")
+
         except Exception as exc:
             logger.error("enter_host_mode failed: %s", exc)
             self.status_message.emit(f"Host Mode error: {exc}")
@@ -467,18 +553,14 @@ class SerialManager(QObject):
     def _read_raw_until(self, markers: tuple, timeout: float) -> bytes:
         """Wait for marker in shared rx buffer (filled by ReaderThread).
 
-        Uses threading.Event for efficient waiting instead of polling.
+        Does NOT clear the buffer — caller must clear it before sending
+        the command (with self._rx_buf_lock: self._rx_buf.clear()).
+        This ensures responses already in the buffer are not lost.
         """
         deadline = time.monotonic() + timeout
-        # Clear buffer at start of each wait
-        with self._rx_buf_lock:
-            self._rx_buf.clear()
-        self._rx_buf_event.clear()
 
         while time.monotonic() < deadline:
-            remaining = deadline - time.monotonic()
-            self._rx_buf_event.wait(timeout=min(0.1, remaining))
-            self._rx_buf_event.clear()
+            # Check current buffer first (response may already be there)
             with self._rx_buf_lock:
                 buf_copy = bytes(self._rx_buf)
             for marker in markers:
@@ -486,6 +568,13 @@ class SerialManager(QObject):
                     logger.debug("_read_raw_until: found %r in %d bytes",
                                  marker, len(buf_copy))
                     return buf_copy
+            # Wait for new data from ReaderThread
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            self._rx_buf_event.wait(timeout=min(0.1, remaining))
+            self._rx_buf_event.clear()
+
         # Timeout
         with self._rx_buf_lock:
             result = bytes(self._rx_buf)
@@ -497,6 +586,7 @@ class SerialManager(QObject):
         try:
             with self._write_lock:
                 self._serial.write(data)
+            logger.debug("TX (%d B): %s", len(data), data.hex(' '))
             return True
         except Exception as exc:
             logger.error("Serial write error: %s", exc)
@@ -518,11 +608,10 @@ class SerialManager(QObject):
 
     def _on_raw_data(self, data: bytes) -> None:
         """Store raw bytes in shared buffer and forward to UI."""
-        # Always store in shared buffer (used by _read_raw_until during init)
+        logger.debug("RX (%d B): %s", len(data), data.hex(' '))
         with self._rx_buf_lock:
             self._rx_buf.extend(data)
         self._rx_buf_event.set()
-        # Forward to UI only in verbose mode (not Host Mode)
         if not self._in_host_mode:
             self.raw_data_received.emit(data)
 
