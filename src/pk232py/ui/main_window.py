@@ -22,11 +22,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer
+from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QFont
 from PyQt6.QtWidgets import (
     QComboBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QSplitter, QTextEdit, QToolBar, QVBoxLayout, QWidget,
+    QPushButton, QSplitter, QStackedWidget, QTextEdit, QToolBar,
+    QVBoxLayout, QWidget,
 )
 
 from pk232py import __version__
@@ -36,6 +37,7 @@ from ..mode_manager import ModeManager
 from ..comm.params_uploader import ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
 from .dialogs.params_hf      import HFPacketParamsDialog
+from .appearance_dialog      import AppearanceDialog
 from .dialogs.params_misc    import MiscParamsDialog
 from .dialogs.params_pactor  import PACTORParamsDialog
 from .dialogs.params_amtor   import AMTORParamsDialog
@@ -67,7 +69,8 @@ class MainWindow(QMainWindow):
         self._config_mgr = ConfigManager()
         self._config_mgr.load()
         self._app_config = self._config_mgr.app
-        self._misc_params: dict = {}
+        self._misc_params:   dict = {}
+        self._connect_mode:  str  = "verbose"
         self._build_ui()
         self._connect_signals()
         self._update_connection_ui(False)
@@ -85,6 +88,7 @@ class MainWindow(QMainWindow):
         self._build_central()
         self._build_statusbar()
         self._restore_window_geometry()
+        self._apply_appearance()   # apply saved appearance on startup
 
     def _build_menubar(self) -> None:
         mb = self.menuBar()
@@ -114,11 +118,13 @@ class MainWindow(QMainWindow):
         # ── TNC ───────────────────────────────────────────────────────
         tnc_menu = mb.addMenu("&TNC")
 
-        self._act_connect = QAction("&Connect...", self)
-        self._act_connect.setShortcut("Ctrl+T")
-        self._act_connect.setStatusTip("Open serial port and connect to TNC")
-        self._act_connect.triggered.connect(self._on_connect)
-        tnc_menu.addAction(self._act_connect)
+        self._act_connect_verbose = QAction("Connect + Enter &Verbose Mode...", self)
+        self._act_connect_verbose.setShortcut("Ctrl+T")
+        self._act_connect_verbose.setStatusTip(
+            "Connect to TNC and enter verbose terminal mode"
+        )
+        self._act_connect_verbose.triggered.connect(self._on_connect_verbose)
+        tnc_menu.addAction(self._act_connect_verbose)
 
         self._act_disconnect = QAction("&Disconnect", self)
         self._act_disconnect.setShortcut("Ctrl+D")
@@ -128,13 +134,15 @@ class MainWindow(QMainWindow):
 
         tnc_menu.addSeparator()
 
-        self._act_host_on = QAction("Enter &Host Mode", self)
-        self._act_host_on.setStatusTip("Switch PK-232 to Host Mode")
-        self._act_host_on.triggered.connect(self._on_host_mode_enter)
-        tnc_menu.addAction(self._act_host_on)
+        self._act_connect_host = QAction("Connect + Enter &Host Mode...", self)
+        self._act_connect_host.setStatusTip(
+            "Connect to TNC, upload parameters and enter Host Mode"
+        )
+        self._act_connect_host.triggered.connect(self._on_connect_host)
+        tnc_menu.addAction(self._act_connect_host)
 
-        self._act_host_off = QAction("Leave Host Mode", self)
-        self._act_host_off.setStatusTip("Leave Host Mode, return TNC to terminal mode")
+        self._act_host_off = QAction("Leave Host Mode  (Enter Verbose Mode)", self)
+        self._act_host_off.setStatusTip("Leave Host Mode, return TNC to verbose terminal")
         self._act_host_off.triggered.connect(self._on_host_mode_exit)
         tnc_menu.addAction(self._act_host_off)
 
@@ -145,14 +153,24 @@ class MainWindow(QMainWindow):
         self._act_recovery.triggered.connect(self._on_recovery)
         tnc_menu.addAction(self._act_recovery)
 
-        tnc_menu.addSeparator()
+        # ── View ──────────────────────────────────────────────────────
+        view_menu = mb.addMenu("&View")
 
         self._act_monitor = QAction("Monitor Window", self)
-        self._act_monitor.setStatusTip("Show/hide monitor panel")
+        self._act_monitor.setStatusTip("Show/hide raw frame monitor panel")
         self._act_monitor.setCheckable(True)
         self._act_monitor.setChecked(False)
         self._act_monitor.triggered.connect(self._on_toggle_monitor)
-        tnc_menu.addAction(self._act_monitor)
+        view_menu.addAction(self._act_monitor)
+
+        self._act_serial_status = QAction("Serial Status Bar", self)
+        self._act_serial_status.setStatusTip(
+            "Show/hide serial signal status bar (CTS, DSR, DCD)"
+        )
+        self._act_serial_status.setCheckable(True)
+        self._act_serial_status.setChecked(False)
+        self._act_serial_status.triggered.connect(self._on_toggle_serial_status)
+        view_menu.addAction(self._act_serial_status)
 
         # ── Parameters ────────────────────────────────────────────────
         param_menu = mb.addMenu("&Parameters")
@@ -181,6 +199,16 @@ class MainWindow(QMainWindow):
 
         cfg_menu.addSeparator()
 
+        # Appearance submenu
+        appear_menu = cfg_menu.addMenu("&Appearance")
+
+        act_font = QAction("Font && Colors...", self)
+        act_font.setStatusTip("Set display font, size and colors")
+        act_font.triggered.connect(self._on_appearance)
+        appear_menu.addAction(act_font)
+
+        cfg_menu.addSeparator()
+
         act_about = QAction("&About PK232PY...", self)
         act_about.triggered.connect(self._on_about)
         cfg_menu.addAction(act_about)
@@ -192,7 +220,7 @@ class MainWindow(QMainWindow):
 
         self._tb_connect = tb.addAction("⚡ Connect")
         self._tb_connect.setToolTip("Connect to TNC (Ctrl+T)")
-        self._tb_connect.triggered.connect(self._on_connect)
+        self._tb_connect.triggered.connect(self._on_connect_verbose)
 
         self._tb_disconnect = tb.addAction("✕ Disconnect")
         self._tb_disconnect.setToolTip("Disconnect (Ctrl+D)")
@@ -222,7 +250,19 @@ class MainWindow(QMainWindow):
         tb.addWidget(self._mode_combo)
 
     def _build_central(self) -> None:
-        """Build the central widget: [RX/TX area | Monitor panel]."""
+        """Build the central widget with two views:
+          - Page 0: Host Mode view (RX display + TX input + Monitor)
+          - Page 1: Verbose terminal view (terminal log + command input)
+        """
+        # ── Stack: switches between Host Mode and Verbose Terminal ────
+        self._stack = QStackedWidget()
+
+        # ── Page 0: Host Mode view ────────────────────────────────────
+        host_page = QWidget()
+        host_layout = QVBoxLayout(host_page)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
+
         outer = QSplitter(Qt.Orientation.Horizontal)
 
         left = QWidget()
@@ -292,11 +332,82 @@ class MainWindow(QMainWindow):
 
         self._splitter = outer
         self._terminal = self._rx_display
-        self.setCentralWidget(outer)
+        host_layout.addWidget(outer)
+        self._stack.addWidget(host_page)   # index 0
+
+        # ── Page 1: Verbose Terminal view ─────────────────────────────
+        vterm_page = QWidget()
+        vt_layout  = QVBoxLayout(vterm_page)
+        vt_layout.setContentsMargins(0, 0, 0, 0)
+        vt_layout.setSpacing(0)
+
+        # Upper: TNC output (echo + responses)
+        self._vt_display = QTextEdit()
+        self._vt_display.setReadOnly(True)
+        self._vt_display.setFont(QFont("Courier New", 10))
+        self._vt_display.setStyleSheet(
+            "background-color:#0c0c0c; color:#cccccc; border:none;"
+        )
+        self._vt_display.setPlaceholderText(
+            "TNC verbose mode — echo and responses appear here."
+        )
+        vt_layout.addWidget(self._vt_display, stretch=1)
+
+        # Separator line
+        sep = QWidget()
+        sep.setFixedHeight(2)
+        sep.setStyleSheet("background-color:#444;")
+        vt_layout.addWidget(sep)
+
+        # Lower: command input row
+        cmd_row = QWidget()
+        cmd_row.setFixedHeight(36)
+        cmd_row.setStyleSheet("background-color:#1a1a1a;")
+        cmd_layout = QHBoxLayout(cmd_row)
+        cmd_layout.setContentsMargins(6, 2, 6, 2)
+        cmd_layout.setSpacing(4)
+
+        prompt_label = QLabel("cmd:")
+        prompt_label.setFont(QFont("Courier New", 10))
+        prompt_label.setStyleSheet("color:#569cd6; background:transparent;")
+        cmd_layout.addWidget(prompt_label)
+
+        self._vt_input = QTextEdit()
+        self._vt_input.setFont(QFont("Courier New", 10))
+        self._vt_input.setStyleSheet(
+            "background-color:#1a1a1a; color:#d4d4d4; border:none;"
+        )
+        self._vt_input.setPlaceholderText("type command, Enter to send…")
+        self._vt_input.setFixedHeight(28)
+        self._vt_input.installEventFilter(self)
+        cmd_layout.addWidget(self._vt_input, stretch=1)
+
+        vt_layout.addWidget(cmd_row)
+        self._stack.addWidget(vterm_page)  # index 1
+
+        # Footer container: holds signal status bars (shown/hidden via View menu)
+        self._footer = QWidget()
+        self._footer.setStyleSheet("background:#111111;")
+        self._footer_layout = QVBoxLayout(self._footer)
+        self._footer_layout.setContentsMargins(0, 0, 0, 0)
+        self._footer_layout.setSpacing(0)
+        self._footer.setVisible(False)  # hidden until _build_statusbar adds rows
+
+        # Main container: stack (content) + footer (signal rows)
+        main_container = QWidget()
+        main_layout = QVBoxLayout(main_container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(self._stack, stretch=1)
+        main_layout.addWidget(self._footer)
+
+        self.setCentralWidget(main_container)
+        self._stack.setCurrentIndex(0)     # start in Host Mode view
 
     def _build_statusbar(self) -> None:
         sb = self.statusBar()
 
+        # Row 1 (Qt status bar): Port | Baud | Mode | UTC
         self._sb_port = QLabel("Port: ---")
         self._sb_port.setMinimumWidth(120)
         sb.addPermanentWidget(self._sb_port)
@@ -318,6 +429,97 @@ class MainWindow(QMainWindow):
         self._utc_timer.start(1000)
         self._update_utc_clock()
 
+        # ── Serial signal status bars (hidden by default) ─────────────
+        # Container widget holding both rows
+        self._serial_status_bar = QWidget(self)
+        ssl_outer = QVBoxLayout(self._serial_status_bar)
+        ssl_outer.setContentsMargins(4, 1, 4, 1)
+        ssl_outer.setSpacing(2)
+
+        def _sig_label(text: str, width: int = 75) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+            lbl.setFixedWidth(width)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet(
+                "color:#555555; background:#1a1a1a; border:1px solid #333;"
+                "border-radius:3px; padding:1px 4px;"
+            )
+            return lbl
+
+        # ── Row 1: Hardware signals ────────────────────────────────────
+        row1 = QWidget()
+        row1.setStyleSheet("background:transparent;")
+        r1l = QHBoxLayout(row1)
+        r1l.setContentsMargins(0, 0, 0, 0)
+        r1l.setSpacing(6)
+
+        lbl_hw = QLabel("HW:")
+        lbl_hw.setFont(QFont("Courier New", 8))
+        lbl_hw.setStyleSheet("color:#666; background:transparent;")
+        r1l.addWidget(lbl_hw)
+
+        self._ssl_connected = _sig_label("CONNECTED", 85)
+        self._ssl_cts       = _sig_label("CTS")
+        self._ssl_dsr       = _sig_label("DSR")
+        self._ssl_dcd       = _sig_label("DCD")
+        self._ssl_rts       = _sig_label("RTS")
+        self._ssl_dtr       = _sig_label("DTR")
+
+        for w in [self._ssl_connected, self._ssl_cts, self._ssl_dsr,
+                  self._ssl_dcd,       self._ssl_rts, self._ssl_dtr]:
+            r1l.addWidget(w)
+        r1l.addStretch()
+        ssl_outer.addWidget(row1)
+
+        # ── Row 2: Program/TNC status ──────────────────────────────────
+        row2 = QWidget()
+        row2.setStyleSheet("background:transparent;")
+        r2l = QHBoxLayout(row2)
+        r2l.setContentsMargins(0, 0, 0, 0)
+        r2l.setSpacing(6)
+
+        lbl_tnc = QLabel("TNC:")
+        lbl_tnc.setFont(QFont("Courier New", 8))
+        lbl_tnc.setStyleSheet("color:#666; background:transparent;")
+        r2l.addWidget(lbl_tnc)
+
+        self._ssl_host = _sig_label("HOST")
+        self._ssl_ptt  = _sig_label("PTT")
+        self._ssl_con  = _sig_label("CON")
+        self._ssl_rx   = _sig_label("RX ▼")
+        self._ssl_tx   = _sig_label("TX ▲")
+
+        for w in [self._ssl_host, self._ssl_ptt,
+                  self._ssl_con,  self._ssl_rx, self._ssl_tx]:
+            r2l.addWidget(w)
+        r2l.addStretch()
+        ssl_outer.addWidget(row2)
+
+        self._serial_status_bar.setVisible(True)
+        self._serial_status_bar.setStyleSheet("background:#111111;")
+        # Add signal rows to footer (footer itself is hidden by default)
+        self._footer_layout.addWidget(self._serial_status_bar)
+
+        # RX/TX blink timers
+        self._rx_blink_timer = QTimer(self)
+        self._rx_blink_timer.setSingleShot(True)
+        self._rx_blink_timer.setInterval(150)
+        self._rx_blink_timer.timeout.connect(
+            lambda: self._ssl_rx.setStyleSheet(self._sig_style_inactive())
+        )
+        self._tx_blink_timer = QTimer(self)
+        self._tx_blink_timer.setSingleShot(True)
+        self._tx_blink_timer.setInterval(150)
+        self._tx_blink_timer.timeout.connect(
+            lambda: self._ssl_tx.setStyleSheet(self._sig_style_inactive())
+        )
+
+        # Timer for polling serial signal states (500ms)
+        self._serial_sig_timer = QTimer(self)
+        self._serial_sig_timer.setInterval(500)
+        self._serial_sig_timer.timeout.connect(self._update_serial_signals)
+
     # ------------------------------------------------------------------
     # Signal wiring
     # ------------------------------------------------------------------
@@ -329,6 +531,7 @@ class MainWindow(QMainWindow):
         self._serial.status_message.connect(self._on_status_message)
         self._serial.verbose_mode_ready.connect(self._on_verbose_mode_ready)
         self._serial.params_upload_required.connect(self._on_params_upload_required)
+        self._serial.raw_data_received.connect(self._on_raw_data_received)
 
         # SerialManager → ModeManager (frame dispatch)
         self._serial.frame_received.connect(self._modes.on_frame)
@@ -343,43 +546,82 @@ class MainWindow(QMainWindow):
     # Slots — TNC connection
     # ------------------------------------------------------------------
 
-    def _on_connect(self) -> None:
+    def _open_connect_dialog(self) -> bool:
+        """Show TNC config dialog and open port. Returns True on success."""
+        if self._app_config.tnc.port:
+            self._config.port_name = self._app_config.tnc.port
+        if self._app_config.tnc.tbaud:
+            self._config.baudrate  = self._app_config.tnc.tbaud
         dlg = TncConfigDialog(self._config, parent=self)
         if dlg.exec() != TncConfigDialog.DialogCode.Accepted:
-            return
-
+            return False
         self._config = dlg.get_config()
         if not self._config.port_name or self._config.port_name.startswith("("):
             QMessageBox.warning(self, "No Port", "Please select a valid serial port.")
-            return
-
+            return False
         ok = self._serial.connect_port(
             self._config.port_name,
             baudrate=self._config.baudrate,
         )
         if ok:
+            self._app_config.tnc.port  = self._config.port_name
+            self._app_config.tnc.tbaud = self._config.baudrate
+            self._config_mgr.save()
             self._log_monitor(
                 f"[SYS] Connected: {self._config.port_name} @ {self._config.baudrate} Bd"
             )
-            self._serial.init_tnc()
+        return ok
+
+    def _on_connect_verbose(self) -> None:
+        """Connect and enter verbose terminal mode (no automatic Host Mode)."""
+        if not self._open_connect_dialog():
+            return
+        self._connect_mode = "verbose"
+        self._serial.init_tnc()
+
+    def _on_connect_host(self) -> None:
+        """Connect, upload parameters and enter Host Mode automatically."""
+        if not self._open_connect_dialog():
+            return
+        self._connect_mode = "host"
+        self._serial.init_tnc()
+
+    def _on_connect(self) -> None:
+        """Legacy — defaults to verbose mode."""
+        self._on_connect_verbose()
 
     def _on_disconnect(self) -> None:
         self._serial.disconnect_port()
         self._log_monitor("[SYS] Disconnected")
 
     def _on_verbose_mode_ready(self) -> None:
-        """Called when TNC is in verbose mode — upload params then enter Host Mode."""
-        self._log_monitor("[SYS] TNC in verbose mode — uploading parameters...")
+        """Called when TNC is in verbose mode.
+
+        If _connect_mode == "verbose": stay in verbose terminal, no Host Mode.
+        If _connect_mode == "host":    upload params and enter Host Mode.
+        """
+        self._log_monitor("[SYS] TNC in verbose mode")
         self._sb_mode.setText("Mode: VERBOSE")
-        # Upload parameters in background thread
-        import threading
-        def _upload():
-            uploader = ParamsUploader(self._serial, self._app_config)
-            n = uploader.upload()
-            self._log_monitor(f"[SYS] {n} parameters uploaded")
-            # Now enter Host Mode
-            self._serial.enter_host_mode()
-        threading.Thread(target=_upload, daemon=True, name="PK232-ParamUpload").start()
+        self._stack.setCurrentIndex(1)
+        self._vt_display.clear()
+        self._vt_append("[SYS] TNC ready in verbose mode\n")
+
+        if self._connect_mode == "verbose":
+            self._vt_append("[SYS] Verbose terminal ready — type commands below\n")
+        else:
+            import threading
+            def _upload():
+                self._vt_append("[SYS] Uploading parameters...\n")
+                uploader = ParamsUploader(self._serial, self._app_config)
+                n = uploader.upload()
+                self._log_monitor(f"[SYS] {n} parameters uploaded")
+                self._vt_append(
+                    f"[SYS] {n} parameters uploaded — entering Host Mode...\n"
+                )
+                self._serial.enter_host_mode()
+            threading.Thread(
+                target=_upload, daemon=True, name="PK232-ParamUpload"
+            ).start()
 
     def _on_params_upload_required(self) -> None:
         """Called when TNC rebooted — same as verbose_mode_ready but with log message."""
@@ -426,7 +668,8 @@ class MainWindow(QMainWindow):
         self._mode_combo.blockSignals(False)
 
     def _on_mode_switch_failed(self, reason: str) -> None:
-        self.statusBar().showMessage(f"Mode switch failed: {reason}", 4000)
+        QMessageBox.warning(self, "Mode Switch Failed",
+                            f"Could not switch mode:\n{reason}")
 
     # ------------------------------------------------------------------
     # Slots — parameter dialogs (placeholders)
@@ -482,11 +725,17 @@ class MainWindow(QMainWindow):
     def _on_params_misc(self) -> None:
         """Open Misc Parameters dialog."""
         dlg = MiscParamsDialog(parent=self)
-        # Pre-fill from stored values if available
-        if hasattr(self, '_misc_params'):
-            dlg.set_values(**self._misc_params)
+        mi = self._app_config.misc
+        dlg.set_values(
+            canline=mi.canline, canpac=mi.canpac, command=mi.command,
+            sendpac=mi.sendpac, mark=mi.mark, space=mi.space,
+        )
         if dlg.exec() == MiscParamsDialog.DialogCode.Accepted:
-            self._misc_params = dlg.get_values()
+            v = dlg.get_values()
+            mi.canline  = v["canline"];  mi.canpac  = v["canpac"]
+            mi.command  = v["command"];  mi.sendpac = v["sendpac"]
+            mi.mark     = v["mark"];     mi.space   = v["space"]
+            self._config_mgr.save()
             self._log_monitor("[SYS] Misc parameters updated")
 
     def _on_params_pactor(self) -> None:
@@ -498,33 +747,181 @@ class MainWindow(QMainWindow):
     def _on_params_amtor(self) -> None:
         """Open AMTOR / NAVTEX / TDM Parameters dialog."""
         dlg = AMTORParamsDialog(parent=self)
-        if hasattr(self, '_amtor_params'):
-            dlg.set_values(**self._amtor_params)
+        am = self._app_config.amtor
+        dlg.set_values(
+            myselcal=am.myselcal, myaltcal=am.myaltcal, myident=am.myident,
+            arqtmo=am.arqtmo, arqtol=am.arqtol, adelay=am.adelay,
+            tdbaud=am.tdbaud, tdchan=am.tdchan, xlength=am.xlength,
+            rfec=am.rfec, rxrev=am.rxrev, srxall=am.srxall,
+            txrev=am.txrev, usos=am.usos, wideshft=am.wideshft, xmitok=am.xmitok,
+        )
         if dlg.exec() == AMTORParamsDialog.DialogCode.Accepted:
-            self._amtor_params = dlg.get_values()
+            v = dlg.get_values()
+            am.myselcal = v["myselcal"]; am.myaltcal = v["myaltcal"]
+            am.myident  = v["myident"];  am.arqtmo   = v["arqtmo"]
+            am.arqtol   = v["arqtol"];   am.adelay   = v["adelay"]
+            am.tdbaud   = v["tdbaud"];   am.tdchan   = v["tdchan"]
+            am.xlength  = v["xlength"];  am.rfec     = v["rfec"]
+            am.rxrev    = v["rxrev"];    am.srxall   = v["srxall"]
+            am.txrev    = v["txrev"];    am.usos     = v["usos"]
+            am.wideshft = v["wideshft"]; am.xmitok   = v["xmitok"]
+            self._config_mgr.save()
             self._log_monitor("[SYS] AMTOR/NAVTEX/TDM parameters updated")
 
     def _on_params_baudot(self) -> None:
         """Open BAUDOT / ASCII / CW Parameters dialog."""
         dlg = BaudotParamsDialog(parent=self)
-        if hasattr(self, '_baudot_params'):
-            dlg.set_values(**self._baudot_params)
+        ba = self._app_config.baudot
+        dlg.set_values(
+            mspeed=ba.mspeed, mweight=ba.mweight, code=ba.code,
+            xlength=ba.xlength, xbaud=ba.xbaud, aab=ba.aab,
+            alfrtty=ba.alfrtty, diddle=ba.diddle, mopt=ba.mopt,
+            rxrev=ba.rxrev, txrev=ba.txrev, usos=ba.usos,
+            wideshft=ba.wideshft, xmitok=ba.xmitok,
+        )
         if dlg.exec() == BaudotParamsDialog.DialogCode.Accepted:
-            self._baudot_params = dlg.get_values()
+            v = dlg.get_values()
+            ba.mspeed  = v["mspeed"];  ba.mweight = v["mweight"]
+            ba.code    = v["code"];    ba.xlength = v["xlength"]
+            ba.xbaud   = v["xbaud"];   ba.aab     = v["aab"]
+            ba.alfrtty = v["alfrtty"]; ba.diddle  = v["diddle"]
+            ba.mopt    = v["mopt"];    ba.rxrev   = v["rxrev"]
+            ba.txrev   = v["txrev"];   ba.usos    = v["usos"]
+            ba.wideshft= v["wideshft"]; ba.xmitok  = v["xmitok"]
+            self._config_mgr.save()
             self._log_monitor("[SYS] BAUDOT/ASCII/CW parameters updated")
 
     def _on_params_maildrop(self) -> None:
         """Open MailDrop Parameters dialog."""
         dlg = MailDropParamsDialog(parent=self)
-        if hasattr(self, '_maildrop_params'):
-            dlg.set_values(**self._maildrop_params)
+        md = self._app_config.maildrop
+        dlg.set_values(
+            homebbs=md.homebbs, mymail=md.mymail, mtext=md.mtext,
+            kilonfwd=md.kilonfwd, maildrop=md.maildrop, mdmon=md.mdmon,
+            mmsg=md.mmsg, tmail=md.tmail, third_party=md.third_party,
+        )
         if dlg.exec() == MailDropParamsDialog.DialogCode.Accepted:
-            self._maildrop_params = dlg.get_values()
+            v = dlg.get_values()
+            md.homebbs     = v["homebbs"];     md.mymail      = v["mymail"]
+            md.mtext       = v["mtext"];       md.kilonfwd    = v["kilonfwd"]
+            md.maildrop    = v["maildrop"];    md.mdmon       = v["mdmon"]
+            md.mmsg        = v["mmsg"];        md.tmail       = v["tmail"]
+            md.third_party = v["third_party"]
+            self._config_mgr.save()
             self._log_monitor("[SYS] MailDrop parameters updated")
+
+    def _on_toggle_serial_status(self) -> None:
+        """Show/hide serial signal status rows (rows 2+3)."""
+        visible = self._act_serial_status.isChecked()
+        self._footer.setVisible(visible)
+        if visible:
+            self._update_serial_signals()   # immediate update
+            if self._serial.is_connected:
+                self._serial_sig_timer.start()
+        else:
+            self._serial_sig_timer.stop()
+
+    @staticmethod
+    def _sig_style_active() -> str:
+        return ("color:#00cc00; background:#0a1a0a;"
+                "border:1px solid #00cc00; border-radius:3px;"
+                "padding:1px 4px; font-weight:bold;")
+
+    @staticmethod
+    def _sig_style_inactive() -> str:
+        return ("color:#555555; background:#1a1a1a;"
+                "border:1px solid #333; border-radius:3px;"
+                "padding:1px 4px;")
+
+    def _set_sig(self, label, active: bool) -> None:
+        label.setStyleSheet(
+            self._sig_style_active() if active else self._sig_style_inactive()
+        )
+
+    def _update_serial_signals(self) -> None:
+        """Poll serial port signals and update both status bar rows."""
+        connected = self._serial.is_connected
+        self._set_sig(self._ssl_connected, connected)
+
+        # ── Row 1: Hardware signals ────────────────────────────────────
+        if not connected:
+            for lbl in [self._ssl_cts, self._ssl_dsr, self._ssl_dcd,
+                        self._ssl_rts, self._ssl_dtr]:
+                self._set_sig(lbl, False)
+        else:
+            try:
+                port = self._serial._serial
+                if port is None or not port.is_open:
+                    return
+                def _read(attr):
+                    try: return bool(getattr(port, attr))
+                    except Exception: return False
+                self._set_sig(self._ssl_cts, _read("cts"))
+                self._set_sig(self._ssl_dsr, _read("dsr"))
+                self._set_sig(self._ssl_dcd, _read("dcd"))
+                self._set_sig(self._ssl_rts, _read("rts"))
+                self._set_sig(self._ssl_dtr, _read("dtr"))
+            except Exception:
+                pass
+
+        # ── Row 2: Program/TNC status ──────────────────────────────────
+        self._set_sig(self._ssl_host, self._serial.is_host_mode)
+        # PTT and CON are updated via frame_received — no polling needed
+        # (see _on_frame_received for PTT/CON logic)
+
+    def _blink_rx(self) -> None:
+        """Flash RX indicator for 150ms."""
+        self._ssl_rx.setStyleSheet(self._sig_style_active())
+        self._rx_blink_timer.start()
+
+    def _blink_tx(self) -> None:
+        """Flash TX indicator for 150ms."""
+        self._ssl_tx.setStyleSheet(self._sig_style_active())
+        self._tx_blink_timer.start()
 
     def _on_toggle_monitor(self, checked: bool) -> None:
         self._monitor.setVisible(checked)
         self._splitter.setSizes([630, 270] if checked else [900, 0])
+
+    def _on_appearance(self) -> None:
+        """Open Appearance settings dialog."""
+        dlg = AppearanceDialog(self._app_config.appearance, parent=self)
+        if dlg.exec() == AppearanceDialog.DialogCode.Accepted:
+            self._config_mgr.save()
+            self._apply_appearance()
+            self._log_monitor("[SYS] Appearance settings updated")
+
+    def _apply_appearance(self) -> None:
+        """Apply appearance settings to all display widgets."""
+        a = self._app_config.appearance
+        font = QFont(a.font_family, a.font_size)
+        style_rx = (
+            f"background-color:{a.bg_color}; "
+            f"color:{a.fg_color}; border:none;"
+        )
+        style_tx = (
+            f"background-color:{a.bg_color}; "
+            f"color:{a.fg_color}; border:1px solid #444;"
+        )
+        style_vt = (
+            f"background-color:{a.bg_color}; "
+            f"color:{a.fg_color}; border:none;"
+        )
+        # Host Mode view
+        self._rx_display.setFont(font)
+        self._rx_display.setStyleSheet(style_rx)
+        self._tx_input.setFont(font)
+        self._tx_input.setStyleSheet(style_tx)
+        # Verbose terminal view
+        self._vt_display.setFont(font)
+        self._vt_display.setStyleSheet(style_vt)
+        self._vt_input.setFont(font)
+        self._vt_input.setStyleSheet(
+            f"background-color:{a.bg_color}; "
+            f"color:{a.fg_color}; border:none;"
+        )
+        logger.debug("Appearance applied: %s %dpt bg=%s fg=%s",
+                     a.font_family, a.font_size, a.bg_color, a.fg_color)
 
     def _on_about(self) -> None:
         QMessageBox.about(
@@ -563,22 +960,38 @@ class MainWindow(QMainWindow):
                 self._log_terminal(text)
 
     def _on_status_message(self, msg: str) -> None:
-        self.statusBar().showMessage(msg, 5000)
+        """Route status messages: errors → popup, info → status bar."""
+        # Keywords that indicate an error requiring user attention
+        _error_keywords = (
+            "error", "Error", "failed", "Failed",
+            "cannot", "Cannot", "not installed",
+        )
+        if any(kw in msg for kw in _error_keywords):
+            QMessageBox.critical(self, "TNC Error", msg)
+        else:
+            self.statusBar().showMessage(msg, 5000)
 
     # ------------------------------------------------------------------
     # UI state updates
     # ------------------------------------------------------------------
 
     def _update_connection_ui(self, connected: bool) -> None:
-        self._act_connect.setEnabled(not connected)
+        self._act_connect_verbose.setEnabled(not connected)
+        self._act_connect_host.setEnabled(not connected)
         self._act_disconnect.setEnabled(connected)
-        self._act_host_on.setEnabled(connected)
         self._act_host_off.setEnabled(connected)
         self._act_recovery.setEnabled(connected)
         self._tb_connect.setEnabled(not connected)
         self._tb_disconnect.setEnabled(connected)
-        self._tb_host_on.setEnabled(connected)
         self._tb_recovery.setEnabled(connected)
+        # Always update serial signals immediately on connect/disconnect
+        self._update_serial_signals()
+        # Keep timer running whenever serial status bar is visible
+        if self._act_serial_status.isChecked():
+            if connected:
+                self._serial_sig_timer.start()
+            else:
+                self._serial_sig_timer.stop()
 
         if connected:
             self._sb_port.setText(f"Port: {self._config.port_name}")
@@ -590,12 +1003,18 @@ class MainWindow(QMainWindow):
             self._mode_combo.setEnabled(False)
 
     def _update_host_mode_ui(self, active: bool) -> None:
-        """Enable mode selector when Host Mode is active."""
+        """Switch view and enable mode selector when Host Mode is active."""
         self._mode_combo.setEnabled(active)
         if active:
             self._sb_mode.setText("Mode: HOST")
+            self._stack.setCurrentIndex(0)
         else:
             self._sb_mode.setText("Mode: VERBOSE")
+            self._stack.setCurrentIndex(1)
+        self._set_sig(self._ssl_host, active)
+        if not active:
+            self._set_sig(self._ssl_ptt, False)
+            self._set_sig(self._ssl_con, False)
 
     # ------------------------------------------------------------------
     # Output helpers
@@ -616,13 +1035,57 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def eventFilter(self, obj, event) -> bool:
-        if (obj is self._tx_input
-                and event.type() == QEvent.Type.KeyPress
-                and event.key() == Qt.Key.Key_Return
-                and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
-            self._on_send()
-            return True
+        """Intercept Enter in TX input (Host Mode) and verbose terminal input."""
+        if event.type() == QEvent.Type.KeyPress:
+            if obj is self._tx_input:
+                if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                        and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
+                    self._on_send()
+                    return True
+            elif obj is self._vt_input:
+                if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    self._on_vt_send()
+                    return True
         return super().eventFilter(obj, event)
+
+    def _on_vt_send(self) -> None:
+        """Send a command in verbose terminal mode (Enter pressed)."""
+        text = self._vt_input.toPlainText().strip()
+        if not text:
+            return
+        self._vt_input.clear()
+        self._vt_append(f"cmd:{text}\n", color="#569cd6")
+        if self._serial.is_connected:
+            self._serial.write_verbose(
+                f"{text}\r\n".encode('ascii', errors='replace')
+            )
+        else:
+            self._vt_append("[ERROR] Not connected\n", color="#f44747")
+
+    def _vt_append(self, text: str, color: str = "#cccccc") -> None:
+        """Append coloured text to the verbose terminal display."""
+        from PyQt6.QtGui import QTextCursor, QColor
+        cursor = self._vt_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        fmt = cursor.charFormat()
+        fmt.setForeground(QColor(color))
+        cursor.setCharFormat(fmt)
+        cursor.insertText(text)
+        self._vt_display.setTextCursor(cursor)
+        self._vt_display.ensureCursorVisible()
+
+    def _on_vt_rx_data(self, data: bytes) -> None:
+        """Display raw bytes received from TNC in verbose terminal."""
+        try:
+            text = data.decode('ascii', errors='replace')
+        except Exception:
+            text = repr(data)
+        self._vt_append(text, color="#cccccc")
+
+    def _on_raw_data_received(self, data: bytes) -> None:
+        """Display raw serial data in verbose terminal (only when in verbose mode)."""
+        if self._stack.currentIndex() == 1:
+            self._on_vt_rx_data(data)
 
     def _on_send(self) -> None:
         """Send the input field contents via the active mode.
@@ -636,11 +1099,13 @@ class MainWindow(QMainWindow):
             return
 
         if not self._serial.is_connected:
-            self.statusBar().showMessage("Not connected — connect to TNC first.", 3000)
+            QMessageBox.warning(self, "Not Connected",
+                            "Please connect to the TNC first.")
             return
 
         if not self._serial.is_host_mode:
-            self.statusBar().showMessage("Host Mode not active.", 3000)
+            QMessageBox.warning(self, "Host Mode Not Active",
+                            "Host Mode is not active.\nPlease initialise the TNC first.")
             return
 
         self._log_terminal(

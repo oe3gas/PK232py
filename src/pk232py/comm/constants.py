@@ -144,16 +144,39 @@ FRAME_HOST_OFF = bytes([SOH, CTL_TX_CMD, ord('H'), ord('O'), ord('N'), ETB])
 # (sent as plain ASCII text in verbose/terminal mode)
 # ---------------------------------------------------------------------------
 
-# These commands prepare the TNC for 8-bit Host Mode operation.
-# Send each line followed by CR (\r).  Wait for 'cmd:' before next line.
-# (TRM Section 4.1.3)
+# Verbose-mode commands to prepare the TNC for Host Mode.
+# (TRM Section 4.1.3 + DL3ECD implementation notes)
+#
+# Full correct sequence:
+#   1. Send XON ($11)         — re-enable TNC output if XOFFed
+#   2. Send CANLINE ($18)     — cancel any partial input line
+#   3. Send COMMAND ($03)     — force TNC into COMMAND mode (Ctrl-C)
+#   4. Send "* CR"            — autobaud trigger (TNC echoes banner)
+#   5. Send "AWLEN 8 CR"      — 8-bit word length
+#   6. Send "PARITY 0 CR"     — no parity
+#   7. Send "RESTART CR"      — apply word-length/parity, TNC reboots
+#   8. (wait _RESTART_DELAY)  — let TNC print banner after restart
+#   9. Send XON + CANLINE + COMMAND again (TNC is back in verbose mode)
+#  10. Send "HOST Y CR"       — switch to binary Host Mode
+#
+# Steps 1-3 are sent as raw bytes (not via this list) in serial_manager.
+# This list covers steps 4-10 (the ASCII command phase).
 HOSTMODE_INIT_CMDS: list[bytes] = [
+    b"*",             # autobaud trigger — NO CR, just asterisk
+                      # TNC responds with firmware banner (Ver. 7.1 etc.)
     b"AWLEN 8\r",     # 8-bit word length (required for Host Mode)
     b"PARITY 0\r",    # no parity
-    b"8BITCONV ON\r", # 8-bit transparent mode
-    b"RESTART\r",     # apply AWLEN/PARITY changes
+    b"RESTART\r",     # apply AWLEN/PARITY changes — TNC reboots
     b"HOST Y\r",      # activate Host Mode
 ]
+
+# Raw control bytes sent BEFORE HOSTMODE_INIT_CMDS to put TNC in
+# a defined state (flush input, force COMMAND mode)
+HOSTMODE_PREAMBLE: bytes = (
+    b"\x11"   # XON  — re-enable output
+    b"\x18"   # CANLINE ($18 default) — cancel partial line
+    b"\x03"   # COMMAND ($03 default) — Ctrl-C → COMMAND mode
+)
 
 # Optional: enable polling (TNC waits for FRAME_POLL before sending data)
 HOSTMODE_HPOLL_ON  = b"HPOLL Y\r"

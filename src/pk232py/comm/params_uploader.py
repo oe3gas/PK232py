@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pk232py.comm.serial_manager import SerialManager
-    from pk232py.config import AppConfig
+    from pk232py.config import AppConfig, AMTORConfig, BaudotConfig, MiscConfig, MailDropConfig
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,69 @@ class ParamsUploader:
             self._bool("PT200",   pt.pt200),
             self._bool("PTROUND", pt.ptround),
         ]
+
+        # ── AMTOR / NAVTEX / TDM ─────────────────────────────────────
+        am = self._config.amtor
+        if am.myselcal:
+            cmds.append(self._cmd("MYSELCAL", am.myselcal.upper()))
+        if am.myaltcal:
+            cmds.append(self._cmd("MYALTCAL", am.myaltcal.upper()))
+        if am.myident:
+            cmds.append(self._cmd("MYIDENT", am.myident.upper()))
+        cmds += [
+            self._cmd("ARQTMO",  str(am.arqtmo)),
+            self._cmd("ARQTOL",  str(am.arqtol)),
+            self._cmd("ADELAY",  str(am.adelay)),
+            self._cmd("TDBAUD",  str(am.tdbaud)),
+            self._cmd("TDCHAN",  str(am.tdchan)),
+            self._bool("RFEC",     am.rfec),
+            self._bool("RXREV",    am.rxrev),
+            self._bool("TXREV",    am.txrev),
+            self._bool("XMITOK",   am.xmitok),
+        ]
+
+        # ── BAUDOT / ASCII / CW ───────────────────────────────────────
+        ba = self._config.baudot
+        cmds += [
+            self._cmd("MSPEED",  str(ba.mspeed)),
+            self._cmd("MWEIGHT", str(ba.mweight)),
+            self._cmd("CODE",    str(ba.code)),
+            self._bool("ALFRTTY", ba.alfrtty),
+            self._bool("DIDDLE",  ba.diddle),
+            self._bool("MOPT",    ba.mopt),
+            self._bool("RXREV",   ba.rxrev),
+            self._bool("TXREV",   ba.txrev),
+        ]
+        if ba.aab:
+            cmds.append(self._cmd("AAB", ba.aab))
+
+        # ── Misc ──────────────────────────────────────────────────────
+        mi = self._config.misc
+        cmds += [
+            self._cmd("CANLINE",  str(mi.canline)),
+            self._cmd("CANPAC",   str(mi.canpac)),
+            self._cmd("COMMAND",  f"${mi.command:02X}"),
+            self._cmd("SENDPAC",  f"${mi.sendpac:02X}"),
+            self._cmd("MARK",     str(mi.mark)),
+            self._cmd("SPACE",    str(mi.space)),
+        ]
+
+        # ── MailDrop ──────────────────────────────────────────────────
+        md = self._config.maildrop
+        if md.homebbs:
+            cmds.append(self._cmd("HOMEBBS", md.homebbs.upper()))
+        if md.mymail:
+            cmds.append(self._cmd("MYMAIL", md.mymail.upper()))
+        cmds += [
+            self._bool("MAILDROP",  md.maildrop),
+            self._bool("MDMON",     md.mdmon),
+            self._bool("MMSG",      md.mmsg),
+            self._bool("TMAIL",     md.tmail),
+            self._bool("3RDPARTY",  md.third_party),
+            self._bool("KILONFWD",  md.kilonfwd),
+        ]
+        if md.mtext:
+            cmds.append(self._cmd("MTEXT", md.mtext))
 
         # ── UTC time ──────────────────────────────────────────────────
         if tnc.utc_tnc_time:

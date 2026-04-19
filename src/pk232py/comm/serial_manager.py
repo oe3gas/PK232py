@@ -83,12 +83,13 @@ _SOH_BYTE       = 0x01
 # ---------------------------------------------------------------------------
 
 class _ReaderThread(threading.Thread):
-    def __init__(self, port, frame_callback) -> None:
+    def __init__(self, port, frame_callback, raw_callback=None) -> None:
         super().__init__(daemon=True, name="PK232-Reader")
-        self._port       = port
-        self._callback   = frame_callback
-        self._stop_event = threading.Event()
-        self._parser     = FrameParser(self._on_frame)
+        self._port         = port
+        self._callback     = frame_callback
+        self._raw_callback = raw_callback
+        self._stop_event   = threading.Event()
+        self._parser       = FrameParser(self._on_frame)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -99,6 +100,8 @@ class _ReaderThread(threading.Thread):
             try:
                 raw = self._port.read(64)
                 if raw:
+                    if self._raw_callback:
+                        self._raw_callback(raw)
                     self._parser.feed(raw)
             except Exception as exc:
                 if not self._stop_event.is_set():
@@ -145,6 +148,7 @@ class SerialManager(QObject):
     """
 
     frame_received         = pyqtSignal(object)  # HostFrame
+    raw_data_received      = pyqtSignal(bytes)   # verbose mode raw bytes
     connection_changed     = pyqtSignal(bool)
     verbose_mode_ready     = pyqtSignal()
     host_mode_changed      = pyqtSignal(bool)
@@ -158,6 +162,10 @@ class SerialManager(QObject):
         self._in_host_mode     = False
         self._verbose_ready    = False
         self._write_lock       = threading.Lock()
+        # Shared buffer: ReaderThread writes here, _read_raw_until reads here
+        self._rx_buf           = bytearray()
+        self._rx_buf_lock      = threading.Lock()
+        self._rx_buf_event     = threading.Event()
 
     # ------------------------------------------------------------------
     # Port management
@@ -191,7 +199,11 @@ class SerialManager(QObject):
             self._serial.dtr = False
             logger.info("Port %s opened at %d baud", port_name, baudrate)
             self.status_message.emit(f"Connected: {port_name} @ {baudrate} Bd")
-            self._reader = _ReaderThread(self._serial, self._on_frame_received)
+            self._reader = _ReaderThread(
+                self._serial,
+                self._on_frame_received,
+                raw_callback=self._on_raw_data,
+            )
             self._reader.start()
             self.connection_changed.emit(True)
             return True
@@ -214,6 +226,9 @@ class SerialManager(QObject):
         self._serial        = None
         self._in_host_mode  = False
         self._verbose_ready = False
+        with self._rx_buf_lock:
+            self._rx_buf.clear()
+        self._rx_buf_event.clear()
         self.connection_changed.emit(False)
         self.status_message.emit("Disconnected")
 
@@ -450,22 +465,33 @@ class SerialManager(QObject):
     # ------------------------------------------------------------------
 
     def _read_raw_until(self, markers: tuple, timeout: float) -> bytes:
-        """Read raw bytes until a marker is found or timeout expires."""
-        buf      = bytearray()
+        """Wait for marker in shared rx buffer (filled by ReaderThread).
+
+        Uses threading.Event for efficient waiting instead of polling.
+        """
         deadline = time.monotonic() + timeout
+        # Clear buffer at start of each wait
+        with self._rx_buf_lock:
+            self._rx_buf.clear()
+        self._rx_buf_event.clear()
+
         while time.monotonic() < deadline:
-            try:
-                chunk = self._serial.read(self._serial.in_waiting or 1)
-                if chunk:
-                    buf.extend(chunk)
-                    for marker in markers:
-                        if marker in buf:
-                            return bytes(buf)
-            except Exception as exc:
-                logger.error("_read_raw_until: %s", exc)
-                break
-            time.sleep(0.05)
-        return bytes(buf)
+            remaining = deadline - time.monotonic()
+            self._rx_buf_event.wait(timeout=min(0.1, remaining))
+            self._rx_buf_event.clear()
+            with self._rx_buf_lock:
+                buf_copy = bytes(self._rx_buf)
+            for marker in markers:
+                if marker in buf_copy:
+                    logger.debug("_read_raw_until: found %r in %d bytes",
+                                 marker, len(buf_copy))
+                    return buf_copy
+        # Timeout
+        with self._rx_buf_lock:
+            result = bytes(self._rx_buf)
+        logger.debug("_read_raw_until: timeout after %.1fs, got %d bytes",
+                     timeout, len(result))
+        return result
 
     def _write_raw(self, data: bytes) -> bool:
         try:
@@ -489,6 +515,16 @@ class SerialManager(QObject):
     def _on_frame_received(self, frame: HostFrame) -> None:
         logger.debug("RX %r", frame)
         self.frame_received.emit(frame)
+
+    def _on_raw_data(self, data: bytes) -> None:
+        """Store raw bytes in shared buffer and forward to UI."""
+        # Always store in shared buffer (used by _read_raw_until during init)
+        with self._rx_buf_lock:
+            self._rx_buf.extend(data)
+        self._rx_buf_event.set()
+        # Forward to UI only in verbose mode (not Host Mode)
+        if not self._in_host_mode:
+            self.raw_data_received.emit(data)
 
     @staticmethod
     def list_ports() -> list[str]:
