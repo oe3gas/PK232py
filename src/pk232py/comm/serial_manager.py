@@ -88,13 +88,15 @@ _SOH_BYTE       = 0x01
 # ---------------------------------------------------------------------------
 
 class _ReaderThread(threading.Thread):
-    def __init__(self, port, frame_callback, raw_callback=None) -> None:
+    def __init__(self, port, frame_callback, raw_callback=None,
+                 host_mode_flag=None) -> None:
         super().__init__(daemon=True, name="PK232-Reader")
-        self._port         = port
-        self._callback     = frame_callback
-        self._raw_callback = raw_callback
-        self._stop_event   = threading.Event()
-        self._parser       = FrameParser(self._on_frame)
+        self._port           = port
+        self._callback       = frame_callback
+        self._raw_callback   = raw_callback
+        self._host_mode_flag = host_mode_flag or (lambda: False)
+        self._stop_event     = threading.Event()
+        self._parser         = FrameParser(self._on_frame)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -208,6 +210,7 @@ class SerialManager(QObject):
                 self._serial,
                 self._on_frame_received,
                 raw_callback=self._on_raw_data,
+                host_mode_flag=lambda: self._in_host_mode,
             )
             self._reader.start()
             self.connection_changed.emit(True)
@@ -274,114 +277,93 @@ class SerialManager(QObject):
         return True
 
     def _init_tnc_thread(self) -> None:
-        """Background: wakeup → classify → full or short init."""
+        """Background init — direct serial like pk232_hostmode.py script."""
         try:
-            # Wakeup
+            port = self._serial
+
+            # Stop ReaderThread — we do everything directly
+            if self._reader:
+                self._reader.stop()
+                self._reader.join(timeout=2.0)
+                self._reader = None
+
+            port.reset_input_buffer()
+
+            # ── Read until marker ──────────────────────────────────────
+            def read_until(marker, timeout=3.0):
+                buf = bytearray()
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    n = port.in_waiting
+                    if n:
+                        buf.extend(port.read(n))
+                        if isinstance(marker, (list, tuple)):
+                            if any(m in buf for m in marker):
+                                return bytes(buf)
+                        elif marker in buf:
+                            return bytes(buf)
+                        deadline = time.monotonic() + 0.15
+                    else:
+                        time.sleep(0.02)
+                return bytes(buf)
+
+            # ── STEP 1: Wakeup ─────────────────────────────────────────
             self.status_message.emit("TNC: wakeup...")
             logger.info("Init: sending wakeup '*'")
-            self._write_raw(_WAKEUP)
-            response = self._read_raw_until(
-                markers=(b"cmd:", bytes([_SOH_BYTE])),
-                timeout=_WAKEUP_TIMEOUT,
-            )
-            logger.debug("Wakeup response (%d B): %s", len(response), response.hex(' '))
+            port.write(_WAKEUP)
+            port.flush()
+            resp = read_until(b"cmd:", timeout=_WAKEUP_TIMEOUT)
+            logger.debug("Wakeup response (%d B): %s", len(resp), resp.hex(' '))
 
-            if not response:
-                raise RuntimeError(
-                    f"TNC did not respond within {_WAKEUP_TIMEOUT}s — "
-                    "check COM port and baud rate"
+            if not resp:
+                raise RuntimeError("TNC did not respond — check port and baud")
+
+            if _SOH_BYTE in resp:
+                logger.info("TNC already in Host Mode")
+                self._in_host_mode = True
+                self._reader = _ReaderThread(
+                    port, self._on_frame_received,
+                    raw_callback=self._on_raw_data,
+                    host_mode_flag=lambda: self._in_host_mode,
                 )
-
-            if _SOH_BYTE in response:
-                # Already in Host Mode
-                logger.info("Init: TNC already in Host Mode")
-                self.status_message.emit("TNC already in Host Mode")
-                self._in_host_mode  = True
-                self._verbose_ready = False
+                self._reader.start()
                 self.host_mode_changed.emit(True)
                 return
 
-            tnc_rebooted = any(m in response for m in _BANNER_MARKERS)
-
-            if tnc_rebooted:
-                logger.info("Init: CASE A — fresh boot")
-                self.status_message.emit("TNC: fresh boot detected...")
-                self._full_init()
-                upload_params = True
-            else:
-                logger.info("Init: CASE B — already at cmd: prompt")
-                self.status_message.emit("TNC: already active...")
-                self._short_init()
-                upload_params = False
-
-            # TNC is now in verbose COMMAND mode
+            logger.info("TNC at cmd: prompt")
             self._verbose_ready = True
-            self.status_message.emit("TNC ready (verbose mode)")
+            self.status_message.emit("TNC ready (verbose)")
             logger.info("Init complete — TNC in verbose mode")
-            self.verbose_mode_ready.emit()
 
-            if upload_params:
-                self.params_upload_required.emit()
+            # Restart ReaderThread for verbose mode
+            self._reader = _ReaderThread(
+                port, self._on_frame_received,
+                raw_callback=self._on_raw_data,
+                host_mode_flag=lambda: self._in_host_mode,
+            )
+            self._reader.start()
+            self.verbose_mode_ready.emit()
 
         except Exception as exc:
             logger.error("init_tnc failed: %s", exc)
             self.status_message.emit(f"TNC init error: {exc}")
-            self._verbose_ready = False
+            if self._reader is None and self._serial and self._serial.is_open:
+                self._reader = _ReaderThread(
+                    self._serial, self._on_frame_received,
+                    raw_callback=self._on_raw_data,
+                    host_mode_flag=lambda: self._in_host_mode,
+                )
+                self._reader.start()
+
 
     def _full_init(self) -> None:
-        """XFLOW OFF + AWLEN + PARITY + 8BITCONV + RESTART.
-        Waits for cmd: after EACH command to prevent TNC input buffer merging."""
-        # Note: XFLOW OFF is NOT sent — it is not a standard command on
-        # PK-232MBX v7.1 and causes "?EXPERT command" response.
-        # PCPackRatt sends it but our TNC firmware does not need it.
-        for cmd, label in [
-            (_CMD_AWLEN,    "AWLEN 8"),
-            (_CMD_PARITY,   "PARITY 0"),
-            (_CMD_8BITCONV, "8BITCONV ON"),
-        ]:
-            logger.info("Init: %s", label)
-            self.status_message.emit(f"TNC: {label}...")
-            with self._rx_buf_lock:
-                self._rx_buf.clear()
-            self._rx_buf_event.clear()
-            self._write_raw(cmd)
-            resp = self._read_raw_until(markers=(_PROMPT_MARKER,), timeout=1.0)
-            if _PROMPT_MARKER in resp:
-                logger.debug("Init: %s confirmed (cmd: seen)", label)
-            else:
-                logger.warning("Init: %s — no cmd: seen (%d B), continuing", label, len(resp))
-                time.sleep(_CMD_DELAY)
-
-        logger.info("Init: RESTART — waiting for reboot...")
-        self.status_message.emit("TNC: restarting...")
-        with self._rx_buf_lock:
-            self._rx_buf.clear()
-        self._rx_buf_event.clear()
-        self._write_raw(_CMD_RESTART)
-        response = self._read_raw_until(markers=(_PROMPT_MARKER,), timeout=_RESTART_DELAY)
-        if _PROMPT_MARKER not in response:
-            logger.warning("Init: no cmd: after RESTART (%d B)", len(response))
-        else:
-            logger.debug("RESTART response (%d B): %s", len(response), response.hex(' '))
-            time.sleep(0.3)
+        """No-op: PCPackRatt sends nothing before HOST 3 after wakeup.
+        AWLEN/PARITY skipped — TNC uses default values which are correct."""
+        logger.info("Init: skipping verbose config (PCPackRatt-style)")
 
     def _short_init(self) -> None:
-        """XFLOW OFF + AWLEN + PARITY + 8BITCONV (no RESTART).
-        Waits for cmd: after each command."""
-        for cmd, label in [
-            (_CMD_AWLEN,    "AWLEN 8"),
-            (_CMD_PARITY,   "PARITY 0"),
-            (_CMD_8BITCONV, "8BITCONV ON"),
-        ]:
-            logger.info("Init: %s", label)
-            with self._rx_buf_lock:
-                self._rx_buf.clear()
-            self._rx_buf_event.clear()
-            self._write_raw(cmd)
-            resp = self._read_raw_until(markers=(_PROMPT_MARKER,), timeout=1.0)
-            if _PROMPT_MARKER not in resp:
-                logger.warning("Init: %s — no cmd: seen, continuing", label)
-                time.sleep(_CMD_DELAY)
+        """No-op: PCPackRatt sends nothing before HOST 3."""
+        logger.info("Init: skipping verbose config (PCPackRatt-style)")
 
     # ------------------------------------------------------------------
     # Phase 3 — switch to Host Mode
@@ -414,70 +396,92 @@ class SerialManager(QObject):
         return True
 
     def _enter_host_mode_thread(self) -> None:
-        """Enter Host Mode.
+        """Enter Host Mode via subprocess (pk232_hostmode_sub.py).
 
-        Verified on real PK-232MBX v7.1:
-        - "HOST Y\r" switches TNC to Host Mode silently (no response)
-        - After HOST Y, send HPOLL Y frame immediately
-        - TNC responds with HPOLL ACK: 01 4F 48 50 00 17
+        The subprocess is a plain Python script with no PyQt6/threading.
+        Proven to work on real PK-232MBX v7.1 hardware.
         """
+        import subprocess, sys, os
+
         try:
-            logger.info("Entering Host Mode...")
+            logger.info("Entering Host Mode via subprocess...")
             self.status_message.emit("Entering Host Mode...")
 
-            # Send HOST Y — TNC switches silently, no response expected
-            with self._rx_buf_lock:
-                self._rx_buf.clear()
-            self._rx_buf_event.clear()
+            port_name = self._serial.port
+            baudrate  = self._serial.baudrate
 
-            logger.info("Sending HOST Y...")
-            self._write_raw(b"HOST Y\r")
+            # Find pk232_hostmode_sub.py next to this file
+            sub_script = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "pk232_hostmode_sub.py"
+            )
+            if not os.path.exists(sub_script):
+                raise FileNotFoundError(f"Not found: {sub_script}")
 
-            # Brief pause for TNC to switch modes
+            # Stop ReaderThread and close port
+            if self._reader:
+                self._reader.stop()
+                self._reader.join(timeout=2.0)
+                self._reader = None
+            self._serial.close()
+            logger.debug("Port closed for subprocess")
             time.sleep(0.3)
 
-            # Send HPOLL Y and wait for ACK
-            with self._rx_buf_lock:
-                self._rx_buf.clear()
-            self._rx_buf_event.clear()
+            # Run subprocess
+            result = subprocess.run(
+                [sys.executable, sub_script, port_name, str(baudrate)],
+                capture_output=True, text=True, timeout=15
+            )
+            output = result.stdout.strip()
+            stderr = result.stderr.strip()
+            logger.info("Subprocess stdout: %r", output)
+            if stderr:
+                logger.error("Subprocess stderr: %s", stderr)
 
-            logger.info("Sending HPOLL Y...")
-            self._write_raw(_CMD_HPOLL_Y)
+            # Reopen port
+            time.sleep(0.3)
+            self._serial.open()
+            time.sleep(0.1)
+            logger.debug("Port reopened")
 
-            verified = False
-            deadline = time.monotonic() + 3.0
-            while time.monotonic() < deadline:
-                self._rx_buf_event.wait(timeout=0.1)
-                self._rx_buf_event.clear()
-                with self._rx_buf_lock:
-                    buf = bytes(self._rx_buf)
-                logger.debug("RX buf (%d B): %s", len(buf), buf.hex(' ') if buf else "(empty)")
-                if _HPOLL_ACK in buf:
-                    logger.info("HPOLL ACK received — Host Mode confirmed!")
-                    verified = True
-                    break
-                # Accept any valid Host Mode frame
-                if len(buf) >= 6 and buf[0] == 0x01 and buf[1] == 0x4F and 0x17 in buf:
-                    logger.info("Host Mode frame received — confirmed!")
-                    verified = True
-                    break
-
-            if verified:
+            if output == "OK":
                 self._in_host_mode  = True
                 self._verbose_ready = False
+                self._reader = _ReaderThread(
+                    self._serial, self._on_frame_received,
+                    raw_callback=self._on_raw_data,
+                    host_mode_flag=lambda: self._in_host_mode,
+                )
+                self._reader.start()
                 self.host_mode_changed.emit(True)
                 self.status_message.emit("Host Mode active ✓")
-                logger.info("Host Mode active")
+                logger.info("Host Mode active!")
             else:
-                with self._rx_buf_lock:
-                    final = bytes(self._rx_buf)
-                logger.error("No HPOLL ACK. Final buf (%d B): %s",
-                             len(final), final.hex(' ') if final else "(empty)")
-                self.status_message.emit("Host Mode error: no HPOLL ACK")
+                logger.error("Subprocess failed: %r / %s", output, stderr)
+                self._reader = _ReaderThread(
+                    self._serial, self._on_frame_received,
+                    raw_callback=self._on_raw_data,
+                    host_mode_flag=lambda: self._in_host_mode,
+                )
+                self._reader.start()
+                self.status_message.emit(f"Host Mode error: {output or stderr}")
 
         except Exception as exc:
             logger.error("enter_host_mode failed: %s", exc)
             self.status_message.emit(f"Host Mode error: {exc}")
+            try:
+                if not self._serial.is_open:
+                    self._serial.open()
+                if self._reader is None:
+                    self._reader = _ReaderThread(
+                        self._serial, self._on_frame_received,
+                        raw_callback=self._on_raw_data,
+                        host_mode_flag=lambda: self._in_host_mode,
+                    )
+                    self._reader.start()
+            except Exception:
+                pass
+
 
     def exit_host_mode(self) -> None:
         """Send HOST OFF binary frame — return TNC to verbose mode."""
