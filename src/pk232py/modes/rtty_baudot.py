@@ -176,8 +176,8 @@ class BaudotRTTYMode(BaseMode):
         """
         kind = frame.kind
 
-        if kind == FrameKind.RX_DATA:
-            logger.debug("Baudot RX %d bytes", len(frame.data))
+        if kind in (FrameKind.RX_DATA, FrameKind.RX_MONITOR):
+            logger.debug("Baudot RX %d bytes (kind=%s)", len(frame.data), kind.name)
             if self.on_data_received:
                 self.on_data_received(frame.data)
 

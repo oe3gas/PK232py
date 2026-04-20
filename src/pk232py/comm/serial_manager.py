@@ -168,6 +168,8 @@ class SerialManager(QObject):
         self._reader:          Optional[_ReaderThread]   = None
         self._in_host_mode     = False
         self._verbose_ready    = False
+        self._poll_active      = False
+        self._poll_thread      = None
         self._write_lock       = threading.Lock()
         # Shared buffer: ReaderThread writes here, _read_raw_until reads here
         self._rx_buf           = bytearray()
@@ -456,6 +458,13 @@ class SerialManager(QObject):
                 self.host_mode_changed.emit(True)
                 self.status_message.emit("Host Mode active ✓")
                 logger.info("Host Mode active!")
+                # Start GG poll — HOST 3 requires periodic polling
+                self._poll_active = True
+                import threading as _t
+                self._poll_thread = _t.Thread(
+                    target=self._poll_loop, daemon=True, name="PK232-Poll")
+                self._poll_thread.start()
+                logger.debug("GG poll started")
             else:
                 logger.error("Subprocess failed: %r / %s", output, stderr)
                 self._reader = _ReaderThread(
@@ -488,6 +497,8 @@ class SerialManager(QObject):
         if not self.is_connected or not self._in_host_mode:
             return
         try:
+            self._poll_active = False
+            time.sleep(0.15)  # let poll thread finish
             self._write_raw(FRAME_HOST_OFF)
             time.sleep(0.1)
             self._in_host_mode  = False
@@ -532,6 +543,13 @@ class SerialManager(QObject):
         if not self._check_ready():
             return False
         return self._write_raw(build_data(channel, data))
+
+    def _poll_loop(self) -> None:
+        """Send GG poll every 100ms while in Host Mode."""
+        while self._poll_active and self._in_host_mode:
+            self._write_raw(FRAME_POLL)
+            time.sleep(0.1)
+        logger.debug("GG poll stopped")
 
     def send_poll(self) -> bool:
         """Send HPOLL GG poll frame."""

@@ -148,7 +148,7 @@ class MorseMode(BaseMode):
         """
         kind = frame.kind
 
-        if kind == FrameKind.RX_DATA:
+        if kind in (FrameKind.RX_DATA, FrameKind.RX_MONITOR):
             logger.debug("Morse RX %d bytes", len(frame.data))
             if self.on_data_received:
                 self.on_data_received(frame.data)

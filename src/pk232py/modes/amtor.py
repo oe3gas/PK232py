@@ -218,7 +218,7 @@ class AMTORMode(BaseMode):
         """
         kind = frame.kind
 
-        if kind == FrameKind.RX_DATA:
+        if kind in (FrameKind.RX_DATA, FrameKind.RX_MONITOR):
             # Mode A (ARQ) — TRM Section 4.4.3
             logger.debug("AMTOR ARQ RX %d bytes", len(frame.data))
             if self.on_arq_data:
