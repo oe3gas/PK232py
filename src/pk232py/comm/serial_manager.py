@@ -43,6 +43,7 @@ from .constants import (
     FRAME_HOST_OFF,
     CTL_TX_DATA_BASE,
 )
+from .pk232_hostmode_sub import HostModeWorker as _HostModeWorker
 from .frame import (
     HostFrame,
     FrameKind,
@@ -87,6 +88,80 @@ _SOH_BYTE       = 0x01
 # Background reader thread
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Host Mode frame extraction — proven in pk232_hostmode.py
+# Handles DLE escaping per AEA TRM Section 4.4
+# ---------------------------------------------------------------------------
+_SOH_BYTE = 0x01
+_ETB_BYTE = 0x17
+_DLE_BYTE = 0x10
+_CTL_BYTE = 0x4F
+
+def _extract_frames(buf: bytearray):
+    """Extract complete Host Mode frames from a bytearray.
+
+    Returns (list_of_HostFrame_tuples, remaining_buf).
+    Each tuple is (ctl: int, payload: bytes).
+    Handles DLE-escaped bytes inside payload.
+    """
+    frames    = []
+    remaining = buf
+    while True:
+        soh_pos = next((i for i, b in enumerate(remaining) if b == _SOH_BYTE), -1)
+        if soh_pos < 0:
+            remaining = bytearray()
+            break
+        etb_pos = -1
+        i = soh_pos + 2          # skip SOH + CTL
+        while i < len(remaining):
+            if remaining[i] == _DLE_BYTE:
+                i += 2
+                continue
+            if remaining[i] == _ETB_BYTE:
+                etb_pos = i
+                break
+            i += 1
+        if etb_pos < 0:
+            remaining = remaining[soh_pos:]
+            break
+        raw       = bytes(remaining[soh_pos:etb_pos + 1])
+        remaining = remaining[etb_pos + 1:]
+        ctl       = raw[1] if len(raw) > 1 else 0
+        payload   = bytearray()
+        j = 2
+        while j < len(raw) - 1:
+            if raw[j] == _DLE_BYTE and j + 1 < len(raw) - 1:
+                payload.append(raw[j + 1])
+                j += 2
+            else:
+                payload.append(raw[j])
+                j += 1
+        frames.append((ctl, bytes(payload)))
+    return frames, remaining
+
+
+def _make_host_frame(ctl: int, payload: bytes):
+    """Map (ctl, payload) to a HostFrame object."""
+    from .frame import HostFrame, FrameKind
+    if ctl == 0x4F:
+        kind = FrameKind.CMD_RESP
+    elif ctl == 0x3F:
+        kind = FrameKind.RX_MONITOR
+    elif 0x30 <= ctl <= 0x39:
+        kind = FrameKind.RX_DATA
+    elif ctl == 0x2F:
+        kind = FrameKind.ECHO
+    elif ctl == 0x5F:
+        kind = FrameKind.STATUS_ERR
+    elif 0x50 <= ctl <= 0x5E:
+        kind = FrameKind.LINK_MSG
+    else:
+        kind = FrameKind.CMD_RESP
+    ch = (ctl - 0x30) if 0x30 <= ctl <= 0x39 else 15
+    return HostFrame(kind=kind, ctl=ctl, channel=ch, data=payload)
+
+
+
 class _ReaderThread(threading.Thread):
     def __init__(self, port, frame_callback, raw_callback=None,
                  host_mode_flag=None) -> None:
@@ -103,13 +178,27 @@ class _ReaderThread(threading.Thread):
 
     def run(self) -> None:
         logger.debug("ReaderThread started")
+        _buf = bytearray()
         while not self._stop_event.is_set():
             try:
                 raw = self._port.read(64)
                 if raw:
                     if self._raw_callback:
                         self._raw_callback(raw)
-                    self._parser.feed(raw)
+                    if self._host_mode_flag():
+                        # Use _extract_frames — proven DLE-aware parser
+                        _buf.extend(raw)
+                        frames, _buf = _extract_frames(_buf)
+                        for ctl, payload in frames:
+                            try:
+                                frame = _make_host_frame(ctl, payload)
+                                logger.debug("RX %r", frame)
+                                self._callback(frame)
+                            except Exception as exc:
+                                logger.error("Frame dispatch: %s", exc)
+                    else:
+                        # Verbose mode: use legacy parser
+                        self._parser.feed(raw)
             except Exception as exc:
                 if not self._stop_event.is_set():
                     logger.error("Serial read error: %s", exc)
@@ -170,6 +259,7 @@ class SerialManager(QObject):
         self._verbose_ready    = False
         self._poll_active      = False
         self._poll_thread      = None
+        self._worker           = None  # _HostModeWorker in Host Mode
         self._write_lock       = threading.Lock()
         # Shared buffer: ReaderThread writes here, _read_raw_until reads here
         self._rx_buf           = bytearray()
@@ -224,16 +314,48 @@ class SerialManager(QObject):
             return False
 
     def disconnect_port(self) -> None:
+        # Step 1: leave host mode cleanly (sends HOST OFF, stops ReaderThread)
         if self._in_host_mode:
-            self.exit_host_mode()
+            try:
+                if self._reader:
+                    self._reader.stop()
+                    self._reader.join(timeout=1.0)
+                    self._reader = None
+                if self._serial and self._serial.is_open:
+                    self._serial.write(FRAME_HOST_OFF)
+                    self._serial.flush()
+                    time.sleep(0.2)
+                self._in_host_mode = False
+            except Exception as exc:
+                logger.warning("exit host mode during disconnect: %s", exc)
+
+        # Step 2: stop HostModeWorker if running
+        if self._worker:
+            self._worker.stop()
+            self._worker.join(timeout=1.0)
+            self._worker = None
+        self._poll_active = False
+        if self._poll_thread:
+            self._poll_thread.join(timeout=1.0)
+            self._poll_thread = None
+
+        # Step 3: stop ReaderThread if still running
         if self._reader:
             self._reader.stop()
-            self._reader.join(timeout=2.0)
+            self._reader.join(timeout=1.0)
             self._reader = None
-        if self._serial and self._serial.is_open:
-            self._serial.close()
-            logger.info("Serial port closed")
-        self._serial        = None
+
+        # Step 3: close port
+        if self._serial:
+            try:
+                if self._serial.is_open:
+                    self._serial.close()
+                    logger.info("Serial port closed")
+            except Exception as exc:
+                logger.warning("Port close error: %s", exc)
+            finally:
+                self._serial = None
+
         self._in_host_mode  = False
         self._verbose_ready = False
         with self._rx_buf_lock:
@@ -449,22 +571,37 @@ class SerialManager(QObject):
             if output == "OK":
                 self._in_host_mode  = True
                 self._verbose_ready = False
-                self._reader = _ReaderThread(
-                    self._serial, self._on_frame_received,
+
+                # Stop ReaderThread — Worker owns port from here
+                if self._reader:
+                    self._reader.stop()
+                    self._reader.join(timeout=1.0)
+                    self._reader = None
+
+                # Frame adapter: (ctl, payload) → HostFrame → Qt Signal
+                def _frame_adapter(ctl, payload):
+                    try:
+                        frame = _make_host_frame(ctl, payload)
+                        self._on_frame_received(frame)
+                    except Exception as exc:
+                        logger.error("Frame adapter: %s", exc)
+
+                # Start Worker — single owner of serial port in Host Mode
+                from .pk232_hostmode_sub import HostModeWorker as _HMW
+                self._worker = _HMW(
+                    self._serial, _frame_adapter,
                     raw_callback=self._on_raw_data,
-                    host_mode_flag=lambda: self._in_host_mode,
                 )
-                self._reader.start()
+                self._worker.start()
+
+                # Send HPOLL OFF — TNC will push data spontaneously
+                from .pk232_hostmode_sub import HPOLL_OFF
+                self._worker.send(HPOLL_OFF)
+                logger.info("HPOLL OFF sent — TNC pushes data spontaneously")
+
                 self.host_mode_changed.emit(True)
                 self.status_message.emit("Host Mode active ✓")
                 logger.info("Host Mode active!")
-                # Start GG poll — HOST 3 requires periodic polling
-                self._poll_active = True
-                import threading as _t
-                self._poll_thread = _t.Thread(
-                    target=self._poll_loop, daemon=True, name="PK232-Poll")
-                self._poll_thread.start()
-                logger.debug("GG poll started")
             else:
                 logger.error("Subprocess failed: %r / %s", output, stderr)
                 self._reader = _ReaderThread(
@@ -497,12 +634,25 @@ class SerialManager(QObject):
         if not self.is_connected or not self._in_host_mode:
             return
         try:
-            self._poll_active = False
-            time.sleep(0.15)  # let poll thread finish
-            self._write_raw(FRAME_HOST_OFF)
-            time.sleep(0.1)
+            # Stop HostModeWorker
+            if self._worker:
+                self._worker.stop()
+                self._worker.join(timeout=1.0)
+                self._worker = None
+
             self._in_host_mode  = False
             self._verbose_ready = False
+            self._write_raw(FRAME_HOST_OFF)
+            time.sleep(0.2)  # wait for TNC to switch back to verbose
+
+            # Start fresh ReaderThread for verbose mode
+            self._reader = _ReaderThread(
+                self._serial, self._on_frame_received,
+                raw_callback=self._on_raw_data,
+                host_mode_flag=lambda: self._in_host_mode,
+            )
+            self._reader.start()
+
             self.host_mode_changed.emit(False)
             self.status_message.emit("Host Mode off — verbose mode")
             logger.info("Host Mode deactivated")
@@ -527,9 +677,16 @@ class SerialManager(QObject):
     # ------------------------------------------------------------------
 
     def send_command(self, mnemonic: bytes, args: bytes = b"") -> bool:
-        """Send a Host Mode command frame (CTL=$4F)."""
+        """Send a Host Mode command frame via HostModeWorker queue.
+
+        The worker sends each frame and reads the response before
+        processing the next — exactly like pk232_hostmode.py.
+        """
         if not self._check_ready():
             return False
+        if self._worker and self._worker.is_alive():
+            self._worker.send(build_command(mnemonic, args))
+            return True
         return self._write_raw(build_command(mnemonic, args))
 
     def send_channel_command(self, channel: int, mnemonic: bytes, args: bytes = b"") -> bool:
@@ -545,11 +702,67 @@ class SerialManager(QObject):
         return self._write_raw(build_data(channel, data))
 
     def _poll_loop(self) -> None:
-        """Send GG poll every 100ms while in Host Mode."""
+        """GG poll loop — per TRM 4.4.1 (HPOLL ON mode).
+
+        CRITICAL: holds _write_lock for the entire poll+read cycle.
+        This prevents _write_raw() from interleaving bytes with our poll.
+        The Prolific USB chip coalesces writes — interleaving corrupts frames.
+        """
+        port = self._serial
+        if port is None or not port.is_open:
+            return
+
+        logger.debug("GG poll loop started")
+        _buf = bytearray()
+
         while self._poll_active and self._in_host_mode:
-            self._write_raw(FRAME_POLL)
+            if port is None or not port.is_open:
+                break
+
+            try:
+                # Hold lock for entire poll+read cycle — no interleaving allowed
+                with self._write_lock:
+                    port.write(FRAME_POLL)
+                    port.flush()
+
+                    # Read response immediately — TNC responds to each poll
+                    deadline = time.monotonic() + 0.15
+                    while time.monotonic() < deadline:
+                        try:
+                            n = port.in_waiting
+                        except Exception:
+                            break
+                        if n:
+                            chunk = port.read(n)
+                            _buf.extend(chunk)
+                            logger.debug("GG poll RX %d B: %s", len(chunk), chunk.hex())
+                            if 0x17 in chunk:
+                                break
+                            deadline = time.monotonic() + 0.05
+                        else:
+                            time.sleep(0.005)
+
+            except Exception as exc:
+                logger.error("Poll error: %s", exc)
+                break
+
+            # Parse and dispatch complete frames (outside lock)
+            frames, _buf = _extract_frames(_buf)
+            for ctl, payload in frames:
+                # Skip GG $00 — nothing waiting
+                if ctl == 0x4F and (payload[:2] == b'GG' and len(payload) == 3 and payload[2] == 0):
+                    continue
+                try:
+                    frame = _make_host_frame(ctl, payload)
+                    logger.debug("RX poll frame: ctl=0x%02X payload=%s", ctl, payload.hex())
+                    self._on_frame_received(frame)
+                except Exception as exc:
+                    logger.error("Frame dispatch: %s", exc)
+
             time.sleep(0.1)
-        logger.debug("GG poll stopped")
+
+        logger.debug("GG poll loop stopped")
+
 
     def send_poll(self) -> bool:
         """Send HPOLL GG poll frame."""
@@ -625,12 +838,14 @@ class SerialManager(QObject):
         return True
 
     def _on_frame_received(self, frame: HostFrame) -> None:
-        logger.debug("RX %r", frame)
+        if self._in_host_mode:
+            logger.debug("RX %r", frame)
         self.frame_received.emit(frame)
 
     def _on_raw_data(self, data: bytes) -> None:
         """Store raw bytes in shared buffer and forward to UI."""
-        logger.debug("RX (%d B): %s", len(data), data.hex(' '))
+        if self._in_host_mode:
+            logger.debug("RX (%d B): %s", len(data), data.hex(' '))
         with self._rx_buf_lock:
             self._rx_buf.extend(data)
         self._rx_buf_event.set()
