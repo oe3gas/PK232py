@@ -93,6 +93,7 @@ class MorseMode(BaseMode):
 
     name         = "CW/Morse"
     host_command = b'MO'
+    verbose_command = b"MORSE\r\n"
 
     def __init__(
         self,

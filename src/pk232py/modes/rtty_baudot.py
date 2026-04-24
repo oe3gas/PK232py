@@ -106,6 +106,8 @@ class BaudotRTTYMode(BaseMode):
 
     name         = "Baudot RTTY"
     host_command = b'BA'
+    verbose_command = b"BAUDOT\r\n"
+ 
 
     def __init__(
         self,
@@ -117,7 +119,7 @@ class BaudotRTTYMode(BaseMode):
         rxrev:    bool = False,
         txrev:    bool = False,
         xmitok:   bool = True,
-        xlength:  int  = 64,
+        xlength:  int  = 0,
         errchar:  int  = 0x5F,   # '_'
     ) -> None:
         super().__init__()
@@ -152,7 +154,7 @@ class BaudotRTTYMode(BaseMode):
         """Return parameter frames sent after Baudot mode is confirmed."""
         frames = [
             self.rbaud_frame(self.rbaud),
-            self.code_frame(self.code),
+            """self.code_frame(self.code), --- CI does not exist in Host Mode """
             self.alfrtty_frame(self.alfrtty),
             self.usos_frame(self.usos),
             self.xlength_frame(self.xlength),
@@ -277,7 +279,7 @@ class BaudotRTTYMode(BaseMode):
         Args:
             char: ASCII code of replacement char (default 0x5F = '_').
         """
-        return build_command(b'EE', f"${char:02X}".encode('ascii'))
+        return build_command(b'EE', str(char).encode('ascii'))
 
     @staticmethod
     def aab_frame(text: str) -> bytes:

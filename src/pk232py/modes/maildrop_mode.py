@@ -23,6 +23,7 @@ class MailDropMode(HFPacketMode):
 
     name         = "MailDrop"
     host_command = b'PA'          # underlying transport is HF Packet
+    verbose_command = b"PACKET\r\n"
 
     def __init__(
         self,

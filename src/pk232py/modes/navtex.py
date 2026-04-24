@@ -103,6 +103,7 @@ class NAVTEXMode(BaseMode):
 
     name         = "NAVTEX"
     host_command = b'NA'    # NAVTEX direct command per TRM mnemonic table
+    verbose_command = b"NAVTEX\r\n"
 
     def __init__(
         self,

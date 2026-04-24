@@ -70,6 +70,7 @@ class TDMMode(BaseMode):
 
     name         = "TDM"
     host_command = b'TV'
+    verbose_command = b"TDM\r\n"
 
     def __init__(
         self,

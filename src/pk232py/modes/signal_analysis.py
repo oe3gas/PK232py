@@ -73,8 +73,9 @@ class SignalMode(BaseMode):
 
     name         = "Signal"
     host_command = b'SI'
+    verbose_command = b"SIGNAL\r\n"
 
-    def __init__(self, sample: int = 900) -> None:
+def __init__(self, sample: int = 0) -> None:  # 0 = TNC default
         """
         Args:
             sample: Number of samples for analysis.
@@ -90,25 +91,31 @@ class SignalMode(BaseMode):
     def get_activate_frames(self) -> list[bytes]:
         return [build_command(b'SI')]
 
-    def get_init_frames(self) -> list[bytes]:
+def get_init_frames(self) -> list[bytes]:
+    # SA nur senden wenn sample > 0, sonst TNC-Default verwenden
+    if self.sample > 0:
         return [self.sample_frame(self.sample)]
+    return []
 
-    def handle_frame(self, frame: "HostFrame") -> None:
-        """Dispatch incoming frames.
-
-        SIAM results arrive as CMD_RESP ($4F) text frames.
-        """
-        kind = frame.kind
-        if kind == FrameKind.CMD_RESP:
-            text = frame.text.strip()
-            if text:
-                logger.info("SIAM result: %s", text)
-                if self.on_result:
-                    self.on_result(text)
-        elif kind == FrameKind.STATUS_ERR:
-            logger.warning("SIAM status error: %s", frame.data.hex())
-        else:
-            logger.debug("SIAM: unhandled frame %r", frame)
+def handle_frame(self, frame: "HostFrame") -> None:
+    kind = frame.kind
+    if kind == FrameKind.CMD_RESP:
+        text = frame.text.strip()
+        if text and not text.endswith('\x00'):  # kein leerer ACK
+            logger.info("SIAM result: %s", text)
+            if self.on_result:
+                self.on_result(text)
+    elif kind == FrameKind.LINK_MSG:
+        # SIAM liefert Ergebnisse als LINK_MSG ($50)
+        text = frame.text.strip()
+        if text:
+            logger.info("SIAM result (LINK_MSG): %s", text)
+            if self.on_result:
+                self.on_result(text)
+    elif kind == FrameKind.STATUS_ERR:
+        logger.warning("SIAM status error: %s", frame.data.hex())
+    else:
+        logger.debug("SIAM: unhandled frame %r", frame)
 
     @staticmethod
     def sample_frame(count: int) -> bytes:

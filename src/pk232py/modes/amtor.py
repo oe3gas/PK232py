@@ -127,6 +127,7 @@ class AMTORMode(BaseMode):
 
     name         = "AMTOR"
     host_command = b'AM'
+    verbose_command = b"AMTOR\r\n"
 
     def __init__(
         self,
@@ -143,7 +144,7 @@ class AMTORMode(BaseMode):
         rxrev:     bool  = False,
         txrev:     bool  = False,
         xmitok:    bool  = True,
-        xlength:   int   = 64,
+        xlength:   int   = 0,
     ) -> None:
         super().__init__()
         self.myselcal = myselcal.upper()
@@ -387,13 +388,11 @@ class AMTORMode(BaseMode):
         return build_command(b'EA', b'Y' if enabled else b'N')
 
     @staticmethod
-    def errchar_frame(char: int) -> bytes:
-        """ERRCHAR — error replacement character (mnemonic EE).
-
-        Args:
-            char: ASCII code, default 0x5F ('_').
-        """
-        return build_command(b'EE', f"${char:02X}".encode('ascii'))
+def errchar_frame(char: int) -> bytes:
+    """ERRCHAR — error replacement character (mnemonic EE).
+    Dezimalwert, kein $-Prefix im Host Mode.
+    """
+    return build_command(b'EE', str(char).encode('ascii'))
 
     @staticmethod
     def rxrev_frame(enabled: bool) -> bytes:
@@ -466,6 +465,7 @@ class AMTORFECMode(AMTORMode):
 
     name         = "AMTOR FEC"
     host_command = b'AM'          # same as ARQ — FEC is a sub-mode
+    verbose_command = b"AMTOR\r\n"   # gleicher Verbose-Befehl
 
     def __init__(self, **kwargs) -> None:
         kwargs.setdefault("srxall", True)

@@ -5440,6 +5440,7 @@ class AMTORMode(BaseMode):
 
     name         = "AMTOR"
     host_command = b'AM'
+    verbose_command = b"AMTOR\r\n"
 
     def __init__(
         self,
@@ -5456,7 +5457,7 @@ class AMTORMode(BaseMode):
         rxrev:     bool  = False,
         txrev:     bool  = False,
         xmitok:    bool  = True,
-        xlength:   int   = 64,
+        xlength:   int   = 0,
     ) -> None:
         super().__init__()
         self.myselcal = myselcal.upper()
@@ -5700,13 +5701,11 @@ class AMTORMode(BaseMode):
         return build_command(b'EA', b'Y' if enabled else b'N')
 
     @staticmethod
-    def errchar_frame(char: int) -> bytes:
-        """ERRCHAR â€” error replacement character (mnemonic EE).
-
-        Args:
-            char: ASCII code, default 0x5F ('_').
-        """
-        return build_command(b'EE', f"${char:02X}".encode('ascii'))
+def errchar_frame(char: int) -> bytes:
+    """ERRCHAR â€” error replacement character (mnemonic EE).
+    Dezimalwert, kein $-Prefix im Host Mode.
+    """
+    return build_command(b'EE', str(char).encode('ascii'))
 
     @staticmethod
     def rxrev_frame(enabled: bool) -> bytes:
@@ -5779,6 +5778,7 @@ class AMTORFECMode(AMTORMode):
 
     name         = "AMTOR FEC"
     host_command = b'AM'          # same as ARQ â€” FEC is a sub-mode
+    verbose_command = b"AMTOR\r\n"   # gleicher Verbose-Befehl
 
     def __init__(self, **kwargs) -> None:
         kwargs.setdefault("srxall", True)
@@ -6064,6 +6064,7 @@ class MailDropMode(HFPacketMode):
 
     name         = "MailDrop"
     host_command = b'PA'          # underlying transport is HF Packet
+    verbose_command = b"PACKET\r\n"
 
     def __init__(
         self,
@@ -6170,6 +6171,7 @@ class MorseMode(BaseMode):
 
     name         = "CW/Morse"
     host_command = b'MO'
+    verbose_command = b"MORSE\r\n"
 
     def __init__(
         self,
@@ -6444,6 +6446,7 @@ class NAVTEXMode(BaseMode):
 
     name         = "NAVTEX"
     host_command = b'NA'    # NAVTEX direct command per TRM mnemonic table
+    verbose_command = b"NAVTEX\r\n"
 
     def __init__(
         self,
@@ -7306,6 +7309,7 @@ class ASCIIRTTYMode(BaseMode):
 
     name         = "ASCII RTTY"
     host_command = b'AS'
+    verbose_command = b"ASCII\r\n"
 
     def __init__(
         self,
@@ -7315,7 +7319,7 @@ class ASCIIRTTYMode(BaseMode):
         rxrev:      bool = False,
         txrev:      bool = False,
         xmitok:     bool = True,
-        xlength:    int  = 64,
+        xlength:    int  = 0,
         errchar:    int  = 0x5F,
     ) -> None:
         super().__init__()
@@ -7447,7 +7451,7 @@ class ASCIIRTTYMode(BaseMode):
     @staticmethod
     def errchar_frame(char: int) -> bytes:
         """ERRCHAR â€” error replacement character (mnemonic EE)."""
-        return build_command(b'EE', f"${char:02X}".encode('ascii'))
+        return build_command(b'EE', str(char).encode('ascii'))
 
 
 # === E:\PK232\pk232py_repo\src\pk232py\modes\rtty_baudot.py ===
@@ -7559,6 +7563,8 @@ class BaudotRTTYMode(BaseMode):
 
     name         = "Baudot RTTY"
     host_command = b'BA'
+    verbose_command = b"BAUDOT\r\n"
+ 
 
     def __init__(
         self,
@@ -7605,7 +7611,7 @@ class BaudotRTTYMode(BaseMode):
         """Return parameter frames sent after Baudot mode is confirmed."""
         frames = [
             self.rbaud_frame(self.rbaud),
-            self.code_frame(self.code),
+            """self.code_frame(self.code), --- CI does not exist in Host Mode """
             self.alfrtty_frame(self.alfrtty),
             self.usos_frame(self.usos),
             self.xlength_frame(self.xlength),
@@ -7730,7 +7736,7 @@ class BaudotRTTYMode(BaseMode):
         Args:
             char: ASCII code of replacement char (default 0x5F = '_').
         """
-        return build_command(b'EE', f"${char:02X}".encode('ascii'))
+        return build_command(b'EE', str(char).encode('ascii'))
 
     @staticmethod
     def aab_frame(text: str) -> bytes:
@@ -7822,8 +7828,9 @@ class SignalMode(BaseMode):
 
     name         = "Signal"
     host_command = b'SI'
+    verbose_command = b"SIGNAL\r\n"
 
-    def __init__(self, sample: int = 900) -> None:
+def __init__(self, sample: int = 0) -> None:  # 0 = TNC default
         """
         Args:
             sample: Number of samples for analysis.
@@ -7839,25 +7846,31 @@ class SignalMode(BaseMode):
     def get_activate_frames(self) -> list[bytes]:
         return [build_command(b'SI')]
 
-    def get_init_frames(self) -> list[bytes]:
+def get_init_frames(self) -> list[bytes]:
+    # SA nur senden wenn sample > 0, sonst TNC-Default verwenden
+    if self.sample > 0:
         return [self.sample_frame(self.sample)]
+    return []
 
-    def handle_frame(self, frame: "HostFrame") -> None:
-        """Dispatch incoming frames.
-
-        SIAM results arrive as CMD_RESP ($4F) text frames.
-        """
-        kind = frame.kind
-        if kind == FrameKind.CMD_RESP:
-            text = frame.text.strip()
-            if text:
-                logger.info("SIAM result: %s", text)
-                if self.on_result:
-                    self.on_result(text)
-        elif kind == FrameKind.STATUS_ERR:
-            logger.warning("SIAM status error: %s", frame.data.hex())
-        else:
-            logger.debug("SIAM: unhandled frame %r", frame)
+def handle_frame(self, frame: "HostFrame") -> None:
+    kind = frame.kind
+    if kind == FrameKind.CMD_RESP:
+        text = frame.text.strip()
+        if text and not text.endswith('\x00'):  # kein leerer ACK
+            logger.info("SIAM result: %s", text)
+            if self.on_result:
+                self.on_result(text)
+    elif kind == FrameKind.LINK_MSG:
+        # SIAM liefert Ergebnisse als LINK_MSG ($50)
+        text = frame.text.strip()
+        if text:
+            logger.info("SIAM result (LINK_MSG): %s", text)
+            if self.on_result:
+                self.on_result(text)
+    elif kind == FrameKind.STATUS_ERR:
+        logger.warning("SIAM status error: %s", frame.data.hex())
+    else:
+        logger.debug("SIAM: unhandled frame %r", frame)
 
     @staticmethod
     def sample_frame(count: int) -> bytes:
@@ -7942,6 +7955,7 @@ class TDMMode(BaseMode):
 
     name         = "TDM"
     host_command = b'TV'
+    verbose_command = b"TDM\r\n"
 
     def __init__(
         self,

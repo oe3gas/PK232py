@@ -70,6 +70,7 @@ class ASCIIRTTYMode(BaseMode):
 
     name         = "ASCII RTTY"
     host_command = b'AS'
+    verbose_command = b"ASCII\r\n"
 
     def __init__(
         self,
@@ -79,7 +80,7 @@ class ASCIIRTTYMode(BaseMode):
         rxrev:      bool = False,
         txrev:      bool = False,
         xmitok:     bool = True,
-        xlength:    int  = 64,
+        xlength:    int  = 0,
         errchar:    int  = 0x5F,
     ) -> None:
         super().__init__()
@@ -211,4 +212,4 @@ class ASCIIRTTYMode(BaseMode):
     @staticmethod
     def errchar_frame(char: int) -> bytes:
         """ERRCHAR — error replacement character (mnemonic EE)."""
-        return build_command(b'EE', f"${char:02X}".encode('ascii'))
+        return build_command(b'EE', str(char).encode('ascii'))
