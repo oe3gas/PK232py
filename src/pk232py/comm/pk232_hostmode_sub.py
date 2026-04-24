@@ -118,6 +118,24 @@ class HostModeWorker(threading.Thread):
         self._stop.set()
         self._queue.put(None)
 
+    def wait_for_ack(self, mnemonic: bytes, timeout: float = 2.0) -> bool:
+        """Block until a CMD_RESP ACK for mnemonic is received, or timeout.
+        Used by serial_manager to wait for HP N ACK before proceeding.
+        """
+        import threading as _t
+        event = _t.Event()
+        original_cb = self._on_frame
+
+        def _watch(ctl, payload):
+            original_cb(ctl, payload)
+            if ctl == 0x4F and payload[:2] == mnemonic:
+                event.set()
+
+        self._on_frame = _watch
+        result = event.wait(timeout=timeout)
+        self._on_frame = original_cb
+        return result
+
     def run(self) -> None:
         logger.debug("HostModeWorker started")
         port = self._port
@@ -194,5 +212,9 @@ if __name__ == "__main__":
     port.flush()
     r = read_until(port, [HPOLL_ACK, HPOLL_Y], timeout=2.0)
 
-    print("OK" if HPOLL_ACK in r else "FAIL:" + r.hex())
+    # Accept both HP /bin/sh0 (ACK) and HP Y (already in HPOLL ON) as success
+    if HPOLL_ACK in r or HPOLL_Y in r:
+        print("OK")
+    else:
+        print("FAIL:" + r.hex())
     port.close()

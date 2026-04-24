@@ -445,6 +445,8 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(main_container)
         self._stack.setCurrentIndex(0)     # start in Host Mode view
+        self._wire_mode_callbacks()
+        self._tx_input.setFocus()
 
     def _build_statusbar(self) -> None:
         sb = self.statusBar()
@@ -650,8 +652,12 @@ class MainWindow(QMainWindow):
         self._log_monitor("[SYS] TNC in verbose mode")
         self._sb_mode.setText("Mode: VERBOSE")
         self._stack.setCurrentIndex(1)
+        self._vt_input.setFocus()
         self._vt_display.clear()
         self._vt_append("[SYS] TNC ready in verbose mode\n")
+        # Enable mode selector — verbose-only modes (e.g. PACTOR) selectable here
+        self._mode_combo.setEnabled(True)
+        self._mode_combo.setFocus()
 
         if self._connect_mode == "verbose":
             self._vt_append("[SYS] Verbose terminal ready — type commands below\n")
@@ -695,7 +701,9 @@ class MainWindow(QMainWindow):
 
     def _on_mode_selected(self, name: str) -> None:
         """Called when the user selects a mode from the toolbar ComboBox."""
-        if not name or not self._serial.is_host_mode:
+        if not name:
+            return
+        if not self._serial.is_connected:
             return
         # Avoid spurious trigger during programmatic updates
         if name == self._modes.current_mode_name:
@@ -718,6 +726,9 @@ class MainWindow(QMainWindow):
         self._mode_combo.blockSignals(False)
         # Wire active mode callbacks → UI
         self._wire_mode_callbacks()
+        # Return focus to input field
+        if self._serial.is_host_mode:
+            self._tx_input.setFocus()
 
     def _wire_mode_callbacks(self) -> None:
         """Connect the active mode's data callbacks to the RX display."""
@@ -1156,10 +1167,13 @@ class MainWindow(QMainWindow):
 
     def _update_host_mode_ui(self, active: bool) -> None:
         """Switch view and enable mode selector when Host Mode is active."""
-        self._mode_combo.setEnabled(active)
+        # Enable combo in Host Mode AND in verbose when connected
+        # (for verbose-only modes like PACTOR)
+        self._mode_combo.setEnabled(active or self._serial.is_connected)
         if active:
             self._sb_mode.setText("Mode: HOST")
             self._stack.setCurrentIndex(0)
+            self._wire_mode_callbacks()
         else:
             self._sb_mode.setText("Mode: VERBOSE")
             self._stack.setCurrentIndex(1)
@@ -1176,7 +1190,23 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _log_terminal(self, text: str) -> None:
-        self._terminal.append(text)
+        """Append text to terminal without forced newline per call.
+ 
+        QTextEdit.append() adds a newline after each call — wrong for
+        streaming RTTY where each character arrives as a separate frame.
+        insertPlainText() appends directly at cursor position.
+        \r is stripped — only \n causes a real line break.
+        """
+        # Strip \r — QTextEdit handles \n for line breaks
+        text = text.replace('\r', '')
+        if not text:
+            return
+        cursor = self._terminal.textCursor()
+        from PyQt6.QtGui import QTextCursor
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self._terminal.setTextCursor(cursor)
+        self._terminal.insertPlainText(text)
+        self._terminal.ensureCursorVisible()
 
     def _log_monitor(self, text: str, raw: bytes = b"") -> None:
         """Append text to monitor. If raw bytes given, show per selected mode."""

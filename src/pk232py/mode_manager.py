@@ -139,7 +139,10 @@ class ModeManager(QObject):
             self.mode_switch_failed.emit(msg)
             return False
 
-        if not self._serial.is_host_mode:
+        # Modes with verbose_command can be activated in verbose mode too
+        cls_check = MODE_BY_NAME.get(name)
+        needs_host = not (cls_check and getattr(cls_check, 'verbose_command', None))
+        if needs_host and not self._serial.is_host_mode:
             msg = "Cannot switch mode: Host Mode not active"
             logger.warning(msg)
             self.mode_switch_failed.emit(msg)
@@ -164,13 +167,32 @@ class ModeManager(QObject):
         logger.info("Switching to mode: %s", name)
         self.status_message.emit(f"Switching to {name}…")
         self._pending_mode = new_mode
-
-        for frame in new_mode.get_activate_frames():
-            self._serial.send_command(
-                frame[2:4],          # mnemonic bytes from built frame
-                frame[4:-1],         # args bytes (may be empty)
-            )
-
+ 
+        activate_frames = new_mode.get_activate_frames()
+        verbose_cmd = getattr(new_mode, 'verbose_command', None)
+ 
+        if activate_frames:
+            # Normal Host Mode activation
+            for frame in activate_frames:
+                self._serial.send_command(
+                    frame[2:4],
+                    frame[4:-1],
+                )
+        elif verbose_cmd:
+            # Verbose Mode activation (e.g. PACTOR)
+            if self._serial.is_host_mode:
+                # In Host Mode: exit first, send verbose cmd, re-enter
+                logger.info("Verbose-only mode %s: exiting Host Mode first", name)
+                self._serial.exit_host_mode()
+                import time as _t
+                _t.sleep(0.5)
+                self._serial.write_verbose(verbose_cmd)
+                logger.info("Verbose cmd sent: %r", verbose_cmd)
+            else:
+                # Already in verbose mode
+                self._serial.write_verbose(verbose_cmd)
+                logger.info("Verbose cmd sent: %r", verbose_cmd)
+ 
         # Schedule init frame upload after short delay
         self._init_timer.start(_ACTIVATE_DELAY_MS)
         return True

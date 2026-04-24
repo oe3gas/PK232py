@@ -520,10 +520,15 @@ class SerialManager(QObject):
         return True
 
     def _enter_host_mode_thread(self) -> None:
-        """Enter Host Mode via subprocess (pk232_hostmode_sub.py).
+        """Enter Host Mode — exakt wie pk232_minimal_qt.py.
 
-        The subprocess is a plain Python script with no PyQt6/threading.
-        Proven to work on real PK-232MBX v7.1 hardware.
+        Bewiesene Sequenz:
+          1. ReaderThread stoppen + Port schliessen
+          2. Subprocess: HOST 3 + HPOLL Y → OK
+          3. Port neu öffnen (frisches Serial Objekt!)
+          4. Worker starten
+          5. HP N senden + 500ms warten
+          6. host_mode_changed emittieren
         """
         import subprocess, sys, os
 
@@ -534,7 +539,6 @@ class SerialManager(QObject):
             port_name = self._serial.port
             baudrate  = self._serial.baudrate
 
-            # Find pk232_hostmode_sub.py next to this file
             sub_script = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
                 "pk232_hostmode_sub.py"
@@ -551,7 +555,7 @@ class SerialManager(QObject):
             logger.debug("Port closed for subprocess")
             time.sleep(0.3)
 
-            # Run subprocess
+            # Run subprocess — proven Host Mode entry sequence
             result = subprocess.run(
                 [sys.executable, sub_script, port_name, str(baudrate)],
                 capture_output=True, text=True, timeout=15
@@ -562,48 +566,9 @@ class SerialManager(QObject):
             if stderr:
                 logger.error("Subprocess stderr: %s", stderr)
 
-            # Reopen port
-            time.sleep(0.3)
-            self._serial.open()
-            time.sleep(0.1)
-            logger.debug("Port reopened")
-
-            if output == "OK":
-                self._in_host_mode  = True
-                self._verbose_ready = False
-
-                # Stop ReaderThread — Worker owns port from here
-                if self._reader:
-                    self._reader.stop()
-                    self._reader.join(timeout=1.0)
-                    self._reader = None
-
-                # Frame adapter: (ctl, payload) → HostFrame → Qt Signal
-                def _frame_adapter(ctl, payload):
-                    try:
-                        frame = _make_host_frame(ctl, payload)
-                        self._on_frame_received(frame)
-                    except Exception as exc:
-                        logger.error("Frame adapter: %s", exc)
-
-                # Start Worker — single owner of serial port in Host Mode
-                from .pk232_hostmode_sub import HostModeWorker as _HMW
-                self._worker = _HMW(
-                    self._serial, _frame_adapter,
-                    raw_callback=self._on_raw_data,
-                )
-                self._worker.start()
-
-                # Send HPOLL OFF — TNC will push data spontaneously
-                from .pk232_hostmode_sub import HPOLL_OFF
-                self._worker.send(HPOLL_OFF)
-                logger.info("HPOLL OFF sent — TNC pushes data spontaneously")
-
-                self.host_mode_changed.emit(True)
-                self.status_message.emit("Host Mode active ✓")
-                logger.info("Host Mode active!")
-            else:
+            if output != "OK":
                 logger.error("Subprocess failed: %r / %s", output, stderr)
+                self._serial.open()
                 self._reader = _ReaderThread(
                     self._serial, self._on_frame_received,
                     raw_callback=self._on_raw_data,
@@ -611,6 +576,52 @@ class SerialManager(QObject):
                 )
                 self._reader.start()
                 self.status_message.emit(f"Host Mode error: {output or stderr}")
+                return
+
+            # Reopen port — new Serial object like pk232_minimal_qt.py
+            time.sleep(0.3)
+            import serial as _serial
+            new_port = _serial.Serial(
+                port     = port_name,
+                baudrate = baudrate,
+                bytesize = 8,
+                parity   = 'N',
+                stopbits = 1,
+                timeout  = 0.1,
+                xonxoff  = False,
+                rtscts   = False,
+            )
+            # Replace the internal serial object with the fresh one
+            self._serial = new_port
+            logger.debug("Port reopened (fresh object)")
+
+            self._in_host_mode  = True
+            self._verbose_ready = False
+
+            # Frame adapter: (ctl, payload) → HostFrame → Qt Signal
+            def _frame_adapter(ctl, payload):
+                try:
+                    frame = _make_host_frame(ctl, payload)
+                    self._on_frame_received(frame)
+                except Exception as exc:
+                    logger.error("Frame adapter: %s", exc)
+
+            # Start Worker — exakt wie pk232_minimal_qt.py
+            from .pk232_hostmode_sub import HostModeWorker as _HMW, HPOLL_OFF
+            self._worker = _HMW(
+                self._serial, _frame_adapter,
+                raw_callback=self._on_raw_data,
+            )
+            self._worker.start()
+
+            # HP N senden + 500ms warten — bewiesene Sequenz
+            self._worker.send(HPOLL_OFF)
+            time.sleep(0.5)
+            logger.info("HPOLL OFF sent — TNC pushes data spontaneously")
+
+            self.host_mode_changed.emit(True)
+            self.status_message.emit("Host Mode active ✓")
+            logger.info("Host Mode active!")
 
         except Exception as exc:
             logger.error("enter_host_mode failed: %s", exc)
@@ -634,7 +645,12 @@ class SerialManager(QObject):
         if not self.is_connected or not self._in_host_mode:
             return
         try:
-            # Stop HostModeWorker
+            # Send HOST OFF via Worker — guarantees serialization after pending TX
+            if self._worker and self._worker.is_alive():
+                self._worker.send(FRAME_HOST_OFF)
+                time.sleep(0.5)  # let worker send HOST OFF and read response
+
+            # Stop Worker
             if self._worker:
                 self._worker.stop()
                 self._worker.join(timeout=1.0)
@@ -642,7 +658,6 @@ class SerialManager(QObject):
 
             self._in_host_mode  = False
             self._verbose_ready = False
-            self._write_raw(FRAME_HOST_OFF)
             time.sleep(0.2)  # wait for TNC to switch back to verbose
 
             # Start fresh ReaderThread for verbose mode

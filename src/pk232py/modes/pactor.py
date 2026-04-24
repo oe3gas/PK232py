@@ -98,8 +98,9 @@ class PACTORMode(BaseMode):
         Called when the TNC acknowledges a sent data block ($5F $00).
     """
 
-    name         = "PACTOR"
-    host_command = b'PT'
+    name            = "PACTOR"
+    host_command    = b''              # kein Host Mode Mnemonic auf PK-232MBX v7.1
+    verbose_command = b"PACTOR\r\n"   # Aktivierung nur im Verbose Mode
 
     def __init__(self, myptcall: str = "") -> None:
         """
@@ -122,11 +123,12 @@ class PACTORMode(BaseMode):
     # ------------------------------------------------------------------
 
     def get_activate_frames(self) -> list[bytes]:
-        """Return the frame to switch the TNC into PACTOR standby.
-
-        Mnemonic PT (TRM Section 4.2.2 / STABO Ch. 12).
+        """PACTOR has no Host Mode mnemonic on PK-232MBX v7.1.
+ 
+        Activation via verbose_command = b"PACTOR\\r\\n".
+        ModeManager handles verbose activation separately.
         """
-        return [build_command(b'PT')]
+        return []
 
     def get_init_frames(self) -> list[bytes]:
         """Return parameter frames sent after PACTOR mode is confirmed.
