@@ -52,6 +52,7 @@ class VHFPacketMode(HFPacketMode):
 
     name         = "VHF Packet"
     host_command = b'PA'   # same mnemonic as HF Packet
+    verbose_command = b"VHF\r\n"
 
     def get_activate_frames(self) -> list[bytes]:
         """Return frames to switch TNC to VHF Packet mode.

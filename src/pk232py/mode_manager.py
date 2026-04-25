@@ -171,7 +171,7 @@ class ModeManager(QObject):
         activate_frames = new_mode.get_activate_frames()
         verbose_cmd = getattr(new_mode, 'verbose_command', None)
  
-        if activate_frames:
+        if activate_frames and self._serial.is_host_mode:
             # Normal Host Mode activation
             for frame in activate_frames:
                 self._serial.send_command(

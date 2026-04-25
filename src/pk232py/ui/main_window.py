@@ -1,20 +1,21 @@
+# === E:\PK232\pk232py_repo\src\pk232py\ui\main_window.py ===
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
-# Copyright (C) 2026  OE3GAS  —  GPL v2
+# Copyright (C) 2026  OE3GAS  Ã¢â‚¬â€  GPL v2
 """Main window of PK232PY.
 
 Layout:
-  ┌─────────────────────────────────────────────────┐
-  │  Menu: File | TNC | Parameters | Configure       │
-  ├─────────────────────────────────────────────────┤
-  │  Toolbar: [Connect] [Disconnect] [Host Mode]     │
-  │           [Mode: HF Packet ▼]                    │
-  ├───────────────────────┬─────────────────────────┤
-  │                       │                         │
-  │   RX / Terminal panel │   Monitor panel          │
-  │                       │   (toggleable)           │
-  ├───────────────────────┴─────────────────────────┤
-  │  Status: Port | Baud | Mode | UTC time           │
-  └─────────────────────────────────────────────────┘
+  Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
+  Ã¢â€â€š  Menu: File | TNC | Parameters | Configure       Ã¢â€â€š
+  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¤
+  Ã¢â€â€š  Toolbar: [Connect] [Disconnect] [Host Mode]     Ã¢â€â€š
+  Ã¢â€â€š           [Mode: HF Packet Ã¢â€“Â¼]                    Ã¢â€â€š
+  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¤
+  Ã¢â€â€š                       Ã¢â€â€š                         Ã¢â€â€š
+  Ã¢â€â€š   RX / Terminal panel Ã¢â€â€š   Monitor panel          Ã¢â€â€š
+  Ã¢â€â€š                       Ã¢â€â€š   (toggleable)           Ã¢â€â€š
+  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â´Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¤
+  Ã¢â€â€š  Status: Port | Baud | Mode | UTC time           Ã¢â€â€š
+  Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ
 """
 
 from __future__ import annotations
@@ -93,7 +94,7 @@ class MainWindow(QMainWindow):
     def _build_menubar(self) -> None:
         mb = self.menuBar()
 
-        # ── File ──────────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ File Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         file_menu = mb.addMenu("&File")
 
         act_load = QAction("&Load Settings...", self)
@@ -115,7 +116,7 @@ class MainWindow(QMainWindow):
         act_exit.triggered.connect(self.close)
         file_menu.addAction(act_exit)
 
-        # ── TNC ───────────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ TNC Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         tnc_menu = mb.addMenu("&TNC")
 
         self._act_connect_verbose = QAction("Connect + Enter &Verbose Mode...", self)
@@ -153,7 +154,7 @@ class MainWindow(QMainWindow):
         self._act_recovery.triggered.connect(self._on_recovery)
         tnc_menu.addAction(self._act_recovery)
 
-        # ── View ──────────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ View Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         view_menu = mb.addMenu("&View")
 
         self._act_monitor = QAction("Monitor Window", self)
@@ -172,7 +173,7 @@ class MainWindow(QMainWindow):
         self._act_serial_status.triggered.connect(self._on_toggle_serial_status)
         view_menu.addAction(self._act_serial_status)
 
-        # ── Parameters ────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Parameters Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         param_menu = mb.addMenu("&Parameters")
         # Implemented dialogs
         _implemented = {"HF Packet...", "Misc...", "PACTOR...", "AMTOR / NAVTEX / TDM...", "BAUDOT / ASCII / CW...", "MailDrop..."}
@@ -189,7 +190,7 @@ class MainWindow(QMainWindow):
             act.triggered.connect(slot)
             param_menu.addAction(act)
 
-        # ── Configure ─────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Configure Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         cfg_menu = mb.addMenu("&Configure")
 
         act_tnc_cfg = QAction("TNC &Configuration...", self)
@@ -218,21 +219,21 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(tb)
 
-        self._tb_connect = tb.addAction("⚡ Connect")
+        self._tb_connect = tb.addAction("Ã¢Å¡Â¡ Connect")
         self._tb_connect.setToolTip("Connect to TNC (Ctrl+T)")
         self._tb_connect.triggered.connect(self._on_connect_verbose)
 
-        self._tb_disconnect = tb.addAction("✕ Disconnect")
+        self._tb_disconnect = tb.addAction("Ã¢Å“â€¢ Disconnect")
         self._tb_disconnect.setToolTip("Disconnect (Ctrl+D)")
         self._tb_disconnect.triggered.connect(self._on_disconnect)
 
         tb.addSeparator()
 
-        self._tb_host_on = tb.addAction("⬆ Host Mode")
+        self._tb_host_on = tb.addAction("Ã¢Â¬â€  Host Mode")
         self._tb_host_on.setToolTip("Enter Host Mode")
         self._tb_host_on.triggered.connect(self._on_host_mode_enter)
 
-        self._tb_recovery = tb.addAction("⟳ Recovery")
+        self._tb_recovery = tb.addAction("Ã¢Å¸Â³ Recovery")
         self._tb_recovery.setToolTip("Host Mode Recovery")
         self._tb_recovery.triggered.connect(self._on_recovery)
 
@@ -254,10 +255,10 @@ class MainWindow(QMainWindow):
           - Page 0: Host Mode view (RX display + TX input + Monitor)
           - Page 1: Verbose terminal view (terminal log + command input)
         """
-        # ── Stack: switches between Host Mode and Verbose Terminal ────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Stack: switches between Host Mode and Verbose Terminal Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         self._stack = QStackedWidget()
 
-        # ── Page 0: Host Mode view ────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Page 0: Host Mode view Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         host_page = QWidget()
         host_layout = QVBoxLayout(host_page)
         host_layout.setContentsMargins(0, 0, 0, 0)
@@ -279,7 +280,7 @@ class MainWindow(QMainWindow):
             "background-color:#1e1e1e; color:#d4d4d4; border:none;"
         )
         self._rx_display.setPlaceholderText(
-            "TNC output — received data and responses appear here."
+            "TNC output Ã¢â‚¬â€ received data and responses appear here."
         )
         vs.addWidget(self._rx_display)
 
@@ -295,7 +296,7 @@ class MainWindow(QMainWindow):
             "background-color:#1e1e1e; color:#d4d4d4; border:1px solid #444;"
         )
         self._tx_input.setPlaceholderText(
-            "Enter command… (Enter = send, Shift+Enter = new line)"
+            "Enter commandÃ¢â‚¬Â¦ (Enter = send, Shift+Enter = new line)"
         )
         self._tx_input.setFixedHeight(60)
         self._tx_input.installEventFilter(self)
@@ -363,7 +364,7 @@ class MainWindow(QMainWindow):
             "background-color:#0d1117; color:#8b949e; border:none;"
         )
         self._monitor.setPlaceholderText(
-            "Monitor — decoded frames / raw / hex"
+            "Monitor Ã¢â‚¬â€ decoded frames / raw / hex"
         )
         mc_layout.addWidget(self._monitor)
 
@@ -377,7 +378,7 @@ class MainWindow(QMainWindow):
         host_layout.addWidget(outer)
         self._stack.addWidget(host_page)   # index 0
 
-        # ── Page 1: Verbose Terminal view ─────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Page 1: Verbose Terminal view Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         vterm_page = QWidget()
         vt_layout  = QVBoxLayout(vterm_page)
         vt_layout.setContentsMargins(0, 0, 0, 0)
@@ -391,7 +392,7 @@ class MainWindow(QMainWindow):
             "background-color:#0c0c0c; color:#cccccc; border:none;"
         )
         self._vt_display.setPlaceholderText(
-            "TNC verbose mode — echo and responses appear here."
+            "TNC verbose mode Ã¢â‚¬â€ echo and responses appear here."
         )
         vt_layout.addWidget(self._vt_display, stretch=1)
 
@@ -419,7 +420,7 @@ class MainWindow(QMainWindow):
         self._vt_input.setStyleSheet(
             "background-color:#1a1a1a; color:#d4d4d4; border:none;"
         )
-        self._vt_input.setPlaceholderText("type command, Enter to send…")
+        self._vt_input.setPlaceholderText("type command, Enter to sendÃ¢â‚¬Â¦")
         self._vt_input.setFixedHeight(28)
         self._vt_input.installEventFilter(self)
         cmd_layout.addWidget(self._vt_input, stretch=1)
@@ -473,7 +474,7 @@ class MainWindow(QMainWindow):
         self._utc_timer.start(1000)
         self._update_utc_clock()
 
-        # ── Serial signal status bars (hidden by default) ─────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Serial signal status bars (hidden by default) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         # Container widget holding both rows
         self._serial_status_bar = QWidget(self)
         ssl_outer = QVBoxLayout(self._serial_status_bar)
@@ -491,7 +492,7 @@ class MainWindow(QMainWindow):
             )
             return lbl
 
-        # ── Row 1: Hardware signals ────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Row 1: Hardware signals Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         row1 = QWidget()
         row1.setStyleSheet("background:transparent;")
         r1l = QHBoxLayout(row1)
@@ -516,7 +517,7 @@ class MainWindow(QMainWindow):
         r1l.addStretch()
         ssl_outer.addWidget(row1)
 
-        # ── Row 2: Program/TNC status ──────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Row 2: Program/TNC status Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         row2 = QWidget()
         row2.setStyleSheet("background:transparent;")
         r2l = QHBoxLayout(row2)
@@ -531,8 +532,8 @@ class MainWindow(QMainWindow):
         self._ssl_host = _sig_label("HOST")
         self._ssl_ptt  = _sig_label("PTT")
         self._ssl_con  = _sig_label("CON")
-        self._ssl_rx   = _sig_label("RX ▼")
-        self._ssl_tx   = _sig_label("TX ▲")
+        self._ssl_rx   = _sig_label("RX Ã¢â€“Â¼")
+        self._ssl_tx   = _sig_label("TX Ã¢â€“Â²")
 
         for w in [self._ssl_host, self._ssl_ptt,
                   self._ssl_con,  self._ssl_rx, self._ssl_tx]:
@@ -574,7 +575,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _connect_signals(self) -> None:
-        # SerialManager → MainWindow
+        # SerialManager Ã¢â€ â€™ MainWindow
         self._serial.connection_changed.connect(self._update_connection_ui)
         self._serial.host_mode_changed.connect(self._update_host_mode_ui)
         self._serial.status_message.connect(self._on_status_message)
@@ -582,17 +583,17 @@ class MainWindow(QMainWindow):
         self._serial.params_upload_required.connect(self._on_params_upload_required)
         self._serial.raw_data_received.connect(self._on_raw_data_received)
 
-        # SerialManager → ModeManager (frame dispatch)
+        # SerialManager Ã¢â€ â€™ ModeManager (frame dispatch)
         self._serial.frame_received.connect(self._modes.on_frame)
         self._serial.frame_received.connect(self._on_frame_received)
 
-        # ModeManager → MainWindow
+        # ModeManager Ã¢â€ â€™ MainWindow
         self._modes.mode_changed.connect(self._on_mode_changed)
         self._modes.mode_switch_failed.connect(self._on_mode_switch_failed)
         self._modes.status_message.connect(self._on_status_message)
 
     # ------------------------------------------------------------------
-    # Slots — TNC connection
+    # Slots Ã¢â‚¬â€ TNC connection
     # ------------------------------------------------------------------
 
     def _open_connect_dialog(self) -> bool:
@@ -636,7 +637,7 @@ class MainWindow(QMainWindow):
         self._serial.init_tnc()
 
     def _on_connect(self) -> None:
-        """Legacy — defaults to verbose mode."""
+        """Legacy Ã¢â‚¬â€ defaults to verbose mode."""
         self._on_connect_verbose()
 
     def _on_disconnect(self) -> None:
@@ -646,8 +647,9 @@ class MainWindow(QMainWindow):
     def _on_verbose_mode_ready(self) -> None:
         """Called when TNC is in verbose mode.
 
-        If _connect_mode == "verbose": stay in verbose terminal, no Host Mode.
-        If _connect_mode == "host":    upload params and enter Host Mode.
+        Always uploads parameters from INI to TNC.
+        If _connect_mode == "host": additionally enters Host Mode after upload.
+        If _connect_mode == "verbose": stays in verbose terminal after upload.
         """
         self._log_monitor("[SYS] TNC in verbose mode")
         self._sb_mode.setText("Mode: VERBOSE")
@@ -655,30 +657,38 @@ class MainWindow(QMainWindow):
         self._vt_input.setFocus()
         self._vt_display.clear()
         self._vt_append("[SYS] TNC ready in verbose mode\n")
-        # Enable mode selector — verbose-only modes (e.g. PACTOR) selectable here
+        # Enable mode selector -- all modes with verbose_command selectable here
         self._mode_combo.setEnabled(True)
-        self._mode_combo.setFocus()
 
-        if self._connect_mode == "verbose":
-            self._vt_append("[SYS] Verbose terminal ready — type commands below\n")
-        else:
-            import threading
-            def _upload():
-                self._vt_append("[SYS] Uploading parameters...\n")
-                uploader = ParamsUploader(self._serial, self._app_config)
-                n = uploader.upload()
-                self._log_monitor(f"[SYS] {n} parameters uploaded")
+        # Always upload parameters from INI to TNC
+        import threading
+        connect_mode = self._connect_mode
+        def _upload():
+            self._vt_append("[SYS] Uploading parameters...\n")
+            uploader = ParamsUploader(
+                self._serial,
+                self._app_config,
+                echo_callback=self._vt_append,
+            )
+            n = uploader.upload()
+            self._log_monitor(f"[SYS] {n} parameters uploaded")
+            if connect_mode == "host":
                 self._vt_append(
-                    f"[SYS] {n} parameters uploaded — entering Host Mode...\n"
+                    f"[SYS] {n} parameters uploaded -- entering Host Mode...\n"
                 )
                 self._serial.enter_host_mode()
-            threading.Thread(
-                target=_upload, daemon=True, name="PK232-ParamUpload"
-            ).start()
+            else:
+                self._vt_append(
+                    f"[SYS] {n} parameters uploaded -- verbose terminal ready\n"
+                )
+                self._vt_input.setFocus()
+        threading.Thread(
+            target=_upload, daemon=True, name="PK232-ParamUpload"
+        ).start()
 
     def _on_params_upload_required(self) -> None:
-        """Called when TNC rebooted — same as verbose_mode_ready but with log message."""
-        self._log_monitor("[SYS] TNC rebooted — re-uploading parameters...")
+        """Called when TNC rebooted Ã¢â‚¬â€ same as verbose_mode_ready but with log message."""
+        self._log_monitor("[SYS] TNC rebooted Ã¢â‚¬â€ re-uploading parameters...")
         self._on_verbose_mode_ready()
 
     def _on_host_mode_enter(self) -> None:
@@ -696,7 +706,7 @@ class MainWindow(QMainWindow):
             self._log_monitor("[SYS] Host Mode recovery sent")
 
     # ------------------------------------------------------------------
-    # Slots — mode selection
+    # Slots Ã¢â‚¬â€ mode selection
     # ------------------------------------------------------------------
 
     def _on_mode_selected(self, name: str) -> None:
@@ -724,24 +734,26 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self._mode_combo.setCurrentIndex(idx)
         self._mode_combo.blockSignals(False)
-        # Wire active mode callbacks → UI
+        # Wire active mode callbacks Ã¢â€ â€™ UI
         self._wire_mode_callbacks()
         # Return focus to input field
         if self._serial.is_host_mode:
             self._tx_input.setFocus()
+        else:
+            self._vt_input.setFocus()
 
     def _wire_mode_callbacks(self) -> None:
         """Connect the active mode's data callbacks to the RX display."""
         mode = self._modes.current_mode
         if mode is None:
             return
-        # Generic: on_data_received → RX display
+        # Generic: on_data_received Ã¢â€ â€™ RX display
         if hasattr(mode, "on_data_received"):
             mode.on_data_received = self._on_mode_data_received
         # Echo ($2F): show in RX display too
         if hasattr(mode, "on_echo_received"):
             mode.on_echo_received = self._on_mode_echo_received
-        # Link messages → RX display
+        # Link messages Ã¢â€ â€™ RX display
         if hasattr(mode, "on_link_message"):
             mode.on_link_message = self._on_mode_link_message
         logger.debug("Mode callbacks wired for: %s", mode.name)
@@ -782,7 +794,7 @@ class MainWindow(QMainWindow):
                             f"Could not switch mode:\n{reason}")
 
     # ------------------------------------------------------------------
-    # Slots — parameter dialogs (placeholders)
+    # Slots Ã¢â‚¬â€ parameter dialogs (placeholders)
     # ------------------------------------------------------------------
 
     def _on_tnc_config(self) -> None:
@@ -953,7 +965,7 @@ class MainWindow(QMainWindow):
         connected = self._serial.is_connected
         self._set_sig(self._ssl_connected, connected)
 
-        # ── Row 1: Hardware signals ────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Row 1: Hardware signals Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if not connected:
             for lbl in [self._ssl_cts, self._ssl_dsr, self._ssl_dcd,
                         self._ssl_rts, self._ssl_dtr]:
@@ -974,13 +986,13 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        # ── Row 2: Program/TNC status ──────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Row 2: Program/TNC status Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         self._set_sig(self._ssl_host, self._serial.is_host_mode)
-        # PTT and CON are updated via frame_received — no polling needed
+        # PTT and CON are updated via frame_received Ã¢â‚¬â€ no polling needed
         # (see _on_frame_received for PTT/CON logic)
 
     def _poll_opmode(self) -> None:
-        """Send OPMODE query to TNC — keeps monitor alive with responses."""
+        """Send OPMODE query to TNC Ã¢â‚¬â€ keeps monitor alive with responses."""
         if self._serial.is_host_mode and self._monitor_container.isVisible():
             self._serial.send_command(b"OP")   # OPMODE query
 
@@ -1055,7 +1067,7 @@ class MainWindow(QMainWindow):
         )
 
     # ------------------------------------------------------------------
-    # Slots — incoming frames (monitor only — dispatch via ModeManager)
+    # Slots Ã¢â‚¬â€ incoming frames (monitor only Ã¢â‚¬â€ dispatch via ModeManager)
     # ------------------------------------------------------------------
 
     def _on_frame_received(self, frame: HostFrame) -> None:
@@ -1075,7 +1087,7 @@ class MainWindow(QMainWindow):
             elif frame.mnemonic == b"SI":
                 self._set_sig(self._ssl_ptt, False)
             elif frame.mnemonic == b"OP":
-                # OPMODE response — show in status bar
+                # OPMODE response Ã¢â‚¬â€ show in status bar
                 try:
                     opmode_txt = frame.data[2:].decode('ascii','replace').strip()
                     if opmode_txt:
@@ -1093,7 +1105,7 @@ class MainWindow(QMainWindow):
                 self._set_sig(self._ssl_con, False)
                 self._set_sig(self._ssl_ptt, False)
 
-        # Monitor logging — all modes
+        # Monitor logging Ã¢â‚¬â€ all modes
         if self._monitor_container.isVisible():
             if self._mon_btn_decoded.isChecked():
                 # Decoded: human-readable frame description
@@ -1123,7 +1135,7 @@ class MainWindow(QMainWindow):
                 self._log_terminal(text)
 
     def _on_status_message(self, msg: str) -> None:
-        """Route status messages: errors → popup, info → status bar."""
+        """Route status messages: errors Ã¢â€ â€™ popup, info Ã¢â€ â€™ status bar."""
         # Keywords that indicate an error requiring user attention
         _error_keywords = (
             "error", "Error", "failed", "Failed",
@@ -1192,12 +1204,12 @@ class MainWindow(QMainWindow):
     def _log_terminal(self, text: str) -> None:
         """Append text to terminal without forced newline per call.
  
-        QTextEdit.append() adds a newline after each call — wrong for
+        QTextEdit.append() adds a newline after each call Ã¢â‚¬â€ wrong for
         streaming RTTY where each character arrives as a separate frame.
         insertPlainText() appends directly at cursor position.
-        \r is stripped — only \n causes a real line break.
+        \r is stripped Ã¢â‚¬â€ only \n causes a real line break.
         """
-        # Strip \r — QTextEdit handles \n for line breaks
+        # Strip \r Ã¢â‚¬â€ QTextEdit handles \n for line breaks
         text = text.replace('\r', '')
         if not text:
             return
@@ -1287,12 +1299,12 @@ class MainWindow(QMainWindow):
                     else:
                         self._on_vt_send()
                     return True
-                # Ctrl+C → $03: TNC back to COMMAND mode
+                # Ctrl+C Ã¢â€ â€™ $03: TNC back to COMMAND mode
                 if key == Qt.Key.Key_C and (mods & ctrl):
                     self._vt_send_raw(b"\x03", echo="[CTRL-C]\n",
                                       color="#ff9900")
                     return True
-                # Ctrl+Z → $1A: PACTOR OVER / PTOVER char
+                # Ctrl+Z Ã¢â€ â€™ $1A: PACTOR OVER / PTOVER char
                 if key == Qt.Key.Key_Z and (mods & ctrl):
                     self._vt_send_raw(b"\x1a", echo="[CTRL-Z]\n",
                                       color="#ff9900")
@@ -1345,11 +1357,17 @@ class MainWindow(QMainWindow):
         self._vt_display.ensureCursorVisible()
 
     def _on_vt_rx_data(self, data: bytes) -> None:
-        """Display raw bytes received from TNC in verbose terminal."""
+        """Display raw bytes received from TNC in verbose terminal.
+
+        TNC responses are shown in white. A blank line is inserted
+        before each cmd: prompt to visually separate command/response pairs.
+        """
         try:
             text = data.decode('ascii', errors='replace')
         except Exception:
             text = repr(data)
+        # Insert blank line before cmd: to separate response blocks
+        text = text.replace('cmd:', '\ncmd:')
         self._vt_append(text, color="#cccccc")
 
     def _on_raw_data_received(self, data: bytes) -> None:
@@ -1458,3 +1476,26 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         logger.debug("Window geometry restored")
+
+
+# === E:\PK232\pk232py_repo\src\pk232py\ui\tnc_config_dialog.py ===
+# pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
+# Copyright (C) 2026  OE3GAS  â€”  GPL v2
+"""TNC configuration dialog.
+
+Allows selection of:
+  - Serial port (COM1, /dev/ttyUSB0, â€¦)
+  - Baud rate
+  - Hardware handshake (RTS/CTS)
+  - Host Mode on exit
+  - Fast initialisation
+
+Based on the PCPackRatt "TNC Configuration" dialog
+(see TNC_Config_at_Start.png in project files).
+
+Usage::
+
+    dlg = TncConfigDialog(current_config, parent=self)
+    if dlg.exec() == QDialog.DialogCode.Accepted:
+        config = dlg.get_config()
+"""

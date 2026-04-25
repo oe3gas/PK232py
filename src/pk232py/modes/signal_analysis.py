@@ -75,53 +75,46 @@ class SignalMode(BaseMode):
     host_command = b'SI'
     verbose_command = b"SIGNAL\r\n"
 
-def __init__(self, sample: int = 0) -> None:  # 0 = TNC default
+    def __init__(self, sample: int = 0) -> None:  # 0 = TNC default
         """
         Args:
             sample: Number of samples for analysis.
-                    Range 0-65535.  Default 900 (per STABO formula:
-                    samples/second = 2000 / sample; 900 ≈ 2.2 sec).
-                    Max useful value ≈ 900 (limited by 8536 chip).
+                    Range 0-65535.  Default 0 = TNC default.
         """
         super().__init__()
         self.sample = max(0, min(65535, sample))
-
         self.on_result: Optional[Callable[[str], None]] = None
 
     def get_activate_frames(self) -> list[bytes]:
         return [build_command(b'SI')]
 
-def get_init_frames(self) -> list[bytes]:
-    # SA nur senden wenn sample > 0, sonst TNC-Default verwenden
-    if self.sample > 0:
-        return [self.sample_frame(self.sample)]
-    return []
+    def get_init_frames(self) -> list[bytes]:
+        # SA nur senden wenn sample > 0, sonst TNC-Default verwenden
+        if self.sample > 0:
+            return [self.sample_frame(self.sample)]
+        return []
 
-def handle_frame(self, frame: "HostFrame") -> None:
-    kind = frame.kind
-    if kind == FrameKind.CMD_RESP:
-        text = frame.text.strip()
-        if text and not text.endswith('\x00'):  # kein leerer ACK
-            logger.info("SIAM result: %s", text)
-            if self.on_result:
-                self.on_result(text)
-    elif kind == FrameKind.LINK_MSG:
-        # SIAM liefert Ergebnisse als LINK_MSG ($50)
-        text = frame.text.strip()
-        if text:
-            logger.info("SIAM result (LINK_MSG): %s", text)
-            if self.on_result:
-                self.on_result(text)
-    elif kind == FrameKind.STATUS_ERR:
-        logger.warning("SIAM status error: %s", frame.data.hex())
-    else:
-        logger.debug("SIAM: unhandled frame %r", frame)
+    def handle_frame(self, frame: "HostFrame") -> None:
+        kind = frame.kind
+        if kind == FrameKind.CMD_RESP:
+            text = frame.text.strip()
+            if text and not text.endswith('\x00'):
+                logger.info("SIAM result: %s", text)
+                if self.on_result:
+                    self.on_result(text)
+        elif kind == FrameKind.LINK_MSG:
+            # SIAM liefert Ergebnisse als LINK_MSG ($50)
+            text = frame.text.strip()
+            if text:
+                logger.info("SIAM result (LINK_MSG): %s", text)
+                if self.on_result:
+                    self.on_result(text)
+        elif kind == FrameKind.STATUS_ERR:
+            logger.warning("SIAM status error: %s", frame.data.hex())
+        else:
+            logger.debug("SIAM: unhandled frame %r", frame)
 
     @staticmethod
     def sample_frame(count: int) -> bytes:
-        """SAMPLE — number of analysis samples (mnemonic SA).
-
-        Analysis duration = 2000 / count seconds.
-        Default 900 ≈ 2.2 seconds analysis window.
-        """
+        """SAMPLE — number of analysis samples (mnemonic SA)."""
         return build_command(b'SA', str(max(0, min(65535, count))).encode('ascii'))

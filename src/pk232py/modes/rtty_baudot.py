@@ -153,8 +153,7 @@ class BaudotRTTYMode(BaseMode):
     def get_init_frames(self) -> list[bytes]:
         """Return parameter frames sent after Baudot mode is confirmed."""
         frames = [
-            self.rbaud_frame(self.rbaud),
-            """self.code_frame(self.code), --- CI does not exist in Host Mode """
+            self.rbaud_frame(self.rbaud), 
             self.alfrtty_frame(self.alfrtty),
             self.usos_frame(self.usos),
             self.xlength_frame(self.xlength),

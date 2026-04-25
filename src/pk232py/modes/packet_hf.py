@@ -77,6 +77,7 @@ class HFPacketMode(BaseMode):
 
     name         = "HF Packet"
     host_command = b'PA'
+    verbose_command = b"PACKET\r\n"
 
     def __init__(self) -> None:
         super().__init__()

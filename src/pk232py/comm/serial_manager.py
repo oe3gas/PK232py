@@ -800,6 +800,43 @@ class SerialManager(QObject):
     # Internal helpers
     # ------------------------------------------------------------------
 
+
+    def write_verbose_wait(self, data: bytes, timeout: float = 5.0) -> bool:
+        """Send a verbose-mode command and wait for TNC cmd: prompt.
+
+        Sends the command, then accumulates incoming bytes until
+        'cmd:' is detected (preceded by newline, or at chunk start).
+
+        Args:
+            data:    ASCII command e.g. b'MYCALL OE3GAS\r\n'
+            timeout: Max seconds to wait (default 5.0)
+
+        Returns:
+            True if cmd: received, False on timeout.
+        """
+        if not self.is_connected:
+            return False
+        if not self._write_raw(data):
+            return False
+        import time as _t
+        local_buf = bytearray()
+        deadline = _t.monotonic() + timeout
+        _t.sleep(0.05)  # give TNC time to start responding
+        while _t.monotonic() < deadline:
+            with self._rx_buf_lock:
+                chunk = bytes(self._rx_buf)
+                self._rx_buf.clear()
+            self._rx_buf_event.clear()
+            if chunk:
+                local_buf.extend(chunk)
+                if b'\ncmd:' in local_buf or local_buf.startswith(b'cmd:'):
+                    return True
+            remaining = deadline - _t.monotonic()
+            if remaining <= 0:
+                break
+            self._rx_buf_event.wait(timeout=min(0.1, remaining))
+        return False
+
     def _read_raw_until(self, markers: tuple, timeout: float) -> bytes:
         """Wait for marker in shared rx buffer (filled by ReaderThread).
 

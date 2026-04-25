@@ -1,6 +1,6 @@
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
-# Copyright (C) 2026  OE3GAS  —  GPL v2
-"""TNC Parameter Uploader — sends stored parameters in verbose mode.
+# Copyright (C) 2026  OE3GAS  Ã¢â‚¬â€  GPL v2
+"""TNC Parameter Uploader Ã¢â‚¬â€ sends stored parameters in verbose mode.
 
 Reads parameters from AppConfig (which is backed by pk232py.ini) and
 sends them as ASCII verbose-mode commands to the TNC after initialisation.
@@ -9,15 +9,15 @@ All commands are sent as:  COMMAND value\\r\\n
 and followed by a short delay to allow the TNC to process each one.
 
 Parameter groups sent:
-  1. General / identity  — MYCALL, MYPTCALL, MYSELCAL
-  2. HF Packet           — PACLEN, TXDELAY, FRACK, RETRY, MAXFRAME, …
-  3. PACTOR              — ARQTMO, PTDOWN, PTUP, PT200, …
-  4. Misc                — CANLINE, SENDPAC, COMMAND char, …
+  1. General / identity  Ã¢â‚¬â€ MYCALL, MYPTCALL, MYSELCAL
+  2. HF Packet           Ã¢â‚¬â€ PACLEN, TXDELAY, FRACK, RETRY, MAXFRAME, Ã¢â‚¬Â¦
+  3. PACTOR              Ã¢â‚¬â€ ARQTMO, PTDOWN, PTUP, PT200, Ã¢â‚¬Â¦
+  4. Misc                Ã¢â‚¬â€ CANLINE, SENDPAC, COMMAND char, Ã¢â‚¬Â¦
 
 Usage::
 
     uploader = ParamsUploader(serial_manager, config_manager.app)
-    uploader.upload()   # blocking — call from background thread only
+    uploader.upload()   # blocking Ã¢â‚¬â€ call from background thread only
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ class ParamsUploader:
         serial:  SerialManager instance (must be connected, verbose mode).
         config:  AppConfig with all parameter dataclasses.
 
-    Call :meth:`upload` from a background thread — it blocks for
+    Call :meth:`upload` from a background thread Ã¢â‚¬â€ it blocks for
     the duration of the upload (several seconds for a full set).
     """
 
@@ -51,9 +51,12 @@ class ParamsUploader:
         self,
         serial: "SerialManager",
         config: "AppConfig",
+        echo_callback=None,
     ) -> None:
         self._serial = serial
         self._config = config
+        # Optional callback(text, color) for UI display of sent commands
+        self._echo = echo_callback
 
     # ------------------------------------------------------------------
     # Public API
@@ -61,6 +64,9 @@ class ParamsUploader:
 
     def upload(self) -> int:
         """Upload all parameters to the TNC in verbose mode.
+
+        Sends each command and waits for the TNC "cmd:" prompt
+        before sending the next one.
 
         Returns:
             Number of commands sent.
@@ -70,31 +76,35 @@ class ParamsUploader:
         sent = 0
         for cmd in commands:
             logger.debug("Verbose param: %r", cmd)
-            self._serial.write_verbose(cmd)
-            time.sleep(_PARAM_DELAY)
+            # Show sent command in UI (green)
+            if self._echo:
+                text = cmd.decode("ascii", errors="replace")
+                self._echo(text, "#4ec94e")  # green
+            ok = self._serial.write_verbose_wait(cmd, timeout=5.0)
+            if not ok:
+                logger.warning("ParamsUploader: no cmd: after %r, continuing",
+                               cmd.rstrip())
             sent += 1
         logger.info("ParamsUploader: upload complete (%d commands)", sent)
         return sent
 
-    # ------------------------------------------------------------------
-    # Build command list
-    # ------------------------------------------------------------------
-
     def _build_commands(self) -> list[bytes]:
         """Build the full list of verbose-mode parameter commands."""
         cmds: list[bytes] = []
+        cmds.append(self._cmd("EXPERT", "ON"))  # enable expert params
+
         tnc = self._config.tnc
         hf  = self._config.hf_packet
         pt  = self._config.pactor
 
-        # ── Identity ──────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Identity Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if hf.mycall and hf.mycall != "NOCALL":
             cmds.append(self._cmd("MYCALL", hf.mycall.upper()))
 
         if pt.myptcall and pt.myptcall != "NOCALL":
             cmds.append(self._cmd("MYPTCALL", pt.myptcall.upper()))
 
-        # ── HF Packet ─────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ HF Packet Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         cmds += [
             self._cmd("PACLEN",   str(hf.paclen)),
             self._cmd("TXDELAY",  str(hf.txdelay)),
@@ -113,9 +123,8 @@ class ParamsUploader:
             self._bool("AX25L2V2",  hf.ax25l2v2),
             self._bool("HEADERLN",  hf.headerln),
             self._bool("CONSTAMP",  hf.constamp),
-            self._bool("DAGSTAMP",  hf.dagstamp),
+            self._bool("DAYSTAMP",  hf.dagstamp),
             self._bool("ILFPACK",   hf.ilfpack),
-            self._bool("AERPACK",   hf.aerpack),
             self._bool("ALFPACK",   hf.alfpack),
             self._bool("MRPT",      hf.mrpt),
             self._bool("PPERSIST",  hf.ppersist),
@@ -132,21 +141,15 @@ class ParamsUploader:
         if hf.ctext:
             cmds.append(self._cmd("CTEXT",   hf.ctext))
 
-        # ── PACTOR ────────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ PACTOR Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         cmds += [
-            self._cmd("ARQTMO",  str(pt.arqtmo)),
-            self._cmd("ADELAY",  str(pt.adelay)),
-            self._cmd("PTDOWN",  str(pt.ptdown)),
-            self._cmd("PTUP",    str(pt.ptup)),
-            self._cmd("PTHUFF",  str(pt.pthuff)),
-            self._cmd("PTSUM",   str(pt.ptsum)),
-            self._cmd("PTTRIES", str(pt.pttries)),
-            self._cmd("PTSEND",  f"{pt.ptsend:.1f}"),
-            self._bool("PT200",   pt.pt200),
-            self._bool("PTROUND", pt.ptround),
+            # PACTOR parameters available in verbose mode
+            self._bool("PTHUFF",  pt.pthuff),   # Huffman compression ON/OFF
+            self._bool("PT200",   pt.pt200),    # auto speed selection ON/OFF
+            self._cmd("PTOVER",  f"${pt.ptover:02X}"),  # changeover char
         ]
 
-        # ── AMTOR / NAVTEX / TDM ─────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ AMTOR / NAVTEX / TDM Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         am = self._config.amtor
         if am.myselcal:
             cmds.append(self._cmd("MYSELCAL", am.myselcal.upper()))
@@ -166,7 +169,7 @@ class ParamsUploader:
             self._bool("XMITOK",   am.xmitok),
         ]
 
-        # ── BAUDOT / ASCII / CW ───────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ BAUDOT / ASCII / CW Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         ba = self._config.baudot
         cmds += [
             self._cmd("MSPEED",  str(ba.mspeed)),
@@ -181,18 +184,16 @@ class ParamsUploader:
         if ba.aab:
             cmds.append(self._cmd("AAB", ba.aab))
 
-        # ── Misc ──────────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ Misc Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         mi = self._config.misc
         cmds += [
             self._cmd("CANLINE",  str(mi.canline)),
             self._cmd("CANPAC",   str(mi.canpac)),
             self._cmd("COMMAND",  f"${mi.command:02X}"),
             self._cmd("SENDPAC",  f"${mi.sendpac:02X}"),
-            self._cmd("MARK",     str(mi.mark)),
-            self._cmd("SPACE",    str(mi.space)),
         ]
 
-        # ── MailDrop ──────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ MailDrop Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         md = self._config.maildrop
         if md.homebbs:
             cmds.append(self._cmd("HOMEBBS", md.homebbs.upper()))
@@ -209,14 +210,18 @@ class ParamsUploader:
         if md.mtext:
             cmds.append(self._cmd("MTEXT", md.mtext))
 
-        # ── UTC time ──────────────────────────────────────────────────
+        # Ã¢â€â‚¬Ã¢â€â‚¬ UTC time Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
         if tnc.utc_tnc_time:
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
             cmds.append(self._cmd(
                 "DAYTIME",
-                now.strftime("%H:%M:%S %d/%m/%y"),
+                now.strftime("%y%m%d%H%M%S"),
             ))
+
+
+        # Restore expert mode to default
+        cmds.append(self._cmd("EXPERT", "OFF"))
 
         return cmds
 

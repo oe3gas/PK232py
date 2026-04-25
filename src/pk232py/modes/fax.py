@@ -73,6 +73,7 @@ class FAXMode(BaseMode):
 
     name         = "FAX"
     host_command = b'FA'
+    verbose_command = b"FAX\r\n"
 
     def __init__(
         self,

@@ -388,11 +388,11 @@ class AMTORMode(BaseMode):
         return build_command(b'EA', b'Y' if enabled else b'N')
 
     @staticmethod
-def errchar_frame(char: int) -> bytes:
-    """ERRCHAR — error replacement character (mnemonic EE).
-    Dezimalwert, kein $-Prefix im Host Mode.
-    """
-    return build_command(b'EE', str(char).encode('ascii'))
+    def errchar_frame(char: int) -> bytes:
+        """ERRCHAR — error replacement character (mnemonic EE).
+        Dezimalwert, kein $-Prefix im Host Mode.
+        """
+        return build_command(b'EE', str(char).encode('ascii'))
 
     @staticmethod
     def rxrev_frame(enabled: bool) -> bytes:
