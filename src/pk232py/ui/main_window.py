@@ -1,23 +1,22 @@
 # === E:\PK232\pk232py_repo\src\pk232py\ui\main_window.py ===
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
-# Copyright (C) 2026  OE3GAS  Ã¢â‚¬â€  GPL v2
+# Copyright (C) 2026  OE3GAS  --  GPL v2
 """Main window of PK232PY.
 
 Layout:
-  Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
-  Ã¢â€â€š  Menu: File | TNC | Parameters | Configure       Ã¢â€â€š
-  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¤
-  Ã¢â€â€š  Toolbar: [Connect] [Disconnect] [Host Mode]     Ã¢â€â€š
-  Ã¢â€â€š           [Mode: HF Packet Ã¢â€“Â¼]                    Ã¢â€â€š
-  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¤
-  Ã¢â€â€š                       Ã¢â€â€š                         Ã¢â€â€š
-  Ã¢â€â€š   RX / Terminal panel Ã¢â€â€š   Monitor panel          Ã¢â€â€š
-  Ã¢â€â€š                       Ã¢â€â€š   (toggleable)           Ã¢â€â€š
-  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â´Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¤
-  Ã¢â€â€š  Status: Port | Baud | Mode | UTC time           Ã¢â€â€š
-  Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ
+  +--------------------------------------------------+
+  |  Menu: File | TNC | View | Parameters | Configure |
+  +--------------------------------------------------+
+  |  Toolbar: [Connect] [Disconnect] [Host Mode]     |
+  |           [Mode: HF Packet v]                    |
+  +----------------------+---------------------------+
+  |                      |                           |
+  |  Opmode screen stack |  Monitor panel            |
+  |  (mode-specific UI)  |  (toggleable)             |
+  +----------------------+---------------------------+
+  |  Status: Port | Baud | Mode | UTC time           |
+  +--------------------------------------------------+
 """
-
 from __future__ import annotations
 
 import logging
@@ -44,6 +43,16 @@ from .dialogs.params_pactor  import PACTORParamsDialog
 from .dialogs.params_amtor   import AMTORParamsDialog
 from .dialogs.params_baudot  import BaudotParamsDialog
 from .dialogs.params_maildrop import MailDropParamsDialog
+
+# Opmode screens — embedded in MainWindow via QStackedWidget
+from .screens.baudot_screen  import BaudotScreen
+from .screens.ascii_screen   import AsciiScreen
+from .screens.amtor_screen   import AmtorScreen
+from .screens.morse_screen   import MorseScreen
+from .screens.navtex_screen  import NavtexScreen
+from .screens.signal_screen  import SignalScreen
+from .screens.fax_screen     import FaxScreen
+from .screens.pactor_screen  import PactorScreen   # added
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +103,7 @@ class MainWindow(QMainWindow):
     def _build_menubar(self) -> None:
         mb = self.menuBar()
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ File Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # File 
         file_menu = mb.addMenu("&File")
 
         act_load = QAction("&Load Settings...", self)
@@ -116,7 +125,7 @@ class MainWindow(QMainWindow):
         act_exit.triggered.connect(self.close)
         file_menu.addAction(act_exit)
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ TNC Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # TNC 
         tnc_menu = mb.addMenu("&TNC")
 
         self._act_connect_verbose = QAction("Connect + Enter &Verbose Mode...", self)
@@ -142,7 +151,7 @@ class MainWindow(QMainWindow):
         self._act_connect_host.triggered.connect(self._on_connect_host)
         tnc_menu.addAction(self._act_connect_host)
 
-        self._act_host_off = QAction("Leave Host Mode  (Enter Verbose Mode)", self)
+        self._act_host_off = QAction("Leave Host Mode (Enter Verbose Mode)", self)
         self._act_host_off.setStatusTip("Leave Host Mode, return TNC to verbose terminal")
         self._act_host_off.triggered.connect(self._on_host_mode_exit)
         tnc_menu.addAction(self._act_host_off)
@@ -154,7 +163,7 @@ class MainWindow(QMainWindow):
         self._act_recovery.triggered.connect(self._on_recovery)
         tnc_menu.addAction(self._act_recovery)
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ View Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # View 
         view_menu = mb.addMenu("&View")
 
         self._act_monitor = QAction("Monitor Window", self)
@@ -173,7 +182,7 @@ class MainWindow(QMainWindow):
         self._act_serial_status.triggered.connect(self._on_toggle_serial_status)
         view_menu.addAction(self._act_serial_status)
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Parameters Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # Parameters 
         param_menu = mb.addMenu("&Parameters")
         # Implemented dialogs
         _implemented = {"HF Packet...", "Misc...", "PACTOR...", "AMTOR / NAVTEX / TDM...", "BAUDOT / ASCII / CW...", "MailDrop..."}
@@ -190,7 +199,7 @@ class MainWindow(QMainWindow):
             act.triggered.connect(slot)
             param_menu.addAction(act)
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Configure Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # Configure 
         cfg_menu = mb.addMenu("&Configure")
 
         act_tnc_cfg = QAction("TNC &Configuration...", self)
@@ -215,50 +224,112 @@ class MainWindow(QMainWindow):
         cfg_menu.addAction(act_about)
 
     def _build_toolbar(self) -> None:
+        # ── Row 1: Connection controls ───────────────────────────────────────
         tb = QToolBar("Main", self)
         tb.setMovable(False)
         self.addToolBar(tb)
 
-        self._tb_connect = tb.addAction("Ã¢Å¡Â¡ Connect")
+        self._tb_connect = tb.addAction("Connect")
         self._tb_connect.setToolTip("Connect to TNC (Ctrl+T)")
         self._tb_connect.triggered.connect(self._on_connect_verbose)
 
-        self._tb_disconnect = tb.addAction("Ã¢Å“â€¢ Disconnect")
+        self._tb_disconnect = tb.addAction("Disconnect")
         self._tb_disconnect.setToolTip("Disconnect (Ctrl+D)")
         self._tb_disconnect.triggered.connect(self._on_disconnect)
 
         tb.addSeparator()
 
-        self._tb_host_on = tb.addAction("Ã¢Â¬â€  Host Mode")
+        self._tb_host_on = tb.addAction("Host Mode")
         self._tb_host_on.setToolTip("Enter Host Mode")
         self._tb_host_on.triggered.connect(self._on_host_mode_enter)
 
-        self._tb_recovery = tb.addAction("Ã¢Å¸Â³ Recovery")
+        self._tb_recovery = tb.addAction("Recovery")
         self._tb_recovery.setToolTip("Host Mode Recovery")
         self._tb_recovery.triggered.connect(self._on_recovery)
 
         tb.addSeparator()
 
-        # Mode selector ComboBox in toolbar
+        # Mode selector ComboBox
         tb.addWidget(QLabel(" Mode: "))
         self._mode_combo = QComboBox()
         self._mode_combo.setMinimumWidth(120)
         self._mode_combo.setToolTip("Select operating mode")
+        # Build display list: merge "AMTOR ARQ" and "AMTOR FEC" into "AMTOR"
+        _seen: set[str] = set()
         for name in self._modes.available_modes():
-            self._mode_combo.addItem(name)
-        self._mode_combo.setEnabled(False)   # enabled after Host Mode active
+            display = "AMTOR" if name.startswith("AMTOR") else name
+            if display not in _seen:
+                self._mode_combo.addItem(display)
+                _seen.add(display)
+        self._mode_combo.setEnabled(False)
         self._mode_combo.currentTextChanged.connect(self._on_mode_selected)
         tb.addWidget(self._mode_combo)
 
+        # ── Spacer + Mode/Connection status indicator (right-aligned) ────────
+        spacer = QWidget()
+        from PyQt6.QtWidgets import QSizePolicy as QSP
+        spacer.setSizePolicy(QSP.Policy.Expanding, QSP.Policy.Preferred)
+        tb.addWidget(spacer)
+
+        # Prominent mode indicator: shows OFFLINE / VERBOSE / HOST MODE
+        # with colour coding so the current state is always visible.
+        self._mode_indicator = QLabel("  OFFLINE  ")
+        self._mode_indicator.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self._mode_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._mode_indicator.setMinimumWidth(140)
+        self._mode_indicator.setFixedHeight(26)
+        self._mode_indicator.setStyleSheet(self._indicator_style("offline"))
+        tb.addWidget(self._mode_indicator)
+        tb.addWidget(QLabel("  "))   # right padding
+
+    # ── Mode indicator styles ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _indicator_style(state: str) -> str:
+        """Return stylesheet for the mode indicator label.
+
+        state: 'offline' | 'verbose' | 'host' | 'switching'
+        """
+        styles = {
+            "offline":   ("  OFFLINE  ",    "#888888", "#2a2a2a", "#555555"),
+            "verbose":   ("  VERBOSE  ",    "#ffcc44", "#2a2200", "#776600"),
+            "host":      ("  HOST MODE  ",  "#44ff88", "#00220f", "#007733"),
+            "switching": ("  SWITCHING...","#88aaff", "#001133", "#224488"),
+        }
+        label, fg, bg, border = styles.get(state, styles["offline"])
+        return (
+            f"QLabel {{"
+            f"  color: {fg};"
+            f"  background-color: {bg};"
+            f"  border: 2px solid {border};"
+            f"  border-radius: 4px;"
+            f"  padding: 2px 8px;"
+            f"}}"
+        )
+
+    def _set_mode_indicator(self, state: str) -> None:
+        """Update the mode indicator label text and colour."""
+        texts = {
+            "offline":   "  OFFLINE  ",
+            "verbose":   "  VERBOSE MODE  ",
+            "host":      "  HOST MODE  ",
+            "switching": "  SWITCHING...  ",
+        }
+        self._mode_indicator.setText(texts.get(state, "  OFFLINE  "))
+        self._mode_indicator.setStyleSheet(self._indicator_style(state))
+
     def _build_central(self) -> None:
         """Build the central widget with two views:
-          - Page 0: Host Mode view (RX display + TX input + Monitor)
+          - Page 0: Host Mode view  ->  QSplitter(opmode_stack | monitor)
           - Page 1: Verbose terminal view (terminal log + command input)
+
+        The opmode_stack holds all 7 operating-mode screens as QWidgets.
+        _switch_opmode(name) swaps the visible screen inside that inner stack.
         """
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Stack: switches between Host Mode and Verbose Terminal Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+        # -- Outer stack: Page 0 = Host Mode, Page 1 = Verbose Terminal ------
         self._stack = QStackedWidget()
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Page 0: Host Mode view Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+        # -- Page 0: Host Mode view -------------------------------------------
         host_page = QWidget()
         host_layout = QVBoxLayout(host_page)
         host_layout.setContentsMargins(0, 0, 0, 0)
@@ -266,61 +337,43 @@ class MainWindow(QMainWindow):
 
         outer = QSplitter(Qt.Orientation.Horizontal)
 
-        left = QWidget()
-        ll   = QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 0, 0)
-        ll.setSpacing(0)
+        # -- Left side: Opmode screen stack -----------------------------------
+        # Each operating mode screen is a self-contained QWidget with its own
+        # RX display, TX input, mode buttons and macro bar.  We create all
+        # screens once here and switch between them via _opmode_stack.
 
-        vs = QSplitter(Qt.Orientation.Vertical)
+        self._opmode_stack = QStackedWidget()
 
-        self._rx_display = QTextEdit()
-        self._rx_display.setReadOnly(True)
-        self._rx_display.setFont(QFont("Courier New", 10))
-        self._rx_display.setStyleSheet(
-            "background-color:#1e1e1e; color:#d4d4d4; border:none;"
-        )
-        self._rx_display.setPlaceholderText(
-            "TNC output Ã¢â‚¬â€ received data and responses appear here."
-        )
-        vs.addWidget(self._rx_display)
+        # Map: ModeManager mode name -> screen widget.
+        # Keys MUST exactly match the names in ALL_MODES (mode_manager.py).
+        # "AMTOR ARQ" and "AMTOR FEC" share one screen — both keys point
+        # to the same AmtorScreen instance.
+        _amtor = AmtorScreen()
+        self._opmode_screens: dict[str, QWidget] = {
+            "Baudot RTTY":   BaudotScreen(),
+            "ASCII RTTY":    AsciiScreen(),
+            "AMTOR ARQ":     _amtor,
+            "AMTOR FEC":     _amtor,       # same screen, different sub-mode
+            "PACTOR":        PactorScreen(),   # added
+            "CW / Morse":    MorseScreen(),
+            "NAVTEX":        NavtexScreen(),
+            "Signal (SIAM)": SignalScreen(),
+            "FAX":           FaxScreen(),
+        }
+        # Add each unique screen widget to the stack once.
+        # (AMTOR ARQ and AMTOR FEC share one widget — add it only once.)
+        _added: set[int] = set()
+        for screen in self._opmode_screens.values():
+            if id(screen) not in _added:
+                self._opmode_stack.addWidget(screen)
+                _added.add(id(screen))
 
-        iw = QWidget()
-        iw.setStyleSheet("background-color:#252526;")
-        il = QHBoxLayout(iw)
-        il.setContentsMargins(4, 4, 4, 4)
-        il.setSpacing(4)
+        # Default: show Baudot on startup
+        self._opmode_stack.setCurrentWidget(self._opmode_screens["Baudot RTTY"])
 
-        self._tx_input = QTextEdit()
-        self._tx_input.setFont(QFont("Courier New", 10))
-        self._tx_input.setStyleSheet(
-            "background-color:#1e1e1e; color:#d4d4d4; border:1px solid #444;"
-        )
-        self._tx_input.setPlaceholderText(
-            "Enter commandÃ¢â‚¬Â¦ (Enter = send, Shift+Enter = new line)"
-        )
-        self._tx_input.setFixedHeight(60)
-        self._tx_input.installEventFilter(self)
-        il.addWidget(self._tx_input)
+        outer.addWidget(self._opmode_stack)
 
-        self._send_btn = QPushButton("Send")
-        self._send_btn.setFixedWidth(80)
-        self._send_btn.setFixedHeight(60)
-        self._send_btn.setStyleSheet(
-            "QPushButton{background:#0e639c;color:white;border:none;font-weight:bold;}"
-            "QPushButton:hover{background:#1177bb;}"
-            "QPushButton:pressed{background:#0a4f7e;}"
-            "QPushButton:disabled{background:#3a3a3a;color:#666;}"
-        )
-        self._send_btn.clicked.connect(self._on_send)
-        il.addWidget(self._send_btn)
-
-        vs.addWidget(iw)
-        vs.setSizes([480, 120])
-        vs.setCollapsible(1, False)
-        ll.addWidget(vs)
-        outer.addWidget(left)
-
-        # Monitor panel with mode selector
+        # -- Right side: Monitor panel (toggleable) ---------------------------
         monitor_container = QWidget()
         mc_layout = QVBoxLayout(monitor_container)
         mc_layout.setContentsMargins(0, 0, 0, 0)
@@ -364,7 +417,7 @@ class MainWindow(QMainWindow):
             "background-color:#0d1117; color:#8b949e; border:none;"
         )
         self._monitor.setPlaceholderText(
-            "Monitor Ã¢â‚¬â€ decoded frames / raw / hex"
+            "Monitor - decoded frames / raw / hex"
         )
         mc_layout.addWidget(self._monitor)
 
@@ -374,11 +427,11 @@ class MainWindow(QMainWindow):
         self._monitor_container = monitor_container
 
         self._splitter = outer
-        self._terminal = self._rx_display
         host_layout.addWidget(outer)
         self._stack.addWidget(host_page)   # index 0
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Page 1: Verbose Terminal view Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+
+ # Page 1: Verbose Terminal view 
         vterm_page = QWidget()
         vt_layout  = QVBoxLayout(vterm_page)
         vt_layout.setContentsMargins(0, 0, 0, 0)
@@ -392,7 +445,7 @@ class MainWindow(QMainWindow):
             "background-color:#0c0c0c; color:#cccccc; border:none;"
         )
         self._vt_display.setPlaceholderText(
-            "TNC verbose mode Ã¢â‚¬â€ echo and responses appear here."
+            "TNC verbose mode - echo and responses appear here."
         )
         vt_layout.addWidget(self._vt_display, stretch=1)
 
@@ -420,7 +473,7 @@ class MainWindow(QMainWindow):
         self._vt_input.setStyleSheet(
             "background-color:#1a1a1a; color:#d4d4d4; border:none;"
         )
-        self._vt_input.setPlaceholderText("type command, Enter to sendÃ¢â‚¬Â¦")
+        self._vt_input.setPlaceholderText("type command, Enter to send...")
         self._vt_input.setFixedHeight(28)
         self._vt_input.installEventFilter(self)
         cmd_layout.addWidget(self._vt_input, stretch=1)
@@ -445,9 +498,78 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self._footer)
 
         self.setCentralWidget(main_container)
-        self._stack.setCurrentIndex(0)     # start in Host Mode view
+        self._stack.setCurrentIndex(1)     # start in Verbose Terminal view
         self._wire_mode_callbacks()
-        self._tx_input.setFocus()
+        # Focus goes to verbose terminal input on startup
+        QTimer.singleShot(0, lambda: self._vt_input.setFocus())
+
+    # ------------------------------------------------------------------
+    # Opmode screen helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def _rx_display(self) -> QTextEdit:
+        """Return the RX display of the currently visible opmode screen.
+
+        Falls back to the first screen's RX display if the active screen
+        has no rx_display attribute (e.g. FAX, Signal, NAVTEX).
+        Kept for compatibility with legacy code that references _rx_display.
+        """
+        screen = self._opmode_stack.currentWidget()
+        if hasattr(screen, "rx_display"):
+            return screen.rx_display
+        # Receive-only screens have no rx_display usable as _terminal;
+        # return a dummy that absorbs calls without crashing.
+        return self._monitor   # safe fallback: monitor QTextEdit
+
+    @property
+    def _tx_input(self) -> QTextEdit | None:
+        """Return the TX input of the currently visible opmode screen.
+
+        Returns None for receive-only screens (NAVTEX, Signal, FAX).
+        Kept for compatibility with legacy eventFilter / _on_send code.
+        """
+        screen = self._opmode_stack.currentWidget()
+        if hasattr(screen, "tx_input"):
+            return screen.tx_input
+        return None
+
+    @property
+    def _terminal(self) -> QTextEdit:
+        """Alias for _rx_display — used by _log_terminal."""
+        return self._rx_display
+
+    def _switch_opmode(self, name: str) -> None:
+        """Switch the visible opmode screen to the one matching 'name'.
+
+        Called from _on_mode_changed when ModeManager confirms a mode switch.
+        If the name is not in _opmode_screens, the current screen is kept.
+        """
+        screen = self._opmode_screens.get(name)
+        if screen is None:
+            logger.warning("No opmode screen registered for mode: %s", name)
+            return
+        self._opmode_stack.setCurrentWidget(screen)
+        logger.debug("Opmode screen switched to: %s", name)
+
+        # For RTTY/Morse screens: set RECEIVE button green on entry
+        # because the TNC starts in receive mode.
+        _rx_modes = ("Baudot RTTY", "ASCII RTTY", "CW / Morse")
+        if name in _rx_modes and hasattr(screen, "btn_receive"):
+            screen.btn_receive.blockSignals(True)
+            screen.btn_receive.setChecked(True)
+            screen.btn_receive.blockSignals(False)
+            # Trigger visual update directly (signals blocked above)
+            screen._on_receive_toggled(True)
+
+        # Focus the TX window of the new screen immediately
+        QTimer.singleShot(0, self._focus_active_tx)
+
+    def _focus_active_tx(self) -> None:
+        """Set keyboard focus to the TX window of the active opmode screen."""
+        tx = self._tx_input   # uses the property above
+        if tx is not None:
+            tx.setFocus()
 
     def _build_statusbar(self) -> None:
         sb = self.statusBar()
@@ -474,7 +596,7 @@ class MainWindow(QMainWindow):
         self._utc_timer.start(1000)
         self._update_utc_clock()
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Serial signal status bars (hidden by default) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # Serial signal status bars (hidden by default) 
         # Container widget holding both rows
         self._serial_status_bar = QWidget(self)
         ssl_outer = QVBoxLayout(self._serial_status_bar)
@@ -492,7 +614,7 @@ class MainWindow(QMainWindow):
             )
             return lbl
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Row 1: Hardware signals Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # Row 1: Hardware signals 
         row1 = QWidget()
         row1.setStyleSheet("background:transparent;")
         r1l = QHBoxLayout(row1)
@@ -517,7 +639,7 @@ class MainWindow(QMainWindow):
         r1l.addStretch()
         ssl_outer.addWidget(row1)
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Row 2: Program/TNC status Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # Row 2: Program/TNC status 
         row2 = QWidget()
         row2.setStyleSheet("background:transparent;")
         r2l = QHBoxLayout(row2)
@@ -532,8 +654,8 @@ class MainWindow(QMainWindow):
         self._ssl_host = _sig_label("HOST")
         self._ssl_ptt  = _sig_label("PTT")
         self._ssl_con  = _sig_label("CON")
-        self._ssl_rx   = _sig_label("RX Ã¢â€“Â¼")
-        self._ssl_tx   = _sig_label("TX Ã¢â€“Â²")
+        self._ssl_rx   = _sig_label("RX")
+        self._ssl_tx   = _sig_label("TX")
 
         for w in [self._ssl_host, self._ssl_ptt,
                   self._ssl_con,  self._ssl_rx, self._ssl_tx]:
@@ -575,7 +697,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _connect_signals(self) -> None:
-        # SerialManager Ã¢â€ â€™ MainWindow
+ # SerialManager MainWindow
         self._serial.connection_changed.connect(self._update_connection_ui)
         self._serial.host_mode_changed.connect(self._update_host_mode_ui)
         self._serial.status_message.connect(self._on_status_message)
@@ -583,17 +705,17 @@ class MainWindow(QMainWindow):
         self._serial.params_upload_required.connect(self._on_params_upload_required)
         self._serial.raw_data_received.connect(self._on_raw_data_received)
 
-        # SerialManager Ã¢â€ â€™ ModeManager (frame dispatch)
+ # SerialManager ModeManager (frame dispatch)
         self._serial.frame_received.connect(self._modes.on_frame)
         self._serial.frame_received.connect(self._on_frame_received)
 
-        # ModeManager Ã¢â€ â€™ MainWindow
+ # ModeManager MainWindow
         self._modes.mode_changed.connect(self._on_mode_changed)
         self._modes.mode_switch_failed.connect(self._on_mode_switch_failed)
         self._modes.status_message.connect(self._on_status_message)
 
     # ------------------------------------------------------------------
-    # Slots Ã¢â‚¬â€ TNC connection
+    # Slots -- TNC connection
     # ------------------------------------------------------------------
 
     def _open_connect_dialog(self) -> bool:
@@ -637,7 +759,7 @@ class MainWindow(QMainWindow):
         self._serial.init_tnc()
 
     def _on_connect(self) -> None:
-        """Legacy Ã¢â‚¬â€ defaults to verbose mode."""
+        """Legacy defaults to verbose mode."""
         self._on_connect_verbose()
 
     def _on_disconnect(self) -> None:
@@ -653,6 +775,7 @@ class MainWindow(QMainWindow):
         """
         self._log_monitor("[SYS] TNC in verbose mode")
         self._sb_mode.setText("Mode: VERBOSE")
+        self._set_mode_indicator("verbose")
         self._stack.setCurrentIndex(1)
         self._vt_input.setFocus()
         self._vt_display.clear()
@@ -687,13 +810,20 @@ class MainWindow(QMainWindow):
         ).start()
 
     def _on_params_upload_required(self) -> None:
-        """Called when TNC rebooted Ã¢â‚¬â€ same as verbose_mode_ready but with log message."""
-        self._log_monitor("[SYS] TNC rebooted Ã¢â‚¬â€ re-uploading parameters...")
+        """Called when TNC rebooted same as verbose_mode_ready but with log message."""
+        self._log_monitor("[SYS] TNC rebooted re-uploading parameters...")
         self._on_verbose_mode_ready()
 
     def _on_host_mode_enter(self) -> None:
-        """Manual Host Mode entry from menu/toolbar."""
+        """Manual Host Mode entry from menu/toolbar.
+
+        Sets the indicator to SWITCHING immediately so the user sees
+        feedback while the TNC initialises. Replaced by HOST MODE once
+        _update_host_mode_ui(active=True) fires.
+        """
         if self._serial.is_connected:
+            self._set_mode_indicator("switching")
+            self._sb_mode.setText("Mode: Switching to Host Mode...")
             self._serial.enter_host_mode()
 
     def _on_host_mode_exit(self) -> None:
@@ -706,67 +836,1005 @@ class MainWindow(QMainWindow):
             self._log_monitor("[SYS] Host Mode recovery sent")
 
     # ------------------------------------------------------------------
-    # Slots Ã¢â‚¬â€ mode selection
+    # Slots -- mode selection
     # ------------------------------------------------------------------
 
+    # Display name -> ModeManager name mapping for merged entries
+    _DISPLAY_TO_MODE: dict[str, str] = {
+        "AMTOR": "AMTOR ARQ",   # dropdown shows "AMTOR", ModeManager needs "AMTOR ARQ"
+    }
+    # ModeManager name -> display name (reverse map, for syncing combo)
+    _MODE_TO_DISPLAY: dict[str, str] = {
+        "AMTOR ARQ": "AMTOR",
+        "AMTOR FEC": "AMTOR",
+    }
+
     def _on_mode_selected(self, name: str) -> None:
-        """Called when the user selects a mode from the toolbar ComboBox."""
+        """Called when the user selects a mode from the toolbar ComboBox.
+
+        The combo shows display names (e.g. "AMTOR"). Map back to the
+        ModeManager name before calling set_mode().
+        """
         if not name:
             return
         if not self._serial.is_connected:
             return
+        # Translate display name to ModeManager name
+        mm_name = self._DISPLAY_TO_MODE.get(name, name)
         # Avoid spurious trigger during programmatic updates
-        if name == self._modes.current_mode_name:
+        if mm_name == self._modes.current_mode_name:
             return
-        logger.info("User selected mode: %s", name)
-        self._log_monitor(f"[TX] Switching to mode: {name}")
-        self._modes.set_mode(name)
+        logger.info("User selected mode: %s -> %s", name, mm_name)
+
+        # Inform the user if a mode needs Host Mode but it's not active
+        from pk232py.modes import MODE_BY_NAME
+        cls = MODE_BY_NAME.get(mm_name)
+        if cls is not None:
+            needs_host = not getattr(cls, 'verbose_command', None)
+            if needs_host and not self._serial.is_host_mode:
+                QMessageBox.information(
+                    self, "Host Mode required",
+                    f"The mode '{name}' requires Host Mode.\n"
+                    f"Please click 'Host Mode' to activate it first."
+                )
+                return
+            # Modes that use verbose activation (e.g. PACTOR) will briefly
+            # switch to Verbose Mode — inform the user so it is not surprising.
+            has_host_cmd = bool(getattr(cls, 'host_command', b''))
+            if not has_host_cmd and self._serial.is_host_mode:
+                self._log_monitor(
+                    f"[SYS] {mm_name} requires Verbose Mode activation "
+                    f"-- exiting Host Mode temporarily"
+                )
+
+        self._log_monitor(f"[SYS] Switching to mode: {mm_name}")
+        self._modes.set_mode(mm_name)
 
     def _on_mode_changed(self, name: str) -> None:
         """Called by ModeManager when mode switch completes.
-        Wires the active mode's data callbacks to the UI.
+        Switches the visible opmode screen and wires callbacks.
         """
         self._sb_mode.setText(f"Mode: {name}")
         self._log_monitor(f"[SYS] Mode switched to: {name}")
-        # Sync ComboBox without triggering _on_mode_selected
+        # Sync ComboBox: translate ModeManager name to display name
+        display_name = self._MODE_TO_DISPLAY.get(name, name)
         self._mode_combo.blockSignals(True)
-        idx = self._mode_combo.findText(name)
+        idx = self._mode_combo.findText(display_name)
         if idx >= 0:
             self._mode_combo.setCurrentIndex(idx)
         self._mode_combo.blockSignals(False)
-        # Wire active mode callbacks Ã¢â€ â€™ UI
+        # Switch the visible opmode screen to match the new mode
+        self._switch_opmode(name)
+        # Wire active mode callbacks to UI
         self._wire_mode_callbacks()
-        # Return focus to input field
-        if self._serial.is_host_mode:
-            self._tx_input.setFocus()
-        else:
+        # Focus: TX window is handled by _switch_opmode via singleShot.
+        # Only override focus to verbose terminal if not in Host Mode.
+        if not self._serial.is_host_mode:
             self._vt_input.setFocus()
 
     def _wire_mode_callbacks(self) -> None:
-        """Connect the active mode's data callbacks to the RX display."""
+        """Connect the active mode's data callbacks to the UI."""
         mode = self._modes.current_mode
         if mode is None:
             return
-        # Generic: on_data_received Ã¢â€ â€™ RX display
+
+        # ARQ / general received data
         if hasattr(mode, "on_data_received"):
             mode.on_data_received = self._on_mode_data_received
-        # Echo ($2F): show in RX display too
+
+        # PACTOR FEC / Unproto data ($3F) — same handler as ARQ data
+        if hasattr(mode, "on_fec_received"):
+            mode.on_fec_received = self._on_mode_data_received
+
+        # Echo ($2F)
         if hasattr(mode, "on_echo_received"):
             mode.on_echo_received = self._on_mode_echo_received
-        # Link messages Ã¢â€ â€™ RX display
+
+        # Link messages → log + screen status label
         if hasattr(mode, "on_link_message"):
-            mode.on_link_message = self._on_mode_link_message
+            screen = self._opmode_screens.get(mode.name)
+            if screen is not None and hasattr(screen, "_set_status"):
+                mode.on_link_message = self._make_link_handler(screen)
+            else:
+                mode.on_link_message = self._on_mode_link_message
+
+        # Wire screen buttons (SEND, RECEIVE) to MainWindow slots
+        self._wire_screen_buttons()
+
         logger.debug("Mode callbacks wired for: %s", mode.name)
 
+    def _make_link_handler(self, screen):
+        """Return a link-message handler that updates both the
+        monitor log and the screen's _set_status label.
+
+        Maps TNC link-message text to the status keys used by
+        AmtorScreen and PactorScreen.
+        """
+        def handler(msg: str) -> None:
+            # 1. General log / monitor
+            self._on_mode_link_message(msg)
+            # 2. Update screen status label
+            m = msg.lower()
+            if "connected" in m and "disconnect" not in m:
+                status = "CONNECTED"
+            elif "disconnect" in m:
+                status = "DISCONN"
+            elif "calling" in m or "connect request" in m:
+                status = "CALLING"
+            elif "fec" in m:
+                status = "FEC TX"
+            else:
+                status = "STBY"
+            screen._set_status(status)
+        return handler
+
+    def _wire_screen_buttons(self) -> None:
+        """Connect SEND and RECEIVE buttons of the active screen
+        to MainWindow slots.
+
+        Called from _wire_mode_callbacks() whenever the mode changes.
+        Safe to call multiple times — Qt ignores duplicate connections
+        only if the same signal+slot pair is connected again, but we
+        explicitly disconnect first to avoid stacking signals.
+        """
+        screen = self._opmode_stack.currentWidget()
+        if screen is None:
+            return
+
+        # SEND button — toggled ON: activate TX; toggled OFF: no-op
+        if hasattr(screen, "btn_send"):
+            try:
+                screen.btn_send.toggled.disconnect(self._on_screen_send)
+            except (RuntimeError, TypeError):
+                pass   # not connected yet — harmless
+            screen.btn_send.toggled.connect(self._on_screen_send)
+
+        # RECEIVE button — toggled ON: put TNC into receive; OFF: standby
+        if hasattr(screen, "btn_receive"):
+            try:
+                screen.btn_receive.toggled.disconnect(self._on_screen_receive)
+            except (RuntimeError, TypeError):
+                pass
+            screen.btn_receive.toggled.connect(self._on_screen_receive)
+
+        # AMTOR mode buttons
+        self._wire_amtor_buttons(screen)
+
+        # PACTOR mode buttons
+        self._wire_pactor_buttons(screen)
+
+        # RBAUD dropdown — currentIndexChanged: send RB frame to TNC
+        if hasattr(screen, "combo_rbaud"):
+            try:
+                screen.combo_rbaud.currentIndexChanged.disconnect(
+                    self._on_screen_rbaud_changed
+                )
+            except (RuntimeError, TypeError):
+                pass
+            screen.combo_rbaud.currentIndexChanged.connect(
+                self._on_screen_rbaud_changed
+            )
+
+        # Phase 3 — identity fields, spinboxes, toggles, NAVTEX filters
+        self._wire_identity_fields(screen)
+        self._wire_morse_params(screen)
+        self._wire_toggle_buttons(screen)
+        self._wire_navtex_filters(screen)
+
+    def _on_screen_send(self, active: bool) -> None:
+        """Called when the SEND button on the active screen is toggled.
+
+        active=True:
+          1. Send XMIT command (XM) — TNC keys PTT and starts DIDDLE.
+          2. Send any text already in TX window.
+          3. Wire tx_input.textChanged so every new character is sent
+             immediately as a data frame.
+
+        active=False:
+          1. Warn if unsent text remains in TX window.
+          2. Disconnect textChanged.
+          3. Send RCVE command (RC) — TNC returns to receive.
+        """
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+
+        tx = self._tx_input
+        if tx is None:
+            return
+
+        from pk232py.comm.frame import build_command
+
+        if active:
+            # 1. Send XMIT — TNC keys PTT and starts DIDDLE
+            xmit = build_command(b'XM')
+            self._serial.send_command(xmit[2:4], xmit[4:-1])
+            self._log_monitor("[TX] XMIT — PTT ON, DIDDLE started")
+
+            # 2. Send any text already in TX window
+            text = tx.toPlainText().strip()
+            if text:
+                self._send_rtty_text(text)
+                tx.blockSignals(True)
+                tx.clear()
+                tx.blockSignals(False)
+
+            # 3. Wire live-TX: every new character goes out immediately
+            try:
+                tx.textChanged.disconnect(self._on_rtty_text_changed)
+            except (RuntimeError, TypeError):
+                pass
+            tx.textChanged.connect(self._on_rtty_text_changed)
+
+            # 4. Return keyboard focus to TX window
+            #    (btn_send has NoFocus but focus may have drifted)
+            QTimer.singleShot(0, tx.setFocus)
+
+        else:
+            # 1. Warn if unsent text remains
+            pending = tx.toPlainText().strip()
+            if pending:
+                rx = self._rx_display
+                rx.moveCursor(rx.textCursor().MoveOperation.End)
+                rx.insertPlainText("\n*** Still text to transmit! ***\n")
+
+            # 2. Disconnect live-TX
+            try:
+                tx.textChanged.disconnect(self._on_rtty_text_changed)
+            except (RuntimeError, TypeError):
+                pass
+
+            # 3. Send RCVE — TNC switches back to receive
+            rcve = build_command(b'RC')
+            self._serial.send_command(rcve[2:4], rcve[4:-1])
+            self._log_monitor("[TX] RCVE — PTT OFF, back to receive")
+
+    def _on_rtty_text_changed(self) -> None:
+        """Called whenever TX window content changes while SEND is active.
+
+        Sends the complete current content as a data frame, then clears
+        the window — producing character-by-character live transmission.
+        blockSignals prevents a recursive call when clearing the field.
+        """
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+        tx = self._tx_input
+        if tx is None:
+            return
+        text = tx.toPlainText()
+        if not text:
+            return
+        tx.blockSignals(True)
+        tx.clear()
+        tx.blockSignals(False)
+        self._send_rtty_text(text)
+
+    def _send_rtty_text(self, text: str) -> None:
+        """Send text as a data frame via the active mode.
+
+        Baudot mode uppercases automatically via data_frame().
+        send_data() expects raw payload bytes — not a full Host frame.
+        """
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+        self._serial.send_data(
+            text.encode('ascii', errors='replace'),
+            channel=0,
+        )
+        self._log_monitor(f"[TX] {text!r}")
+
+    def _on_screen_receive(self, active: bool) -> None:
+        """Called when the RECEIVE button on the active screen is toggled.
+
+        active=True:  send RECEIVE command to TNC for the current mode.
+        active=False: return TNC to standby for the current mode.
+
+        Each mode has a different receive-activation mnemonic:
+          Baudot/ASCII RTTY  — RX is always on; no explicit command needed.
+          AMTOR              — receive handled by ALIST / FEC buttons.
+          Morse              — RX is always on; no explicit command needed.
+          PACTOR             — receive via PTLIST (btn_ptlist on screen).
+        For modes where no action is needed, the call is a graceful no-op.
+        """
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+
+        mode = self._modes.current_mode
+        if mode is None:
+            return
+
+        mode_name = mode.name
+
+        if active:
+            # Mode-specific receive activation
+            if mode_name in ("Baudot RTTY", "ASCII RTTY", "CW / Morse"):
+                # These modes receive continuously — no command needed.
+                # The button is purely visual feedback for the operator.
+                logger.debug("RECEIVE: %s — continuous RX, no TNC command",
+                             mode_name)
+
+            elif mode_name == "NAVTEX":
+                # NAVTEX receives automatically — no command needed.
+                logger.debug("RECEIVE: NAVTEX — auto RX")
+
+            else:
+                # Unknown mode — log and do nothing.
+                logger.debug("RECEIVE: %s — no specific receive command",
+                             mode_name)
+        else:
+            # RECEIVE toggled OFF — no explicit TNC command for most modes.
+            logger.debug("RECEIVE OFF: %s", mode_name)
+
+    def _on_screen_rbaud_changed(self, index: int) -> None:
+        """Called when the RBAUD dropdown on the active screen changes.
+
+        Reads the selected baud-rate string from the dropdown,
+        converts it to an integer and sends an RB command frame.
+
+        Only sent when Host Mode is active — silently ignored
+        otherwise (e.g. when the screen is first built and the
+        dropdown is populated programmatically).
+        """
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+
+        mode = self._modes.current_mode
+        if mode is None or not hasattr(mode, "rbaud_frame"):
+            return
+
+        # Read baud value from the dropdown text (e.g. "45", "100")
+        screen = self._opmode_stack.currentWidget()
+        if not hasattr(screen, "combo_rbaud"):
+            return
+        text = screen.combo_rbaud.currentText().strip()
+        try:
+            baud = int(text)
+        except ValueError:
+            logger.warning("RBAUD: invalid value %r", text)
+            return
+
+        # Update mode instance so get_init_frames() stays in sync
+        mode.rbaud = baud
+
+        # Send RB frame to TNC
+        frame = mode.rbaud_frame(baud)
+        self._serial.send_command(
+            frame[2:4],   # mnemonic bytes
+            frame[4:-1],  # argument bytes
+        )
+        logger.info("RBAUD set to %d Bd", baud)
+        self._log_monitor(f"[PARAM] RBAUD → {baud} Bd")
+
+    def _wire_amtor_buttons(self, screen) -> None:
+        """Connect AMTOR mode buttons to TNC commands.
+
+        Only wires buttons that exist on the screen — safe to call
+        for non-AMTOR screens (all hasattr guards).
+        """
+        def _conn(btn_name: str, slot) -> None:
+            btn = getattr(screen, btn_name, None)
+            if btn is None:
+                return
+            try:
+                btn.clicked.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+            btn.clicked.connect(slot)
+
+        _conn("btn_arq",        self._on_amtor_arq)
+        _conn("btn_fec",        self._on_amtor_fec)
+        _conn("btn_selfec",     self._on_amtor_selfec)
+        _conn("btn_alist",      self._on_amtor_alist)
+        _conn("btn_stby",       self._on_amtor_stby)
+        _conn("btn_achg",       self._on_amtor_achg)
+
+    def _wire_pactor_buttons(self, screen) -> None:
+        """Connect PACTOR mode buttons to TNC commands."""
+        def _conn(btn_name: str, slot) -> None:
+            btn = getattr(screen, btn_name, None)
+            if btn is None:
+                return
+            try:
+                btn.clicked.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+            btn.clicked.connect(slot)
+
+        _conn("btn_connect",    self._on_pactor_connect)
+        _conn("btn_ptlist",     self._on_pactor_ptlist)
+        _conn("btn_ptsend",     self._on_pactor_ptsend)
+        _conn("btn_disconnect", self._on_pactor_disconnect)
+        _conn("btn_stby",       self._on_pactor_stby)
+
+    # ------------------------------------------------------------------
+    # AMTOR slots
+    # ------------------------------------------------------------------
+
+    def _amtor_send(self, frame: bytes) -> bool:
+        """Send a pre-built AMTOR command frame. Returns True on success."""
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return False
+        return self._serial.send_command(frame[2:4], frame[4:-1])
+
+    def _on_amtor_arq(self) -> None:
+        """ARQ button — call the destination SELCAL (mnemonic AC)."""
+        screen = self._opmode_stack.currentWidget()
+        selcal = getattr(screen, "le_dest", None)
+        if selcal is None:
+            return
+        dest = selcal.text().strip().upper()
+        if not dest:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "ARQ Call",
+                                "Please enter a destination SELCAL.")
+            return
+        from pk232py.modes.amtor import AMTORMode
+        frame = AMTORMode.arq_call_frame(dest)
+        if self._amtor_send(frame):
+            self._log_monitor(f"[AMTOR] ARQ call → {dest}")
+
+    def _on_amtor_fec(self) -> None:
+        """FEC button — start Mode B broadcast (mnemonic FE)."""
+        from pk232py.modes.amtor import AMTORMode
+        frame = AMTORMode.fec_frame()
+        if self._amtor_send(frame):
+            self._log_monitor("[AMTOR] FEC broadcast started")
+
+    def _on_amtor_selfec(self) -> None:
+        """SELFEC button — selective FEC (mnemonic SE)."""
+        screen = self._opmode_stack.currentWidget()
+        selcal = getattr(screen, "le_dest", None)
+        dest = selcal.text().strip().upper() if selcal else ""
+        if not dest:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "SELFEC",
+                                "Please enter a destination SELCAL.")
+            return
+        from pk232py.modes.amtor import AMTORMode
+        frame = AMTORMode.selfec_frame(dest)
+        if self._amtor_send(frame):
+            self._log_monitor(f"[AMTOR] SELFEC → {dest}")
+
+    def _on_amtor_alist(self) -> None:
+        """ALIST button — Mode A listen (mnemonic AL)."""
+        from pk232py.modes.amtor import AMTORMode
+        frame = AMTORMode.alist_frame()
+        if self._amtor_send(frame):
+            self._log_monitor("[AMTOR] ALIST — listening")
+
+    def _on_amtor_stby(self) -> None:
+        """STBY button — return to AMTOR standby (mnemonic AM)."""
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+        from pk232py.comm.frame import build_command
+        frame = build_command(b'AM')
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        self._log_monitor("[AMTOR] Standby")
+
+    def _on_amtor_achg(self) -> None:
+        """ACHG button — ARQ changeover / break-in (mnemonic AG)."""
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+        from pk232py.comm.frame import build_command
+        frame = build_command(b'AG')
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        self._log_monitor("[AMTOR] ACHG — changeover sent")
+
+    # ------------------------------------------------------------------
+    # PACTOR slots
+    # ------------------------------------------------------------------
+
+    def _pactor_send(self, frame: bytes) -> bool:
+        """Send a pre-built PACTOR command frame."""
+        if not self._serial.is_connected:
+            return False
+        return self._serial.send_command(frame[2:4], frame[4:-1])
+
+    def _on_pactor_connect(self) -> None:
+        """Connect button — initiate PACTOR ARQ call.
+
+        Sends PACTOR standby (PT) then ARQ call (AC {callsign}).
+        MYPTCALL must already be set via get_init_frames().
+        """
+        screen = self._opmode_stack.currentWidget()
+        le_dest = getattr(screen, "le_dest", None)
+        if le_dest is None:
+            return
+        dest = le_dest.text().strip().upper()
+        if not dest:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "PACTOR Connect",
+                                "Please enter a destination callsign.")
+            return
+        if not self._serial.is_connected:
+            return
+        from pk232py.comm.frame import build_command
+        # 1. Enter PACTOR standby
+        stby = build_command(b'PT')
+        self._serial.send_command(stby[2:4], stby[4:-1])
+        # 2. Initiate ARQ call (mnemonic AC, same as AMTOR but for PACTOR)
+        call = build_command(b'AC', dest.encode('ascii'))
+        self._serial.send_command(call[2:4], call[4:-1])
+        self._log_monitor(f"[PACTOR] Connecting → {dest}")
+
+    def _on_pactor_ptlist(self) -> None:
+        """PTLIST button — enter PACTOR listen mode (mnemonic PN)."""
+        from pk232py.modes.pactor import PACTORMode
+        frame = PACTORMode.ptlist_frame()
+        if self._pactor_send(frame):
+            self._log_monitor("[PACTOR] PTLIST — listening")
+
+    def _on_pactor_ptsend(self) -> None:
+        """PTSEND button — start PACTOR FEC unproto transmission (mnemonic PD).
+
+        Sends TX window contents as PTSEND unproto.
+        """
+        if not self._serial.is_connected:
+            return
+        from pk232py.comm.frame import build_command
+        # PD 1,2 = 100 baud, 2 repetitions (sensible default)
+        frame = build_command(b'PD', b'1,2')
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        self._log_monitor("[PACTOR] PTSEND started (100 Bd, 2x)")
+
+    def _on_pactor_disconnect(self) -> None:
+        """Disconnect button — terminate PACTOR ARQ (DI then PT standby)."""
+        if not self._serial.is_connected:
+            return
+        from pk232py.comm.frame import build_command
+        di = build_command(b'DI')
+        self._serial.send_command(di[2:4], di[4:-1])
+        self._log_monitor("[PACTOR] Disconnect sent")
+
+    def _on_pactor_stby(self) -> None:
+        """STBY button — return to PACTOR standby (mnemonic PT)."""
+        if not self._serial.is_connected:
+            return
+        from pk232py.comm.frame import build_command
+        frame = build_command(b'PT')
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        self._log_monitor("[PACTOR] Standby")
+
+    def _wire_identity_fields(self, screen) -> None:
+        """Wire identity QLineEdit fields to TNC parameter frames.
+
+        Covers:
+          PACTOR  le_myptcall  → PACTORMode.myptcall_frame()  (MK)
+          AMTOR   le_myselcal  → AMTORMode.myselcal_frame()   (MG)
+          AMTOR   le_myaltcal  → AMTORMode.myaltcal_frame()   (MK)
+          AMTOR   le_myident   → AMTORMode.myident_frame()    (MY)
+
+        Uses editingFinished so the frame is only sent when the
+        user leaves the field (Enter or focus-out), not on every
+        keystroke.
+        """
+        def _wire(field_name: str, slot) -> None:
+            field = getattr(screen, field_name, None)
+            if field is None:
+                return
+            try:
+                field.editingFinished.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+            field.editingFinished.connect(slot)
+
+        _wire("le_myptcall",  self._on_pactor_myptcall_changed)
+        _wire("le_myselcal",  self._on_amtor_myselcal_changed)
+        _wire("le_myaltcal",  self._on_amtor_myaltcal_changed)
+        _wire("le_myident",   self._on_amtor_myident_changed)
+
+    def _on_pactor_myptcall_changed(self) -> None:
+        """Send MYPTCALL frame when le_myptcall editingFinished fires."""
+        if not self._serial.is_connected:
+            return
+        screen = self._opmode_stack.currentWidget()
+        call = getattr(screen, "le_myptcall", None)
+        if call is None:
+            return
+        text = call.text().strip().upper()
+        if not text:
+            return
+        from pk232py.modes.pactor import PACTORMode
+        frame = PACTORMode.myptcall_frame(text)
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        # Keep mode instance in sync
+        mode = self._modes.current_mode
+        if hasattr(mode, "myptcall"):
+            mode.myptcall = text
+        self._log_monitor(f"[PARAM] MYPTCALL → {text}")
+
+    def _on_amtor_myselcal_changed(self) -> None:
+        """Send MYSELCAL frame when le_myselcal editingFinished fires."""
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+        screen = self._opmode_stack.currentWidget()
+        field = getattr(screen, "le_myselcal", None)
+        if field is None:
+            return
+        text = field.text().strip().upper()
+        if not text:
+            return
+        from pk232py.modes.amtor import AMTORMode
+        frame = AMTORMode.myselcal_frame(text)
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        mode = self._modes.current_mode
+        if hasattr(mode, "myselcal"):
+            mode.myselcal = text
+        self._log_monitor(f"[PARAM] MYSELCAL → {text}")
+
+    def _on_amtor_myaltcal_changed(self) -> None:
+        """Send MYALTCAL frame when le_myaltcal editingFinished fires."""
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+        screen = self._opmode_stack.currentWidget()
+        field = getattr(screen, "le_myaltcal", None)
+        if field is None:
+            return
+        text = field.text().strip().upper()
+        from pk232py.modes.amtor import AMTORMode
+        frame = AMTORMode.myaltcal_frame(text)
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        mode = self._modes.current_mode
+        if hasattr(mode, "myaltcal"):
+            mode.myaltcal = text
+        self._log_monitor(f"[PARAM] MYALTCAL → {text or '(cleared)'}")
+
+    def _on_amtor_myident_changed(self) -> None:
+        """Send MYIDENT frame when le_myident editingFinished fires."""
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+        screen = self._opmode_stack.currentWidget()
+        field = getattr(screen, "le_myident", None)
+        if field is None:
+            return
+        text = field.text().strip().upper()
+        from pk232py.modes.amtor import AMTORMode
+        frame = AMTORMode.myident_frame(text)
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        mode = self._modes.current_mode
+        if hasattr(mode, "myident"):
+            mode.myident = text
+        self._log_monitor(f"[PARAM] MYIDENT → {text or '(cleared)'}")
+
+    # ------------------------------------------------------------------
+    # Morse parameter wiring
+    # ------------------------------------------------------------------
+
+    def _wire_morse_params(self, screen) -> None:
+        """Wire Morse SpinBoxes and LOCK button to TNC commands."""
+
+        def _wire_sb(attr: str, slot) -> None:
+            sb = getattr(screen, attr, None)
+            if sb is None:
+                return
+            try:
+                sb.valueChanged.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+            sb.valueChanged.connect(slot)
+
+        def _wire_btn(attr: str, slot) -> None:
+            btn = getattr(screen, attr, None)
+            if btn is None:
+                return
+            try:
+                btn.clicked.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+            btn.clicked.connect(slot)
+
+        _wire_sb("sb_mspeed",  self._on_morse_mspeed_changed)
+        _wire_sb("sb_mweight", self._on_morse_mweight_changed)
+        _wire_sb("sb_mid",     self._on_morse_mid_changed)
+        _wire_btn("btn_lock",  self._on_morse_lock)
+
+    def _morse_send(self, frame: bytes) -> bool:
+        """Send a Morse parameter frame. Guard: Host Mode required."""
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return False
+        return self._serial.send_command(frame[2:4], frame[4:-1])
+
+    def _on_morse_mspeed_changed(self, value: int) -> None:
+        """MSPEED spinbox changed — send MP frame (mnemonic MP)."""
+        from pk232py.modes.morse import MorseMode
+        frame = MorseMode.mspeed_frame(value)
+        if self._morse_send(frame):
+            mode = self._modes.current_mode
+            if hasattr(mode, "mspeed"):
+                mode.mspeed = value
+            self._log_monitor(f"[PARAM] MSPEED → {value} WPM")
+
+    def _on_morse_mweight_changed(self, value: int) -> None:
+        """MWEIGHT spinbox changed — send MW frame (mnemonic MW)."""
+        from pk232py.modes.morse import MorseMode
+        frame = MorseMode.mweight_frame(value)
+        if self._morse_send(frame):
+            mode = self._modes.current_mode
+            if hasattr(mode, "mweight"):
+                mode.mweight = value
+            self._log_monitor(f"[PARAM] MWEIGHT → {value}")
+
+    def _on_morse_mid_changed(self, value: int) -> None:
+        """MID spinbox changed — send MI frame (mnemonic MI)."""
+        from pk232py.modes.morse import MorseMode
+        frame = MorseMode.mid_frame(value)
+        if self._morse_send(frame):
+            mode = self._modes.current_mode
+            if hasattr(mode, "mid"):
+                mode.mid = value
+            self._log_monitor(f"[PARAM] MID → {value} min")
+
+    def _on_morse_lock(self) -> None:
+        """LOCK button — lock RX speed to current signal (mnemonic LO)."""
+        from pk232py.modes.morse import MorseMode
+        frame = MorseMode.lock_frame()
+        if self._morse_send(frame):
+            self._log_monitor("[MORSE] LOCK — RX speed locked to signal")
+
+    # ------------------------------------------------------------------
+    # Toggle button wiring (RXREV, TXREV, EAS, WIDESHFT, PT200, …)
+    # ------------------------------------------------------------------
+
+    def _wire_toggle_buttons(self, screen) -> None:
+        """Wire all toggle buttons on the active screen to TNC frames.
+
+        Each entry: (widget_attr, mode_class_path, frame_method_name, instance_attr)
+        The slot is built dynamically from these components.
+        """
+        mode = self._modes.current_mode
+        if mode is None:
+            return
+
+        # Map: btn_attr → (frame_builder_callable, instance_attr_name)
+        # frame_builder takes a bool and returns bytes
+        from pk232py.modes.amtor   import AMTORMode
+        from pk232py.modes.morse   import MorseMode
+        from pk232py.modes.pactor  import PACTORMode
+        from pk232py.modes.rtty_baudot import BaudotRTTYMode
+        from pk232py.modes.rtty_ascii  import ASCIIRTTYMode
+
+        toggle_map = {
+            # AMTOR toggles
+            "btn_rxrev":    (AMTORMode.rxrev_frame,   "rxrev"),
+            "btn_txrev":    (AMTORMode.txrev_frame,   "txrev"),
+            "btn_rfec":     (AMTORMode.rfec_frame,    "rfec"),
+            "btn_srxall":   (AMTORMode.srxall_frame,  "srxall"),
+            "btn_eas":      (AMTORMode.eas_frame,     "eas"),
+            # Morse toggles (share same attr names, same mnemonic pattern)
+            "btn_wordout":  (MorseMode.wordout_frame, "wordout"),
+            "btn_moptt":    (None,                    None),   # MO toggle — handled separately
+            # PACTOR toggles
+            "btn_pt200":    (PACTORMode.pt200_frame,  None),
+            "btn_pthuff":   (PACTORMode.pthuff_frame, None),
+            "btn_ptround":  (PACTORMode.ptround_frame, None),
+            # Baudot/ASCII toggles
+            "btn_wideshft": (BaudotRTTYMode.wideshft_frame, "wideshft"),
+        }
+
+        # _toggle_slots: Dict btn_name → letzter verbundener TNC-Slot
+        # Wird auf der Instanz gespeichert um bei erneutem Aufruf
+        # nur unseren Slot zu trennen — nicht den screen-internen.
+        if not hasattr(self, '_toggle_slots'):
+            self._toggle_slots = {}
+
+        for btn_name, (frame_fn, inst_attr) in toggle_map.items():
+            btn = getattr(screen, btn_name, None)
+            if btn is None or frame_fn is None:
+                continue
+
+            # Nur unseren eigenen Slot trennen (nicht screen-interne!)
+            old_slot = self._toggle_slots.get(btn_name)
+            if old_slot is not None:
+                try:
+                    btn.toggled.disconnect(old_slot)
+                except (RuntimeError, TypeError):
+                    pass
+
+            # Neuen Slot erzeugen und speichern
+            def _make_slot(fn, attr, bname):
+                def slot(checked: bool) -> None:
+                    if not self._serial.is_connected or not self._serial.is_host_mode:
+                        return
+                    frame = fn(checked)
+                    self._serial.send_command(frame[2:4], frame[4:-1])
+                    if attr:
+                        m = self._modes.current_mode
+                        if m and hasattr(m, attr):
+                            setattr(m, attr, checked)
+                    self._log_monitor(
+                        f"[PARAM] {bname.replace('btn_', '').upper()}"
+                        f" → {'ON' if checked else 'OFF'}"
+                    )
+                return slot
+
+            new_slot = _make_slot(frame_fn, inst_attr, btn_name)
+            self._toggle_slots[btn_name] = new_slot
+            btn.toggled.connect(new_slot)
+
+    # ------------------------------------------------------------------
+    # NAVTEX filter wiring
+    # ------------------------------------------------------------------
+
+    def _wire_navtex_filters(self, screen) -> None:
+        """Wire NAVTEX NAVMSG checkboxes and NAVSTN field to TNC."""
+        # NAVMSG checkboxes — stateChanged
+        msg_checks = getattr(screen, "_msg_checks", None)
+        if msg_checks is not None:
+            for letter, cb in msg_checks.items():
+                try:
+                    cb.stateChanged.disconnect(self._on_navtex_navmsg_changed)
+                except (RuntimeError, TypeError):
+                    pass
+                cb.stateChanged.connect(self._on_navtex_navmsg_changed)
+
+        # NAVSTN field — editingFinished
+        le_navstn = getattr(screen, "le_navstn", None)
+        if le_navstn is not None:
+            try:
+                le_navstn.editingFinished.disconnect(
+                    self._on_navtex_navstn_changed
+                )
+            except (RuntimeError, TypeError):
+                pass
+            le_navstn.editingFinished.connect(
+                self._on_navtex_navstn_changed
+            )
+
+    def _on_navtex_navmsg_changed(self) -> None:
+        """Any NAVMSG checkbox changed — rebuild filter and send NM frame."""
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+        screen = self._opmode_stack.currentWidget()
+        if not hasattr(screen, "get_navmsg_filter"):
+            return
+        filter_str = screen.get_navmsg_filter()
+        from pk232py.modes.navtex import NAVTEXMode
+        frame = NAVTEXMode.navmsg_frame(filter_str)
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        mode = self._modes.current_mode
+        if hasattr(mode, "navmsg"):
+            mode.navmsg = filter_str
+        self._log_monitor(f"[PARAM] NAVMSG → {filter_str}")
+
+    def _on_navtex_navstn_changed(self) -> None:
+        """NAVSTN field editingFinished — send NS frame."""
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+        screen = self._opmode_stack.currentWidget()
+        if not hasattr(screen, "get_navstn_filter"):
+            return
+        filter_str = screen.get_navstn_filter()
+        from pk232py.modes.navtex import NAVTEXMode
+        frame = NAVTEXMode.navstn_frame(filter_str)
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        mode = self._modes.current_mode
+        if hasattr(mode, "navstn"):
+            mode.navstn = filter_str
+        self._log_monitor(f"[PARAM] NAVSTN → {filter_str}")
+
+    def _on_screen_send(self, active: bool) -> None:
+        """Called when the SEND button on the active screen is toggled.
+
+        active=True:
+          1. Send XMIT command (XM) — TNC keys PTT and starts DIDDLE.
+          2. Send any text already in TX window.
+          3. Wire tx_input.textChanged so every new character is sent
+             immediately as a data frame.
+
+        active=False:
+          1. Warn if unsent text remains in TX window.
+          2. Disconnect textChanged.
+          3. Send RCVE command (RC) — TNC returns to receive.
+        """
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+
+        tx = self._tx_input
+        if tx is None:
+            return
+
+        from pk232py.comm.frame import build_command
+
+        if active:
+            # 1. Send XMIT — TNC keys PTT and starts DIDDLE
+            xmit = build_command(b'XM')
+            self._serial.send_command(xmit[2:4], xmit[4:-1])
+            self._log_monitor("[TX] XMIT — PTT ON, DIDDLE started")
+
+            # 2. Send any text already in TX window
+            text = tx.toPlainText().strip()
+            if text:
+                self._send_rtty_text(text)
+                tx.blockSignals(True)
+                tx.clear()
+                tx.blockSignals(False)
+
+            # 3. Wire live-TX: every new character goes out immediately
+            try:
+                tx.textChanged.disconnect(self._on_rtty_text_changed)
+            except (RuntimeError, TypeError):
+                pass
+            tx.textChanged.connect(self._on_rtty_text_changed)
+
+        else:
+            # 1. Warn if unsent text remains
+            pending = tx.toPlainText().strip()
+            if pending:
+                rx = self._rx_display
+                rx.moveCursor(rx.textCursor().MoveOperation.End)
+                rx.insertPlainText("\n*** Still text to transmit! ***\n")
+
+            # 2. Disconnect live-TX
+            try:
+                tx.textChanged.disconnect(self._on_rtty_text_changed)
+            except (RuntimeError, TypeError):
+                pass
+
+            # 3. Send RCVE — TNC switches back to receive
+            rcve = build_command(b'RC')
+            self._serial.send_command(rcve[2:4], rcve[4:-1])
+            self._log_monitor("[TX] RCVE — PTT OFF, back to receive")
+
+    def _on_screen_receive(self, active: bool) -> None:
+        """Called when the RECEIVE button on the active screen is toggled.
+
+        active=True:  send RECEIVE command to TNC for the current mode.
+        active=False: return TNC to standby for the current mode.
+
+        Each mode has a different receive-activation mnemonic:
+          Baudot/ASCII RTTY  — RX is always on; no explicit command needed.
+          AMTOR              — receive handled by ALIST / FEC buttons.
+          Morse              — RX is always on; no explicit command needed.
+          PACTOR             — receive via PTLIST (btn_ptlist on screen).
+        For modes where no action is needed, the call is a graceful no-op.
+        """
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return
+
+        mode = self._modes.current_mode
+        if mode is None:
+            return
+
+        mode_name = mode.name
+
+        if active:
+            # Mode-specific receive activation
+            if mode_name in ("Baudot RTTY", "ASCII RTTY", "CW / Morse"):
+                # These modes receive continuously — no command needed.
+                # The button is purely visual feedback for the operator.
+                logger.debug("RECEIVE: %s — continuous RX, no TNC command",
+                             mode_name)
+
+            elif mode_name == "NAVTEX":
+                # NAVTEX receives automatically — no command needed.
+                logger.debug("RECEIVE: NAVTEX — auto RX")
+
+            else:
+                # Unknown mode — log and do nothing.
+                logger.debug("RECEIVE: %s — no specific receive command",
+                             mode_name)
+        else:
+            # RECEIVE toggled OFF — no explicit TNC command for most modes.
+            logger.debug("RECEIVE OFF: %s", mode_name)
+
     def _on_mode_data_received(self, data: bytes) -> None:
-        """Display decoded data from active mode in RX panel."""
+        """Route decoded TNC data to the correct display widget.
+
+        Host Mode (stack index 0): active opmode screen's rx_display.
+        Verbose Mode (stack index 1): verbose terminal _vt_display.
+        """
         try:
             text = data.decode("ascii", errors="replace")
         except Exception:
             text = repr(data)
-        # Show in RX display
-        self._log_terminal(text)
-        # Show in monitor (decoded mode)
+
+        if self._stack.currentIndex() == 0:
+            # Host Mode: write to active opmode screen's rx_display
+            self._log_terminal(text)
+        else:
+            # Verbose Mode: show decoded data in verbose terminal
+            self._vt_append(text, color="#88ccff")
+
+        # Monitor panel (always, if visible)
         if self._monitor_container.isVisible():
             if self._mon_btn_decoded.isChecked():
                 self._log_monitor(f"[DATA] {text.rstrip()}")
@@ -794,7 +1862,7 @@ class MainWindow(QMainWindow):
                             f"Could not switch mode:\n{reason}")
 
     # ------------------------------------------------------------------
-    # Slots Ã¢â‚¬â€ parameter dialogs (placeholders)
+    # Slots -- parameter dialogs (placeholders)
     # ------------------------------------------------------------------
 
     def _on_tnc_config(self) -> None:
@@ -965,7 +2033,7 @@ class MainWindow(QMainWindow):
         connected = self._serial.is_connected
         self._set_sig(self._ssl_connected, connected)
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Row 1: Hardware signals Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # Row 1: Hardware signals 
         if not connected:
             for lbl in [self._ssl_cts, self._ssl_dsr, self._ssl_dcd,
                         self._ssl_rts, self._ssl_dtr]:
@@ -986,13 +2054,13 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        # Ã¢â€â‚¬Ã¢â€â‚¬ Row 2: Program/TNC status Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+ # Row 2: Program/TNC status 
         self._set_sig(self._ssl_host, self._serial.is_host_mode)
-        # PTT and CON are updated via frame_received Ã¢â‚¬â€ no polling needed
+        # PTT and CON are updated via frame_received -- no polling needed
         # (see _on_frame_received for PTT/CON logic)
 
     def _poll_opmode(self) -> None:
-        """Send OPMODE query to TNC Ã¢â‚¬â€ keeps monitor alive with responses."""
+        """Send OPMODE query to TNC keeps monitor alive with responses."""
         if self._serial.is_host_mode and self._monitor_container.isVisible():
             self._serial.send_command(b"OP")   # OPMODE query
 
@@ -1039,11 +2107,17 @@ class MainWindow(QMainWindow):
             f"background-color:{a.bg_color}; "
             f"color:{a.fg_color}; border:none;"
         )
-        # Host Mode view
-        self._rx_display.setFont(font)
-        self._rx_display.setStyleSheet(style_rx)
-        self._tx_input.setFont(font)
-        self._tx_input.setStyleSheet(style_tx)
+        # Opmode screens: apply font + colors to all screens' RX and TX widgets
+        for screen in self._opmode_screens.values():
+            if hasattr(screen, "rx_display"):
+                screen.rx_display.setFont(font)
+                screen.rx_display.setStyleSheet(style_rx)
+            if hasattr(screen, "tx_input"):
+                screen.tx_input.setFont(font)
+                screen.tx_input.setStyleSheet(style_tx)
+                # Block cursor: width = one average character
+                char_w = screen.tx_input.fontMetrics().averageCharWidth()
+                screen.tx_input.setCursorWidth(char_w)
         # Verbose terminal view
         self._vt_display.setFont(font)
         self._vt_display.setStyleSheet(style_vt)
@@ -1052,6 +2126,9 @@ class MainWindow(QMainWindow):
             f"background-color:{a.bg_color}; "
             f"color:{a.fg_color}; border:none;"
         )
+        # Block cursor on verbose terminal input
+        char_w_vt = self._vt_input.fontMetrics().averageCharWidth()
+        self._vt_input.setCursorWidth(char_w_vt)
         logger.debug("Appearance applied: %s %dpt bg=%s fg=%s",
                      a.font_family, a.font_size, a.bg_color, a.fg_color)
 
@@ -1067,7 +2144,7 @@ class MainWindow(QMainWindow):
         )
 
     # ------------------------------------------------------------------
-    # Slots Ã¢â‚¬â€ incoming frames (monitor only Ã¢â‚¬â€ dispatch via ModeManager)
+    # Slots -- incoming frames (monitor only -- dispatch via ModeManager)
     # ------------------------------------------------------------------
 
     def _on_frame_received(self, frame: HostFrame) -> None:
@@ -1087,7 +2164,7 @@ class MainWindow(QMainWindow):
             elif frame.mnemonic == b"SI":
                 self._set_sig(self._ssl_ptt, False)
             elif frame.mnemonic == b"OP":
-                # OPMODE response Ã¢â‚¬â€ show in status bar
+                # OPMODE response -- show in status bar
                 try:
                     opmode_txt = frame.data[2:].decode('ascii','replace').strip()
                     if opmode_txt:
@@ -1105,7 +2182,7 @@ class MainWindow(QMainWindow):
                 self._set_sig(self._ssl_con, False)
                 self._set_sig(self._ssl_ptt, False)
 
-        # Monitor logging Ã¢â‚¬â€ all modes
+        # Monitor logging -- all modes
         if self._monitor_container.isVisible():
             if self._mon_btn_decoded.isChecked():
                 # Decoded: human-readable frame description
@@ -1123,19 +2200,17 @@ class MainWindow(QMainWindow):
                     f"[RX] {frame.kind.name:12s} "
                     f"ctl=0x{frame.ctl:02X} ch={frame.channel}"
                     f"{' '+mn if mn else ''}"
-                    f"  {txt}" if txt else ""
+                    f" {txt}" if txt else ""
                 )
             # Raw/Hex: handled via _on_raw_data_received
 
-        # Terminal: show received text for data frames
-        if frame.kind in (FrameKind.RX_DATA, FrameKind.RX_MONITOR,
-                          FrameKind.ECHO):
-            text = frame.text.strip()
-            if text:
-                self._log_terminal(text)
+        # RX_DATA / RX_MONITOR / ECHO are routed to the active
+        # screen's rx_display via the mode's on_data_received callback
+        # (_wire_mode_callbacks → _on_mode_data_received).
+        # Writing here as well would produce duplicate output.
 
     def _on_status_message(self, msg: str) -> None:
-        """Route status messages: errors Ã¢â€ â€™ popup, info Ã¢â€ â€™ status bar."""
+        """Route status messages: errors popup, info status bar."""
         # Keywords that indicate an error requiring user attention
         _error_keywords = (
             "error", "Error", "failed", "Failed",
@@ -1159,9 +2234,7 @@ class MainWindow(QMainWindow):
         self._tb_connect.setEnabled(not connected)
         self._tb_disconnect.setEnabled(connected)
         self._tb_recovery.setEnabled(connected)
-        # Always update serial signals immediately on connect/disconnect
         self._update_serial_signals()
-        # Keep timer running whenever serial status bar is visible
         if self._act_serial_status.isChecked():
             if connected:
                 self._serial_sig_timer.start()
@@ -1171,23 +2244,26 @@ class MainWindow(QMainWindow):
         if connected:
             self._sb_port.setText(f"Port: {self._config.port_name}")
             self._sb_baud.setText(f"Baud: {self._config.baudrate}")
+            # Connected but not yet in any mode → verbose indicator
+            self._set_mode_indicator("verbose")
         else:
             self._sb_port.setText("Port: ---")
             self._sb_baud.setText("Baud: ---")
             self._sb_mode.setText("Mode: OFFLINE")
             self._mode_combo.setEnabled(False)
+            self._set_mode_indicator("offline")
 
     def _update_host_mode_ui(self, active: bool) -> None:
         """Switch view and enable mode selector when Host Mode is active."""
-        # Enable combo in Host Mode AND in verbose when connected
-        # (for verbose-only modes like PACTOR)
         self._mode_combo.setEnabled(active or self._serial.is_connected)
         if active:
             self._sb_mode.setText("Mode: HOST")
+            self._set_mode_indicator("host")
             self._stack.setCurrentIndex(0)
             self._wire_mode_callbacks()
         else:
             self._sb_mode.setText("Mode: VERBOSE")
+            self._set_mode_indicator("verbose")
             self._stack.setCurrentIndex(1)
         self._set_sig(self._ssl_host, active)
         if active:
@@ -1204,12 +2280,12 @@ class MainWindow(QMainWindow):
     def _log_terminal(self, text: str) -> None:
         """Append text to terminal without forced newline per call.
  
-        QTextEdit.append() adds a newline after each call Ã¢â‚¬â€ wrong for
+        QTextEdit.append() adds a newline after each call -- wrong for
         streaming RTTY where each character arrives as a separate frame.
         insertPlainText() appends directly at cursor position.
-        \r is stripped Ã¢â‚¬â€ only \n causes a real line break.
+        \r is stripped -- only \n causes a real line break.
         """
-        # Strip \r Ã¢â‚¬â€ QTextEdit handles \n for line breaks
+        # Strip \r -- QTextEdit handles \n for line breaks
         text = text.replace('\r', '')
         if not text:
             return
@@ -1232,7 +2308,7 @@ class MainWindow(QMainWindow):
                     asc_part = "".join(
                         chr(b) if 32 <= b < 127 else "." for b in chunk
                     )
-                    lines.append(f"{i:04X}  {hex_part:<48}  {asc_part}")
+                    lines.append(f"{i:04X} {hex_part:<48} {asc_part}")
                 self._monitor.append("\n".join(lines))
                 return
             elif self._mon_btn_raw.isChecked():
@@ -1258,7 +2334,7 @@ class MainWindow(QMainWindow):
                     chr(b) if 32 <= b < 127 else "." for b in chunk
                 )
                 lines.append(
-                    f"{prefix}{i:04X}  {hex_part:<48}  {asc_part}"
+                    f"{prefix}{i:04X} {hex_part:<48} {asc_part}"
                 )
             self._monitor.append("\n".join(lines))
         elif self._mon_btn_raw.isChecked():
@@ -1279,14 +2355,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def eventFilter(self, obj, event) -> bool:
-        """Intercept keys in TX input (Host Mode) and verbose terminal."""
+        """Intercept keys in verbose terminal input.
+
+        Note: Opmode screens (Baudot, AMTOR, Morse etc.) manage their own
+        TX input Enter-key handling via their own eventFilter.  MainWindow
+        only needs to handle the verbose terminal input (_vt_input) here.
+        """
         if event.type() == QEvent.Type.KeyPress:
-            if obj is self._tx_input:
-                if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                        and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
-                    self._on_send()
-                    return True
-            elif obj is self._vt_input:
+            if obj is self._vt_input:
                 key  = event.key()
                 mods = event.modifiers()
                 ctrl = Qt.KeyboardModifier.ControlModifier
@@ -1299,12 +2375,12 @@ class MainWindow(QMainWindow):
                     else:
                         self._on_vt_send()
                     return True
-                # Ctrl+C Ã¢â€ â€™ $03: TNC back to COMMAND mode
+                # Ctrl+C -> $03: TNC back to COMMAND mode
                 if key == Qt.Key.Key_C and (mods & ctrl):
                     self._vt_send_raw(b"\x03", echo="[CTRL-C]\n",
                                       color="#ff9900")
                     return True
-                # Ctrl+Z Ã¢â€ â€™ $1A: PACTOR OVER / PTOVER char
+                # Ctrl+Z -> $1A: PACTOR OVER / PTOVER char
                 if key == Qt.Key.Key_Z and (mods & ctrl):
                     self._vt_send_raw(b"\x1a", echo="[CTRL-Z]\n",
                                       color="#ff9900")
@@ -1381,8 +2457,13 @@ class MainWindow(QMainWindow):
         If a mode is active, its data_frame() method is used to build
         the outgoing frame.  Falls back to raw send_data() if no mode
         is active (v0.1 behaviour).
+        Receive-only screens (NAVTEX, Signal, FAX) have no TX input;
+        _tx_input returns None for those — the call is a no-op.
         """
-        text = self._tx_input.toPlainText().strip()
+        tx = self._tx_input   # property: None for receive-only screens
+        if tx is None:
+            return
+        text = tx.toPlainText().strip()
         if not text:
             return
 
@@ -1407,20 +2488,17 @@ class MainWindow(QMainWindow):
             if not line:
                 continue
             if mode is not None and hasattr(mode, 'data_frame'):
-                # Use mode-specific frame builder
                 frame_bytes = mode.data_frame(line)
-                # Extract channel and data from built frame, send via serial
                 self._serial.send_data(
-                    frame_bytes[2:-1],   # payload between CTL and ETB
+                    frame_bytes[2:-1],
                     channel=0,
                 )
             else:
-                # Fallback: raw data send
                 self._serial.send_data(
                     line.encode('ascii', errors='replace')
                 )
 
-        self._tx_input.clear()
+        tx.clear()
 
     # ------------------------------------------------------------------
     # Window close
