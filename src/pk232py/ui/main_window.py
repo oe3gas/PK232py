@@ -1113,6 +1113,8 @@ class MainWindow(QMainWindow):
 
         Baudot mode uppercases automatically via data_frame().
         send_data() expects raw payload bytes — not a full Host frame.
+        Also echoes sent text to RX window (local TX echo) in TX colour
+        so the operator can see what was transmitted.
         """
         if not self._serial.is_connected or not self._serial.is_host_mode:
             return
@@ -1120,6 +1122,20 @@ class MainWindow(QMainWindow):
             text.encode('ascii', errors='replace'),
             channel=0,
         )
+        # Local TX echo: show sent chars in RX window in TX colour
+        rx = self._rx_display
+        from PyQt6.QtGui import QTextCursor, QColor
+        cursor = rx.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        fmt = cursor.charFormat()
+        fmt.setForeground(QColor("#ffee88"))   # TX yellow
+        cursor.setCharFormat(fmt)
+        cursor.insertText(text)
+        # Reset colour to RX blue for subsequent received text
+        fmt.setForeground(QColor("#88ccff"))
+        cursor.setCharFormat(fmt)
+        rx.setTextCursor(cursor)
+        rx.ensureCursorVisible()
         self._log_monitor(f"[TX] {text!r}")
 
     def _on_screen_receive(self, active: bool) -> None:
