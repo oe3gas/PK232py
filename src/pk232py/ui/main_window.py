@@ -69,6 +69,9 @@ class MainWindow(QMainWindow):
       - Menu bar, toolbar, status bar
     """
 
+    # Thread-safe verbose-terminal append: emit from any thread, handled in GUI thread.
+    _vt_append_signal = pyqtSignal(str, str)  # (text, color)
+
     def __init__(self) -> None:
         super().__init__()
         self._config: TncConfig = TncConfig()
@@ -791,6 +794,9 @@ class MainWindow(QMainWindow):
         self._serial.params_upload_required.connect(self._on_params_upload_required)
         self._serial.raw_data_received.connect(self._on_raw_data_received)
 
+        # Thread-safe VT append — background threads emit this signal
+        self._vt_append_signal.connect(self._vt_append)
+
  # SerialManager ModeManager (frame dispatch)
         self._serial.frame_received.connect(self._modes.on_frame)
         self._serial.frame_received.connect(self._on_frame_received)
@@ -925,35 +931,33 @@ class MainWindow(QMainWindow):
         connect_mode = self._connect_mode
         fast_init    = self._config.fast_init
 
+        # Thread-safe wrapper: background thread emits signal → GUI thread calls _vt_append
+        def _vt(text: str, color: str = "#cccccc") -> None:
+            self._vt_append_signal.emit(text, color)
+
         def _upload():
             if fast_init:
-                self._vt_append("[SYS] Fast Init — parameter upload skipped\n")
+                _vt("[SYS] Fast Init — parameter upload skipped\n")
                 self._log_monitor("[SYS] Fast Init active — no parameter upload")
                 if connect_mode == "host":
-                    self._vt_append("[SYS] Entering Host Mode...\n")
+                    _vt("[SYS] Entering Host Mode...\n")
                     self._serial.enter_host_mode()
                 else:
-                    self._vt_append("[SYS] Verbose terminal ready (fast init)\n")
-                    self._vt_input.setFocus()
+                    _vt("[SYS] Verbose terminal ready (fast init)\n")
                 return
-            self._vt_append("[SYS] Uploading parameters...\n")
+            _vt("[SYS] Uploading parameters...\n")
             uploader = ParamsUploader(
                 self._serial,
                 self._app_config,
-                echo_callback=self._vt_append,
+                echo_callback=_vt,
             )
             n = uploader.upload()
             self._log_monitor(f"[SYS] {n} parameters uploaded")
             if connect_mode == "host":
-                self._vt_append(
-                    f"[SYS] {n} parameters uploaded -- entering Host Mode...\n"
-                )
+                _vt(f"[SYS] {n} parameters uploaded -- entering Host Mode...\n")
                 self._serial.enter_host_mode()
             else:
-                self._vt_append(
-                    f"[SYS] {n} parameters uploaded -- verbose terminal ready\n"
-                )
-                self._vt_input.setFocus()
+                _vt(f"[SYS] {n} parameters uploaded -- verbose terminal ready\n")
         threading.Thread(
             target=_upload, daemon=True, name="PK232-ParamUpload"
         ).start()
