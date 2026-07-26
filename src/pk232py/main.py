@@ -16,14 +16,40 @@
 """Application entry point."""
 
 import sys
+import os
 import logging
+import tempfile
 
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 from pk232py import __version__
 from pk232py.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
+
+
+def _close_nuitka_splash() -> None:
+    """Dismiss the native Nuitka onefile splash screen (Windows only).
+
+    Nuitka shows the splash while the onefile payload is unpacked and
+    keeps it up until we delete the feedback file it created in TEMP.
+    NUITKA_ONEFILE_PARENT only exists inside a compiled onefile build,
+    so this is a harmless no-op when running from source or in a
+    non-onefile build - same idea as the try/__compiled__ guard used
+    in ui/screens/help_viewer.py.
+    """
+    parent = os.environ.get("NUITKA_ONEFILE_PARENT")
+    if not parent:
+        return  # not a onefile build -> nothing to dismiss
+    splash_file = os.path.join(
+        tempfile.gettempdir(),
+        f"onefile_{int(parent)}_splash_feedback.tmp",
+    )
+    try:
+        os.unlink(splash_file)
+    except OSError:
+        pass  # already gone or never created
 
 
 def main() -> None:
@@ -41,6 +67,11 @@ def main() -> None:
 
     window = MainWindow()
     window.show()
+
+    # show() only schedules the paint; dismissing the splash immediately
+    # can flash the still-empty window. singleShot(0) lets the paint
+    # event run first, then removes the splash underneath - seamless.
+    QTimer.singleShot(0, _close_nuitka_splash)
 
     sys.exit(app.exec())
 
