@@ -23,7 +23,7 @@ from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
-    QComboBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QComboBox, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
     QPushButton, QSplitter, QStackedWidget, QTextEdit, QToolBar,
     QVBoxLayout, QWidget, QWidgetAction,
 )
@@ -341,6 +341,31 @@ class MainWindow(QMainWindow):
         self._f1_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
         self._f1_shortcut.activated.connect(self._on_f1)
 
+        # Keep the verbose command field focused: whenever any menu closes,
+        # return focus to _vt_input (deferred + guarded, see _restore_vt_focus).
+        for _menu in mb.findChildren(QMenu):
+            _menu.aboutToHide.connect(self._on_menu_hidden)
+
+    def _restore_vt_focus(self) -> None:
+        """Return keyboard focus to the verbose command field.
+
+        Only acts when the verbose terminal page (_stack index 1) is
+        visible and no modal dialog is open — so we never steal focus
+        from a dialog the user is still working in.
+        """
+        if self._stack.currentIndex() != 1:
+            return
+        if QApplication.activeModalWidget() is not None:
+            return
+        self._vt_input.setFocus()
+
+    def _on_menu_hidden(self) -> None:
+        # Defer via singleShot(0): if the chosen menu action opens a modal
+        # dialog, its exec() blocks the event loop until the dialog closes.
+        # The restore then runs AFTERWARDS, and the activeModalWidget guard
+        # in _restore_vt_focus prevents stealing focus while a dialog is up.
+        QTimer.singleShot(0, self._restore_vt_focus)
+
     def _on_help_contents(self) -> None:
         """Open the help viewer at the top-level index page (Help → Contents)."""
         from pk232py.ui.screens.help_viewer import show_help
@@ -385,6 +410,15 @@ class MainWindow(QMainWindow):
         self._tb_recovery = tb.addAction("Recovery")
         self._tb_recovery.setToolTip("Host Mode Recovery")
         self._tb_recovery.triggered.connect(self._on_recovery)
+
+        # Toolbar buttons must not steal keyboard focus from the verbose
+        # command field / opmode tx_input (same NoFocus convention the opmode
+        # screen buttons already use). QToolButton via widgetForAction.
+        for _act in (self._tb_connect, self._tb_disconnect,
+                     self._tb_host_on, self._tb_recovery):
+            _btn = tb.widgetForAction(_act)
+            if _btn is not None:
+                _btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         tb.addSeparator()
 
@@ -4120,6 +4154,29 @@ class MainWindow(QMainWindow):
                         finally:
                             self._in_event_filter = False
                         return True
+
+            # Verbose Mode: route stray printable keystrokes into _vt_input, so a
+            # keypress lands in the command field even when focus is elsewhere
+            # (e.g. after a menu closed). Mirrors the Host-Mode tx_input routing.
+            if (self._stack.currentIndex() == 1
+                    and not self._in_event_filter
+                    and obj is not self._vt_input
+                    and QApplication.activeModalWidget() is None):
+                _skip = (Qt.KeyboardModifier.ControlModifier
+                         | Qt.KeyboardModifier.AltModifier
+                         | Qt.KeyboardModifier.MetaModifier)
+                # Skip Ctrl/Alt/Meta combos so menu shortcuts still fire.
+                # Only route real text characters (event.text() printable) — this
+                # excludes Enter/Backspace/arrows and, crucially, leaves clicks
+                # into _vt_display untouched so text selection/copy still works.
+                if not (event.modifiers() & _skip) and event.text() and event.text().isprintable():
+                    self._in_event_filter = True
+                    try:
+                        self._vt_input.setFocus()
+                        QApplication.sendEvent(self._vt_input, event)
+                    finally:
+                        self._in_event_filter = False
+                    return True
             if obj is self._vt_input:
                 key  = event.key()
                 mods = event.modifiers()
