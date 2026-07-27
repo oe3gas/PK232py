@@ -3941,6 +3941,9 @@ class MainWindow(QMainWindow):
         self._tb_connect.setEnabled(not connected)
         self._tb_disconnect.setEnabled(connected)
         self._tb_recovery.setEnabled(connected)
+        # "Enter Host Mode" only makes sense when connected and still in
+        # verbose mode (is_host_mode False right after connecting).
+        self._tb_host_on.setEnabled(connected and not self._serial.is_host_mode)
         self._update_serial_signals()
         if self._act_serial_status.isChecked():
             if connected:
@@ -3963,6 +3966,9 @@ class MainWindow(QMainWindow):
     def _update_host_mode_ui(self, active: bool) -> None:
         """Switch view and enable mode selector when Host Mode is active."""
         self._mode_combo.setEnabled(active or self._serial.is_connected)
+        # Toolbar "Enter Host Mode" is pointless while already in Host Mode.
+        # Enabled only when connected and NOT in Host Mode.
+        self._tb_host_on.setEnabled(not active and self._serial.is_connected)
         # CTRL+D is used as EOT marker in TX window during Host Mode.
         # Disable the Disconnect shortcut to prevent conflict.
         self._act_disconnect.setShortcut(
