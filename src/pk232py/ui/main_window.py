@@ -161,7 +161,9 @@ class MainWindow(QMainWindow):
         file_menu = mb.addMenu("&File")
 
         act_load = QAction("&Load Settings...", self)
-        act_load.setShortcut("Ctrl+L")
+        # Ctrl+L now belongs to TNC -> Leave Host Mode (see _build_menubar's
+        # TNC block); Ctrl+O avoids an ambiguous-shortcut collision.
+        act_load.setShortcut("Ctrl+O")
         act_load.setStatusTip("Load settings from INI file")
         act_load.triggered.connect(self._on_load_settings)
         file_menu.addAction(act_load)
@@ -182,34 +184,46 @@ class MainWindow(QMainWindow):
  # TNC 
         tnc_menu = mb.addMenu("&TNC")
 
-        self._act_connect_verbose = QAction("Connect + Enter &Verbose Mode...", self)
+        # 1) Connect + Enter Terminal Mode (Ctrl+T)
+        self._act_connect_verbose = QAction("Connect + Enter &Terminal Mode...", self)
         self._act_connect_verbose.setShortcut("Ctrl+T")
         self._act_connect_verbose.setStatusTip(
-            "Connect to TNC and enter verbose terminal mode"
+            "Connect to TNC and enter terminal (verbose) mode"
         )
         self._act_connect_verbose.triggered.connect(self._on_connect_verbose)
         tnc_menu.addAction(self._act_connect_verbose)
 
-        self._act_disconnect = QAction("&Disconnect", self)
-        self._act_disconnect.setShortcut("Ctrl+D")
-        self._act_disconnect.setStatusTip("Disconnect from TNC")
-        self._act_disconnect.triggered.connect(self._on_disconnect)
-        tnc_menu.addAction(self._act_disconnect)
-
-        tnc_menu.addSeparator()
-
+        # 2) Connect + Enter Host Mode (Ctrl+M)
         self._act_connect_host = QAction("Connect + Enter &Host Mode...", self)
+        self._act_connect_host.setShortcut("Ctrl+M")
         self._act_connect_host.setStatusTip(
             "Connect to TNC, upload parameters and enter Host Mode"
         )
         self._act_connect_host.triggered.connect(self._on_connect_host)
         tnc_menu.addAction(self._act_connect_host)
 
-        self._act_host_off = QAction("Leave Host Mode (Enter Verbose Mode)", self)
-        self._act_host_off.setStatusTip("Leave Host Mode, return TNC to verbose terminal")
+        # 3) Leave Host Mode + Return to Terminal (Ctrl+L)
+        self._act_host_off = QAction("&Leave Host Mode + Return to Terminal", self)
+        self._act_host_off.setShortcut("Ctrl+L")
+        self._act_host_off.setStatusTip(
+            "Leave Host Mode and return the TNC to terminal mode"
+        )
         self._act_host_off.triggered.connect(self._on_host_mode_exit)
         tnc_menu.addAction(self._act_host_off)
 
+        # 4) Disconnect + Close Serial Port (Ctrl+D)
+        self._act_disconnect = QAction("&Disconnect + Close Serial Port", self)
+        self._act_disconnect.setShortcut("Ctrl+D")
+        self._act_disconnect.setStatusTip(
+            "Leave Host Mode if active, then close the serial port"
+        )
+        self._act_disconnect.triggered.connect(self._on_disconnect)
+        tnc_menu.addAction(self._act_disconnect)
+
+        tnc_menu.addSeparator()
+
+        # Safety net: free the TNC from a stuck Host Mode without closing
+        # the port (sends the double-SOH resync frame, then HOST OFF).
         self._act_recovery = QAction("Host Mode &Recovery", self)
         self._act_recovery.setStatusTip(
             "Emergency recovery: free TNC from stuck Host Mode"
