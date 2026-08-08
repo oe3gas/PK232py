@@ -3817,8 +3817,12 @@ class MainWindow(QMainWindow):
                 screen.tx_input.setCurrentCharFormat(_tx_fmt)
                 # Keep colour_at() / space-insert char-level formatting
                 # (which overrides the stylesheet above) in sync with the
-                # same theme-aware colour.
-                screen.tx_input.set_theme_colors(tx_fg, a.bg_color)
+                # same theme-aware colour. Only TxInputWidget instances
+                # (Baudot/ASCII/Morse/AMTOR) have this method — PACTOR and
+                # HF/VHF Packet still use a plain QTextEdit for tx_input
+                # (no char-level ACK tracking there), so skip them.
+                if hasattr(screen.tx_input, "set_theme_colors"):
+                    screen.tx_input.set_theme_colors(tx_fg, a.bg_color)
                 # Block cursor: width = one average character
                 char_w = screen.tx_input.fontMetrics().averageCharWidth()
                 screen.tx_input.setCursorWidth(char_w)
