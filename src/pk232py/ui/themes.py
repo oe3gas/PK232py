@@ -197,3 +197,42 @@ def build_palette(theme: Theme) -> QPalette | None:
         pal.setColor(G.Disabled, role, disabled)
 
     return pal
+
+
+# ---------------------------------------------------------------------------
+# RX highlight colour roles
+# ---------------------------------------------------------------------------
+
+# LERNMODUS — why luma-based (light/dark bucket) instead of one fixed colour
+# set per theme.key: a per-key lookup ("dark" -> these three hex values,
+# "mono" -> those, ...) has to be hand-extended every time a new preset is
+# added, and silently falls back to something wrong if someone forgets. Luma
+# only cares whether theme.bg is visually light or dark, so it classifies any
+# future/custom theme (a user-picked bg/fg pair, not just the four built-in
+# presets) automatically -- the same two-bucket logic that already decides
+# button/window shading in build_palette() above, reused here for the RX
+# panel's semantic highlight colours instead of full palette roles.
+def semantic_colors(theme: Theme) -> dict[str, str]:
+    """RX highlight colours (received / echo / warning) for *theme*.
+
+    Bucketed by background luma rather than by theme.key, so a future custom
+    theme gets readable RX colours without a hand-added case here. Threshold
+    128 splits at roughly perceptual middle grey.
+
+    Contrast check (rough luma distance to theme.bg, target > 80):
+      Dark bucket   (bg luma ~9-30 for Retro/Dark):
+        rx_received #88ccff (luma ~190) -> diff ~160-181
+        rx_echo      #ffaa00 (luma ~176) -> diff ~146-167
+        rx_warning   #ff9900 (luma ~166) -> diff ~136-157
+      Light bucket  (bg luma ~255 for Mono/Air):
+        rx_received #0055aa (luma ~69)  -> diff ~186
+        rx_echo      #b36b00 (luma ~116) -> diff ~139
+        rx_warning   #b34700 (luma ~95)  -> diff ~160
+      All comfortably clear the 80 target.
+    """
+    dark_bg = _luma(QColor(theme.bg)) < 128
+    return {
+        "rx_received": "#88ccff" if dark_bg else "#0055aa",
+        "rx_echo":     "#ffaa00" if dark_bg else "#b36b00",
+        "rx_warning":  "#ff9900" if dark_bg else "#b34700",
+    }
