@@ -919,10 +919,9 @@ class MainWindow(QMainWindow):
         self._ssl_ptt  = _sig_label("PTT")
         self._ssl_con  = _sig_label("CON")
         self._ssl_rx   = _sig_label("RX")
-        self._ssl_tx   = _sig_label("TX")
 
         for w in [self._ssl_host, self._ssl_ptt,
-                  self._ssl_con,  self._ssl_rx, self._ssl_tx]:
+                  self._ssl_con,  self._ssl_rx]:
             r2l.addWidget(w)
         r2l.addStretch()
         ssl_outer.addWidget(row2)
@@ -932,18 +931,12 @@ class MainWindow(QMainWindow):
         # Add signal rows to footer (footer itself is hidden by default)
         self._footer_layout.addWidget(self._serial_status_bar)
 
-        # RX/TX blink timers
+        # RX blink timer
         self._rx_blink_timer = QTimer(self)
         self._rx_blink_timer.setSingleShot(True)
         self._rx_blink_timer.setInterval(150)
         self._rx_blink_timer.timeout.connect(
             lambda: self._ssl_rx.setStyleSheet(self._sig_style_inactive())
-        )
-        self._tx_blink_timer = QTimer(self)
-        self._tx_blink_timer.setSingleShot(True)
-        self._tx_blink_timer.setInterval(150)
-        self._tx_blink_timer.timeout.connect(
-            lambda: self._ssl_tx.setStyleSheet(self._sig_style_inactive())
         )
 
         # Timer for polling serial signal states (500ms)
@@ -1658,6 +1651,7 @@ class MainWindow(QMainWindow):
             # Send XM — TNC keys PTT and starts DIDDLE
             xmit = build_command(b'XM')
             self._serial.send_command(xmit[2:4], xmit[4:-1])
+            self._set_sig(self._ssl_ptt, True)
             self._log_monitor("[TX] XMIT — PTT ON, DIDDLE started")
             # For TxController modes (Baudot/ASCII/Morse): on_send_start() is
             # called when XM ACK arrives via _on_frame_received →
@@ -1695,6 +1689,7 @@ class MainWindow(QMainWindow):
             # Send RC — PTT off, back to receive
             rcve = build_command(b'RC')
             self._serial.send_command(rcve[2:4], rcve[4:-1])
+            self._set_sig(self._ssl_ptt, False)
             self._log_monitor("[TX] RCVE — PTT OFF, back to receive")
 
     def _flush_tx_buffer(self, tx, chars: list) -> None:
@@ -1885,6 +1880,7 @@ class MainWindow(QMainWindow):
             self._serial.send_command(frame[2:4], frame[4:-1])
             self._log_monitor(
                 f"[TX] {stop.decode()} — TX aborted, TNC buffer flushed")
+            self._set_sig(self._ssl_ptt, False)
 
         # 2. Empty the PC-side buffer/queue and reset the document anchors.
         #    _tx_ctrl.clear() resets _arr, _tx_queue, stops the timer and sets
@@ -3683,11 +3679,6 @@ class MainWindow(QMainWindow):
         self._ssl_rx.setStyleSheet(self._sig_style_active())
         self._rx_blink_timer.start()
 
-    def _blink_tx(self) -> None:
-        """Flash TX indicator for 150ms."""
-        self._ssl_tx.setStyleSheet(self._sig_style_active())
-        self._tx_blink_timer.start()
-
     def _on_toggle_monitor(self, checked: bool) -> None:
         self._monitor_container.setVisible(checked)
         self._splitter.setSizes([630, 270] if checked else [900, 0])
@@ -4229,8 +4220,6 @@ class MainWindow(QMainWindow):
             self._vt_append(echo, color=color)
         if self._serial.is_connected:
             self._serial.write_verbose(data)
-            if self._act_serial_status.isChecked():
-                self._blink_tx()
             if self._monitor_container.isVisible():
                 if not self._mon_btn_decoded.isChecked():
                     self._monitor_raw("tx", data)
@@ -4247,8 +4236,6 @@ class MainWindow(QMainWindow):
         if self._serial.is_connected:
             raw_tx = f"{text}\r\n".encode('ascii', errors='replace')
             self._serial.write_verbose(raw_tx)
-            if self._act_serial_status.isChecked():
-                self._blink_tx()
             if self._monitor_container.isVisible():
                 if not self._mon_btn_decoded.isChecked():
                     self._monitor_raw("tx", raw_tx)
