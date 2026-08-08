@@ -106,6 +106,20 @@ set for it (no SEND/RECEIVE button — ARQ TX is CONNECTED-triggered, not
 button-triggered); `_on_clear_tx()` sends `AM` unconditionally for AMTOR while
 keeping the `_send_active` guard for the button modes. Hardware verify (incl. the
 Morse-regression check below) still pending.
+
+**Bugfix 2026-08-08 (UI-Repaint):** `btn_send` blieb nach Clear TX
+optisch rot/aktiv (inkl. weiterlaufendem Blink-Timer), obwohl
+`isChecked()` bereits korrekt auf RECEIVE stand. Ursache:
+`blockSignals()` beim Umschalten in `_on_clear_tx()` unterdrückt
+`_on_receive_toggled()` — genau dort (nicht am Checked-Zustand) hängt
+die Stylesheet-Umschaltung und der `_blink_timer.stop()`. Fix: beides
+in `_on_clear_tx()` explizit nachgezogen (STYLE_PROM_INACTIVE /
+STYLE_RECEIVE_ON aus opmode_rtty_base importiert, blink_timer per
+getattr() gestoppt bevor die Stylesheets gesetzt werden).
+Betrifft Baudot RTTY, ASCII RTTY, CW/Morse (die einzigen Screens mit
+btn_send/_blink_timer). AMTOR hat kein btn_send → getattr-Guard greift
+korrekt ins Leere.
+
 Verify on hardware: during SEND, type a long line, press **Clear TX** →
 TNC must stop keying immediately (TX §7.2), window blanks, UI returns to
 RECEIVE. Check per mode: Baudot/ASCII/Morse (`RC`), AMTOR (`AM` flush).
@@ -115,6 +129,11 @@ the TNC holds ≤ 1 char, so at most one stray char is acceptable; a whole
 buffered message resuming = fail. Also confirm Morse still keys smoothly
 (no audible inter-character gaps from `_EAS_WINDOW=1`); if gaps appear, bump
 `_EAS_WINDOW` to 2.
+Verify visually on all three RTTY/Morse screens (Baudot, ASCII,
+Morse — each has its own `_blink_timer` instance): after Clear TX
+during active SEND, `btn_send` must show `STYLE_PROM_INACTIVE` (grey,
+not blinking) and `btn_receive` `STYLE_RECEIVE_ON` immediately, with
+no further colour flicker.
 
 ### T85 — Stop Sending via RECEIVE button (Paket 3)
 Prerequisite: `python tools/mock_tnc_bbs.py --trace`
