@@ -3815,6 +3815,10 @@ class MainWindow(QMainWindow):
                 _tx_fmt = QTextCharFormat()
                 _tx_fmt.setForeground(QColor(tx_fg))  # theme-aware TX colour
                 screen.tx_input.setCurrentCharFormat(_tx_fmt)
+                # Keep colour_at() / space-insert char-level formatting
+                # (which overrides the stylesheet above) in sync with the
+                # same theme-aware colour.
+                screen.tx_input.set_theme_colors(tx_fg, a.bg_color)
                 # Block cursor: width = one average character
                 char_w = screen.tx_input.fontMetrics().averageCharWidth()
                 screen.tx_input.setCursorWidth(char_w)
