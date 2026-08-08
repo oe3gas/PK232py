@@ -204,6 +204,22 @@ class TxInputWidget(QTextEdit):
         self._tx_fg_color = fg
         self._tx_bg_color = bg
 
+    def clear(self) -> None:
+        """Clear the document, then restore the theme-aware default format.
+
+        QTextEdit.clear() resets the cursor's current character format to the
+        document's built-in default, discarding whatever set_theme_colors()
+        last applied. Without this override, text typed after Clear TX (or any
+        other clear() caller) reverts to a stale colour until the next
+        _apply_appearance() theme refresh happens to run. Overriding clear()
+        here — instead of patching every call site individually — means the
+        fix applies uniformly no matter who calls clear().
+        """
+        super().clear()
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(self._tx_fg_color))
+        self.setCurrentCharFormat(fmt)
+
     def set_cycle_anchor(self, doc_offset: int, cycle_start: int) -> None:
         """Update anchors for colour_at() positioning.
 
