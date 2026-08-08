@@ -3824,6 +3824,26 @@ class MainWindow(QMainWindow):
     def _apply_appearance(self) -> None:
         """Apply appearance settings: global palette/style + display widgets."""
         a = self._app_config.appearance
+        logger.debug("_apply_appearance: theme=%s bg_color=%s fg_color=%s",
+                     a.theme, a.bg_color, a.fg_color)
+
+        # Self-healing: for the four built-in presets, always trust the CURRENT
+        # THEMES definition over whatever bg/fg/font happens to be persisted in
+        # pk232py.ini. Config drift (e.g. from an older app version, before this
+        # colour system existed) would otherwise silently survive every cold
+        # start — only a manual theme re-selection via _on_theme_selected()
+        # happened to repair it, which is why this bug was invisible during
+        # runtime theme-switch testing but visible on every fresh launch.
+        # "custom" is exempt: those values come from the user's own Appearance
+        # dialog choices and must NOT be overwritten.
+        from pk232py.ui.themes import THEMES, THEME_ORDER
+        if a.theme in THEME_ORDER:
+            preset = THEMES[a.theme]
+            a.bg_color    = preset.bg
+            a.fg_color    = preset.fg
+            a.font_family = preset.font_family
+            a.font_size   = preset.font_size
+
         self._apply_palette()   # global QPalette + style (menus, dialogs, buttons)
         font = QFont(a.font_family, a.font_size)
         # TX text colour: a distinct gold accent ONLY on the Dark theme (where
