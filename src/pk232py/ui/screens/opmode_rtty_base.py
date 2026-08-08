@@ -190,6 +190,20 @@ class TxInputWidget(QTextEdit):
         # SEND), so already-transmitted chars lock as soon as they are sent.
         self._sent_boundary = 0   # doc position just past the last sent char
 
+        # Fallback until set_theme_colors() is called by MainWindow.
+        self._tx_fg_color: str = "#ffee88"
+
+    def set_theme_colors(self, fg: str, bg: str) -> None:
+        """Update the per-character colours used for unsent TX text.
+
+        Called by MainWindow on every theme change so the char-level
+        QTextCharFormat colouring in colour_at() and the space-insert path
+        (keyPressEvent) follows the currently active theme, independent of
+        the old ui_theme.get_theme() system.
+        """
+        self._tx_fg_color = fg
+        self._tx_bg_color = bg
+
     def set_cycle_anchor(self, doc_offset: int, cycle_start: int) -> None:
         """Update anchors for colour_at() positioning.
 
@@ -246,7 +260,7 @@ class TxInputWidget(QTextEdit):
         else:
             # Normal unsent: theme TX colour
             t = get_theme()
-            f.setForeground(QColor(t["tx_color"]))
+            f.setForeground(QColor(self._tx_fg_color))
             f.setBackground(QColor(t["bg_input_tx"]))
         c.setCharFormat(f)
 
@@ -566,7 +580,7 @@ class TxInputWidget(QTextEdit):
 
             # Insert the space in normal TX colour
             f_tx = QTextCharFormat()
-            f_tx.setForeground(QColor(get_theme()['tx_color']))
+            f_tx.setForeground(QColor(self._tx_fg_color))
             cur = self.textCursor()
             space_doc_pos = cur.position()
             cur.setCharFormat(f_tx)
