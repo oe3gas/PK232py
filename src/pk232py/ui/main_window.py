@@ -1903,6 +1903,18 @@ class MainWindow(QMainWindow):
             screen.btn_receive.setChecked(True)
             screen.btn_receive.blockSignals(False)
 
+        # blockSignals above prevents _on_receive_toggled(True) from firing,
+        # so its visual side effects (stylesheets, blink stop) never run —
+        # redo them explicitly here.
+        from .screens.opmode_rtty_base import STYLE_PROM_INACTIVE, STYLE_RECEIVE_ON
+        blink_timer = getattr(screen, '_blink_timer', None)
+        if blink_timer is not None:
+            blink_timer.stop()
+        if hasattr(screen, 'btn_send'):
+            screen.btn_send.setStyleSheet(STYLE_PROM_INACTIVE)
+        if hasattr(screen, 'btn_receive'):
+            screen.btn_receive.setStyleSheet(STYLE_RECEIVE_ON)
+
         self._shared_tx_text = ""
         self._log_monitor("[SYS] TX buffer cleared")
 
