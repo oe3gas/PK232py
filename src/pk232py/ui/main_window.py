@@ -69,6 +69,38 @@ _MORSE_TXCTRL_MS = 50
 _AMTOR_TXCTRL_MS = 50
 
 
+def _recolor_existing_text(widget: QTextEdit, color_map: dict) -> None:
+    """Re-apply theme colours to text already in the document after a
+    theme switch. Only the FOREGROUND of matching fragments is rewritten;
+    backgrounds (sent-confirmed highlight, control-marker highlight) are
+    left untouched, so this never disturbs the ACK-status colouring.
+
+    color_map: {old_hex_lowercase: new_hex}
+    """
+    if not color_map:
+        return
+    from PyQt6.QtGui import QTextCursor, QTextCharFormat, QColor
+    doc = widget.document()
+    block = doc.begin()
+    while block.isValid():
+        it = block.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            if frag.isValid():
+                fg = frag.charFormat().foreground().color().name().lower()
+                new_fg = color_map.get(fg)
+                if new_fg:
+                    c = QTextCursor(doc)
+                    c.setPosition(frag.position())
+                    c.setPosition(frag.position() + frag.length(),
+                                  QTextCursor.MoveMode.KeepAnchor)
+                    new_fmt = QTextCharFormat(frag.charFormat())
+                    new_fmt.setForeground(QColor(new_fg))
+                    c.mergeCharFormat(new_fmt)
+            it += 1
+        block = block.next()
+
+
 class MainWindow(QMainWindow):
     """Main application window.
 
@@ -119,6 +151,17 @@ class MainWindow(QMainWindow):
         # When APRS toggle fires, _packet_rx_redraw() re-renders all entries.
         self._packet_raw_frames: list[tuple[str, str]] = []
         self._packet_aprs_active: bool = False
+
+        # RX highlight colour roles (received/echo/warning) and the TX unsent
+        # colour, both theme-dependent. Sensible Dark-theme defaults here;
+        # _apply_appearance() recomputes and updates them on every theme
+        # change (and recolours already-rendered text accordingly).
+        self._semantic_colors: dict = {
+            "rx_received": "#88ccff",
+            "rx_echo":     "#ffaa00",
+            "rx_warning":  "#ff9900",
+        }
+        self._tx_fg: str = "#ffee88"
 
         # Apply the saved theme's palette + style BEFORE building any widgets,
         # so every widget inherits the right palette at construction time.
@@ -1951,10 +1994,10 @@ class MainWindow(QMainWindow):
         cursor = rx.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor('#ffee88'))
+        fmt.setForeground(QColor(self._semantic_colors['rx_echo']))
         cursor.setCharFormat(fmt)
         cursor.insertText(" ")   # placeholder for legacy modes
-        fmt.setForeground(QColor('#88ccff'))
+        fmt.setForeground(QColor(self._semantic_colors['rx_received']))
         cursor.setCharFormat(fmt)
         rx.setTextCursor(cursor)
         rx.ensureCursorVisible()
@@ -1986,10 +2029,10 @@ class MainWindow(QMainWindow):
         cursor = rx.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor('#ffaa00'))   # amber — confirmed sent
+        fmt.setForeground(QColor(self._semantic_colors['rx_echo']))   # confirmed sent
         cursor.setCharFormat(fmt)
         cursor.insertText(display)
-        fmt.setForeground(QColor('#88ccff'))   # reset to RX blue
+        fmt.setForeground(QColor(self._semantic_colors['rx_received']))   # reset to RX baseline
         cursor.setCharFormat(fmt)
         rx.setTextCursor(cursor)
         rx.ensureCursorVisible()
@@ -2157,11 +2200,11 @@ class MainWindow(QMainWindow):
         cursor = rx.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = cursor.charFormat()
-        fmt.setForeground(QColor("#ffee88"))   # TX yellow
+        fmt.setForeground(QColor(self._semantic_colors['rx_echo']))
         cursor.setCharFormat(fmt)
         cursor.insertText(text)
-        # Reset colour to RX blue for subsequent received text
-        fmt.setForeground(QColor("#88ccff"))
+        # Reset colour to RX baseline for subsequent received text
+        fmt.setForeground(QColor(self._semantic_colors['rx_received']))
         cursor.setCharFormat(fmt)
         rx.setTextCursor(cursor)
         rx.ensureCursorVisible()
@@ -3460,12 +3503,12 @@ class MainWindow(QMainWindow):
         self._serial.send_data(data, channel=1)
         self._log_monitor(f"[PKT TX] {text.rstrip()!r}")
 
-        # Echo in RX display (TX yellow) — will be confirmed by DATA_ACK
+        # Echo in RX display — will be confirmed by DATA_ACK
         from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat
         cursor = screen.rx_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor('#ffee88'))  # TX yellow
+        fmt.setForeground(QColor(self._semantic_colors['rx_echo']))
         cursor.setCharFormat(fmt)
         cursor.insertText(f'> {text.rstrip()}\n')
         screen.rx_display.setTextCursor(cursor)
@@ -3789,6 +3832,26 @@ class MainWindow(QMainWindow):
         # scheme — use the theme foreground so the TX text never ends up an
         # unreadable gold-on-light (the Air bug).
         tx_fg = "#ffee88" if a.theme == "dark" else a.fg_color
+
+        # RX highlight roles (received/echo/warning), theme-aware. Capture the
+        # previous values BEFORE overwriting self._semantic_colors/_tx_fg —
+        # needed below to build the old-colour -> new-colour recolour map for
+        # text already sitting in the documents.
+        from pk232py.ui.themes import semantic_colors
+        old_colors = self._semantic_colors
+        old_tx_fg  = self._tx_fg
+        new_colors = semantic_colors(self._current_theme())
+
+        # Recolour already-rendered text: only entries where the colour
+        # actually changed are worth a document walk.
+        recolor_map = {}
+        if old_tx_fg.lower() != tx_fg.lower():
+            recolor_map[old_tx_fg.lower()] = tx_fg
+        for role, new_hex in new_colors.items():
+            old_hex = old_colors.get(role)
+            if old_hex and old_hex.lower() != new_hex.lower():
+                recolor_map[old_hex.lower()] = new_hex
+
         style_rx = (
             f"background-color:{a.bg_color}; "
             f"color:{a.fg_color}; border:none;"
@@ -3806,6 +3869,11 @@ class MainWindow(QMainWindow):
             if hasattr(screen, "rx_display"):
                 screen.rx_display.setFont(font)
                 screen.rx_display.setStyleSheet(style_rx)
+                # Recolour text already sitting in the RX document — the
+                # stylesheet above only affects the widget's fallback colour,
+                # not per-character QTextCharFormat already applied to
+                # existing received/echoed/warning text.
+                _recolor_existing_text(screen.rx_display, recolor_map)
             if hasattr(screen, "tx_input"):
                 screen.tx_input.setFont(font)
                 screen.tx_input.setStyleSheet(style_tx)
@@ -3820,12 +3888,15 @@ class MainWindow(QMainWindow):
                 # same theme-aware colour. Only TxInputWidget instances
                 # (Baudot/ASCII/Morse/AMTOR) have this method — PACTOR and
                 # HF/VHF Packet still use a plain QTextEdit for tx_input
-                # (no char-level ACK tracking there), so skip them.
+                # (no char-level ACK tracking there), so skip them here too.
                 if hasattr(screen.tx_input, "set_theme_colors"):
                     screen.tx_input.set_theme_colors(tx_fg, a.bg_color)
+                    _recolor_existing_text(screen.tx_input, recolor_map)
                 # Block cursor: width = one average character
                 char_w = screen.tx_input.fontMetrics().averageCharWidth()
                 screen.tx_input.setCursorWidth(char_w)
+        self._semantic_colors = new_colors
+        self._tx_fg = tx_fg
         # Verbose terminal view
         self._vt_display.setFont(font)
         self._vt_display.setStyleSheet(style_vt)
@@ -3839,6 +3910,9 @@ class MainWindow(QMainWindow):
         self._vt_input.setCursorWidth(char_w_vt)
         logger.debug("Appearance applied: %s %dpt bg=%s fg=%s",
                      a.font_family, a.font_size, a.bg_color, a.fg_color)
+        if recolor_map:
+            logger.debug("Recoloured existing text: %s (semantic=%s tx_fg=%s)",
+                         recolor_map, new_colors, tx_fg)
 
     def _on_about(self) -> None:
         QMessageBox.about(
@@ -4053,10 +4127,10 @@ class MainWindow(QMainWindow):
         from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat
         cursor = self._terminal.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        # Always force RX blue color — resets any TX yellow left
+        # Always force the RX baseline colour — resets any TX echo colour left
         # by _on_rtty_char_ready after a SEND -> RECEIVE transition.
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor('#88ccff'))  # RX blue
+        fmt.setForeground(QColor(self._semantic_colors['rx_received']))
         cursor.setCharFormat(fmt)
         cursor.insertText(text)
         self._terminal.setTextCursor(cursor)
