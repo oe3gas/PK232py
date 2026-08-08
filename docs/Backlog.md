@@ -288,6 +288,12 @@ decision matrix confirmed headless — AMTOR ARQ/FEC → `AM` even with
 `_send_active=False`; Baudot/Morse idle Clear TX → no command; Packet/PACTOR →
 none. Live-GUI click + hardware re-test (AMTOR flush, Morse RC-regression) pending.
 
+**Follow-up fix (2026-08-08):**
+
+| Item | Notes |
+|------|-------|
+| Clear TX UI-Repaint bug | Fixed 2026-08-08. `_on_clear_tx()` setzte btn_send/btn_receive Checked-Zustand via blockSignals, ohne die zugehörigen Stylesheets/Blink-Timer nachzuziehen — btn_send blieb rot. Fix: STYLE_PROM_INACTIVE/STYLE_RECEIVE_ON + blink_timer.stop() explizit in _on_clear_tx() gesetzt. |
+
 ---
 
 ## Completed (2026-06-22 — Sprint T41/T42 MHEARD)
