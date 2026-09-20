@@ -97,7 +97,12 @@ class HFPacketParamsDialog(QDialog):
         self._sb_monitor  = spin(0, 6,   4);     form.addRow("MONITOR:",  self._sb_monitor)
         self._sb_resptime = spin(0, 250, 0);     form.addRow("RESPTIME:", self._sb_resptime)
         self._sb_txsmt    = spin(0, 250, 50);    form.addRow("TXSMT:",    self._sb_txsmt)
-        self._sb_users    = spin(0, 26,  1);     form.addRow("USERS:",    self._sb_users)
+        self._sb_users    = spin(1, 10,  1);     form.addRow("USERS:",    self._sb_users)
+        self._sb_users.setToolTip(
+            "Maximum number of simultaneous AX.25 connections the TNC "
+            "will accept.\nChannels above this number stay unused. "
+            "Default 1."
+        )
 
         # Read-only fields
         self._sb_qhpacket = spin(0, 99, 33); self._sb_qhpacket.setEnabled(False)
@@ -197,7 +202,7 @@ class HFPacketParamsDialog(QDialog):
         self._sb_check.setValue(c.check)
         self._sb_monitor.setValue(c.monitor)
         self._sb_resptime.setValue(c.resptime)
-        self._sb_users.setValue(1)
+        self._sb_users.setValue(c.users)
 
         self._chk_ax25l2v2.setChecked(c.ax25l2v2)
         self._chk_headerln.setChecked(c.headerln)
@@ -228,6 +233,7 @@ class HFPacketParamsDialog(QDialog):
         config.check    = self._sb_check.value()
         config.monitor  = self._sb_monitor.value()
         config.resptime = self._sb_resptime.value()
+        config.users    = self._sb_users.value()
 
         config.ax25l2v2  = self._chk_ax25l2v2.isChecked()
         config.headerln  = self._chk_headerln.isChecked()
