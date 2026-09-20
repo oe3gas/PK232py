@@ -1,5 +1,5 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T92**
+**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix)**
 **Previous stand: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
 
 ---
@@ -30,7 +30,7 @@
 | **v16** | `tx_controller.py` *(renamed)* | `BaudotTxController` → `TxController`; `set_mspeed_ms()` added (cc2adff) |
 | **v16** | `morse_screen.py`, `main_window.py` | Morse on TxController: `TxInputWidget`, `[^D]` EOT → RC, ACK-paced; `_is_txctrl_mode()` helper, `_MORSE_TXCTRL_MS=50` (437e8a1) |
 | **v16** | `tx_controller.py`, `morse_screen.py`, `amtor_screen.py`, `main_window.py` | TxController: Morse (Paket 2a) + AMTOR (Paket 2b); CONNECTED triggers `on_send_start()`; PTOVER for ARQ EOT (8087564) |
-| **2026-09-20** | `packet_screen.py`, `main_window.py`, `packet_hf.py` | Packet channel model: `ChannelBar` (10 chips), `cb_dest` history combo, ALL/CH RX filter, Capture, MHEARD channel column, `HFPacketMode.on_channel_state`; +T87–T92 |
+| **2026-09-20** | `packet_screen.py`, `main_window.py`, `packet_hf.py`, `serial_manager.py` | Packet channel model: `ChannelBar` (10 chips), `cb_dest` history combo, ALL/CH RX filter, Capture, MHEARD channel column, `HFPacketMode.on_channel_state`; fixed `_make_host_frame()` channel-nibble bug (was hardcoded 15 for $4x/$5x); +T87–T93 |
 
 ---
 
@@ -716,7 +716,9 @@ just "4" (grey) after step 3; `ChannelBar.channel_map()` contains
 `{"OE1XYZ-5": 4}` after step 2 and is empty after step 3.
 
 **Status:** ✅ PASS (2026-09-20, headless — `HFPacketMode.on_channel_state`
-end-to-end through a synthetic `LINK_MSG` frame into `ChannelBar`).
+end-to-end through a synthetic `LINK_MSG` frame into `ChannelBar`, AND
+re-confirmed against the real `tools/mock_tnc_bbs.py` `LoopbackTNC` after
+the `_make_host_frame()` channel-nibble bugfix below — see T93).
 
 ### T90 — ALL/CH view filters RX correctly
 1. `btn_view_ch` active, current channel = 4 — data arrives on channel 4 and
@@ -751,6 +753,35 @@ timestamps) even though channel 3 is not the currently viewed channel.
 **Status:** ✅ PASS (2026-09-20, headless — `QFileDialog.getSaveFileName`
 stubbed, `_on_packet_data_received`/`_on_packet_monitor_frame` write via
 `_packet_capture_write()` regardless of the screen's view filter).
+
+### T93 — CONNECTED on channel 3 against tools/mock_tnc_bbs.py
+Numbered T93, not T90 as first sketched — T90 above was already taken by
+"ALL/CH view filters RX correctly" (added earlier in this same sprint).
+
+Prerequisite: `python tools/mock_tnc_bbs.py --trace`
+
+1. Packet screen (Host Mode via the mock) — select channel 3 in the
+   ChannelBar, Dest = OE1XYZ, click **Connect**
+2. Observe the `CO` frame's CTL byte and the mock's `CONNECTED to OE1XYZ`
+   reply
+
+**Expected result:** `CO` goes out with CTL=$43 (channel 3); the mock's
+`CONNECTED to OE1XYZ` reply carries CTL=$53 and chip 3 turns green and shows
+"OE1XYZ" — this specifically exercises the real `SerialManager` frame
+decode path (`_make_host_frame()`), not a synthetic/direct-call frame like
+T89. Before the channel-nibble bugfix ("Fix channel nibble extraction for
+4x and 5x frames"), `_make_host_frame()` reported channel 15 for every $5x
+LINK_MSG frame, so the chip never updated — this test is the regression
+guard for that fix at the application level (the unit-level guard is
+`TestMakeHostFrame` in `test_hostmode.py`).
+
+**Status:** ✅ PASS (2026-09-20, headless — full app against the real
+`LoopbackTNC`: `connect_port("MOCK")` → `init_tnc()` → mode switch to VHF
+Packet → Connect on channel 4 → `CO` with CTL=$44 confirmed in the trace
+→ mock replies `CONNECTED to OE1XYZ` with CTL=$54 → chip 4 shows
+"connected OE1XYZ"; TX data (`L`) sent and BBS reply routed into the RX
+display via `append_channel_data()`; Disconnect sends `DI` on channel 4 and
+frees the chip). Interactive mock-GUI click and hardware re-test pending.
 
 ---
 
@@ -1011,7 +1042,7 @@ Diagnose bei Fehler:
 | Low | Help Viewer | T27–T28 |
 | Medium | CW/Morse TxController (Paket 2a) | T69–T72 |
 | Medium | AMTOR TxController (Paket 2b) — T73 zuerst! | T73–T79 |
-| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T92 |
+| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T93 |
 
 ---
 

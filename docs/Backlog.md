@@ -7,6 +7,43 @@
 
 ## Priority 1 — Next implementation sprint
 
+### `_make_host_frame()` misclassifies LINK_STATUS ($40–$4E) as CMD_RESP — open
+
+Discovered 2026-09-20 while fixing the channel-nibble bug (see the
+"Fix channel nibble extraction for 4x and 5x frames" commit and the
+Completed block below) — **not fixed in that commit**, deliberately left
+alone since it is a different bug with a different blast radius:
+
+- `_make_host_frame()`'s `elif` chain (`serial_manager.py`) has explicit
+  branches for `$4F` (CMD_RESP), `$3F` (RX_MONITOR), `$30–$39` (RX_DATA),
+  `$5F` (STATUS_ERR) and `$50–$5E` (LINK_MSG) — but **none for `$40–$4E`**
+  (LINK_STATUS, "response to a CONNECT query" per `HFPacketMode.handle_frame()`
+  §"LINK_STATUS"). Those frames fall through to the `else` branch and are
+  built as `FrameKind.CMD_RESP` instead of `FrameKind.LINK_STATUS`.
+- Impact: `HFPacketMode.handle_frame()` routes them into `_handle_cmd_resp()`
+  (MHEARD-line parsing) instead of the (currently log-only)
+  `FrameKind.LINK_STATUS` branch, and `ModeManager.on_frame()` / mode-switch
+  ACK detection may see a CMD_RESP where it does not expect one.
+- **Possibly the same root cause as** the existing "Known issues" entry
+  `HFPacket/VHFPacket: CMD_RESP reaches mode | Minor | handle_frame() logs
+  "unhandled frame" for ACKs — harmless" — that note is about general `$4F`
+  ACKs, not `$40–$4E` specifically, so it may be a related-but-distinct
+  symptom rather than the identical bug. **Needs a hardware test** (or at
+  least a byte-level trace of a real CONNECT-query LINK_STATUS reply) to
+  confirm before touching the elif chain — do not guess-fix this one.
+
+### Tech debt — two parallel Host Mode frame decoders
+
+`comm/frame.py::FrameParser` (used by `tools/mock_tnc_bbs.py` and the
+Host Mode subprocess path) and `comm/serial_manager.py::_make_host_frame()`
+(used by `SerialManager`'s reader thread — the actual runtime path for a
+connected TNC) are two independent re-implementations of the same
+CTL-byte-to-`FrameKind`/channel mapping, with different bugs (see the
+channel-nibble fix above, which only touched one of the two). Consolidate
+onto one decoder in a later session — out of scope for the channel-model
+sprint (hard constraint: no serial-layer changes beyond the one-line
+channel-nibble fix).
+
 ### Packet — Channel model (ChannelBar) — ✅ DONE (2026-09-20, software/headless)
 
 - ✅ `ChannelBar` (10 chips, free/calling/connected state + partner callsign,
@@ -283,16 +320,22 @@ AMTOR nutzt TxController. TX startet bei ARQ CONNECTED
 | Hold TX (`btn_hold_tx`) | Pure UI: while ON, Enter inserts a newline instead of sending — lets the user compose a multi-line message (Packet has no TxController/[^D] EOT concept). |
 | Band indicator (`btn_band`) | Read-only in v0.1 — the screen cannot itself trigger a ModeManager mode switch; the real HF↔VHF switch stays on the opmode selector. |
 | CONPERM / MAILDROP / MDMON / LITE | Built and wired but send no frame — mnemonics unverifiable in this session (no TRM / `pk232_mnemonic_table.txt` available). See "Offene Mnemonics" above. |
-| Testplan T87–T92 | New (renumbered from the sprint sketch's T83–T88, which collided with existing tests). Software/headless-verified against a stub `_serial`; interactive mock-GUI + hardware re-test open. |
+| Testplan T87–T93 | New (renumbered from the sprint sketch's T83–T88, which collided with existing tests). T87–T92 software/headless-verified against a stub `_serial`; T93 verified end-to-end against the real `tools/mock_tnc_bbs.py` `LoopbackTNC`. Interactive mock-GUI click + hardware re-test still open. |
+| `_make_host_frame()` channel-nibble bugfix | Found *while* verifying this sprint against the real mock TNC (not the stub): `_make_host_frame()` (`serial_manager.py`) hardcoded `channel=15` for every CTL byte except `$3x`, so `on_channel_state` never got the real channel for a live LINK_MSG — the chip silently never updated outside synthetic tests. Fixed in its own commit ("Fix channel nibble extraction for 4x and 5x frames") using the canonical `ctl_channel()`. Pre-existing bug (commit ff17aa01, 2026-04-24), not introduced by this sprint. See the two new Priority 1 entries above (LINK_STATUS misclassification, parallel decoders) for what was deliberately *not* touched. |
 
-**Verification:** 70 unit tests pass; all touched files byte-compile.
-Headless (offscreen Qt) end-to-end check: `HFPacketMode` wired into a live
-`MainWindow`/`PacketBaseScreen` pair with a stub `_serial` — Connect on
-channel 4 sends `CO` with the channel-4 CTL nibble (not channel 1), a
-synthetic `LINK_MSG` "CONNECTED to OE1XYZ-5" on channel 4 updates the chip,
-`ChannelBar.channel_map()` and `MheardPanel`'s channel column; TX data goes
-out on channel 4; Disconnect sends `DI` on channel 4 and frees the chip.
-Capture and the ALL/CH filter were checked the same way (see Testplan T87–T92).
+**Verification:** 75 unit tests pass (70 + 5 new `TestMakeHostFrame` cases);
+all touched files byte-compile. Headless (offscreen Qt) end-to-end check:
+`HFPacketMode` wired into a live `MainWindow`/`PacketBaseScreen` pair —
+first against a stub `_serial` (Connect on channel 4 sends `CO` with the
+channel-4 CTL nibble, not channel 1; a synthetic `LINK_MSG` "CONNECTED to
+OE1XYZ-5" on channel 4 updates the chip, `ChannelBar.channel_map()` and
+`MheardPanel`'s channel column; TX data goes out on channel 4; Disconnect
+sends `DI` on channel 4 and frees the chip; Capture and the ALL/CH filter
+checked the same way), then a second time against the real
+`tools/mock_tnc_bbs.py` `LoopbackTNC` end to end (`connect_port` →
+`init_tnc` → mode switch → Connect/TX/Disconnect on channel 4) to catch
+exactly the kind of runtime-only bug a stub can hide — which is how the
+channel-nibble bug above was actually found (see Testplan T93).
 
 ---
 

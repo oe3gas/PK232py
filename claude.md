@@ -509,12 +509,31 @@ Grows over time.
 - **Connect ↔ Unproto are mutually exclusive (T39).** `set_link_state()` greys
   `btn_unproto` while connected/calling; `_on_packet_unproto()` greys
   `btn_connect` while Unproto is on (link-busy proxy = `btn_disconnect.isEnabled()`).
+- **Two parallel Host Mode frame decoders — `comm/frame.py::FrameParser` vs
+  `comm/serial_manager.py::_make_host_frame()`.** `FrameParser` is used by
+  `tools/mock_tnc_bbs.py` and the Host Mode subprocess path; `_make_host_frame()`
+  is what `SerialManager`'s reader thread actually builds `HostFrame`s with
+  for a **connected TNC at runtime** — the one that matters for the real app.
+  They re-implement the same CTL-byte mapping independently and can drift:
+  `_make_host_frame()` hardcoded `channel=15` for every CTL byte except `$3x`
+  until the 2026-09-20 fix ("Fix channel nibble extraction for 4x and 5x
+  frames") — a pre-existing bug (commit ff17aa01, 2026-04-24) that was
+  invisible until the ChannelBar sprint became the first code to actually use
+  the channel of a $5x LINK_MSG frame. **Still open, deliberately not
+  touched:** `_make_host_frame()`'s `elif` chain has no branch for `$40–$4E`
+  (LINK_STATUS) — those frames fall through to `else` and are built as
+  `CMD_RESP` instead, possibly the same root cause as the "HFPacket/VHFPacket:
+  CMD_RESP reaches mode" item further down — needs a hardware test before
+  fixing (see Backlog.md Priority 1). Consolidating the two decoders into one
+  is filed as tech debt, not done in this sprint (serial-layer changes were
+  explicitly out of scope beyond the one-line channel-nibble fix).
 - **Channel model (2026-09-20, ChannelBar sprint).** There is **no CSTATUS
   poll in Host Mode** — the PK-232 never tells the host "channel N is
   connected to X" on demand. The channel a frame belongs to lives only in the
-  low nibble of that frame's CTL byte, already decoded into
-  `HostFrame.channel` by `comm/frame.py`. So the UI's channel model is purely
-  local bookkeeping, built entirely from frames that already went by:
+  low nibble of that frame's CTL byte (`ctl_channel()` in `comm/constants.py`
+  — see the two-decoders gotcha above for where that nibble is actually
+  extracted at runtime). So the UI's channel model is purely local
+  bookkeeping, built entirely from frames that already went by:
   `HFPacketMode.on_channel_state(channel, state, partner)` derives
   free/calling/connected from the same $5x link messages `on_link_message`
   already parses (`_extract_partner()` does best-effort callsign extraction
