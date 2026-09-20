@@ -13,6 +13,8 @@ Covers:
   - Chip 0 special-casing (P10.1): label "UI", fixed fill colour, state
     changes ignored, excluded from channel_map(), still reachable via
     step(); append_monitor_data() filtered like append_channel_data()
+  - set_user_limit() (P11.5): advisory tooltip only on chips above the
+    USERS limit, never a lock/grey-out/colour change
 
 Needs a QApplication; forced to the offscreen platform so this runs in a
 headless CI/dev environment with no real display (module-level setdefault,
@@ -199,3 +201,36 @@ class TestUiChannelZero:
         screen.channel_bar.set_current(3)
         screen.append_monitor_data("heard something")
         assert "heard something" in screen.rx_display.toPlainText()
+
+
+class TestUserLimitTooltipOnly:
+    """P11.5 — set_user_limit() is advisory only: a tooltip line, never a
+    lock, grey-out or colour change."""
+
+    def test_channels_at_or_below_limit_get_no_extra_tooltip(self):
+        screen = _make_screen()
+        screen.channel_bar.set_user_limit(1)
+        assert "USERS is set to" not in screen.channel_bar._chips[1].toolTip()
+
+    def test_channels_above_limit_get_the_warning_line(self):
+        screen = _make_screen()
+        screen.channel_bar.set_user_limit(1)
+        for ch in range(2, 10):
+            tip = screen.channel_bar._chips[ch].toolTip()
+            assert "USERS is set to 1" in tip
+            assert "will not be accepted" in tip
+
+    def test_ui_channel_never_gets_the_warning_line(self):
+        screen = _make_screen()
+        screen.channel_bar.set_user_limit(0)
+        assert "USERS" not in screen.channel_bar._chips[UI_CHANNEL].toolTip()
+
+    def test_no_lock_or_style_change_above_the_limit(self):
+        screen = _make_screen()
+        screen.channel_bar.set_user_limit(1)
+        chip = screen.channel_bar._chips[5]
+        assert chip.isEnabled()
+        assert chip.isCheckable()
+        # Still selectable and usable exactly like any other chip.
+        screen.channel_bar.set_current(5)
+        assert screen.channel_bar.current() == 5

@@ -839,6 +839,11 @@ class MainWindow(QMainWindow):
             # there with no frame left to clear it.
             if hasattr(screen, "reset_channels"):
                 screen.reset_channels()
+            # USERS (P11.5) — advisory tooltip only, no lock/greying. Both
+            # HF and VHF Packet share hf_packet config (no separate
+            # VHFPacketConfig, see the "Config: add USERS..." commit).
+            if hasattr(screen, "channel_bar"):
+                screen.channel_bar.set_user_limit(self._app_config.hf_packet.users)
 
         # For PACTOR: populate lbl_myptcall from AppConfig if set.
         if name == "PACTOR" and hasattr(screen, "lbl_myptcall"):
@@ -3796,6 +3801,13 @@ class MainWindow(QMainWindow):
         dlg = HFPacketParamsDialog(self._app_config.hf_packet, parent=self)
         if dlg.exec() == HFPacketParamsDialog.DialogCode.Accepted:
             self._log_monitor("[SYS] HF Packet parameters updated")
+            # Refresh the USERS tooltip immediately (P11.5) rather than
+            # waiting for the next mode (re)activation — HF and VHF Packet
+            # share hf_packet config, so update both if either is built.
+            for _pkt_name in ("HF Packet", "VHF Packet"):
+                _pkt_screen = self._opmode_screens.get(_pkt_name)
+                if _pkt_screen is not None and hasattr(_pkt_screen, "channel_bar"):
+                    _pkt_screen.channel_bar.set_user_limit(self._app_config.hf_packet.users)
 
     def _on_params_misc(self) -> None:
         """Open Misc Parameters dialog."""

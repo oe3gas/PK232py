@@ -226,6 +226,8 @@ class ChannelBar(QWidget):
         self._state: dict[int, str] = {ch: "free" for ch in range(CHANNEL_COUNT)}
         self._partner: dict[int, str] = {ch: "" for ch in range(CHANNEL_COUNT)}
         self._chips: dict[int, QPushButton] = {}
+        # USERS (P11.5) — advisory only, see set_user_limit().
+        self._user_limit: int = CHANNEL_COUNT - 1
 
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
@@ -334,6 +336,21 @@ class ChannelBar(QWidget):
             self._partner[ch] = ""
             self._update_chip(ch)
 
+    def set_user_limit(self, limit: int) -> None:
+        """Number of simultaneous connections the TNC accepts (USERS, P11.5).
+
+        Advisory only — adds a tooltip line to chips above the limit, never
+        a lock, greying-out or colour change. USERS is documented as
+        limiting *accepted* (incoming) connections; whether it also blocks
+        *outgoing* connects on higher channels is not confirmed, so a hard
+        lock could prevent operation that would actually have worked. An
+        incorrect tooltip costs nothing; a locked chip that would have
+        worked costs the operator a QSO.
+        """
+        self._user_limit = limit
+        for ch in range(CHANNEL_COUNT):
+            self._update_chip(ch)
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -386,13 +403,19 @@ class ChannelBar(QWidget):
                 "Click to select, or Ctrl+Up / Ctrl+Down steps through it too."
             )
         else:
-            chip.setToolTip(
+            tip = (
                 f"Channel {ch}\n"
                 f"State: {state}\n"
                 f"Partner: {partner or '—'}\n"
                 "Click to select as the current channel for Connect/TX.\n"
                 "Ctrl+Up / Ctrl+Down steps through channels."
             )
+            if ch > self._user_limit:
+                tip += (
+                    f"\nUSERS is set to {self._user_limit} — incoming "
+                    "connects on this channel will not be accepted."
+                )
+            chip.setToolTip(tip)
 
 
 # ---------------------------------------------------------------------------
