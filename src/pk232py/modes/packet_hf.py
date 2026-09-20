@@ -41,6 +41,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_partner(text: str) -> str:
+    """Best-effort far-end callsign extraction from a link-message string.
+
+    Handles the two message shapes seen in the TRM / mock TNC:
+      "CONNECTED to OE1XYZ-5"   -> "OE1XYZ-5"   (" to " marker)
+      "Connect request: OE1XYZ" -> "OE1XYZ"     (":" marker)
+    Falls back to the first whitespace-separated token, e.g. "OE1XYZ busy".
+    Returns "" if nothing usable is found — callers must tolerate that.
+    """
+    lower = text.lower()
+    if " to " in lower:
+        tail = text[lower.index(" to ") + 4:].strip()
+        return tail.split()[0] if tail else ""
+    if ":" in text:
+        tail = text.split(":", 1)[1].strip()
+        return tail.split()[0] if tail else ""
+    tokens = text.strip().split()
+    return tokens[0] if tokens else ""
+
+
 # Link message substrings used to classify incoming $5x frames
 _MSG_CONNECTED    = "connected"
 _MSG_DISCONNECTED = "disconnected"
@@ -73,6 +94,16 @@ class HFPacketMode(BaseMode):
 
     ``on_data_ack``        : ``Callable[[int], None]``
         Called with channel when the TNC acknowledges a sent data block.
+
+    ``on_channel_state``   : ``Callable[[int, str, str], None]``
+        Called with (channel, state, partner) whenever a link message implies
+        a channel state change. ``state`` is one of "free"/"calling"/
+        "connected". This is a second, channel-scoped consumer of the same
+        $5x frames already handled by ``on_link_message`` above — it feeds
+        ChannelBar (packet_screen.py) rather than the screen-wide status
+        label. There is no CSTATUS poll in Host Mode (see CLAUDE.md
+        "Channel model"), so this is the only way the UI learns which
+        channel a partner callsign belongs to.
     """
 
     name         = "HF Packet"
@@ -86,6 +117,7 @@ class HFPacketMode(BaseMode):
         self.on_monitor_frame: Optional[Callable[[bytes], None]]      = None
         self.on_link_message:  Optional[Callable[[int, str], None]]   = None
         self.on_data_ack:      Optional[Callable[[int], None]]        = None
+        self.on_channel_state: Optional[Callable[[int, str, str], None]] = None
         # One MHEARD line per call (polled line-by-line, TRM §4.11). The raw
         # ASCII line text, e.g. "18:06 OE3GAS*"; end-of-list lines are filtered
         # out before this fires.
@@ -261,6 +293,18 @@ class HFPacketMode(BaseMode):
 
         if self.on_link_message:
             self.on_link_message(ch, text)
+
+        # Channel-scoped state for ChannelBar (P3) — a second consumer of the
+        # same message, independent of on_link_message above. Retry/FRMR/
+        # link-out-of-order are left alone here (they do not by themselves
+        # mean the channel is free again — a DISCONNECTED usually follows).
+        if self.on_channel_state:
+            if _MSG_CONNECTED in lower and _MSG_DISCONNECTED not in lower:
+                self.on_channel_state(ch, "connected", _extract_partner(text))
+            elif _MSG_CONNECT_REQ in lower:
+                self.on_channel_state(ch, "connected", _extract_partner(text))
+            elif _MSG_DISCONNECTED in lower or _MSG_BUSY in lower:
+                self.on_channel_state(ch, "free", "")
 
     def _handle_status_err(self, frame: "HostFrame") -> None:
         """Handle $5F — data ACK or status error (TRM Section 4.4.1).
