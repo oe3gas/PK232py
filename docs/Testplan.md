@@ -1,5 +1,5 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel)**
+**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix)**
 **Previous stand: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
 
 ---
@@ -33,6 +33,7 @@
 | **2026-09-20** | `packet_screen.py`, `main_window.py`, `packet_hf.py`, `serial_manager.py` | Packet channel model: `ChannelBar` (10 chips), `cb_dest` history combo, ALL/CH RX filter, Capture, MHEARD channel column, `HFPacketMode.on_channel_state`; fixed `_make_host_frame()` channel-nibble bug (was hardcoded 15 for $4x/$5x); +T87–T93 |
 | **2026-09-20** | `packet_screen.py`, `main_window.py` | P9 per-channel TX draft buffer (`_tx_buffers`/`_tx_channel`, `tx_text()`/`clear_tx()`); +T94–T97 |
 | **2026-09-20** | `packet_screen.py`, `main_window.py` | P10: channel 0 reserved as the UI/unproto/monitor channel (`UI_CHANNEL`), Connect/Disconnect/Unproto now driven by channel selection; +T98–T101 |
+| **2026-09-20** | `main_window.py` | Bugfix: `_make_link_handler()` gated `set_link_state()` to the visible channel only, not every link message; +T102 |
 
 ---
 
@@ -892,6 +893,25 @@ but is not documented for v7.1's Host Mode. If not: log the error frame and
 record the finding in CLAUDE.md before relying on this channel assignment
 in the field.
 
+### T102 — Link message for a channel that is not visible does not touch the buttons
+Bugfix (2026-09-20): `_make_link_handler()` used to call `set_link_state()`
+for every link message regardless of channel, so a CONNECTED on one channel
+could enable Disconnect while a different chip was on screen — pressing
+that Disconnect would then send `DI` on the wrong channel.
+
+1. Connect on channel 4
+2. Switch to the `UI` chip
+3. Trigger a link message for channel 4 (mock)
+
+**Expected result:** Disconnect stays locked, Unproto stays unlocked, chip
+4 stays green (ChannelBar itself is a separate, always-on consumer of the
+same message and is unaffected). Switching back to chip 4 re-enables
+Disconnect.
+
+**Status:** ✅ PASS (2026-09-20, headless — full app against the real
+`tools/mock_tnc_bbs.py` `LoopbackTNC`, plus
+`TestLinkMessageGatedByVisibleChannel` in `test_main_window_packet.py`).
+
 ---
 
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
@@ -1151,7 +1171,7 @@ Diagnose bei Fehler:
 | Low | Help Viewer | T27–T28 |
 | Medium | CW/Morse TxController (Paket 2a) | T69–T72 |
 | Medium | AMTOR TxController (Paket 2b) — T73 zuerst! | T73–T79 |
-| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T100 |
+| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T100, T102 |
 | High | UI-channel unproto behaviour — needs real hardware | T101 |
 
 ---
