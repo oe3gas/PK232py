@@ -1,6 +1,7 @@
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
 # Copyright (C) 2026  OE3GAS  —  GPL v2
-"""Unit tests for the Packet screen's per-channel TX draft buffer (P9).
+"""Unit tests for the Packet screen's per-channel TX draft buffer (P9) and
+the channel-0 UI/unproto/monitor channel (P10).
 
 Covers:
   - T94 — text typed on one channel survives any number of channel
@@ -9,6 +10,9 @@ Covers:
           chip click (both go through ChannelBar.channel_changed)
   - T96 — reset_channels() discards every buffered draft, not just the
           visible one
+  - Chip 0 special-casing (P10.1): label "UI", fixed fill colour, state
+    changes ignored, excluded from channel_map(), still reachable via
+    step(); append_monitor_data() filtered like append_channel_data()
 
 Needs a QApplication; forced to the offscreen platform so this runs in a
 headless CI/dev environment with no real display (module-level setdefault,
@@ -24,7 +28,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
-from pk232py.ui.screens.packet_screen import HFPacketScreen
+from pk232py.ui.screens.packet_screen import HFPacketScreen, UI_CHANNEL
 
 _app = QApplication.instance() or QApplication([])
 
@@ -140,3 +144,58 @@ class TestResetChannelsClearsAllBuffers:
         for ch in range(10):
             assert screen.channel_bar.state(ch) == "free"
             assert screen.channel_bar.partner(ch) == ""
+
+
+class TestUiChannelZero:
+    """P10.1 — channel 0 is the UI/unproto/monitor channel, not a QSO chip."""
+
+    def test_chip_zero_label_is_ui(self):
+        screen = _make_screen()
+        assert screen.channel_bar._chips[0]._lbl_num.text() == "UI"
+
+    def test_channel_zero_state_never_sticks(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(0, "connected", "SHOULDNOTSTICK")
+        assert screen.channel_bar.state(0) == "free"
+        assert screen.channel_bar.partner(0) == ""
+
+    def test_channel_zero_excluded_from_channel_map(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(0, "connected", "SHOULDNOTSTICK")
+        screen.channel_bar.set_channel_state(3, "connected", "OE1XYZ")
+        cmap = screen.channel_bar.channel_map()
+        assert "SHOULDNOTSTICK" not in cmap
+        assert cmap == {"OE1XYZ": 3}
+
+    def test_step_still_reaches_channel_zero(self):
+        screen = _make_screen()
+        screen.channel_bar.set_current(1)
+        screen.channel_bar.step(-1)
+        assert screen.channel_bar.current() == 0
+
+    def test_reset_does_not_change_current_channel(self):
+        screen = _make_screen()
+        screen.channel_bar.set_current(4)
+        screen.reset_channels()
+        assert screen.channel_bar.current() == 4
+
+    def test_monitor_data_hidden_in_ch_view_on_qso_channel(self):
+        screen = _make_screen()
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(3)
+        screen.append_monitor_data("heard something")
+        assert screen.rx_display.toPlainText() == ""
+
+    def test_monitor_data_shown_in_ch_view_on_ui_channel(self):
+        screen = _make_screen()
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(UI_CHANNEL)
+        screen.append_monitor_data("heard something")
+        assert "heard something" in screen.rx_display.toPlainText()
+
+    def test_monitor_data_always_shown_in_all_view(self):
+        screen = _make_screen()
+        screen.set_view_all(True)
+        screen.channel_bar.set_current(3)
+        screen.append_monitor_data("heard something")
+        assert "heard something" in screen.rx_display.toPlainText()

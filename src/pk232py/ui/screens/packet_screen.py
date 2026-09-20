@@ -189,6 +189,7 @@ def _no_focus_btn(text: str, width: int = BTN_W) -> QPushButton:
 
 CHANNEL_COUNT = 10
 CHIP_MIN_W = 56
+UI_CHANNEL = 0   # P10: channel 0 is the UI/unproto/monitor channel, not a QSO
 
 # Chip fill colour per state — CH_FREE / CH_CALLING / CH_CONNECTED
 _CHIP_FILL = {
@@ -197,6 +198,10 @@ _CHIP_FILL = {
     "connected": "#3a9e3a",
 }
 _CHIP_BORDER_CURRENT = "#ffb400"   # amber, 2px — marks the current channel
+# Channel 0 has no connection state a free/calling/connected fill could
+# express — it is a fixed, separate colour, always, regardless of _state[0]
+# (which set_channel_state() prevents from ever changing anyway).
+_UI_CHANNEL_FILL = "#2a6496"
 
 
 class ChannelBar(QWidget):
@@ -266,8 +271,15 @@ class ChannelBar(QWidget):
     # ------------------------------------------------------------------
 
     def set_channel_state(self, ch: int, state: str, partner: str = "") -> None:
-        """Update chip *ch* to *state* ('free'/'calling'/'connected')."""
-        if ch not in self._state:
+        """Update chip *ch* to *state* ('free'/'calling'/'connected').
+
+        Channel 0 (P10, UI_CHANNEL) never changes state — it is not a QSO
+        channel, so it can never be "calling" or "connected". This is a
+        defensive guard, not just a UI nicety: in every non-Packet operating
+        mode 0 is the only channel used (TRM 4.3), so a stray link-message
+        frame reporting channel 0 is not entirely impossible.
+        """
+        if ch == UI_CHANNEL or ch not in self._state:
             return
         self._state[ch] = state if state in _CHIP_FILL else "free"
         self._partner[ch] = partner if state != "free" else ""
@@ -290,11 +302,18 @@ class ChannelBar(QWidget):
 
     def channel_map(self) -> dict[str, int]:
         """Return {callsign: channel} for every channel that is currently
-        connected or calling. Feeds MheardPanel.set_channel_map()."""
+        connected or calling. Feeds MheardPanel.set_channel_map().
+
+        Channel 0 never appears here — set_channel_state() never lets it
+        become "connected"/"calling" in the first place, but the exclusion
+        is repeated here too since this is a public, independently callable
+        method (defence in depth, not redundant given how cheap it is).
+        """
         return {
             call: ch
             for ch, call in self._partner.items()
-            if call and self._state.get(ch) in ("connected", "calling")
+            if ch != UI_CHANNEL and call
+            and self._state.get(ch) in ("connected", "calling")
         }
 
     def step(self, delta: int) -> None:
@@ -334,15 +353,22 @@ class ChannelBar(QWidget):
             self.channel_changed.emit(ch)
 
     def _update_chip(self, ch: int) -> None:
+        """Render chip *ch*. Channel 0's UI-channel special-casing lives
+        HERE ONLY (P10) — label, fill colour and tooltip all branch on
+        `ch == UI_CHANNEL` in this one method, not scattered across the
+        class, so there is exactly one place to look when that behaviour
+        needs to change.
+        """
         chip = self._chips[ch]
         state = self._state[ch]
         partner = self._partner[ch]
         is_current = ch == self._current
+        is_ui_channel = ch == UI_CHANNEL
 
-        chip._lbl_num.setText(str(ch))
+        chip._lbl_num.setText("UI" if is_ui_channel else str(ch))
         chip._lbl_call.setText(partner if partner else "")
 
-        fill = _CHIP_FILL.get(state, _CHIP_FILL["free"])
+        fill = _UI_CHANNEL_FILL if is_ui_channel else _CHIP_FILL.get(state, _CHIP_FILL["free"])
         border = _CHIP_BORDER_CURRENT if is_current else "#333333"
         border_w = 2 if is_current else 1
         chip.setStyleSheet(
@@ -351,13 +377,22 @@ class ChannelBar(QWidget):
             f"  border: {border_w}px solid {border}; border-radius: 4px;"
             "}"
         )
-        chip.setToolTip(
-            f"Channel {ch}\n"
-            f"State: {state}\n"
-            f"Partner: {partner or '—'}\n"
-            "Click to select as the current channel for Connect/TX.\n"
-            "Ctrl+Up / Ctrl+Down steps through channels."
-        )
+        if is_ui_channel:
+            chip.setToolTip(
+                "UI / Unproto / Monitor channel.\n"
+                "No connection can be made here — text typed on this "
+                "channel is sent by the TNC as a UI frame along the "
+                "UNPROTO path (see the Unproto button).\n"
+                "Click to select, or Ctrl+Up / Ctrl+Down steps through it too."
+            )
+        else:
+            chip.setToolTip(
+                f"Channel {ch}\n"
+                f"State: {state}\n"
+                f"Partner: {partner or '—'}\n"
+                "Click to select as the current channel for Connect/TX.\n"
+                "Ctrl+Up / Ctrl+Down steps through channels."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -842,16 +877,28 @@ class PacketBaseScreen(QWidget):
 
     def append_monitor_data(self, text: str, is_html: bool = False,
                              ts: str = "") -> None:
-        """Append a monitored/unproto frame. Not channel-scoped — unlike
-        connected data, monitor traffic is always shown regardless of the
-        ALL/CH filter (it never belonged to a specific connected channel).
+        """Append a monitored/unproto frame, honouring the same ALL/CH filter
+        as append_channel_data() (P10): ALL always shows it; CH shows it only
+        when channel 0 (UI_CHANNEL) is the current channel. Monitor frames
+        carry no channel of their own ($3F, TRM 4.3) — they are attributed to
+        channel 0 by convention, matching how outgoing UNPROTO traffic is
+        also sent on channel 0 (see _on_packet_unproto()). This gives the
+        CH view one consistent meaning: chip 0 selected = monitor traffic,
+        chip N selected = only that QSO.
 
         `ts` is optional and only used by MainWindow._packet_rx_redraw() to
         replay a HISTORICAL timestamp when the user toggles APRS decode
         on/off (T59/T60 — that redraw re-renders the whole buffer and must
         not relabel every old frame with "now"). Live callers omit it and
-        get the current UTC time, same as append_channel_data().
+        get the current UTC time, same as append_channel_data(). Because the
+        filter now applies here too, that redraw will also honour whichever
+        channel is current at the time of the toggle — consistent with the
+        v0.1 "no buffer rebuild on channel switch" rule (P1.4): the redraw is
+        already a full re-render for a different reason (APRS decode), so it
+        is not a new exception, just this filter applying like anywhere else.
         """
+        if not (self._view_all or self.current_channel() == UI_CHANNEL):
+            return
         self._rx_append(text, is_html=is_html, color="#aaaaaa", ts=ts)
 
     def _rx_append(self, text: str, is_html: bool, color: str,
