@@ -2,7 +2,7 @@
 
 > This file is the single entry point for Claude Code to understand the
 > PK232PY project. Read it completely before touching any source file.
-> Last updated: 2026-07-21
+> Last updated: 2026-09-20
 
 ---
 
@@ -53,6 +53,13 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
 
 ### Active/recently completed work
 
+- **Packet channel model / ChannelBar sprint (2026-09-20, software/headless-
+  verified):** `ChannelBar` (10-chip multi-channel selector), `cb_dest`
+  history combo (replaces `le_dest` on Packet screens only), ALL/CH RX
+  filtering, Capture, MHEARD channel column, `HFPacketMode.on_channel_state`.
+  MainWindow's Packet connect/disconnect/TX no longer hardcode channel 1. See
+  §"Channel model" under Known Gotchas / Packet, and Backlog.md's "Completed
+  (2026-09-20 — Packet channel model / ChannelBar sprint)" block.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -502,6 +509,33 @@ Grows over time.
 - **Connect ↔ Unproto are mutually exclusive (T39).** `set_link_state()` greys
   `btn_unproto` while connected/calling; `_on_packet_unproto()` greys
   `btn_connect` while Unproto is on (link-busy proxy = `btn_disconnect.isEnabled()`).
+- **Channel model (2026-09-20, ChannelBar sprint).** There is **no CSTATUS
+  poll in Host Mode** — the PK-232 never tells the host "channel N is
+  connected to X" on demand. The channel a frame belongs to lives only in the
+  low nibble of that frame's CTL byte, already decoded into
+  `HostFrame.channel` by `comm/frame.py`. So the UI's channel model is purely
+  local bookkeeping, built entirely from frames that already went by:
+  `HFPacketMode.on_channel_state(channel, state, partner)` derives
+  free/calling/connected from the same $5x link messages `on_link_message`
+  already parses (`_extract_partner()` does best-effort callsign extraction
+  from strings like `"CONNECTED to OE1XYZ-5"`), and feeds
+  `ChannelBar.set_channel_state()` in `packet_screen.py`. `ChannelBar` (10
+  chips, channels 0–9) is the single source of truth for "which channel do
+  Connect/Disconnect/TX act on right now" — `PacketBaseScreen.current_channel()`
+  is a thin proxy to `channel_bar.current()`. **Channel 0 is the only channel
+  ever used outside Packet mode** (unproto/monitor default; `send_data(...,
+  channel=0)` elsewhere in the app). MainWindow no longer hardcodes channel 1
+  anywhere in the Packet connect/disconnect/TX path — see
+  `_on_packet_connect`/`_on_packet_disconnect`/`_on_packet_tx_enter`.
+- **ALL/CH RX filter is append-time, not a buffer rebuild.** Switching the
+  current channel or toggling ALL/CH does **not** redraw RX history —
+  `PacketBaseScreen.append_channel_data()` simply decides whether to write a
+  given line when it arrives. This is a deliberate v0.1 simplification (see
+  the method's docstring); monitor/unproto frames (`append_monitor_data()`)
+  are never filtered by channel since they were never channel-scoped to begin
+  with. This is unrelated to (and does not replace) the pre-existing
+  `_packet_raw_frames` buffer + `_packet_rx_redraw()`, which still exists
+  solely to re-render raw ↔ APRS-decoded on the APRS toggle (T59/T60).
 
 ### UI / PyQt6
 

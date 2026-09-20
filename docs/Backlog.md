@@ -1,11 +1,55 @@
 # PK232PY — Development Backlog
 
-**Last updated:** 2026-07-21 (v16)
+**Last updated:** 2026-09-20 (Packet channel model sprint)
 **Current version:** v0.1 (development)
 
 ---
 
 ## Priority 1 — Next implementation sprint
+
+### Packet — Channel model (ChannelBar) — ✅ DONE (2026-09-20, software/headless)
+
+- ✅ `ChannelBar` (10 chips, free/calling/connected state + partner callsign,
+  Ctrl+Up/Down stepping) replaces the implicit "always channel 1" model.
+  `PacketBaseScreen` rows regrouped (header/identity/connect/unproto/tool/
+  options/channel-bar/RX/TX/macro); `le_dest` → `cb_dest` history combo
+  (`dest_callsign()`/`set_dest_callsign()`/`add_dest_history()`).
+- ✅ `HFPacketMode.on_channel_state(channel, state, partner)` — derives
+  per-channel state from the same $5x link messages `on_link_message`
+  already parses (`_extract_partner()` best-effort callsign extraction).
+  `VHFPacketMode` inherits it unchanged (no override to add).
+- ✅ MainWindow: `_on_packet_connect`/`_on_packet_disconnect`/
+  `_on_packet_tx_enter` now read `screen.current_channel()`/
+  `dest_callsign()` instead of hardcoding channel 1 / `le_dest.text()` —
+  verified end-to-end headless against a stub `_serial` (channel 4, incl. a
+  simulated CONNECTED reply and disconnect).
+- ✅ RX filtering: `append_channel_data()`/`append_monitor_data()`/
+  `set_view_all()` — ALL/CH filter applied at append time, no buffer
+  rebuild on channel switch (deliberate v0.1 simplification).
+- ✅ Capture (`btn_capture` → `_on_packet_capture`): records every channel's
+  traffic to a file regardless of the ALL/CH view.
+- ✅ MHEARD channel column + amber "connected" colouring
+  (`set_channel_map()`), double-click to fill Dest or switch channel.
+- **New, unverified-mnemonic placeholders** (built + wired, no frame sent —
+  see "Offene Mnemonics" below): CONPERM, MAILDROP (options-row toggle,
+  distinct from the working MailDrop-login button), MDMON, LITE.
+- **Open (Priority 2):** interactive mock-GUI re-click (`tools/
+  mock_tnc_bbs.py`) and hardware re-test for T87–T92 (Testplan.md); Connect
+  dialog ("…" next to Dest) has no persistence across sessions yet; Files/
+  QSO Log stay disabled placeholders; Band indicator in the header is
+  read-only in v0.1 (the screen cannot itself trigger a ModeManager switch).
+
+### Offene Mnemonics (unverified — no TRM / pk232_mnemonic_table.txt
+available in this session; per the "never guess a mnemonic" rule these send
+NOTHING to the TNC yet)
+
+| Function | Candidate | Status |
+|---|---|---|
+| CONPERM | `CY` | Button built, `# TODO mnemonic unverified`, no frame sent. |
+| MAILDROP on/off (options row) | unresolved | Button built, no frame sent. Distinct from the working `btn_maildrop` MDCHECK-login button (mnemonic `MI`, already T47-verified) — do not conflate the two. |
+| MDMON | unresolved | Button built, no frame sent. |
+| LITE | unresolved | Button built, no frame sent. |
+| MailDrop-Login / MID | `MI` (both) | Pre-existing, documented conflict — `MI` used for both MDCHECK login and the MID (Morse ID) toggle. Behaviour intentionally left unchanged; see CLAUDE.md "Known bug" history and the code comment in `packet_screen.py`. |
 
 ### Packet — Connect/Disconnect & MHEARD
 
@@ -41,6 +85,17 @@ The T35/T37 + T38/T39 + T41/T42 hardware re-tests still need a real station.*
 ---
 
 ## Priority 2 — Improvements
+
+### Packet — v0.2 follow-ups from the channel-model sprint
+
+| Item | Notes |
+|------|-------|
+| Connect-dialog persistence | The "…" advanced-connect dialog (channel + digipeater path) does not remember its last values across sessions. |
+| File transfer (`btn_files`) | Disabled placeholder in v0.1 — no protocol implementation yet. |
+| QSO-Log integration (`btn_qsolog`) | Disabled placeholder in v0.1 — depends on the planned SQLite QSO log (see Priority 3). |
+| MailDrop management dialog | The tool-row `btn_maildrop` only sends MDCHECK login (`MI`, T47-verified); browsing/composing MailDrop messages is not implemented. |
+| CONPERM / MAILDROP / MDMON / LITE mnemonics | Confirm against the TRM / `pk232_mnemonic_table.txt` (neither was available in this session) before wiring real frames. |
+| Interactive mock-GUI + hardware re-test | T87–T92 (Testplan.md) are software/headless-verified only. |
 
 ### APRS — Phase 2
 
@@ -209,6 +264,35 @@ AMTOR nutzt TxController. TX startet bei ARQ CONNECTED
 
 ### MailDrop
 - TNC mailbox functionality (`maildrop/` directory planned)
+
+---
+
+## Completed (2026-09-20 — Packet channel model / ChannelBar sprint)
+
+| Item | Notes |
+|------|-------|
+| `ChannelBar` (`packet_screen.py`) | 10 chips (0–9), free/calling/connected state + partner callsign, amber 2px border on the current channel, Ctrl+Up/Down stepping. `channel_map()` feeds `MheardPanel.set_channel_map()`. |
+| `PacketBaseScreen` row regroup | header (title/band indicator/param hint/UTC) → identity → connect → unproto → tool row → hidden options row → ChannelBar → RX → TX+side buttons → macros; new status bar (channel/partner/capture/RX size/band). |
+| `cb_dest` | Editable QComboBox with a 10-entry history, replaces `le_dest`; `dest_callsign()`/`set_dest_callsign()`/`add_dest_history()`. `PactorScreen.le_dest` untouched. |
+| `append_channel_data()` / `append_monitor_data()` / `set_view_all()` | ALL/CH RX filter applied at append time — switching channel or view does NOT rebuild/redraw history (v0.1 decision). Monitor frames are never filtered (not channel-scoped). |
+| `MheardPanel` channel column | `set_channel_map()`, amber colouring for connected stations, double-click → `connect_requested`/`channel_requested` (wired locally in `PacketBaseScreen.__init__`, no MainWindow round-trip needed — pure UI). |
+| `HFPacketMode.on_channel_state` | New callback, second consumer of the existing $5x `on_link_message` frames; `_extract_partner()` best-effort callsign parsing. `VHFPacketMode` inherits unchanged. |
+| MainWindow channel routing | `_on_packet_connect`/`_on_packet_disconnect`/`_on_packet_tx_enter` read `screen.current_channel()`/`dest_callsign()` instead of hardcoding channel 1 / `le_dest.text()`. |
+| Capture (`btn_capture`) | `_on_packet_capture()` opens a file via `QFileDialog`, `_packet_capture_write()` records every channel's RX/TX + monitor traffic regardless of the ALL/CH view. |
+| PacketConnectDialog | "…" button next to Dest — pick channel + optional digipeater path (no persistence yet, Priority 2). |
+| Hold TX (`btn_hold_tx`) | Pure UI: while ON, Enter inserts a newline instead of sending — lets the user compose a multi-line message (Packet has no TxController/[^D] EOT concept). |
+| Band indicator (`btn_band`) | Read-only in v0.1 — the screen cannot itself trigger a ModeManager mode switch; the real HF↔VHF switch stays on the opmode selector. |
+| CONPERM / MAILDROP / MDMON / LITE | Built and wired but send no frame — mnemonics unverifiable in this session (no TRM / `pk232_mnemonic_table.txt` available). See "Offene Mnemonics" above. |
+| Testplan T87–T92 | New (renumbered from the sprint sketch's T83–T88, which collided with existing tests). Software/headless-verified against a stub `_serial`; interactive mock-GUI + hardware re-test open. |
+
+**Verification:** 70 unit tests pass; all touched files byte-compile.
+Headless (offscreen Qt) end-to-end check: `HFPacketMode` wired into a live
+`MainWindow`/`PacketBaseScreen` pair with a stub `_serial` — Connect on
+channel 4 sends `CO` with the channel-4 CTL nibble (not channel 1), a
+synthetic `LINK_MSG` "CONNECTED to OE1XYZ-5" on channel 4 updates the chip,
+`ChannelBar.channel_map()` and `MheardPanel`'s channel column; TX data goes
+out on channel 4; Disconnect sends `DI` on channel 4 and frees the chip.
+Capture and the ALL/CH filter were checked the same way (see Testplan T87–T92).
 
 ---
 

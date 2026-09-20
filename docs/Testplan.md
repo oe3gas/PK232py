@@ -1,6 +1,6 @@
 # PK232PY — Test Plan
-**Updated: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
-**Previous stand: 2026-06-16 (v16) — CW/Morse TxController tests T69–T72 (Paket 2a)**
+**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T92**
+**Previous stand: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
 
 ---
 
@@ -30,6 +30,7 @@
 | **v16** | `tx_controller.py` *(renamed)* | `BaudotTxController` → `TxController`; `set_mspeed_ms()` added (cc2adff) |
 | **v16** | `morse_screen.py`, `main_window.py` | Morse on TxController: `TxInputWidget`, `[^D]` EOT → RC, ACK-paced; `_is_txctrl_mode()` helper, `_MORSE_TXCTRL_MS=50` (437e8a1) |
 | **v16** | `tx_controller.py`, `morse_screen.py`, `amtor_screen.py`, `main_window.py` | TxController: Morse (Paket 2a) + AMTOR (Paket 2b); CONNECTED triggers `on_send_start()`; PTOVER for ARQ EOT (8087564) |
+| **2026-09-20** | `packet_screen.py`, `main_window.py`, `packet_hf.py` | Packet channel model: `ChannelBar` (10 chips), `cb_dest` history combo, ALL/CH RX filter, Capture, MHEARD channel column, `HFPacketMode.on_channel_state`; +T87–T92 |
 
 ---
 
@@ -673,6 +674,86 @@ restoring the 300 Bd HF modem for the next mode.
 
 ---
 
+## Test Block 6b — Packet Channel Model (ChannelBar sprint)
+
+Numbered T87–T92, not T83–T88 as in the original sprint sketch —
+T83–T86 were already taken (Mock-TNC BBS gating/session, Stop Sending via
+RECEIVE, PASSALL mnemonic). Software/mock-checked headlessly against a stub
+`_serial` (channel 4, not 1) in this sprint — see the "Packet screen: channel
+bar…" / "MainWindow: packet channel routing…" commits; interactive
+mock-GUI (`tools/mock_tnc_bbs.py`) and hardware re-tests still open.
+
+### T87 — Channel selection via chip click
+1. Packet screen (Host Mode) — click channel chip 4 in the ChannelBar
+2. Enter a Dest callsign → click **Connect**
+
+**Expected result:** CO goes out with CTL=$44 (channel 4), not $41; chip 4
+shows the amber "calling" fill immediately.
+
+**Status:** ✅ PASS (2026-09-20, headless — stub `_serial`, see
+`_on_packet_connect`/`ChannelBar.set_channel_state`). Interactive mock-GUI
+re-click and hardware re-test pending.
+
+### T88 — Channel stepping via Ctrl+Up / Ctrl+Down
+1. Packet screen, focus in `tx_input` — press **Ctrl+Down** three times
+
+**Expected result:** current channel advances 1→2→3→4, wrapping
+9→0. Plain Up/Down (no Ctrl) are NOT intercepted — they still move the
+text cursor inside `tx_input` (chosen specifically to avoid regressing TX
+message composition; the original "Pfeiltaste hoch/runter" sketch did not
+specify a modifier).
+
+**Status:** ✅ PASS (2026-09-20, headless — `ChannelBar.step()` unit-checked
+via the eventFilter Ctrl+Up/Down branch). Live-GUI keyboard re-test pending.
+
+### T89 — Chip shows callsign after CONNECTED, number after DISCONNECTED
+1. Connect on channel 4 — chip shows "4" only (grey/amber)
+2. TNC replies `LINK_MSG` "CONNECTED to OE1XYZ-5" on channel 4
+3. Disconnect — TNC replies "DISCONNECTED" (or local DI path)
+
+**Expected result:** chip 4 shows "OE1XYZ-5" (green) after step 2, reverts to
+just "4" (grey) after step 3; `ChannelBar.channel_map()` contains
+`{"OE1XYZ-5": 4}` after step 2 and is empty after step 3.
+
+**Status:** ✅ PASS (2026-09-20, headless — `HFPacketMode.on_channel_state`
+end-to-end through a synthetic `LINK_MSG` frame into `ChannelBar`).
+
+### T90 — ALL/CH view filters RX correctly
+1. `btn_view_ch` active, current channel = 4 — data arrives on channel 4 and
+   channel 5
+2. Switch `btn_view_all` on
+
+**Expected result:** step 1 shows only the channel-4 line; the channel-5 line
+never appears retroactively when switching to ALL in step 2 (filtering
+happens at append time, not by rebuilding the RX buffer — v0.1 decision,
+see `PacketBaseScreen.append_channel_data()`).
+
+**Status:** ✅ PASS (2026-09-20, headless —
+`append_channel_data()`/`set_view_all()` unit-checked).
+
+### T91 — MHEARD shows the channel number for connected stations
+1. Channel 4 connects to OE1XYZ-5 — MHEARD Refresh already lists OE1XYZ-5
+   from an earlier heard frame
+
+**Expected result:** the OE1XYZ-5 row shows "4 OE1XYZ-5" in amber; every other
+row shows two leading spaces before the callsign.
+
+**Status:** ✅ PASS (2026-09-20, headless —
+`MheardPanel.set_channel_map()` + `_render()` unit-checked).
+
+### T92 — Capture records every channel regardless of the ALL/CH view
+1. `btn_view_ch` active on channel 1 — start **Capture**
+2. Data arrives on channel 3 and as a monitored frame
+
+**Expected result:** the capture file contains both lines (with UTC
+timestamps) even though channel 3 is not the currently viewed channel.
+
+**Status:** ✅ PASS (2026-09-20, headless — `QFileDialog.getSaveFileName`
+stubbed, `_on_packet_data_received`/`_on_packet_monitor_frame` write via
+`_packet_capture_write()` regardless of the screen's view filter).
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
@@ -930,6 +1011,7 @@ Diagnose bei Fehler:
 | Low | Help Viewer | T27–T28 |
 | Medium | CW/Morse TxController (Paket 2a) | T69–T72 |
 | Medium | AMTOR TxController (Paket 2b) — T73 zuerst! | T73–T79 |
+| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T92 |
 
 ---
 
