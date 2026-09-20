@@ -1,5 +1,5 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix)**
+**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer)**
 **Previous stand: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
 
 ---
@@ -785,6 +785,67 @@ frees the chip). Interactive mock-GUI click and hardware re-test pending.
 
 ---
 
+## Test Block 6c — Packet TX Buffer per Channel (P9)
+
+From `docs/P9_TX_Buffer_Spec.md`. Continues the existing numbering —
+T87–T93 above are unchanged.
+
+### T94 — TX buffer per channel
+1. Select channel 1, type `test eins`, do **not** send
+2. Select channel 3 → TX window is empty
+3. Type `test drei`, do **not** send
+4. Back to channel 1 → `test eins` is there again, cursor at the end
+5. Back to channel 3 → `test drei` is there
+6. Send on channel 3 → only channel 3 is empty, channel 1 still holds
+   `test eins`
+
+**Expected result:** no text loss, no text on the wrong channel.
+
+**Status:** ✅ PASS (2026-09-20, headless — full app against the real
+`tools/mock_tnc_bbs.py` `LoopbackTNC`, plus `TestPerChannelTxBuffer` in
+`test_packet_screen.py`). Interactive manual click-through and hardware
+re-test still open (see Definition of Done below).
+
+### T95 — MHEARD double-click switches channel without losing text
+1. Type text on channel 1, do not send
+2. Double-click a station connected on channel 4 in the MHEARD list
+3. **Expected result:** switches to channel 4, TX window shows channel 4's
+   text (or empty), channel 1 keeps its text
+
+**Status:** ✅ PASS (2026-09-20, headless — `TestMheardChannelSwitchKeepsText`
+in `test_packet_screen.py`: `MheardPanel.channel_requested` and a chip click
+both go through the same `ChannelBar.channel_changed` signal, so the P9
+buffer swap in `PacketBaseScreen._on_tx_channel_switch()` applies identically
+either way).
+
+### T96 — reset_channels() on mode switch
+1. Connect on channel 2, type text on channel 5
+2. Switch operating mode to Baudot, then back to HF Packet
+3. **Expected result:** every chip is `free`, no partner callsigns, TX
+   buffer empty
+
+**Status:** ✅ PASS (2026-09-20, headless — full app: `connect_port` →
+`init_tnc` → VHF Packet → connect ch2 + draft on ch5 → mode switch to
+Baudot RTTY → back to VHF Packet → every chip `free`, `_tx_buffers == {}`,
+`tx_input` empty; also `TestResetChannelsClearsAllBuffers` in
+`test_packet_screen.py`).
+
+### T97 — "CONNECTED to:" with a colon
+Check against `tools/mock_tnc_bbs.py` with both message forms; the chip
+shows the callsign in both cases, never `":"`.
+
+**Status:** ✅ PASS (2026-09-20 — unit-level: `TestExtractPartner` +
+`TestOnChannelState` in `test_packet_hf.py` cover both the TRM form
+"CONNECTED to OE1XYZ-5" and the colon form "CONNECTED to: OE1XYZ-5", with
+and without a trailing " via " path; extended in this pass to also feed
+both forms through `HFPacketMode._handle_link_msg()` end to end (see the
+smoke check in the "Packet screen: per-channel TX buffers" commit).
+`tools/mock_tnc_bbs.py` itself only ever sends the no-colon TRM form, so
+the colon form is not independently exercised against the mock — it is a
+firmware variant per the STABO manual, reproduced synthetically here.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
@@ -1042,7 +1103,7 @@ Diagnose bei Fehler:
 | Low | Help Viewer | T27–T28 |
 | Medium | CW/Morse TxController (Paket 2a) | T69–T72 |
 | Medium | AMTOR TxController (Paket 2b) — T73 zuerst! | T73–T79 |
-| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T93 |
+| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T97 |
 
 ---
 
