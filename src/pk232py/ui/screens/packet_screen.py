@@ -301,6 +301,20 @@ class ChannelBar(QWidget):
         """Move the current channel by *delta*, wrapping 0..9."""
         self._select((self._current + delta) % CHANNEL_COUNT, emit=True)
 
+    def reset(self) -> None:
+        """Set every chip back to 'free' with no partner.
+
+        Called on mode activation and on leaving Host Mode — otherwise a
+        stale CONNECTED/CALLING chip from an earlier session (or from a
+        connection that was never explicitly torn down before the TNC
+        dropped out of Host Mode) would sit there with no frame left to
+        clear it. Does NOT change which channel is current.
+        """
+        for ch in range(CHANNEL_COUNT):
+            self._state[ch] = "free"
+            self._partner[ch] = ""
+            self._update_chip(ch)
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -746,6 +760,16 @@ class PacketBaseScreen(QWidget):
 
     def current_channel(self) -> int:
         return self.channel_bar.current()
+
+    def reset_channels(self) -> None:
+        """Clear all channel state — every chip back to free, MHEARD channel
+        column cleared. Called by MainWindow when the mode is (re)activated
+        and when leaving Host Mode (see _switch_opmode()/_update_host_mode_ui()
+        in main_window.py) — without this, a CONNECTED/CALLING chip from a
+        previous session would linger with no frame ever left to clear it.
+        """
+        self.channel_bar.reset()
+        self.mheard_panel.set_channel_map({})
 
     def set_view_all(self, show_all: bool) -> None:
         self._view_all = show_all

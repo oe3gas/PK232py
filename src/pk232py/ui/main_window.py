@@ -833,6 +833,12 @@ class MainWindow(QMainWindow):
             if not mycall or mycall.upper() == "NOCALL":
                 mycall = ""
             screen.set_mycall(mycall)
+            # Fresh channel state on every (re)activation - otherwise a
+            # CONNECTED/CALLING chip from a previous session (HF<->VHF
+            # switch, or a link that never got a DISCONNECTED) would sit
+            # there with no frame left to clear it.
+            if hasattr(screen, "reset_channels"):
+                screen.reset_channels()
 
         # For PACTOR: populate lbl_myptcall from AppConfig if set.
         if name == "PACTOR" and hasattr(screen, "lbl_myptcall"):
@@ -3626,7 +3632,10 @@ class MainWindow(QMainWindow):
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(self._semantic_colors['rx_echo']))
         cursor.setCharFormat(fmt)
-        cursor.insertText(f'> {text.rstrip()}\n')
+        # Channel number in the echo prefix (matches the Capture line format
+        # "[CH{n} TX] ..." above) so the ALL view shows which channel was
+        # actually sent on, not just that *something* was sent.
+        cursor.insertText(f'> ch{channel} {text.rstrip()}\n')
         screen.rx_display.setTextCursor(cursor)
         screen.rx_display.ensureCursorVisible()
 
@@ -4217,6 +4226,14 @@ class MainWindow(QMainWindow):
         else:
             self._sb_mode.setText("Mode: VERBOSE")
             self._set_mode_indicator("verbose")
+            # Host Mode is gone - any Packet channel state is now stale (no
+            # frame will ever arrive to clear a CONNECTED/CALLING chip).
+            # Reset both screens regardless of which one (if either) was
+            # active, and regardless of user-exit vs. temporary exit below.
+            for _pkt_name in ("HF Packet", "VHF Packet"):
+                _pkt_screen = self._opmode_screens.get(_pkt_name)
+                if _pkt_screen is not None and hasattr(_pkt_screen, "reset_channels"):
+                    _pkt_screen.reset_channels()
             if self._exiting_host_mode_by_user:
                 # Genuine user exit: always show verbose terminal
                 # and deactivate the current mode so the next
