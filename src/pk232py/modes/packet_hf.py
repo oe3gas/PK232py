@@ -54,6 +54,15 @@ def _extract_partner(text: str) -> str:
     lower = text.lower()
     if " to " in lower:
         tail = text[lower.index(" to ") + 4:].strip()
+        # Some firmware variants send "CONNECTED to: OE1XYZ-5" (colon before
+        # the callsign, per the STABO manual chapter 12) instead of the TRM
+        # 4.4.4 "CONNECTED to OE1XYZ-5" form. Strip one optional leading ':'
+        # (and the whitespace around it) before taking the first token, or
+        # the colon itself gets misread as the callsign. A trailing
+        # " via ..." digipeater path is already dropped by split()[0] either
+        # way, with or without the colon.
+        if tail.startswith(":"):
+            tail = tail[1:].strip()
         return tail.split()[0] if tail else ""
     if ":" in text:
         tail = text.split(":", 1)[1].strip()
