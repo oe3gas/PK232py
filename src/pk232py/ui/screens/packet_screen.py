@@ -575,7 +575,10 @@ class PacketConnectDialog(QDialog):
         form = QFormLayout(self)
 
         self.spin_channel = QSpinBox()
-        self.spin_channel.setRange(0, CHANNEL_COUNT - 1)
+        # P10: channel 0 is the UI/unproto/monitor channel, not a QSO
+        # channel — Connect always needs 1-9. If the dialog is opened while
+        # channel 0 is current, QSpinBox clamps setValue(0) up to 1.
+        self.spin_channel.setRange(1, CHANNEL_COUNT - 1)
         self.spin_channel.setValue(current_channel)
         form.addRow("Channel:", self.spin_channel)
 
