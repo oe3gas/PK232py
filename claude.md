@@ -679,6 +679,29 @@ Grows over time.
   Hz (on-air convention, for the software audio decoder). Never feed an `sw` WAV
   to the TNC or a `_tnc` WAV to `fax_decoder_test.py`.
 
+### Parameter dialogs
+
+- **A dialog widget must be wired in BOTH directions, or it silently discards
+  input while looking fully functional (found via `USERS`, 2026-09-20).**
+  `HFPacketParamsDialog`/`PACTORParamsDialog` load from and save to their
+  config object via `_populate()`/`apply_to()`; `AMTORParamsDialog`/
+  `BaudotParamsDialog`/`MiscParamsDialog`/`MailDropParamsDialog` take no
+  config at all — `MainWindow` maps fields to/from their
+  `set_values(**kw)`/`get_values() -> dict`. Either way, a widget that is
+  built in `_build_ui()` but left out of the load method, the save method, or
+  the `MainWindow` mapping (for the `set_values`/`get_values` dialogs) just
+  keeps showing whatever it was constructed with — `USERS` did exactly this
+  for months (range 0–26, hardcoded to `1` on every open, every change
+  discarded). `src/pk232py/tests/test_param_dialogs_roundtrip.py` checks this
+  mechanically for all six `&Parameters` dialogs (~100 widgets): every widget
+  found via `findChildren()` must move some config field (Test A), every
+  config field must round-trip through the dialog (Test B), and every field
+  of all six configs must survive an INI save/load (Test C) — a field can be
+  wired to the dialog and still vanish on restart if `ConfigManager`'s
+  `_apply_*()`/`_build_*()` forgot it (found for `HFPacketConfig.txsmt`/
+  `aerpack`/`alfpack`, 2026-09-20). A new widget with only half the wiring
+  fails this test immediately instead of shipping silently broken.
+
 ### Repo / tooling
 
 - **`CLAUDE.md` is tracked by git as lowercase `claude.md`** on the

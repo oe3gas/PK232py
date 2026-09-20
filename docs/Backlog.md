@@ -141,6 +141,38 @@ T105 additionally needs a second AX.25 station.*
 
 ## Priority 2 — Improvements
 
+### Parameter dialogs — widgets with no config field yet (P12 audit, 2026-09-20)
+
+Found by `test_param_dialogs_roundtrip.py` (Test A) — each one is a widget
+the dialog builds and (for the `set_values`/`get_values` dialogs) already
+reads/writes internally, but that has no corresponding field in the
+project's own config dataclasses, so it never reaches `AppConfig`/the INI
+file. Per the "never guess" rule these are **not** wired to a newly invented
+field — logged here for a future session to decide whether each one is
+worth adding to config, and each is listed in `UNWIRED_OK` in the test file
+with the reason `"no config field yet — see Backlog"` so the audit stays
+green in the meantime.
+
+| Dialog | Widgets |
+|--------|---------|
+| HF Packet | `8BITCONV`, `MBELL`, `MDIGI`, `MPROTO`, `MSTAMP`, `PASSALL`, `HID`, `BBSMSGS`, `FULLDP` flags; `CFROM`/`DFROM`/`MFROM`/`MTO` filter combos + their callsign filter fields; `MBX` |
+| PACTOR | `8BITCONV`, `AFILTER`, `XGATEWAY` flags |
+| AMTOR/NAVTEX/TDM | `AAB`, `CODE`, `ERRCHAR`, `GUSERS`, `MID`, `MWEIGHT`, `UBIT`, `NAVMSG`, `NAVSTN`; `AFILTER`, `MARSDISP` flags |
+| BAUDOT/ASCII/CW | `ACRTTY`, `ATXRTTY`, `AUDELAY`, `ERRCHAR`, `UBIT`; `AFILTER`, `CRADD`, `MARSDISP`, `RFRAME`, `WRU` flags |
+| Misc | `BITINV`, `CWID`, `HEREIS`, `RECEIVE`, `REDISPLA`, `TIME`, `MODEM` |
+| MailDrop | `LASTMSG`, `MDPROMPT`, `TMPROMPT` |
+
+Also read-only TNC-query fields (`QHPACKET`, `QVPACKET`, `QPTOR`, `QTDM`,
+`QTOR`, `QMORSE`, `QRTTY`, `QWIDE`, `BRIGHT`, `BARGRAPH`, `THRESHOLD`) —
+these are deliberately never settable, not a gap, listed in `UNWIRED_OK`
+with reason `"read-only, TNC query result"`.
+
+**Not covered by Test A at all:** `MailDropParamsDialog._te_mtext` is a
+`QTextEdit`, outside the five widget types
+(`QSpinBox`/`QDoubleSpinBox`/`QCheckBox`/`QLineEdit`/`QComboBox`) the audit
+scans — it is correctly wired (verified by Test B/C), just not exercised by
+Test A's mechanical widget walk.
+
 ### Packet — v0.2 follow-ups from the channel-model sprint
 
 | Item | Notes |

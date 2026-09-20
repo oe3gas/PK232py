@@ -1,5 +1,5 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix); +T103–T105 (P11 USERS parameter)**
+**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix); +T103–T105 (P11 USERS parameter); +T106 (P12 parameter dialog wiring audit)**
 **Previous stand: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
 
 ---
@@ -35,6 +35,7 @@
 | **2026-09-20** | `packet_screen.py`, `main_window.py` | P10: channel 0 reserved as the UI/unproto/monitor channel (`UI_CHANNEL`), Connect/Disconnect/Unproto now driven by channel selection; +T98–T101 |
 | **2026-09-20** | `main_window.py` | Bugfix: `_make_link_handler()` gated `set_link_state()` to the visible channel only, not every link message; +T102 |
 | **2026-09-20** | `config.py`, `params_hf.py`, `params_uploader.py`, `packet_screen.py`, `main_window.py` | P11: `USERS` parameter (max. simultaneous AX.25 connections) added to config, params dialog, upload, and `ChannelBar` advisory tooltips; +T103–T105 |
+| **2026-09-20** | `test_param_dialogs_roundtrip.py` *(new)*, `params_hf.py`, `config.py` | P12: mechanical wiring audit for all six `&Parameters` dialogs; found and fixed `HFPacketConfig.txsmt` (dialog-unwired) and `.aerpack`/`.alfpack` (INI-unwired); +T106 |
 
 ---
 
@@ -953,6 +954,37 @@ click-through against a real TNC monitor still open.
 
 **Status:** ⬜ OPEN — needs real hardware and a second AX.25 station. This
 is the actual proof that the multi-channel model holds up beyond one QSO.
+
+---
+
+## Test Block 6f — Parameter Dialog Wiring Audit (P12)
+
+### T106 — Parameter dialog wiring
+Automatic, via `src/pk232py/tests/test_param_dialogs_roundtrip.py`
+(`python -m pytest src/pk232py/tests/test_param_dialogs_roundtrip.py`). Not a
+manual test case — status follows the test run.
+
+Covers all six `&Parameters` dialogs (HF Packet, PACTOR, AMTOR/NAVTEX/TDM,
+BAUDOT/ASCII/CW, Misc, MailDrop): every widget must reach a config field
+(Test A), every config field must reach the dialog and back (Test B), every
+field of all six configs must survive an INI save/load round trip (Test C).
+
+**First-run findings (2026-09-20, all fixed in the same sprint):**
+- `HFPacketParamsDialog._sb_txsmt` — built but unwired in both directions
+  (Test A/B) — fixed in "HF params dialog: wire TXSMT in populate/apply_to".
+- `HFPacketConfig.txsmt` / `.aerpack` / `.alfpack` — wired to the dialog but
+  missing from `ConfigManager._apply_hf_packet()`/`_build_hf_packet()`, so
+  lost on restart (Test C) — fixed in "Config: persist TXSMT/AERPACK/ALFPACK
+  to INI".
+
+**Documented, deliberate exceptions** (see `UNWIRED_OK`/`FIELD_HAS_NO_WIDGET`
+in the test file for the full itemised list with reasons): ~60 widgets across
+all six dialogs with no corresponding config field yet (filed in Backlog.md),
+~11 read-only TNC-query spinboxes, and `BaudotConfig.mid` (handled live on
+the Morse operating screen, not in the shared setup dialog).
+
+**Status:** ✅ PASS (2026-09-20 — all three checks green across all six
+dialogs after the TXSMT/AERPACK/ALFPACK fixes).
 
 ---
 
