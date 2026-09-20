@@ -120,6 +120,15 @@ class ParamsUploader:
             self._cmd("DWAIT",    str(hf.dwait)),
             self._cmd("CHECK",    str(hf.check)),
             self._cmd("MONITOR",  str(hf.monitor)),
+            # USERS caps simultaneous AX.25 connections (P11) - verbose-mode
+            # command name, NOT the Host Mode mnemonic UR (that one is not
+            # used or built here; changing USERS at runtime in Host Mode is
+            # out of scope). NOTE: the TNC rejects some parameter changes
+            # with error $09 "not while connected" while a link is up (TRM
+            # 4.3) - whether USERS is one of them is not confirmed (see
+            # Testplan T104). This uploader only ever runs before Host Mode
+            # is entered, so it is not yet a practical problem here.
+            self._cmd("USERS",    str(hf.users)),
         ]
 
         # Boolean flags
