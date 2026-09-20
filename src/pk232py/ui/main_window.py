@@ -1425,8 +1425,10 @@ class MainWindow(QMainWindow):
         def handler(*args) -> None:
             # Accept both 1-arg (msg) and 2-arg (channel, msg) calls.
             # HFPacketMode calls on_link_message(ch, text); AMTOR/PACTOR
-            # call on_link_message(text).
+            # call on_link_message(text) — channel is None for those (single
+            # channel, no per-channel button gating needed).
             msg = args[-1] if args else ""
+            channel = args[0] if len(args) >= 2 else None
             # 1. General log / monitor
             self._on_mode_link_message(msg)
             # 2. Update screen status label
@@ -1462,11 +1464,32 @@ class MainWindow(QMainWindow):
             # Packet only: gate Connect/Disconnect by link state so a second CO
             # cannot be sent while connected or calling. Guarded by hasattr so
             # AMTOR/PACTOR screens (no set_link_state) are unaffected.
+            #
+            # Bug fixed 2026-09-20: set_link_state() used to fire for EVERY
+            # link message regardless of which channel it came from. With
+            # multiple channels this is wrong — a CONNECTED on channel 4
+            # would enable Disconnect and lock Unproto even while the
+            # operator is looking at a different chip (e.g. the UI channel),
+            # and pressing that "enabled" Disconnect would then send DI on
+            # whatever channel is CURRENTLY selected, not channel 4. Button
+            # gating must only react to a message about the visible channel;
+            # _set_status() is an EVENT display, not a channel display, so it
+            # keeps showing every message regardless (see the trailing
+            # screen._set_status(status) call below, outside this guard).
+            # This leaves exactly two triggers for button gating:
+            #   1. a channel switch (_on_packet_channel_changed() already
+            #      calls set_link_state(channel_bar.state(new_channel)))
+            #   2. a link message about the channel that is CURRENTLY selected
             if hasattr(screen, "set_link_state"):
-                if status in ("CONNECTED", "CALLING"):
-                    screen.set_link_state(status.lower())
-                elif status == "DISCONNECTED":
-                    screen.set_link_state("disconnected")
+                from .screens.packet_screen import PacketBaseScreen
+                is_visible_channel = True
+                if isinstance(screen, PacketBaseScreen) and channel is not None:
+                    is_visible_channel = (channel == screen.current_channel())
+                if is_visible_channel:
+                    if status in ("CONNECTED", "CALLING"):
+                        screen.set_link_state(status.lower())
+                    elif status == "DISCONNECTED":
+                        screen.set_link_state("disconnected")
             screen._set_status(status)
         return handler
 
