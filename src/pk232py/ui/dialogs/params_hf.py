@@ -203,6 +203,7 @@ class HFPacketParamsDialog(QDialog):
         self._sb_monitor.setValue(c.monitor)
         self._sb_resptime.setValue(c.resptime)
         self._sb_users.setValue(c.users)
+        self._sb_txsmt.setValue(c.txsmt)
 
         self._chk_ax25l2v2.setChecked(c.ax25l2v2)
         self._chk_headerln.setChecked(c.headerln)
@@ -234,6 +235,7 @@ class HFPacketParamsDialog(QDialog):
         config.monitor  = self._sb_monitor.value()
         config.resptime = self._sb_resptime.value()
         config.users    = self._sb_users.value()
+        config.txsmt    = self._sb_txsmt.value()
 
         config.ax25l2v2  = self._chk_ax25l2v2.isChecked()
         config.headerln  = self._chk_headerln.isChecked()
