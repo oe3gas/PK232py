@@ -86,6 +86,7 @@ class HFPacketConfig:
     check:      int = 30
     monitor:    int = 4
     resptime:   int = 0
+    users:      int = 1   # USERS — max. simultaneous AX.25 connections (1-10)
     txsmt:      int = 50
 
     # Boolean flags
@@ -323,6 +324,7 @@ class ConfigManager:
         hf.check     = s.getint("check",     hf.check)
         hf.monitor   = s.getint("monitor",   hf.monitor)
         hf.resptime  = s.getint("resptime",  hf.resptime)
+        hf.users     = s.getint("users",     hf.users)
         hf.ax25l2v2  = s.getboolean("ax25l2v2",  hf.ax25l2v2)
         hf.headerln  = s.getboolean("headerln",  hf.headerln)
         hf.constamp  = s.getboolean("constamp",  hf.constamp)
@@ -401,6 +403,7 @@ class ConfigManager:
             "check":    str(hf.check),
             "monitor":  str(hf.monitor),
             "resptime": str(hf.resptime),
+            "users":    str(hf.users),
             "ax25l2v2": str(hf.ax25l2v2).lower(),
             "headerln": str(hf.headerln).lower(),
             "constamp": str(hf.constamp).lower(),
