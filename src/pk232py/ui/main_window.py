@@ -1964,8 +1964,16 @@ class MainWindow(QMainWindow):
         # 2. Empty the PC-side buffer/queue and reset the document anchors.
         #    _tx_ctrl.clear() resets _arr, _tx_queue, stops the timer and sets
         #    _send_active=False; we mirror the MainWindow flag to match.
+        #    Packet screens (P9.3): route through clear_tx() so the current
+        #    channel's buffered draft is discarded too, not just the widget —
+        #    otherwise switching away and back would bring the "cleared"
+        #    text right back. clear_tx() with no argument only ever touches
+        #    the ONE channel currently visible, never every channel's draft.
         if tx is not None:
-            tx.clear()
+            if hasattr(screen, "clear_tx"):
+                screen.clear_tx()
+            else:
+                tx.clear()
             if hasattr(tx, 'set_cycle_anchor'):
                 tx.set_cycle_anchor(0, 0)
         self._tx_ctrl.clear()
@@ -3595,11 +3603,19 @@ class MainWindow(QMainWindow):
         """Send the TX window content as an AX.25 DATA frame.
 
         Called when the user presses Enter in the Packet screen's
-        tx_input.  Grabs the complete text, sends it as build_data()
-        on channel 1, then clears the TX window.
+        tx_input. Grabs the complete text, sends it as build_data() on the
+        current channel, then clears that channel's TX buffer.
 
         Only fires when connected (btn_connect is checked) or in
         unproto mode (btn_unproto is checked).
+
+        P9.4: the channel number is read from current_channel() exactly
+        ONCE, right here, and every later step in this method (send_data,
+        Capture, RX echo, clear_tx) reuses that same `channel` variable — a
+        second current_channel() call anywhere below could pick up a channel
+        switch that happened between statements (e.g. a queued chip-click
+        event) and end up sending on one channel while clearing the buffer
+        of another, dropping text on a channel nothing was ever sent on.
         """
         if not self._serial.is_connected or not self._serial.is_host_mode:
             return
@@ -3615,11 +3631,11 @@ class MainWindow(QMainWindow):
         if not connected and not unproto:
             return
 
-        text = screen.tx_input.toPlainText()
+        channel = screen.current_channel() if hasattr(screen, "current_channel") else 1
+        text = screen.tx_text() if hasattr(screen, "tx_text") else screen.tx_input.toPlainText()
         if not text.strip():
             return
 
-        channel = screen.current_channel() if hasattr(screen, "current_channel") else 1
         data = (text + '\r').encode('ascii', errors='replace')
         self._serial.send_data(data, channel=channel)
         self._packet_capture_write(f"[CH{channel} TX] {text.rstrip()}")
@@ -3639,8 +3655,13 @@ class MainWindow(QMainWindow):
         screen.rx_display.setTextCursor(cursor)
         screen.rx_display.ensureCursorVisible()
 
-        # Clear TX window
-        screen.tx_input.clear()
+        # Clear TX window AND that channel's buffered draft (P9.3) — never
+        # screen.tx_input.clear() directly, and always with the fixed
+        # `channel` from the top of this method, not a fresh lookup.
+        if hasattr(screen, "clear_tx"):
+            screen.clear_tx(channel)
+        else:
+            screen.tx_input.clear()
 
     def _on_mode_link_message(self, msg: str) -> None:
         """Display link state messages in RX panel."""
