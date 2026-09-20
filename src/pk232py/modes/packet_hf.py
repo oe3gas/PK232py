@@ -311,7 +311,16 @@ class HFPacketMode(BaseMode):
             if _MSG_CONNECTED in lower and _MSG_DISCONNECTED not in lower:
                 self.on_channel_state(ch, "connected", _extract_partner(text))
             elif _MSG_CONNECT_REQ in lower:
-                self.on_channel_state(ch, "connected", _extract_partner(text))
+                # "Connect request: <call>" means the incoming call was heard
+                # and understood, NOT that the link is up — per the TRM this
+                # is the not-yet-accepted state, so it maps to "calling", the
+                # same bucket _make_link_handler() already uses for the
+                # screen-wide status label (keeps the two consumers of this
+                # message consistent). CAUTION: if CONOK is OFF (no
+                # auto-accept), no CONNECTED/DISCONNECTED may ever follow a
+                # request that is not answered, so the chip can stay
+                # "calling" indefinitely — Disconnect always frees it.
+                self.on_channel_state(ch, "calling", _extract_partner(text))
             elif _MSG_DISCONNECTED in lower or _MSG_BUSY in lower:
                 self.on_channel_state(ch, "free", "")
 
