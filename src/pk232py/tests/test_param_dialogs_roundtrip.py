@@ -1,0 +1,487 @@
+# pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
+# Copyright (C) 2026  OE3GAS  —  GPL v2
+"""Wiring round-trip audit for the six Parameter dialogs (P12).
+
+This is the test that would have caught the USERS bug (self._sb_users
+existed as a widget but neither read from nor written back to config
+- see the "HF packet params dialog: USERS spinbox" commit). Rather than
+review ~100 widgets by hand, this test mechanically proves every one of
+them is actually connected in both directions.
+
+Scope: the six dialogs under the &Parameters menu (HF Packet, PACTOR,
+AMTOR/NAVTEX/TDM, BAUDOT/ASCII/CW, Misc, MailDrop). TncConfigDialog and
+AppearanceDialog are separate &Configure dialogs, not part of this family,
+and are out of scope.
+
+The dialogs have TWO different APIs:
+  - HFPacketParamsDialog / PACTORParamsDialog: own a config object passed
+    into __init__, load it via _populate() and write it back via
+    apply_to(config).
+  - AMTORParamsDialog / BaudotParamsDialog / MiscParamsDialog /
+    MailDropParamsDialog: take no config; MainWindow maps fields to/from
+    their set_values(**kw) / get_values() -> dict. Neither dialog API is
+    changed here - _DialogSpec below is the adapter the spec asked for,
+    not a refactor of the dialogs.
+
+Three tests, run once per dialog:
+  A. test_widget_writes_back_to_config - read direction. Every QSpinBox/
+     QDoubleSpinBox/QCheckBox/QLineEdit/QComboBox found via findChildren()
+     must change SOME config field when its value changes. This needs no
+     name mapping at all, which is exactly why it catches an unwired
+     widget that "looks" fine.
+  B. test_config_field_reaches_dialog_and_back - write direction. Every
+     field of the dialog's config dataclass must round-trip: change it,
+     _load() it into a fresh dialog, _read() it back out, compare.
+  C. test_ini_roundtrip - every field of every one of these six configs
+     must survive ConfigManager.save()/load() through a real (temporary)
+     INI file - a field can be correctly wired to the dialog but still
+     get lost on restart if ConfigManager's _apply_*()/_build_*() forgot
+     it (this is exactly the class of bug found for HFPacketConfig.aerpack/
+     alfpack/txsmt - see the "Config: ..." fix commit alongside this one).
+
+Needs a QApplication; forced to the offscreen platform (see
+test_packet_screen.py for why this is done at module level, before any
+PyQt6 import).
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import os
+from dataclasses import dataclass
+from typing import Any, Callable
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+from PyQt6.QtWidgets import (
+    QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
+    QFormLayout, QLineEdit, QSpinBox,
+)
+
+from pk232py.config import (
+    AMTORConfig, BaudotConfig, ConfigManager, HFPacketConfig,
+    MailDropConfig, MiscConfig, PACTORConfig,
+)
+from pk232py.ui.dialogs.params_amtor import AMTORParamsDialog
+from pk232py.ui.dialogs.params_baudot import BaudotParamsDialog
+from pk232py.ui.dialogs.params_hf import HFPacketParamsDialog
+from pk232py.ui.dialogs.params_maildrop import MailDropParamsDialog
+from pk232py.ui.dialogs.params_misc import MiscParamsDialog
+from pk232py.ui.dialogs.params_pactor import PACTORParamsDialog
+
+_app = QApplication.instance() or QApplication([])
+
+WIDGET_TYPES = (QSpinBox, QDoubleSpinBox, QCheckBox, QLineEdit, QComboBox)
+
+
+# ---------------------------------------------------------------------------
+# Exceptions -- every entry needs a reason. An exception with no reason is a
+# hidden wiring problem wearing a disguise; that is the whole point of this
+# file, so do not add a pattern-based filter here, ever.
+# ---------------------------------------------------------------------------
+
+# Widgets that Test A finds but that deliberately do not write back to any
+# config field. Keyed by (DialogClassName, attribute name as found via
+# vars(dlg) -- see _widget_name()).
+UNWIRED_OK: dict[tuple[str, str], str] = {
+    # --- read-only TNC query results: never settable, so never in config ---
+    ("HFPacketParamsDialog", "_sb_qhpacket"): "read-only, TNC query result",
+    ("HFPacketParamsDialog", "_sb_qvpacket"): "read-only, TNC query result",
+    ("PACTORParamsDialog", "_sb_qptor"): "read-only, TNC query result",
+    ("AMTORParamsDialog", "_sb_qtdm"): "read-only, TNC query result",
+    ("AMTORParamsDialog", "_sb_qtor"): "read-only, TNC query result",
+    ("BaudotParamsDialog", "_sb_qmorse"): "read-only, TNC query result",
+    ("BaudotParamsDialog", "_sb_qrtty"): "read-only, TNC query result",
+    ("BaudotParamsDialog", "_sb_qwide"): "read-only, TNC query result",
+    ("MiscParamsDialog", "_sb_bright"): "read-only, TNC query result",
+    ("MiscParamsDialog", "_sb_bargraph"): "read-only, TNC query result",
+    ("MiscParamsDialog", "_sb_threshold"): "read-only, TNC query result",
+
+    # --- HF Packet: widgets with no HFPacketConfig field -- see Backlog.md ---
+    ("HFPacketParamsDialog", "_chk_8bitconv"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_chk_mbell"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_chk_mdigi"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_chk_mproto"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_chk_mstamp"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_chk_passall"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_chk_hid"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_chk_bbsmsgs"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_chk_fulldp"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_cb_cfrom"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_cb_dfrom"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_cb_mfrom"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_cb_mto"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_cb_cfrom_le"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_cb_dfrom_le"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_cb_mfrom_le"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_cb_mto_le"): "no config field yet — see Backlog",
+    ("HFPacketParamsDialog", "_le_mbx"): "no config field yet — see Backlog",
+
+    # --- PACTOR: no PACTORConfig field -- see Backlog.md ---
+    ("PACTORParamsDialog", "_chk_8bitconv"): "no config field yet — see Backlog",
+    ("PACTORParamsDialog", "_chk_afilter"): "no config field yet — see Backlog",
+    ("PACTORParamsDialog", "_chk_xgateway"): "no config field yet — see Backlog",
+
+    # --- AMTOR/NAVTEX/TDM: no AMTORConfig field -- see Backlog.md ---
+    ("AMTORParamsDialog", "_le_aab"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_sb_code"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_hx_errchar"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_sb_gusers"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_sb_mid"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_le_ubit"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_sb_mweight"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_le_navmsg"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_le_navstn"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_chk_afilter"): "no config field yet — see Backlog",
+    ("AMTORParamsDialog", "_chk_marsdisp"): "no config field yet — see Backlog",
+
+    # --- BAUDOT/ASCII/CW: no BaudotConfig field -- see Backlog.md ---
+    ("BaudotParamsDialog", "_sb_acrtty"): "no config field yet — see Backlog",
+    ("BaudotParamsDialog", "_sb_atxrtty"): "no config field yet — see Backlog",
+    ("BaudotParamsDialog", "_sb_audelay"): "no config field yet — see Backlog",
+    ("BaudotParamsDialog", "_hx_errchar"): "no config field yet — see Backlog",
+    ("BaudotParamsDialog", "_le_ubit"): "no config field yet — see Backlog",
+    ("BaudotParamsDialog", "_chk_afilter"): "no config field yet — see Backlog",
+    ("BaudotParamsDialog", "_chk_cradd"): "no config field yet — see Backlog",
+    ("BaudotParamsDialog", "_chk_marsdisp"): "no config field yet — see Backlog",
+    ("BaudotParamsDialog", "_chk_rframe"): "no config field yet — see Backlog",
+    ("BaudotParamsDialog", "_chk_wru"): "no config field yet — see Backlog",
+
+    # --- Misc: no MiscConfig field -- see Backlog.md ---
+    ("MiscParamsDialog", "_hx_bitinv"): "no config field yet — see Backlog",
+    ("MiscParamsDialog", "_hx_cwid"): "no config field yet — see Backlog",
+    ("MiscParamsDialog", "_hx_hereis"): "no config field yet — see Backlog",
+    ("MiscParamsDialog", "_hx_receive"): "no config field yet — see Backlog",
+    ("MiscParamsDialog", "_hx_redispla"): "no config field yet — see Backlog",
+    ("MiscParamsDialog", "_hx_time"): "no config field yet — see Backlog",
+    ("MiscParamsDialog", "_le_modem"): "no config field yet — see Backlog",
+
+    # --- MailDrop: no MailDropConfig field -- see Backlog.md ---
+    ("MailDropParamsDialog", "_sb_lastmsg"): "no config field yet — see Backlog",
+    ("MailDropParamsDialog", "_le_mdprompt"): "no config field yet — see Backlog",
+    ("MailDropParamsDialog", "_le_tmprompt"): "no config field yet — see Backlog",
+}
+
+# The reverse case: a config field that deliberately has no widget in THIS
+# dialog. Keyed by (DialogClassName, field name).
+FIELD_HAS_NO_WIDGET: dict[tuple[str, str], str] = {
+    ("BaudotParamsDialog", "mid"): (
+        "handled live on the Morse operating screen (MorseScreen.sb_mid via "
+        "main_window._on_morse_mid_changed), not in this setup dialog"
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Per-dialog adapters -- _load()/_read() unify the two APIs without changing
+# either of them (P12.1: "keine Änderung an den Dialog-APIs").
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _DialogSpec:
+    dialog_cls: type
+    config_cls: type
+    make: Callable[[], Any]              # () -> dialog, defaults populated
+    load: Callable[[Any, Any], None]     # (dialog, config) -> None
+    read: Callable[[Any], Any]           # (dialog) -> fresh config instance
+
+
+def _bound_spec(dialog_cls: type, config_cls: type) -> _DialogSpec:
+    """HFPacketParamsDialog / PACTORParamsDialog: dialog owns a config
+    object, loaded via _populate() and written back via apply_to()."""
+    def make():
+        return dialog_cls(config_cls())
+
+    def load(dlg, cfg):
+        dlg._config = cfg
+        dlg._populate()
+
+    def read(dlg):
+        out = config_cls()
+        dlg.apply_to(out)
+        return out
+
+    return _DialogSpec(dialog_cls, config_cls, make, load, read)
+
+
+def _dict_spec(dialog_cls: type, config_cls: type) -> _DialogSpec:
+    """AMTORParamsDialog / BaudotParamsDialog / MiscParamsDialog /
+    MailDropParamsDialog: no config object; set_values(**kw) / get_values()
+    are the only surface. MainWindow does this same filtering itself (see
+    e.g. _on_params_amtor) when mapping to/from the real AppConfig."""
+    field_names = {f.name for f in dataclasses.fields(config_cls)}
+
+    def make():
+        return dialog_cls()
+
+    def load(dlg, cfg):
+        dlg.set_values(**dataclasses.asdict(cfg))
+
+    def read(dlg):
+        values = dlg.get_values()
+        return config_cls(**{k: v for k, v in values.items() if k in field_names})
+
+    return _DialogSpec(dialog_cls, config_cls, make, load, read)
+
+
+DIALOG_SPECS: list[_DialogSpec] = [
+    _bound_spec(HFPacketParamsDialog, HFPacketConfig),
+    _bound_spec(PACTORParamsDialog, PACTORConfig),
+    _dict_spec(AMTORParamsDialog, AMTORConfig),
+    _dict_spec(BaudotParamsDialog, BaudotConfig),
+    _dict_spec(MiscParamsDialog, MiscConfig),
+    _dict_spec(MailDropParamsDialog, MailDropConfig),
+]
+
+
+# ---------------------------------------------------------------------------
+# Widget introspection helpers
+# ---------------------------------------------------------------------------
+
+def _widget_name(dlg, widget) -> str:
+    """objectName() if set, else the attribute name resolved backwards
+    through vars(dlg) (none of these widgets call setObjectName() today)."""
+    name = widget.objectName()
+    if name:
+        return name
+    for attr, value in vars(dlg).items():
+        if value is widget:
+            return attr
+    return repr(widget)
+
+
+def _form_label(dlg, widget) -> str:
+    """The QFormLayout row label text for *widget*, if it is in one."""
+    for layout in dlg.findChildren(QFormLayout):
+        label = layout.labelForField(widget)
+        if label is not None:
+            return label.text()
+    return ""
+
+
+def _bump_widget(widget):
+    """Change *widget*'s value in place.
+
+    Returns True if the value actually changed, False if the widget's
+    range is degenerate (only one valid value) and should be reported and
+    skipped rather than failed, or None if the widget should be skipped
+    silently (a read-only QLineEdit).
+    """
+    if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+        before = widget.value()
+        step = widget.singleStep() or 1
+        candidate = before + step
+        if candidate > widget.maximum():
+            candidate = before - step
+        widget.setValue(candidate)   # Qt clamps to [minimum, maximum]
+        return widget.value() != before
+    if isinstance(widget, QCheckBox):
+        widget.setChecked(not widget.isChecked())
+        return True
+    if isinstance(widget, QLineEdit):
+        if widget.isReadOnly():
+            return None
+        widget.setText(widget.text() + "X")
+        return True
+    if isinstance(widget, QComboBox):
+        if widget.count() < 2:
+            return False
+        widget.setCurrentIndex((widget.currentIndex() + 1) % widget.count())
+        return True
+    return None
+
+
+def _restore_widget(widget, before) -> None:
+    if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+        widget.setValue(before)
+    elif isinstance(widget, QCheckBox):
+        widget.setChecked(before)
+    elif isinstance(widget, QLineEdit):
+        widget.setText(before)
+    elif isinstance(widget, QComboBox):
+        widget.setCurrentIndex(before)
+
+
+def _snapshot(widget):
+    if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+        return widget.value()
+    if isinstance(widget, QCheckBox):
+        return widget.isChecked()
+    if isinstance(widget, QLineEdit):
+        return widget.text()
+    if isinstance(widget, QComboBox):
+        return widget.currentIndex()
+    return None
+
+
+def _bump_field_value(value):
+    """Change a config field's value per its type (P12.1 Test B)."""
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, int):
+        return value + 1
+    if isinstance(value, float):
+        return round(value + 0.1, 2)
+    if isinstance(value, str):
+        # Already uppercase and free of surrounding whitespace, so it
+        # survives a dialog's .upper()/.strip() normalisation unchanged -
+        # the point is to test wiring, not string formatting.
+        return ((value or "X") + "TEST").upper()
+    raise TypeError(f"don't know how to bump a value of type {type(value)!r}")
+
+
+# ---------------------------------------------------------------------------
+# Test A — read direction: every widget must reach some config field
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("spec", DIALOG_SPECS, ids=lambda s: s.dialog_cls.__name__)
+def test_widget_writes_back_to_config(spec: _DialogSpec):
+    dlg = spec.make()
+    widgets = dlg.findChildren(WIDGET_TYPES)
+    assert widgets, f"{spec.dialog_cls.__name__}: findChildren() found nothing"
+
+    degenerate: list[str] = []
+    failures: list[str] = []
+    exercised = 0
+
+    for widget in widgets:
+        # QSpinBox/QDoubleSpinBox build an internal QLineEdit
+        # ("qt_spinbox_lineedit") to display their value -- a Qt
+        # implementation detail findChildren() also picks up, not one of
+        # the dialog's own ~100 parameter widgets. Not a UNWIRED_OK case:
+        # it belongs to no dialog author's widget list at all.
+        if isinstance(widget.parent(), QAbstractSpinBox):
+            continue
+        name = _widget_name(dlg, widget)
+        label = _form_label(dlg, widget)
+        before_value = _snapshot(widget)
+
+        before_cfg = spec.read(dlg)
+        changed = _bump_widget(widget)
+        if changed is None:
+            continue   # read-only QLineEdit: not a wiring question
+        if changed is False:
+            degenerate.append(f"{name} ({label!r})")
+            continue
+        after_cfg = spec.read(dlg)
+        _restore_widget(widget, before_value)
+
+        key = (spec.dialog_cls.__name__, name)
+        if key in UNWIRED_OK:
+            continue
+
+        exercised += 1
+        if after_cfg == before_cfg:
+            failures.append(
+                f'{name} (form label {label!r}) -- add '
+                f'("{spec.dialog_cls.__name__}", "{name}") to UNWIRED_OK '
+                f'if this is deliberate'
+            )
+
+    assert exercised > 0, (
+        f"{spec.dialog_cls.__name__}: every widget is degenerate or in "
+        f"UNWIRED_OK -- nothing was actually tested"
+    )
+    if degenerate:
+        print(f"{spec.dialog_cls.__name__}: degenerate-range widgets "
+              f"(single valid value, skipped): {degenerate}")
+    assert not failures, (
+        f"{spec.dialog_cls.__name__}: {len(failures)} widget(s) changed "
+        f"value but no config field reflects it:\n  " + "\n  ".join(failures)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test B — write direction: every config field must reach the dialog and back
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("spec", DIALOG_SPECS, ids=lambda s: s.dialog_cls.__name__)
+def test_config_field_reaches_dialog_and_back(spec: _DialogSpec):
+    failures: list[str] = []
+
+    for f in dataclasses.fields(spec.config_cls):
+        key = (spec.dialog_cls.__name__, f.name)
+        if key in FIELD_HAS_NO_WIDGET:
+            continue
+
+        cfg = spec.config_cls()
+        original = getattr(cfg, f.name)
+        changed_value = _bump_field_value(original)
+        setattr(cfg, f.name, changed_value)
+
+        dlg = spec.make()
+        spec.load(dlg, cfg)
+        back = spec.read(dlg)
+        got = getattr(back, f.name)
+
+        if got == original and isinstance(changed_value, int) and not isinstance(changed_value, bool):
+            # +1 may have clamped to the same value at a spinbox's upper
+            # bound; retry with -1 before failing (P12.1: keeps the test
+            # independent of range limits that may change later).
+            changed_value = original - 1
+            cfg2 = spec.config_cls()
+            setattr(cfg2, f.name, changed_value)
+            dlg2 = spec.make()
+            spec.load(dlg2, cfg2)
+            got = getattr(spec.read(dlg2), f.name)
+
+        if got != changed_value:
+            failures.append(
+                f"{f.name!r}: set to {changed_value!r}, loaded into the "
+                f"dialog, but read back as {got!r} (default was "
+                f"{original!r}) -- add (\"{spec.dialog_cls.__name__}\", "
+                f'"{f.name}") to FIELD_HAS_NO_WIDGET if this is deliberate'
+            )
+
+    assert not failures, (
+        f"{spec.dialog_cls.__name__}: {len(failures)} config field(s) did "
+        f"not round-trip through the dialog:\n  " + "\n  ".join(failures)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test C — INI round trip: every field must survive save() + load()
+# ---------------------------------------------------------------------------
+
+_INI_SECTIONS: list[tuple[str, type]] = [
+    ("hf_packet", HFPacketConfig),
+    ("pactor", PACTORConfig),
+    ("amtor", AMTORConfig),
+    ("baudot", BaudotConfig),
+    ("misc", MiscConfig),
+    ("maildrop", MailDropConfig),
+]
+
+
+def test_ini_roundtrip(tmp_path):
+    ini_path = tmp_path / "pk232_roundtrip_test.ini"
+    mgr = ConfigManager(path=ini_path)
+
+    for attr, config_cls in _INI_SECTIONS:
+        cfg = getattr(mgr.app, attr)
+        for f in dataclasses.fields(config_cls):
+            setattr(cfg, f.name, _bump_field_value(getattr(cfg, f.name)))
+
+    mgr.save()
+
+    reloaded = ConfigManager(path=ini_path)
+    reloaded.load()
+
+    failures: list[str] = []
+    for attr, config_cls in _INI_SECTIONS:
+        original = getattr(mgr.app, attr)
+        got = getattr(reloaded.app, attr)
+        for f in dataclasses.fields(config_cls):
+            before, after = getattr(original, f.name), getattr(got, f.name)
+            if before != after:
+                failures.append(
+                    f"{config_cls.__name__}.{f.name}: saved {before!r}, "
+                    f"reloaded as {after!r} -- ConfigManager._apply_{attr}()/"
+                    f"_build_{attr}() forgot this field"
+                )
+
+    assert not failures, (
+        f"{len(failures)} field(s) did not survive an INI save()/load() "
+        f"round trip:\n  " + "\n  ".join(failures)
+    )
