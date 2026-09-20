@@ -105,9 +105,17 @@ NOTHING to the TNC yet)
   the mock proves the MH0..MH17 poll/parse logic)
 - **Open (v0.2):** MHEARD HBAUD-110 mid-poll consistency workaround
   (TRM §4.11 — deliberately skipped in v0.1; see Priority 2)
+- **Open:** T101 (P10) — hardware check whether v7.1 actually transmits text
+  sent in over `$20` on the unconnected channel 0 as a UI frame along the
+  configured UNPROTO path. Standard AX.25 behaviour, but not documented for
+  v7.1's Host Mode; the whole "channel 0 = UI/unproto channel" assignment
+  (`docs/P10_UI_Channel_Spec.md`) rests on this. If it turns out not to hold,
+  log the error frame and record the finding in CLAUDE.md before relying on
+  it further.
 
 *Note: monitoring on 144.800 MHz has replaced most RX-only tests.
-The T35/T37 + T38/T39 + T41/T42 hardware re-tests still need a real station.*
+The T35/T37 + T38/T39 + T41/T42 + T101 hardware re-tests still need a real
+station (T101 needs no second station, just a real PK-232).*
 
 ### Beta Release (v0.1-beta) — GitHub distribution
 - [ ] Windows build reproducible (decide: Nuitka onefile vs PyInstaller --onedir)

@@ -541,18 +541,39 @@ Grows over time.
   `ChannelBar.set_channel_state()` in `packet_screen.py`. `ChannelBar` (10
   chips, channels 0–9) is the single source of truth for "which channel do
   Connect/Disconnect/TX act on right now" — `PacketBaseScreen.current_channel()`
-  is a thin proxy to `channel_bar.current()`. **Channel 0 is the only channel
-  ever used outside Packet mode** (unproto/monitor default; `send_data(...,
-  channel=0)` elsewhere in the app). MainWindow no longer hardcodes channel 1
-  anywhere in the Packet connect/disconnect/TX path — see
+  is a thin proxy to `channel_bar.current()`. MainWindow no longer hardcodes
+  channel 1 anywhere in the Packet connect/disconnect/TX path — see
   `_on_packet_connect`/`_on_packet_disconnect`/`_on_packet_tx_enter`.
+- **Channel 0 is the UI/unproto/monitor channel, not a QSO channel (P10,
+  2026-09-20).** AEA Host Mode only has `$2x` for outgoing data with
+  `x` = 0–9 — there is no `$2F`. So Unproto is not its own channel; it is the
+  state of a channel with no connection, and the TNC sends whatever goes out
+  on it along the configured UNPROTO path. Receive side already draws this
+  line: `$3x` is connected-station data on channel x, `$3F` is monitored
+  traffic with no channel of its own. Consequence: channel 0 is reserved as
+  the UI channel (`UI_CHANNEL` in `packet_screen.py`), channels 1–9 stay QSO
+  channels — `CHANNEL_COUNT` is still 10, there is no eleventh channel.
+  `ChannelBar.set_channel_state(0, …)` is a no-op (channel 0 can never become
+  calling/connected) and `channel_map()` never includes it; its chip shows
+  `"UI"` instead of `"0"` with its own fixed fill colour, all in
+  `_update_chip()` (one place, not scattered). `_on_packet_unproto()`
+  (`main_window.py`) just calls `channel_bar.set_current(0)` — turning
+  Unproto on/off no longer touches Connect/Disconnect directly; that is
+  `_on_packet_channel_changed()`'s job now (channel 0 → both disabled;
+  channel N → `set_link_state(channel_bar.state(N))`, which also turns
+  Unproto back off if it was still on — the T39 mutual exclusion, rebased
+  onto channel selection instead of a direct button lock). This is also
+  consistent with the rest of the app: every non-Packet operating mode
+  already only ever uses channel 0 (TRM 4.3).
 - **ALL/CH RX filter is append-time, not a buffer rebuild.** Switching the
   current channel or toggling ALL/CH does **not** redraw RX history —
   `PacketBaseScreen.append_channel_data()` simply decides whether to write a
   given line when it arrives. This is a deliberate v0.1 simplification (see
-  the method's docstring); monitor/unproto frames (`append_monitor_data()`)
-  are never filtered by channel since they were never channel-scoped to begin
-  with. This is unrelated to (and does not replace) the pre-existing
+  the method's docstring). `append_monitor_data()` (monitor/unproto frames)
+  gets the same filter since P10: ALL always shows it, CH shows it only when
+  channel 0 (the UI channel above) is current — giving the CH view one
+  consistent meaning, chip 0 = monitor traffic, chip N = only that QSO. This
+  is unrelated to (and does not replace) the pre-existing
   `_packet_raw_frames` buffer + `_packet_rx_redraw()`, which still exists
   solely to re-render raw ↔ APRS-decoded on the APRS toggle (T59/T60).
 

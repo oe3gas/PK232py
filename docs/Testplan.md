@@ -1,5 +1,5 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer)**
+**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel)**
 **Previous stand: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
 
 ---
@@ -31,6 +31,8 @@
 | **v16** | `morse_screen.py`, `main_window.py` | Morse on TxController: `TxInputWidget`, `[^D]` EOT → RC, ACK-paced; `_is_txctrl_mode()` helper, `_MORSE_TXCTRL_MS=50` (437e8a1) |
 | **v16** | `tx_controller.py`, `morse_screen.py`, `amtor_screen.py`, `main_window.py` | TxController: Morse (Paket 2a) + AMTOR (Paket 2b); CONNECTED triggers `on_send_start()`; PTOVER for ARQ EOT (8087564) |
 | **2026-09-20** | `packet_screen.py`, `main_window.py`, `packet_hf.py`, `serial_manager.py` | Packet channel model: `ChannelBar` (10 chips), `cb_dest` history combo, ALL/CH RX filter, Capture, MHEARD channel column, `HFPacketMode.on_channel_state`; fixed `_make_host_frame()` channel-nibble bug (was hardcoded 15 for $4x/$5x); +T87–T93 |
+| **2026-09-20** | `packet_screen.py`, `main_window.py` | P9 per-channel TX draft buffer (`_tx_buffers`/`_tx_channel`, `tx_text()`/`clear_tx()`); +T94–T97 |
+| **2026-09-20** | `packet_screen.py`, `main_window.py` | P10: channel 0 reserved as the UI/unproto/monitor channel (`UI_CHANNEL`), Connect/Disconnect/Unproto now driven by channel selection; +T98–T101 |
 
 ---
 
@@ -846,6 +848,52 @@ firmware variant per the STABO manual, reproduced synthetically here.
 
 ---
 
+## Test Block 6d — Channel 0 is the UI Channel (P10)
+
+From `docs/P10_UI_Channel_Spec.md`. Continues the existing numbering —
+T87–T97 above are unchanged.
+
+### T98 — Unproto switches to the UI channel
+1. Select channel 3, type text, do not send
+2. Turn Unproto on
+3. **Expected result:** the `UI` chip is active, the TX window shows the
+   Unproto draft (empty at first), Connect and Disconnect are locked
+4. Select chip 3 → Unproto turns off, the text from step 1 is back
+
+**Status:** ✅ PASS (2026-09-20, headless — full app against the real
+`tools/mock_tnc_bbs.py` `LoopbackTNC`, plus `TestUnprotoUsesChannelZero` in
+`test_main_window_packet.py`). Interactive manual click-through and
+hardware re-test still open, as with the rest of this sprint's Packet
+tests.
+
+### T99 — Connect on channel 0 is rejected
+1. Select the `UI` chip, enter a callsign in Dest, press Connect
+2. **Expected result:** no `CO` frame goes out, a warning dialog appears,
+   the button un-checks
+
+**Status:** ✅ PASS (2026-09-20, headless — full app against the real
+`LoopbackTNC` [`_serial.calls`/trace shows no `CO`], plus
+`TestConnectRejectedOnChannelZero` in `test_main_window_packet.py`).
+
+### T100 — Monitor traffic in the CH view
+1. View set to `CH`, chip 3 active → monitored frames do **not** appear
+2. Select the `UI` chip → monitored frames appear
+3. View set to `ALL` → monitor traffic appears regardless of the chip
+
+**Status:** ✅ PASS (2026-09-20, headless — `TestUiChannelZero` in
+`test_packet_screen.py`: `append_monitor_data()` now shares
+`append_channel_data()`'s ALL/CH filter, gated on `UI_CHANNEL`).
+
+### T101 — Hardware check: UI frame on an unconnected channel
+**Status:** ⬜ OPEN — needs real hardware. To confirm: does v7.1 actually
+transmit text that comes in over `$20` on the unconnected channel 0 as a UI
+frame along the configured UNPROTO path? This is standard AX.25 behaviour,
+but is not documented for v7.1's Host Mode. If not: log the error frame and
+record the finding in CLAUDE.md before relying on this channel assignment
+in the field.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
@@ -1103,7 +1151,8 @@ Diagnose bei Fehler:
 | Low | Help Viewer | T27–T28 |
 | Medium | CW/Morse TxController (Paket 2a) | T69–T72 |
 | Medium | AMTOR TxController (Paket 2b) — T73 zuerst! | T73–T79 |
-| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T97 |
+| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T100 |
+| High | UI-channel unproto behaviour — needs real hardware | T101 |
 
 ---
 
