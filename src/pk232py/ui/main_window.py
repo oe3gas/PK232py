@@ -151,6 +151,11 @@ class MainWindow(QMainWindow):
         # When APRS toggle fires, _packet_rx_redraw() re-renders all entries.
         self._packet_raw_frames: list[tuple[str, str]] = []
         self._packet_aprs_active: bool = False
+        # Packet Capture (P2.4) — one file at a time, independent of which
+        # channel or ALL/CH view is on screen; every channel's traffic goes
+        # into it while it is open.
+        self._packet_capture_file = None
+        self._packet_capture_path: str = ""
 
         # RX highlight colour roles (received/echo/warning) and the TX unsent
         # colour, both theme-dependent. Sensible Dark-theme defaults here;
@@ -1363,6 +1368,17 @@ class MainWindow(QMainWindow):
             else:
                 mode.on_link_message = self._on_mode_link_message
 
+        # Per-channel link state (P3) — HFPacketMode/VHFPacketMode derive
+        # (channel, state, partner) from the same $5x link messages above and
+        # feed it to ChannelBar, so a chip shows the partner callsign the
+        # moment a connect request/CONNECTED comes in on that channel.
+        if hasattr(mode, "on_channel_state"):
+            screen = self._opmode_screens.get(mode.name)
+            if screen is not None and hasattr(screen, "channel_bar"):
+                mode.on_channel_state = self._make_channel_state_handler(screen)
+            else:
+                mode.on_channel_state = None
+
         # DATA_ACK ($5F) — Packet: flow control; RTTY: colour tracking
         if hasattr(mode, 'on_data_ack'):
             if _is_packet:
@@ -1446,6 +1462,20 @@ class MainWindow(QMainWindow):
                 elif status == "DISCONNECTED":
                     screen.set_link_state("disconnected")
             screen._set_status(status)
+        return handler
+
+    def _make_channel_state_handler(self, screen):
+        """Return a callback for HFPacketMode.on_channel_state(ch, state, partner).
+
+        Keeps ChannelBar and the MHEARD panel's channel column in sync with
+        the link messages already parsed by _make_link_handler() — this is
+        purely a second consumer of the same $5x frames, scoped per channel
+        instead of screen-wide.
+        """
+        def handler(channel: int, state: str, partner: str) -> None:
+            screen.channel_bar.set_channel_state(channel, state, partner)
+            if hasattr(screen, "mheard_panel"):
+                screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
         return handler
 
     def _wire_screen_buttons(self) -> None:
@@ -2429,6 +2459,30 @@ class MainWindow(QMainWindow):
                 lambda checked, mn=mnemonic: self._on_packet_toggle(mn, checked)
             )
 
+        # Channel selection — no TNC frame by itself; keeps the status bar
+        # and (for a connected channel) the MHEARD channel column current.
+        _rewire(screen.channel_bar.channel_changed, self._on_packet_channel_changed)
+
+        # Capture — record every channel's traffic to a file, independent of
+        # the ALL/CH view (P2.4).
+        _rewire(screen.btn_capture.toggled, self._on_packet_capture)
+
+        # CONPERM / MAILDROP / MDMON / LITE — mnemonics could not be verified
+        # against the TRM / pk232_mnemonic_table.txt in this sprint, so these
+        # only log a TODO and send nothing (see packet_screen.py tooltips and
+        # the "never guess a mnemonic" rule).
+        unverified_map = [
+            (screen.btn_conperm, "CONPERM"),
+            (screen.btn_mailbox, "MAILDROP"),
+            (screen.btn_mdmon,   "MDMON"),
+            (screen.btn_lite,    "LITE"),
+        ]
+        for btn, label in unverified_map:
+            _rewire(
+                btn.toggled,
+                lambda checked, lbl=label: self._on_packet_unverified_toggle(lbl, checked)
+            )
+
     def _amtor_send(self, frame: bytes) -> bool:
         """Send a pre-built AMTOR command frame. Returns True on success."""
         if not self._serial.is_connected or not self._serial.is_host_mode:
@@ -2581,7 +2635,8 @@ class MainWindow(QMainWindow):
     def _on_packet_connect(self, checked: bool) -> None:
         """Connect button toggled — send CO frame to TNC.
 
-        checked=True:  validate Dest field, send CO {callsign} on channel 1.
+        checked=True:  validate Dest field, send CO {callsign} on the
+            channel currently selected in the ChannelBar.
         checked=False: no TNC command — user uses Disconnect button to DI.
         """
         if not self._serial.is_connected or not self._serial.is_host_mode:
@@ -2589,10 +2644,9 @@ class MainWindow(QMainWindow):
         if not checked:
             return
         screen = self._opmode_stack.currentWidget()
-        dest = getattr(screen, "le_dest", None)
-        if dest is None:
+        if not hasattr(screen, "dest_callsign"):
             return
-        callsign = dest.text().strip().upper()
+        callsign = screen.dest_callsign()
         if not callsign:
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(
@@ -2604,29 +2658,35 @@ class MainWindow(QMainWindow):
             screen.btn_connect.blockSignals(False)
             screen.on_connect_toggled(False)   # public method on PacketBaseScreen
             return
-        # CONNECT is a CHANNEL command: it must go out with CTL=$41 (ch 1), not
-        # the general-command CTL=$4F. send_command() rebuilds the frame with
-        # CTL=$4F and the channel is lost \u2014 the TNC then treats CO as a plain
-        # command and ignores the connect request. send_channel_command() writes
-        # the $4x channel frame (build_ch_cmd) directly, preserving the channel.
-        self._serial.send_channel_command(1, b'CO', callsign.encode('ascii'))
-        self._log_monitor(f"[PACKET] Connecting \u2192 {callsign}")
+        channel = screen.current_channel()
+        # CONNECT is a CHANNEL command: it must go out with CTL=$4x (the
+        # selected channel), not the general-command CTL=$4F. send_command()
+        # rebuilds the frame with CTL=$4F and the channel is lost — the TNC
+        # then treats CO as a plain command and ignores the connect request.
+        # send_channel_command() writes the $4x channel frame (build_ch_cmd)
+        # directly, preserving the channel (no longer hardcoded to 1 — the
+        # channel comes from the ChannelBar chip the user selected).
+        self._serial.send_channel_command(channel, b'CO', callsign.encode('ascii'))
+        screen.add_dest_history(callsign)
+        self._log_monitor(f"[PACKET] Connecting ch{channel} → {callsign}")
         # Disable Connect immediately (CALLING): the CO is out, awaiting
-        # CONNECTED \u2014 prevent a second CO before the link comes up. Disconnect
+        # CONNECTED — prevent a second CO before the link comes up. Disconnect
         # stays enabled so the user can abort. (set_link_state exists only on
         # the packet screen.)
         if hasattr(screen, "set_link_state"):
             screen.set_link_state("calling")
+        screen.channel_bar.set_channel_state(channel, "calling", callsign)
 
     def _on_packet_disconnect(self) -> None:
-        """Disconnect button clicked — send DI frame to TNC."""
+        """Disconnect button clicked — send DI frame to TNC on the current channel."""
         if not self._serial.is_connected or not self._serial.is_host_mode:
             return
-        # DISCONNECT is a channel command too — send the $41 channel frame, not
-        # a $4F general command (see _on_packet_connect).
-        self._serial.send_channel_command(1, b'DI')
-        self._log_monitor("[PACKET] Disconnect sent")
         screen = self._opmode_stack.currentWidget()
+        channel = screen.current_channel() if hasattr(screen, "current_channel") else 1
+        # DISCONNECT is a channel command too — send the $4x channel frame, not
+        # a $4F general command (see _on_packet_connect).
+        self._serial.send_channel_command(channel, b'DI')
+        self._log_monitor(f"[PACKET] Disconnect sent ch{channel}")
         if hasattr(screen, "_set_status"):
             screen._set_status("DISCONNECTED")
         if hasattr(screen, "btn_connect"):
@@ -2634,6 +2694,8 @@ class MainWindow(QMainWindow):
             screen.btn_connect.setChecked(False)
             screen.btn_connect.blockSignals(False)
             screen.on_connect_toggled(False)   # public method on PacketBaseScreen
+        if hasattr(screen, "channel_bar"):
+            screen.channel_bar.set_channel_state(channel, "free")
 
     def _on_packet_unproto(self, checked: bool) -> None:
         """Unproto button toggled — set TNC UNPROTO path.
@@ -3334,18 +3396,22 @@ class MainWindow(QMainWindow):
     def _on_packet_data_received(self, channel: int, data: bytes) -> None:
         """Handle $3x — received AX.25 data on *channel*.
 
-        Displays the decoded text in the Packet screen's rx_display
-        in the standard RX blue colour.  A channel prefix is shown
-        when channel != 0 so multi-stream connections are readable.
+        Routed through screen.append_channel_data() (P1.4) so the ALL/CH
+        filter applies; Capture (P2.4) records it unconditionally, on every
+        channel, independent of what the ALL/CH view currently shows.
         """
         try:
             text = data.decode('ascii', errors='replace')
         except Exception:
             text = repr(data)
 
-        # Channel prefix for multi-stream (channel 0 = unproto/default)
-        prefix = f"[CH{channel}] " if channel not in (0, 1) else ""
-        self._log_terminal(prefix + text)
+        self._packet_capture_write(f"[CH{channel}] {text.rstrip()}")
+
+        screen = self._opmode_stack.currentWidget()
+        if hasattr(screen, "append_channel_data"):
+            screen.append_channel_data(channel, text.rstrip())
+        else:
+            self._log_terminal(text)
         self._log_monitor(f"[PKT RX ch{channel}] {text.rstrip()}")
 
     def _on_packet_monitor_frame(self, data: bytes) -> None:
@@ -3355,8 +3421,11 @@ class MainWindow(QMainWindow):
           1. Decode bytes → text
           2. Timestamp the frame (UTC HH:MM:SS)
           3. Append (ts, raw_text) to _packet_raw_frames buffer
-             so we can re-render when APRS mode is toggled
-          4. Display: raw text (APRS off) or decoded (APRS on)
+             so we can re-render when APRS mode is toggled (T59/T60)
+          4. Display via screen.append_monitor_data(): raw text (APRS off)
+             or decoded (APRS on) — not channel-scoped (see P1.4 docstring)
+          5. Capture (P2.4) always records the raw text, regardless of
+             APRS decode mode or the ALL/CH view
         """
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -3365,62 +3434,24 @@ class MainWindow(QMainWindow):
             text = data.decode('ascii', errors='replace')
         except Exception:
             text = repr(data)
-        text = text.replace('\r', '').strip()
+        text = text.replace(chr(13), '').strip()
 
         # Store raw frame in buffer (always — independent of display mode)
         self._packet_raw_frames.append((ts, text))
+        self._packet_capture_write(f"[MON] {text}")
 
         # Display: route through decoder if APRS mode is active
         screen = self._opmode_stack.currentWidget()
+        if not hasattr(screen, "append_monitor_data"):
+            self._log_monitor(f"[MON] {text[:80]}")
+            return
         if self._packet_aprs_active:
             from pk232py.modes.aprs_decoder import AprsDecoder
             display_text = AprsDecoder.decode_html(text, ts)
-            self._packet_rx_append(screen, ts, display_text, is_html=True)
+            screen.append_monitor_data(display_text, is_html=True, ts=ts)
         else:
-            self._packet_rx_append(screen, ts, text, is_html=False)
+            screen.append_monitor_data(text, is_html=False, ts=ts)
         self._log_monitor(f"[MON] {text[:80]}")
-
-    def _packet_rx_append(
-            self, screen, ts: str, text: str,
-            is_html: bool = False,
-            color: str = "#aaaaaa") -> None:
-        """Append one timestamped frame to screen.rx_display.
-
-        All packet monitor output goes through here so the
-        formatting is always consistent.
-
-        Parameters
-        ----------
-        screen  : QWidget — the active opmode screen
-        ts      : str     — UTC timestamp string "HH:MM:SS"
-        text    : str     — frame text (raw) or HTML (decoded)
-        is_html : bool    — if True, render text via insertHtml
-        color   : str     — QColor hex string (default grey)
-        """
-        if not hasattr(screen, "rx_display"):
-            return
-        from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat
-        cursor = screen.rx_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        if is_html:
-            cursor.insertHtml(text)
-            fmt = QTextCharFormat()
-            fmt.setForeground(QColor("#111111"))
-            cursor.setCharFormat(fmt)
-            cursor.insertText("\n")
-        else:
-            fmt = QTextCharFormat()
-            fmt.setForeground(QColor(color))
-            cursor.setCharFormat(fmt)
-            # Timestamp prefix on the first line only
-            lines = text.splitlines()
-            if lines:
-                cursor.insertText(f"[{ts}] {lines[0]}\n")
-                for line in lines[1:]:
-                    cursor.insertText(f"         {line}\n")
-            cursor.insertText("\n")      # blank line between frames
-        screen.rx_display.setTextCursor(cursor)
-        screen.rx_display.ensureCursorVisible()
 
     def _packet_rx_redraw(self, screen) -> None:
         """Re-render the entire _packet_raw_frames buffer.
@@ -3428,7 +3459,9 @@ class MainWindow(QMainWindow):
         Called when the APRS toggle changes so the user sees
         all frames in the new mode (raw ↔ decoded).
         The RX display is cleared first, then all buffered
-        frames are written again — either raw or decoded.
+        frames are written again — either raw or decoded, with each
+        frame's ORIGINAL timestamp (not "now" — see
+        PacketBaseScreen.append_monitor_data()).
         """
         if not hasattr(screen, "rx_display"):
             return
@@ -3438,9 +3471,9 @@ class MainWindow(QMainWindow):
         for ts, raw_text in self._packet_raw_frames:
             if self._packet_aprs_active:
                 display_text = AprsDecoder.decode_html(raw_text, ts)
-                self._packet_rx_append(screen, ts, display_text, is_html=True)
+                screen.append_monitor_data(display_text, is_html=True, ts=ts)
             else:
-                self._packet_rx_append(screen, ts, raw_text, is_html=False)
+                screen.append_monitor_data(raw_text, is_html=False, ts=ts)
 
     def _on_packet_aprs_toggled(self, checked: bool) -> None:
         """APRS decode button toggled.
@@ -3471,6 +3504,87 @@ class MainWindow(QMainWindow):
         """
         self._log_monitor(f"[PKT ACK ch{channel}]")
 
+    def _on_packet_channel_changed(self, channel: int) -> None:
+        """ChannelBar selection changed — pure UI/local bookkeeping.
+
+        No TNC frame here: the channel only takes effect the next time the
+        user presses Connect/Disconnect or sends TX data (both read
+        screen.current_channel() themselves). This just keeps the MHEARD
+        channel column in sync and notes the switch in the monitor log.
+        """
+        screen = self._opmode_stack.currentWidget()
+        if hasattr(screen, "mheard_panel") and hasattr(screen, "channel_bar"):
+            screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
+        self._log_monitor(f"[PACKET] Channel → {channel}")
+
+    def _on_packet_capture(self, checked: bool) -> None:
+        """Capture toggle (P2.4) — record all received traffic to a file.
+
+        Captures every channel's data ($3x) and every monitored frame ($3F)
+        regardless of the screen's ALL/CH view, via _packet_capture_write()
+        (called from _on_packet_data_received / _on_packet_monitor_frame).
+        """
+        screen = self._opmode_stack.currentWidget()
+        if checked:
+            from PyQt6.QtWidgets import QFileDialog
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Packet Capture — choose file",
+                "", "Text files (*.txt);;All files (*)"
+            )
+            if not path:
+                if hasattr(screen, "btn_capture"):
+                    screen.btn_capture.blockSignals(True)
+                    screen.btn_capture.setChecked(False)
+                    screen.btn_capture.blockSignals(False)
+                return
+            try:
+                self._packet_capture_file = open(path, "a", encoding="utf-8")
+            except OSError as exc:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Packet Capture", f"Could not open file:\n{exc}")
+                if hasattr(screen, "btn_capture"):
+                    screen.btn_capture.blockSignals(True)
+                    screen.btn_capture.setChecked(False)
+                    screen.btn_capture.blockSignals(False)
+                return
+            self._packet_capture_path = path
+            self._log_monitor(f"[PACKET] Capture started → {path}")
+        else:
+            if self._packet_capture_file is not None:
+                self._packet_capture_file.close()
+            self._packet_capture_file = None
+            self._log_monitor(f"[PACKET] Capture stopped ({self._packet_capture_path})")
+            self._packet_capture_path = ""
+        if hasattr(screen, "note_capture_state"):
+            screen.note_capture_state(checked, self._packet_capture_path)
+
+    def _packet_capture_write(self, line: str) -> None:
+        """Write one already-formatted line to the open capture file, if any."""
+        if self._packet_capture_file is None:
+            return
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        try:
+            self._packet_capture_file.write(f"[{ts}] {line}\n")
+            self._packet_capture_file.flush()
+        except OSError:
+            logger.warning("Packet capture write failed — stopping capture", exc_info=True)
+            self._packet_capture_file = None
+
+    def _on_packet_unverified_toggle(self, label: str, checked: bool) -> None:
+        """CONPERM / MAILDROP / MDMON / LITE toggles.
+
+        These mnemonics could not be confirmed against the TRM /
+        pk232_mnemonic_table.txt in this sprint (neither is available in the
+        repository) — per the "never guess a mnemonic" rule, no frame is
+        sent. This only records the intent so the UI state is at least
+        visible in the monitor log for a future hardware-verification pass.
+        """
+        state = "ON" if checked else "OFF"
+        self._log_monitor(
+            f"[PACKET] {label} {state} — UI only, mnemonic unverified, no frame sent"
+        )
+
     def _on_packet_tx_enter(self) -> None:
         """Send the TX window content as an AX.25 DATA frame.
 
@@ -3499,9 +3613,11 @@ class MainWindow(QMainWindow):
         if not text.strip():
             return
 
+        channel = screen.current_channel() if hasattr(screen, "current_channel") else 1
         data = (text + '\r').encode('ascii', errors='replace')
-        self._serial.send_data(data, channel=1)
-        self._log_monitor(f"[PKT TX] {text.rstrip()!r}")
+        self._serial.send_data(data, channel=channel)
+        self._packet_capture_write(f"[CH{channel} TX] {text.rstrip()}")
+        self._log_monitor(f"[PKT TX ch{channel}] {text.rstrip()!r}")
 
         # Echo in RX display — will be confirmed by DATA_ACK
         from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat
