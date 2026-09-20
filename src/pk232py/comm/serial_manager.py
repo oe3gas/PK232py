@@ -42,6 +42,7 @@ from .constants import (
     FRAME_RECOVERY,
     FRAME_HOST_OFF,
     CTL_TX_DATA_BASE,
+    ctl_channel,
 )
 from .pk232_hostmode_sub import HostModeWorker as _HostModeWorker
 from .frame import (
@@ -157,7 +158,7 @@ def _make_host_frame(ctl: int, payload: bytes):
         kind = FrameKind.LINK_MSG
     else:
         kind = FrameKind.CMD_RESP
-    ch = (ctl - 0x30) if 0x30 <= ctl <= 0x39 else 15
+    ch = ctl_channel(ctl)
     return HostFrame(kind=kind, ctl=ctl, channel=ch, data=payload)
 
 

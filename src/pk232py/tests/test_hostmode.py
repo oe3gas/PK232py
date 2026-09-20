@@ -480,3 +480,38 @@ class TestKISS:
         assert len(received) == 2
         assert received[0].data == b'frame1'
         assert received[1].data == bytes([50])
+
+
+# ===========================================================================
+# SerialManager._make_host_frame  (serial_manager.py)
+# ===========================================================================
+
+class TestMakeHostFrame:
+    """Regression test for the channel-nibble bug fixed 2026-09-20:
+    _make_host_frame() used to hardcode channel=15 for every CTL byte except
+    $3x (RX_DATA), so LINK_MSG ($5x) and LINK_STATUS ($4x) frames never
+    carried their real channel — silently harmless until the Packet channel
+    model (ChannelBar) started relying on it. Fixed by using the same
+    ctl_channel() helper FrameParser already uses, instead of a hand-rolled
+    bitmask local to this function.
+    """
+
+    @staticmethod
+    def _channel_of(ctl: int) -> int:
+        from pk232py.comm.serial_manager import _make_host_frame
+        return _make_host_frame(ctl, b'').channel
+
+    def test_link_msg_channel_1(self):
+        assert self._channel_of(0x51) == 1
+
+    def test_link_status_channel_5(self):
+        assert self._channel_of(0x45) == 5
+
+    def test_general_command_channel_15(self):
+        assert self._channel_of(0x4F) == 15
+
+    def test_rx_monitor_channel_15(self):
+        assert self._channel_of(0x3F) == 15
+
+    def test_rx_data_channel_5(self):
+        assert self._channel_of(0x35) == 5
