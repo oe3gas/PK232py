@@ -1,5 +1,5 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix)**
+**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix); +T103–T105 (P11 USERS parameter)**
 **Previous stand: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
 
 ---
@@ -34,6 +34,7 @@
 | **2026-09-20** | `packet_screen.py`, `main_window.py` | P9 per-channel TX draft buffer (`_tx_buffers`/`_tx_channel`, `tx_text()`/`clear_tx()`); +T94–T97 |
 | **2026-09-20** | `packet_screen.py`, `main_window.py` | P10: channel 0 reserved as the UI/unproto/monitor channel (`UI_CHANNEL`), Connect/Disconnect/Unproto now driven by channel selection; +T98–T101 |
 | **2026-09-20** | `main_window.py` | Bugfix: `_make_link_handler()` gated `set_link_state()` to the visible channel only, not every link message; +T102 |
+| **2026-09-20** | `config.py`, `params_hf.py`, `params_uploader.py`, `packet_screen.py`, `main_window.py` | P11: `USERS` parameter (max. simultaneous AX.25 connections) added to config, params dialog, upload, and `ChannelBar` advisory tooltips; +T103–T105 |
 
 ---
 
@@ -914,6 +915,47 @@ Disconnect.
 
 ---
 
+## Test Block 6e — USERS (P11)
+
+From `docs/P11_USERS_Spec.md`. Continues the existing numbering — T87–T102
+above are unchanged.
+
+### T103 — USERS is uploaded
+1. Open the HF Packet Parameters dialog, set `USERS` to 4, click OK
+2. Trigger a parameter upload
+3. **Expected result:** `USERS 4` appears in the monitor, the TNC
+   acknowledges without error
+4. The value survives an application restart (INI)
+
+**Status:** ✅ PASS (2026-09-20 — unit-level: `TestUsersRoundTrip` in
+`test_params_hf_dialog.py` covers steps 1/4 [dialog ↔ `HFPacketConfig`,
+`_apply_hf_packet()`/`_build_hf_packet()` round-trip through the INI],
+`TestUsersUploaded` in `test_params_uploader.py` covers steps 2/3
+[`USERS 4\r\n` present in `_build_commands()`'s output]. Live-GUI
+click-through against a real TNC monitor still open.
+
+### T104 — USERS while a connection is up (hardware, OPEN)
+1. Connect on channel 1
+2. Change `USERS` in the dialog and upload
+3. **Expected result open:** does the TNC accept the change, or reply with
+   `$09` "not while connected"? Record the result in CLAUDE.md; if
+   rejected, skip the `USERS` upload while connected instead of raising an
+   error.
+
+**Status:** ⬜ OPEN — needs real hardware.
+
+### T105 — a second simultaneous connection (hardware, OPEN)
+1. Set `USERS` to 2 or higher and upload
+2. Connect on channel 1
+3. Let a second station connect on channel 2
+4. **Expected result:** both chips green with their own callsign, data
+   routes into the correct channel view, TX buffers stay separate (P9)
+
+**Status:** ⬜ OPEN — needs real hardware and a second AX.25 station. This
+is the actual proof that the multi-channel model holds up beyond one QSO.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
@@ -1171,8 +1213,9 @@ Diagnose bei Fehler:
 | Low | Help Viewer | T27–T28 |
 | Medium | CW/Morse TxController (Paket 2a) | T69–T72 |
 | Medium | AMTOR TxController (Paket 2b) — T73 zuerst! | T73–T79 |
-| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T100, T102 |
+| Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T100, T102, T103 |
 | High | UI-channel unproto behaviour — needs real hardware | T101 |
+| High | USERS while connected / second simultaneous connection — needs real hardware (+ 2nd station for T105) | T104, T105 |
 
 ---
 

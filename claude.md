@@ -565,6 +565,22 @@ Grows over time.
   onto channel selection instead of a direct button lock). This is also
   consistent with the rest of the app: every non-Packet operating mode
   already only ever uses channel 0 (TRM 4.3).
+- **The channel bar always shows ten chips, but `USERS` decides how many
+  actually work (P11, 2026-09-20).** `ChannelBar` can display channels 0–9
+  regardless of hardware capability — but the PK-232 itself only accepts as
+  many simultaneous AX.25 connections as its `USERS` parameter allows
+  (default **1**). Without raising `USERS`, chips 2–9 stay dead in real
+  operation; that is expected TNC behaviour, not a UI bug. `USERS` lives in
+  `HFPacketConfig.users` (shared by VHF Packet — there is no separate
+  `VHFPacketConfig`), is set via the HF Packet Parameters dialog
+  (`self._sb_users`, range 1–10) and uploaded in verbose mode as the
+  `USERS` command (`comm/params_uploader.py`) — **not** the Host Mode
+  mnemonic `UR`; changing `USERS` at runtime in Host Mode is out of scope.
+  `ChannelBar.set_user_limit()` only ever adds a tooltip line to chips above
+  the limit — deliberately no lock/grey-out/colour change, since it is
+  unconfirmed whether `USERS` also blocks *outgoing* connects on higher
+  channels (it is documented as limiting *accepted*, i.e. incoming, ones) —
+  see Testplan T104/T105 for what is still open on real hardware.
 - **ALL/CH RX filter is append-time, not a buffer rebuild.** Switching the
   current channel or toggling ALL/CH does **not** redraw RX history —
   `PacketBaseScreen.append_channel_data()` simply decides whether to write a

@@ -112,10 +112,20 @@ NOTHING to the TNC yet)
   (`docs/P10_UI_Channel_Spec.md`) rests on this. If it turns out not to hold,
   log the error frame and record the finding in CLAUDE.md before relying on
   it further.
+- **Open:** T104 (P11) — hardware check whether the TNC accepts a `USERS`
+  change while a connection is up, or rejects it with error `$09` "not
+  while connected" (TRM 4.3). If rejected, skip the `USERS` upload while
+  connected instead of raising an error; record the result in CLAUDE.md.
+- **Open:** T105 (P11) — the actual proof that the multi-channel model
+  holds up: raise `USERS` to 2+, connect on channel 1, have a second
+  station connect on channel 2, confirm both chips go green with the
+  right callsign, data routes to the right channel view, and TX buffers
+  (P9) stay separate. Needs a real PK-232 **and** a second AX.25 station.
 
 *Note: monitoring on 144.800 MHz has replaced most RX-only tests.
-The T35/T37 + T38/T39 + T41/T42 + T101 hardware re-tests still need a real
-station (T101 needs no second station, just a real PK-232).*
+The T35/T37 + T38/T39 + T41/T42 + T101 + T104 hardware re-tests still need
+a real station (T101/T104 need no second station, just a real PK-232);
+T105 additionally needs a second AX.25 station.*
 
 ### Beta Release (v0.1-beta) — GitHub distribution
 - [ ] Windows build reproducible (decide: Nuitka onefile vs PyInstaller --onedir)
