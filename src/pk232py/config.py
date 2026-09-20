@@ -325,11 +325,14 @@ class ConfigManager:
         hf.monitor   = s.getint("monitor",   hf.monitor)
         hf.resptime  = s.getint("resptime",  hf.resptime)
         hf.users     = s.getint("users",     hf.users)
+        hf.txsmt     = s.getint("txsmt",     hf.txsmt)
         hf.ax25l2v2  = s.getboolean("ax25l2v2",  hf.ax25l2v2)
         hf.headerln  = s.getboolean("headerln",  hf.headerln)
         hf.constamp  = s.getboolean("constamp",  hf.constamp)
         hf.dagstamp  = s.getboolean("dagstamp",  hf.dagstamp)
         hf.ilfpack   = s.getboolean("ilfpack",   hf.ilfpack)
+        hf.aerpack   = s.getboolean("aerpack",   hf.aerpack)
+        hf.alfpack   = s.getboolean("alfpack",   hf.alfpack)
         hf.mrpt      = s.getboolean("mrpt",      hf.mrpt)
         hf.ppersist  = s.getboolean("ppersist",  hf.ppersist)
         hf.xmitok    = s.getboolean("xmitok",    hf.xmitok)
@@ -404,11 +407,14 @@ class ConfigManager:
             "monitor":  str(hf.monitor),
             "resptime": str(hf.resptime),
             "users":    str(hf.users),
+            "txsmt":    str(hf.txsmt),
             "ax25l2v2": str(hf.ax25l2v2).lower(),
             "headerln": str(hf.headerln).lower(),
             "constamp": str(hf.constamp).lower(),
             "dagstamp": str(hf.dagstamp).lower(),
             "ilfpack":  str(hf.ilfpack).lower(),
+            "aerpack":  str(hf.aerpack).lower(),
+            "alfpack":  str(hf.alfpack).lower(),
             "mrpt":     str(hf.mrpt).lower(),
             "ppersist": str(hf.ppersist).lower(),
             "xmitok":   str(hf.xmitok).lower(),
