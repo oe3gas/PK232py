@@ -757,13 +757,24 @@ class PacketBaseScreen(QWidget):
         prefix = f"[CH{channel}] " if self._view_all else ""
         self._rx_append(prefix + text, is_html=False, color="#66ccff")
 
-    def append_monitor_data(self, text: str, is_html: bool = False) -> None:
+    def append_monitor_data(self, text: str, is_html: bool = False,
+                             ts: str = "") -> None:
         """Append a monitored/unproto frame. Not channel-scoped — unlike
         connected data, monitor traffic is always shown regardless of the
-        ALL/CH filter (it never belonged to a specific connected channel)."""
-        self._rx_append(text, is_html=is_html, color="#aaaaaa")
+        ALL/CH filter (it never belonged to a specific connected channel).
 
-    def _rx_append(self, text: str, is_html: bool, color: str) -> None:
+        `ts` is optional and only used by MainWindow._packet_rx_redraw() to
+        replay a HISTORICAL timestamp when the user toggles APRS decode
+        on/off (T59/T60 — that redraw re-renders the whole buffer and must
+        not relabel every old frame with "now"). Live callers omit it and
+        get the current UTC time, same as append_channel_data().
+        """
+        self._rx_append(text, is_html=is_html, color="#aaaaaa", ts=ts)
+
+    def _rx_append(self, text: str, is_html: bool, color: str,
+                    ts: str = "") -> None:
+        if not ts:
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
         from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat
         cursor = self.rx_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -778,7 +789,7 @@ class PacketBaseScreen(QWidget):
             fmt.setForeground(QColor(color))
             cursor.setCharFormat(fmt)
             lines = text.splitlines() or [""]
-            cursor.insertText(lines[0] + "\n")
+            cursor.insertText(f"[{ts}] {lines[0]}\n")
             for line in lines[1:]:
                 cursor.insertText(f"         {line}\n")
             cursor.insertText("\n")
@@ -1276,13 +1287,13 @@ class PacketBaseScreen(QWidget):
     # ------------------------------------------------------------------
 
     def _on_view_toggled(self, checked: bool) -> None:
-        """ALL/CH exclusive pair — restyle only; set_view_all() does the work."""
-        if checked:
-            self.btn_view_all.setStyleSheet(_STYLE_VIEW_ON)
-            self.btn_view_ch.setStyleSheet(_STYLE_VIEW_OFF)
-        else:
-            self.btn_view_all.setStyleSheet(_STYLE_VIEW_OFF)
-            self.btn_view_ch.setStyleSheet(_STYLE_VIEW_ON)
+        """ALL/CH exclusive pair — pure UI, no TNC frame, so handled locally
+        rather than round-tripping through MainWindow (P2.1 names this as a
+        MainWindow wire-up target, but there is nothing for MainWindow to do
+        here: set_view_all() only changes the local RX filter)."""
+        self.btn_view_all.setStyleSheet(_STYLE_VIEW_ON if checked else _STYLE_VIEW_OFF)
+        self.btn_view_ch.setStyleSheet(_STYLE_VIEW_OFF if checked else _STYLE_VIEW_ON)
+        self.set_view_all(checked)
 
     def _on_options_toggled(self, checked: bool) -> None:
         self._options_container.setVisible(checked)
