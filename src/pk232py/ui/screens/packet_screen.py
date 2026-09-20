@@ -610,6 +610,12 @@ class PacketBaseScreen(QWidget):
 
         self._view_all = True   # ALL vs CH RX filter (P1.4)
 
+        # Per-channel TX draft buffer (P9). ch -> (text, cursor_pos).
+        # _tx_channel is populated once self.channel_bar exists (see
+        # _build_ui() below, right after the ChannelBar is constructed).
+        self._tx_buffers: dict[int, tuple[str, int]] = {}
+        self._tx_channel: int = 0
+
         self._macro_store = MacroStore()
         err = self._macro_store.load()
         if err:
@@ -763,13 +769,66 @@ class PacketBaseScreen(QWidget):
 
     def reset_channels(self) -> None:
         """Clear all channel state — every chip back to free, MHEARD channel
-        column cleared. Called by MainWindow when the mode is (re)activated
-        and when leaving Host Mode (see _switch_opmode()/_update_host_mode_ui()
-        in main_window.py) — without this, a CONNECTED/CALLING chip from a
+        column cleared, every per-channel TX draft discarded (P9.3). Called
+        by MainWindow when the mode is (re)activated and when leaving Host
+        Mode (see _switch_opmode()/_update_host_mode_ui() in main_window.py)
+        — without this, a CONNECTED/CALLING chip or a stale TX draft from a
         previous session would linger with no frame ever left to clear it.
         """
         self.channel_bar.reset()
         self.mheard_panel.set_channel_map({})
+        self._tx_buffers.clear()
+        self.tx_input.blockSignals(True)
+        self.tx_input.clear()
+        self.tx_input.blockSignals(False)
+
+    # ------------------------------------------------------------------
+    # Per-channel TX draft buffer (P9) — text typed on one channel must
+    # survive any number of channel switches, whichever way the channel
+    # changed (chip click, Ctrl+Up/Down, MHEARD double-click, the Connect
+    # dialog's channel picker, or a programmatic channel_bar.set_current()).
+    # All of those funnel through ChannelBar.channel_changed, which this
+    # class connects to _on_tx_channel_switch in _build_ui() — see the
+    # comment there for why that connection must be made in the screen's
+    # own constructor rather than by MainWindow.
+    # ------------------------------------------------------------------
+
+    def tx_text(self) -> str:
+        """Currently visible TX text (for the channel in `_tx_channel`)."""
+        return self.tx_input.toPlainText()
+
+    def clear_tx(self, channel: int | None = None) -> None:
+        """Clear the TX widget AND discard the buffered draft for *channel*
+        (the currently visible channel if None). Only that one channel is
+        affected — never all of them. If *channel* is not the channel
+        currently shown in the widget, only its buffer entry is dropped;
+        the visible text (belonging to a different channel) is untouched.
+        """
+        ch = self.current_channel() if channel is None else channel
+        self._tx_buffers.pop(ch, None)
+        if ch == self._tx_channel:
+            self.tx_input.clear()
+
+    def _on_tx_channel_switch(self, new_ch: int) -> None:
+        """Save the outgoing channel's TX draft (text + cursor position)
+        under `_tx_channel` — the channel the visible text still belongs to,
+        NOT `new_ch` (channel_changed only carries the channel being
+        switched TO) — then load `new_ch`'s draft, or a blank buffer if it
+        has none yet. blockSignals prevents setPlainText()/setTextCursor()
+        from firing textChanged and triggering any send logic.
+        """
+        cursor = self.tx_input.textCursor()
+        self._tx_buffers[self._tx_channel] = (
+            self.tx_input.toPlainText(), cursor.position()
+        )
+        self._tx_channel = new_ch
+        text, pos = self._tx_buffers.get(new_ch, ("", 0))
+        self.tx_input.blockSignals(True)
+        self.tx_input.setPlainText(text)
+        new_cursor = self.tx_input.textCursor()
+        new_cursor.setPosition(min(max(pos, 0), len(text)))
+        self.tx_input.setTextCursor(new_cursor)
+        self.tx_input.blockSignals(False)
 
     def set_view_all(self, show_all: bool) -> None:
         self._view_all = show_all
@@ -1160,6 +1219,17 @@ class PacketBaseScreen(QWidget):
         # 7. ChannelBar ──────────────────────────────────────────────────
         self.channel_bar = ChannelBar()
         root.addWidget(self.channel_bar)
+
+        # P9: per-channel TX buffer swap. Connected here, in the screen
+        # itself, immediately after the ChannelBar is built — NOT in
+        # MainWindow. Qt calls a signal's slots in connection order; the
+        # screen connects during __init__/_build_ui(), MainWindow only
+        # later in _wire_packet_buttons() (itself only run on a mode
+        # switch). Connecting here first guarantees the buffer swap has
+        # already happened by the time any MainWindow slot on the same
+        # channel_changed signal touches tx_input.
+        self._tx_channel = self.channel_bar.current()
+        self.channel_bar.channel_changed.connect(self._on_tx_channel_switch)
 
         add_hline(root)
 
