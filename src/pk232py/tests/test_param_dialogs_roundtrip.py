@@ -185,9 +185,14 @@ FIELD_HAS_NO_WIDGET: dict[tuple[str, str], str] = {
 # Config fields that deliberately never produce an upload command (P13,
 # Test D). Keyed by (config section attribute on AppConfig, field name).
 UPLOAD_EXEMPT: dict[tuple[str, str], str] = {
-    # hf_packet.resptime / .txsmt / .aerpack are DELIBERATELY left out of
-    # this list: they are real gaps fixed in the "Params uploader: ..."
-    # commit, and Test D must stay red for them until that commit lands.
+    # hf_packet.resptime and .acrpack (renamed from .aerpack) are now sent
+    # (see the "Params uploader: RESPTIME, verified flag names, single
+    # MYCALL" commit) and need no exemption.
+    ("hf_packet", "txsmt"): (
+        "TXSMT does not appear in the PK-232 TRM Host Mode command list - "
+        "likely a command from a different AEA product. Field/INI kept for "
+        "compatibility, dialog spinbox disabled, never uploaded."
+    ),
 
     # --- PACTOR: none of these are sent yet. Not fixed in this session --
     # verifying 9 more command names against the TRM / pk232_mnemonic_

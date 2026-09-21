@@ -120,6 +120,8 @@ class ParamsUploader:
             self._cmd("DWAIT",    str(hf.dwait)),
             self._cmd("CHECK",    str(hf.check)),
             self._cmd("MONITOR",  str(hf.monitor)),
+            # RESPTIME - confirmed against the TRM (RP RESPTIME command).
+            self._cmd("RESPTIME", str(hf.resptime)),
             # USERS caps simultaneous AX.25 connections (P11) - verbose-mode
             # command name, NOT the Host Mode mnemonic UR (that one is not
             # used or built here; changing USERS at runtime in Host Mode is
@@ -138,6 +140,9 @@ class ParamsUploader:
             self._bool("CONSTAMP",  hf.constamp),
             self._bool("DAYSTAMP",  hf.dagstamp),
             self._bool("ILFPACK",   hf.ilfpack),
+            # ACRPACK (mnemonic AK, TRM Host Mode command list) - renamed
+            # from "aerpack", which does not exist as a PK-232 command (P13).
+            self._bool("ACRPACK",   hf.acrpack),
             self._bool("ALFPACK",   hf.alfpack),
             self._bool("MRPT",      hf.mrpt),
             self._bool("PPERSIST",  hf.ppersist),
@@ -145,8 +150,12 @@ class ParamsUploader:
         ]
 
         # Message params
-        if hf.mycall:
-            cmds.append(self._cmd("MYCALL",  hf.mycall.upper()))
+        # NOTE (P13): MYCALL used to be sent again here, unconditionally -
+        # a duplicate of the "- Identity -" MYCALL above, which is the
+        # correct one since it also guards against the "NOCALL" placeholder.
+        # TXSMT is deliberately never sent: it does not appear anywhere in
+        # the PK-232 TRM Host Mode command list (see UPLOAD_EXEMPT in
+        # test_param_dialogs_roundtrip.py and the disabled dialog spinbox).
         if hf.unproto:
             cmds.append(self._cmd("UNPROTO", hf.unproto))
         if hf.btext:

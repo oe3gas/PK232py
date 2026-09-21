@@ -97,6 +97,13 @@ class HFPacketParamsDialog(QDialog):
         self._sb_monitor  = spin(0, 6,   4);     form.addRow("MONITOR:",  self._sb_monitor)
         self._sb_resptime = spin(0, 250, 0);     form.addRow("RESPTIME:", self._sb_resptime)
         self._sb_txsmt    = spin(0, 250, 50);    form.addRow("TXSMT:",    self._sb_txsmt)
+        # TXSMT does not appear anywhere in the PK-232 TRM Host Mode command
+        # list (P13) - likely a command from a different AEA product (PK-900,
+        # DSP-2232). Disabled rather than removed: the field and its INI
+        # entry stay so existing INI files keep loading cleanly, but nothing
+        # is ever sent for it (see ParamsUploader / UPLOAD_EXEMPT).
+        self._sb_txsmt.setEnabled(False)
+        self._sb_txsmt.setToolTip("Not a PK-232 command — has no effect")
         self._sb_users    = spin(1, 10,  1);     form.addRow("USERS:",    self._sb_users)
         self._sb_users.setToolTip(
             "Maximum number of simultaneous AX.25 connections the TNC "
@@ -124,7 +131,7 @@ class HFPacketParamsDialog(QDialog):
         self._chk_constamp  = chk("CONSTAMP",   True);  flags_layout.addWidget(self._chk_constamp)
         self._chk_dagstamp  = chk("DAGSTAMP",   True);  flags_layout.addWidget(self._chk_dagstamp)
         self._chk_ilfpack   = chk("ILFPACK",    True);  flags_layout.addWidget(self._chk_ilfpack)
-        self._chk_aerpack   = chk("AERPACK",    True);  flags_layout.addWidget(self._chk_aerpack)
+        self._chk_acrpack   = chk("ACRPACK",    True);  flags_layout.addWidget(self._chk_acrpack)
         self._chk_alfpack   = chk("ALFPACK",    True);  flags_layout.addWidget(self._chk_alfpack)
         self._chk_mrpt      = chk("MRPT",       True);  flags_layout.addWidget(self._chk_mrpt)
         self._chk_ppersist  = chk("PPERSIST",   True);  flags_layout.addWidget(self._chk_ppersist)
@@ -210,7 +217,7 @@ class HFPacketParamsDialog(QDialog):
         self._chk_constamp.setChecked(c.constamp)
         self._chk_dagstamp.setChecked(c.dagstamp)
         self._chk_ilfpack.setChecked(c.ilfpack)
-        self._chk_aerpack.setChecked(c.aerpack)
+        self._chk_acrpack.setChecked(c.acrpack)
         self._chk_alfpack.setChecked(c.alfpack)
         self._chk_mrpt.setChecked(c.mrpt)
         self._chk_ppersist.setChecked(c.ppersist)
@@ -242,7 +249,7 @@ class HFPacketParamsDialog(QDialog):
         config.constamp  = self._chk_constamp.isChecked()
         config.dagstamp  = self._chk_dagstamp.isChecked()
         config.ilfpack   = self._chk_ilfpack.isChecked()
-        config.aerpack   = self._chk_aerpack.isChecked()
+        config.acrpack   = self._chk_acrpack.isChecked()
         config.alfpack   = self._chk_alfpack.isChecked()
         config.mrpt      = self._chk_mrpt.isChecked()
         config.ppersist  = self._chk_ppersist.isChecked()

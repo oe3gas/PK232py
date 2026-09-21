@@ -95,7 +95,12 @@ class HFPacketConfig:
     constamp:   bool = True
     dagstamp:   bool = True   # Note: spec uses DAGSTAMP not DAYSTAMP
     ilfpack:    bool = True
-    aerpack:    bool = True
+    # Renamed from "aerpack" (P13): the TRM Host Mode command list has no
+    # such command, but does have ACRPACK (mnemonic AK) - "aerpack" was
+    # almost certainly a typo in an earlier specification. INI reads still
+    # fall back to the old "aerpack" key (see _apply_hf_packet()); only
+    # "acrpack" is ever written from here on.
+    acrpack:    bool = True
     alfpack:    bool = True
     mrpt:       bool = True
     ppersist:   bool = True
@@ -331,7 +336,9 @@ class ConfigManager:
         hf.constamp  = s.getboolean("constamp",  hf.constamp)
         hf.dagstamp  = s.getboolean("dagstamp",  hf.dagstamp)
         hf.ilfpack   = s.getboolean("ilfpack",   hf.ilfpack)
-        hf.aerpack   = s.getboolean("aerpack",   hf.aerpack)
+        # Read the old "aerpack" key as a fallback for INI files written
+        # before the ACRPACK rename (P13); only "acrpack" is ever written.
+        hf.acrpack   = s.getboolean("acrpack",   s.getboolean("aerpack", hf.acrpack))
         hf.alfpack   = s.getboolean("alfpack",   hf.alfpack)
         hf.mrpt      = s.getboolean("mrpt",      hf.mrpt)
         hf.ppersist  = s.getboolean("ppersist",  hf.ppersist)
@@ -413,7 +420,7 @@ class ConfigManager:
             "constamp": str(hf.constamp).lower(),
             "dagstamp": str(hf.dagstamp).lower(),
             "ilfpack":  str(hf.ilfpack).lower(),
-            "aerpack":  str(hf.aerpack).lower(),
+            "acrpack":  str(hf.acrpack).lower(),
             "alfpack":  str(hf.alfpack).lower(),
             "mrpt":     str(hf.mrpt).lower(),
             "ppersist": str(hf.ppersist).lower(),
