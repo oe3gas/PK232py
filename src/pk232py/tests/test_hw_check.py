@@ -19,11 +19,19 @@ from pathlib import Path
 
 import pytest
 
+from pk232py.comm.frame import FrameKind, HostFrame
+
 _TOOLS_DIR = Path(__file__).resolve().parents[3] / "tools"
 if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
 
 import hw_check  # noqa: E402
+
+
+def _cmd_resp(data: bytes) -> HostFrame:
+    """A real CMD_RESP HostFrame ($4F, channel 15) - the shape every Host
+    Mode query answer actually has."""
+    return HostFrame(ctl=0x4F, channel=15, data=data, kind=FrameKind.CMD_RESP)
 
 
 class TestEvaluateT17:
@@ -43,6 +51,43 @@ class TestEvaluateT17:
     def test_neither_looks_like_a_toggle_is_inconclusive(self):
         result = hw_check.evaluate_t17(px_response="?What?", ps_response="?What?")
         assert result["passall_mnemonic"] is None
+
+
+class TestSelectResponseFrame:
+    """P16.2: correlate a Host Mode response by mnemonic prefix, never by
+    arrival order. Fixtures are the real 21.09.2026 T86 hardware sequence
+    (hw_logs/), including the stale 'HP\\x00' poll-ack from Host Mode entry
+    that was still in flight when the PX query went out and got mistaken
+    for the answer, turning a clean PASS into INCONCLUSIVE."""
+
+    def test_ignores_stale_hp_frame_and_finds_the_real_answer(self):
+        stale_hp = _cmd_resp(b"HP\x00")
+        real_px = _cmd_resp(b"PXN")
+
+        result = hw_check.select_response_frame(b"PX", [stale_hp, real_px])
+
+        assert result is real_px
+
+    def test_returns_none_when_nothing_matches(self):
+        stale_hp = _cmd_resp(b"HP\x00")
+        assert hw_check.select_response_frame(b"PX", [stale_hp]) is None
+
+    def test_returns_none_for_empty_frame_list(self):
+        assert hw_check.select_response_frame(b"PX", []) is None
+
+    def test_full_t86_sequence_yields_pass_for_px(self):
+        # The exact real hardware sequence from 21.09.2026 (T86): PX's own
+        # query still had the stale HP\x00 ahead of it, PS's did not.
+        px_frames = [_cmd_resp(b"HP\x00"), _cmd_resp(b"PXN")]
+        ps_frames = [_cmd_resp(b"PS$16")]
+
+        px_frame = hw_check.select_response_frame(b"PX", px_frames)
+        ps_frame = hw_check.select_response_frame(b"PS", ps_frames)
+
+        assert px_frame is not None
+        assert ps_frame is not None
+        verdict = hw_check.evaluate_t17(px_frame.text, ps_frame.text)
+        assert verdict["passall_mnemonic"] == "PX"
 
 
 class TestParseQueryValue:
