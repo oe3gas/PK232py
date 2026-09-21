@@ -193,3 +193,36 @@ class TestLinkMessageGatedByVisibleChannel:
 
         screen.channel_bar.set_current(4)
         assert screen.btn_disconnect.isEnabled()
+
+
+class TestPassallMnemonic:
+    """T86 (P16, hardware-verified 21.09.2026): PASSALL is host mnemonic
+    PX, not PS. PS is PASS, a masking character - not a toggle; sending
+    'PS Y'/'PS N' would overwrite the masking character with the letter Y
+    or N instead of switching PASSALL. The 2026-06-22 fix (PA -> PS) was
+    itself wrong; corrected here to PA -> PX (packet activation vs the
+    real PASSALL toggle)."""
+
+    def test_passall_toggle_sends_px(self, wired_vhf):
+        w, screen = wired_vhf
+        screen.btn_passall.setChecked(True)
+
+        cmds = [c for c in w._serial.calls if c[0] == "cmd"]
+        assert ("cmd", b'PX', b'Y') in cmds
+
+        screen.btn_passall.setChecked(False)
+        cmds = [c for c in w._serial.calls if c[0] == "cmd"]
+        assert ("cmd", b'PX', b'N') in cmds
+
+    def test_no_packet_screen_button_sends_ps(self, wired_vhf):
+        w, screen = wired_vhf
+        for btn in (
+            screen.btn_eas, screen.btn_passall, screen.btn_mrpt,
+            screen.btn_mid, screen.btn_squelch,
+        ):
+            btn.setChecked(True)
+            btn.setChecked(False)
+
+        assert not any(
+            c[0] == "cmd" and c[1] == b'PS' for c in w._serial.calls
+        )
