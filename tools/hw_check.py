@@ -130,10 +130,12 @@ def evaluate_t17(px_response: str, ps_response: str) -> dict:
     """Classify the PX/PS query responses (T17).
 
     TRM mnemonic table (4.2.2): PS = PASS, a masking CHARACTER (default
-    $16, Ctrl-V) - not a toggle. PX = PASSALL, a Y/N toggle. The
-    application currently sends 'PS' for the PASSALL button; this
-    function only classifies which response LOOKS like a Y/N toggle -
-    it does not assume which one is right.
+    $16, Ctrl-V) - not a toggle. PX = PASSALL, a Y/N toggle. Hardware-
+    confirmed 21.09.2026 (Testplan T86): raw Host Mode responses 'PXN'
+    (PX) and 'PS$16' (PS) - the app's PASSALL toggle sends 'PX'. This
+    function only classifies which response LOOKS like a Y/N toggle - it
+    does not assume which one is right, so a future firmware surprise
+    would still show up as a real INCONCLUSIVE/mismatch, not a silent miss.
     """
     def looks_like_toggle(resp: str) -> bool:
         body = resp.upper()
@@ -160,6 +162,25 @@ def evaluate_t17(px_response: str, ps_response: str) -> dict:
         "ps_is_toggle": ps_is_toggle,
         "passall_mnemonic": passall_mnemonic,
     }
+
+
+def select_response_frame(mnemonic: bytes, frames: list) -> Optional[object]:
+    """Return the first captured Host Mode frame whose payload actually
+    starts with *mnemonic*, ignoring every other frame seen in the same
+    window (P16.2).
+
+    Host Mode responses must never be matched by arrival order - a stale
+    'HP\\x00' poll-ack from Host Mode entry can still be in flight when the
+    first real query goes out (hardware-observed 21.09.2026, T86) and was
+    mistaken for the answer to that query, turning a clean PASS into an
+    INCONCLUSIVE. Frames are plain HostFrame-like objects with a `.data`
+    attribute, so this needs no serial interface and is unit-testable with
+    the real captured bytes.
+    """
+    for f in frames:
+        if f.data.startswith(mnemonic):
+            return f
+    return None
 
 
 _EXPLANATION_RE = re.compile(r"\s*\([^()]*\)\s*$")
@@ -422,12 +443,33 @@ class Session:
 
     # -- Host-mode frames ----------------------------------------------------
 
-    def query_host(self, mnemonic: bytes, timeout: float = 2.0) -> list:
-        """Send a Host Mode query (mnemonic, no args) and return every frame
-        the TNC replies with inside *timeout*."""
+    def drain_pending_frames(self, settle: float = 0.3) -> None:
+        """Log and discard any frames already queued before the first real
+        query (P16.2) - e.g. the stale 'HP\\x00' poll-ack from Host Mode
+        entry that made T17 misread its own PX/PS responses on 21.09.2026.
+        """
+        if self.dry_run:
+            return
+        captured: list = []
+        self.sm.frame_received.connect(captured.append)
+        try:
+            self._pump(settle)
+        finally:
+            self.sm.frame_received.disconnect(captured.append)
+        for f in captured:
+            self.log.line(
+                f"INFO: discarded pending frame ctl=0x{f.ctl:02X} "
+                f"ch={f.channel} data={f.data!r} text={f.text!r}"
+            )
+
+    def query_host(self, mnemonic: bytes, timeout: float = 2.0):
+        """Send a Host Mode query (mnemonic, no args) and return the ONE
+        frame whose payload starts with *mnemonic* - not just the first
+        frame to arrive (P16.2 - see select_response_frame()). Returns None
+        if no matching frame showed up inside *timeout*."""
         if self.dry_run:
             self.log.line(f"[dry-run] would send Host Mode query {mnemonic!r}")
-            return []
+            return None
         captured: list = []
         self.sm.frame_received.connect(captured.append)
         try:
@@ -441,7 +483,11 @@ class Session:
                 f"<< ctl=0x{f.ctl:02X} ch={f.channel} data={f.data!r} "
                 f"text={f.text!r}"
             )
-        return captured
+        match = select_response_frame(mnemonic, captured)
+        for f in captured:
+            if f is not match:
+                self.log.line(f"INFO: unrelated frame {f.data.hex()}")
+        return match
 
     def send_data_channel0(self, text: str) -> None:
         if self.dry_run:
@@ -484,18 +530,23 @@ def test_t17(session: Session, log: RunLog) -> None:
 
     session.enter_host_mode()
     try:
-        px_frames = session.query_host(b"PX")
-        ps_frames = session.query_host(b"PS")
+        # A stale 'HP\x00' poll-ack from Host Mode entry can still be queued
+        # here (T86, 21.09.2026) - drop it before the first real query so it
+        # can never be mistaken for the PX/PS answer.
+        session.drain_pending_frames()
+        px_frame = session.query_host(b"PX")
+        ps_frame = session.query_host(b"PS")
     finally:
         session.exit_host_mode()
 
-    px_text = px_frames[0].text if px_frames else "<no response>"
-    ps_text = ps_frames[0].text if ps_frames else "<no response>"
+    px_text = px_frame.text if px_frame else "<no matching response>"
+    ps_text = ps_frame.text if ps_frame else "<no matching response>"
 
-    if not px_frames or not ps_frames:
+    if px_frame is None or ps_frame is None:
         log.result(
             "T17", "INCONCLUSIVE",
-            f"no response frame in Host Mode -- PX={px_text!r}, PS={ps_text!r}"
+            f"no matching response frame in Host Mode -- PX={px_text!r}, "
+            f"PS={ps_text!r}"
         )
         return
 
@@ -503,15 +554,15 @@ def test_t17(session: Session, log: RunLog) -> None:
     if verdict["passall_mnemonic"] == "PX":
         log.result(
             "T17", "PASS",
-            f"PASSALL is PX, not PS (PX={px_text!r}, PS={ps_text!r}) - the "
-            f"app's PASSALL toggle sends the wrong mnemonic, see "
-            f"packet_screen.py toggle_map / Backlog.md"
+            f"PASSALL is PX (PX={px_text!r}, PS={ps_text!r}) - matches the "
+            f"app's toggle (packet_screen.py toggle_map, fixed P16/T86)"
         )
     elif verdict["passall_mnemonic"] == "PS":
         log.result(
-            "T17", "PASS",
-            f"PASSALL is PS (PX={px_text!r}, PS={ps_text!r}) - the app's "
-            f"toggle is correct"
+            "T17", "FAIL",
+            f"PASSALL is PS, not PX (PX={px_text!r}, PS={ps_text!r}) - the "
+            f"app's PASSALL toggle sends the wrong mnemonic, see "
+            f"packet_screen.py toggle_map / Backlog.md"
         )
     else:
         log.result(
