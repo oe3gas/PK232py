@@ -45,6 +45,73 @@ class TestEvaluateT17:
         assert result["passall_mnemonic"] is None
 
 
+class TestParseQueryValue:
+    """Fixtures are real PK-232 responses captured 21.09.2026 (hw_logs/),
+    not idealised guesses (P15.1) - the 18 pre-P15 tests here all passed
+    while missing every one of the four real hardware bugs, because they
+    were written against responses the TNC does not actually send."""
+
+    def test_users_query(self):
+        resp = "USERS\r\nUSers     1\r\ncmd:"
+        assert hw_check.parse_query_value("USERS", resp) == "1"
+
+    def test_pthuff_query(self):
+        resp = "PTHUFF\r\nPTHuff    0\r\ncmd:"
+        assert hw_check.parse_query_value("PTHUFF", resp) == "0"
+
+    def test_unproto_query(self):
+        resp = "UNPROTO\r\nUnproto   CQ\r\ncmd:"
+        assert hw_check.parse_query_value("UNPROTO", resp) == "CQ"
+
+    def test_monitor_query_strips_explanation(self):
+        resp = "MONITOR\r\nMonitor   6 (seq, P/F + all)\r\ncmd:"
+        assert hw_check.parse_query_value("MONITOR", resp) == "6"
+
+    def test_txdelay_query_strips_explanation(self):
+        resp = "TXDELAY\r\nTXdelay   30 (300 msec.)\r\ncmd:"
+        assert hw_check.parse_query_value("TXDELAY", resp) == "30"
+
+    def test_canline_query_strips_explanation(self):
+        resp = "CANLINE\r\nCANline   $18 (CTRL-X)\r\ncmd:"
+        assert hw_check.parse_query_value("CANLINE", resp) == "$18"
+
+    def test_multi_word_value_preserved(self):
+        # A multi-word value must come back whole - only the trailing
+        # parenthesised note is stripped, not everything after the first
+        # word (P15.1).
+        resp = "UNPROTO\r\nUnproto   CQ VIA WIDE1-1\r\ncmd:"
+        assert hw_check.parse_query_value("UNPROTO", resp) == "CQ VIA WIDE1-1"
+
+    def test_what_error_is_none(self):
+        # The exact T17 failure from the hardware log: two-letter mnemonics
+        # do not exist in verbose mode.
+        resp = "PX\r\n?What?\r\ncmd:"
+        assert hw_check.parse_query_value("PX", resp) is None
+
+    def test_bad_error_is_none(self):
+        # The exact garbage the un-parsed pre-P15 code sent and then choked
+        # on (Befund 2/4: a stray 'cmd:' token mistaken for a value).
+        resp = "PTHUFF cmd:\r\n?bad\r\ncmd:"
+        assert hw_check.parse_query_value("PTHUFF", resp) is None
+
+    def test_callsign_error_is_none(self):
+        resp = "UNPROTO cmd:\r\n?callsign\r\ncmd:"
+        assert hw_check.parse_query_value("UNPROTO", resp) is None
+
+    def test_was_now_set_response_returns_now_value(self):
+        resp = "USERS 1\r\nUSers     was 1\r\nUSers     now 1\r\ncmd:"
+        assert hw_check.parse_query_value("USERS", resp) == "1"
+
+    def test_multiline_value_returns_none(self):
+        # MTEXT's two-line welcome message is not supported yet - returning
+        # a truncated value would be worse than skipping the restore.
+        resp = "MTEXT\r\nMText     PK232PY DE OE3GAS\r\nMText     73 AND CU\r\ncmd:"
+        assert hw_check.parse_query_value("MTEXT", resp) is None
+
+    def test_empty_response_is_none(self):
+        assert hw_check.parse_query_value("USERS", "") is None
+
+
 class TestScanForTncErrors:
     def test_finds_what_error(self):
         lines = ["cmd:", "?What?", "OK"]
@@ -93,56 +160,112 @@ class TestEvaluateT101:
 
 
 class TestRunWithRestore:
-    def test_restores_original_value_after_normal_action(self):
-        calls: list[str] = []
+    """P15.2: query -> action -> restore -> VERIFY. No set before action,
+    SKIPPED (not changed) when the original value can't be parsed, and a
+    failed restore must never claim success."""
+
+    def test_action_runs_before_any_restore_call(self):
+        # P15.2 rule 2 (Befund 4): the old code sent a garbage restore-token
+        # write before the real test action ever ran. Order must now be
+        # strictly action-then-restore, nothing before action.
+        order: list[tuple] = []
 
         def query():
-            return "1"
+            return "USERS\r\nUSers     1\r\ncmd:"
 
-        def set_value(v):
-            calls.append(v)
+        def restore(v):
+            order.append(("restore", v))
 
         def action():
-            calls.append("action")
+            order.append(("action",))
 
-        original = hw_check.run_with_restore(query, set_value, "4", action)
+        log = hw_check.RunLog(None)
+        original = hw_check.run_with_restore("USERS", query, restore, action, log)
 
         assert original == "1"
-        assert calls == ["4", "action", "1"]
+        assert order == [("action",), ("restore", "1")]
 
-    def test_restores_original_value_even_if_action_raises(self):
+    def test_restore_runs_even_if_action_raises(self):
+        order: list[tuple] = []
+
+        def query():
+            return "USERS\r\nUSers     1\r\ncmd:"
+
+        def restore(v):
+            order.append(("restore", v))
+
+        def action():
+            order.append(("action",))
+            raise RuntimeError("simulated failure mid-test")
+
+        log = hw_check.RunLog(None)
+        with pytest.raises(RuntimeError, match="simulated failure"):
+            hw_check.run_with_restore("USERS", query, restore, action, log)
+
+        assert order == [("action",), ("restore", "1")]
+
+    def test_skips_without_changing_anything_when_original_unparseable(self):
+        # P15.2 rule 1: no safe original value -> SKIPPED, action() and
+        # restore() never run at all.
         calls: list[str] = []
 
         def query():
-            return "0"
+            return "?What?"
 
-        def set_value(v):
+        def restore(v):
             calls.append(v)
 
         def action():
             calls.append("action")
-            raise RuntimeError("simulated failure mid-test")
 
-        with pytest.raises(RuntimeError, match="simulated failure"):
-            hw_check.run_with_restore(query, set_value, "9", action)
+        log = hw_check.RunLog(None)
+        result = hw_check.run_with_restore("USERS", query, restore, action, log)
 
-        # The set-to-new-value and the restore-to-original must both have
-        # happened, in order, despite the exception.
-        assert calls == ["9", "action", "0"]
+        assert result is None
+        assert calls == []
+        assert log.findings[0][0] == "USERS"
+        assert log.findings[0][1] == "SKIPPED"
 
-    def test_restores_even_if_set_value_itself_flakes_only_the_first_time(self):
-        # Documents that set_value's OWN failures are not swallowed - only
-        # action()'s are guaranteed a restore attempt afterwards.
-        state = {"n": 0}
+    def test_verified_restore_reports_restored(self, capsys):
+        state = {"value": "1"}
 
         def query():
-            return "orig"
+            return f"USERS\r\nUSers     {state['value']}\r\ncmd:"
 
-        def set_value(v):
-            state["n"] += 1
+        def restore(v):
+            state["value"] = v
 
         def action():
-            pass
+            state["value"] = "4"
 
-        hw_check.run_with_restore(query, set_value, "new", action)
-        assert state["n"] == 2  # once for "new", once for the restore
+        log = hw_check.RunLog(None)
+        hw_check.run_with_restore("USERS", query, restore, action, log)
+
+        out = capsys.readouterr().out
+        assert "USERS restored to '1'" in out
+        assert "FAIL" not in out
+
+    def test_failed_restore_never_says_restored(self, capsys):
+        # The DoD proof: a restore that does not actually stick must NEVER
+        # be reported as "restored" - it must be a clearly flagged FAIL
+        # naming the manual fix-up command instead (P15.2).
+        state = {"value": "1"}
+
+        def query():
+            return f"USERS\r\nUSers     {state['value']}\r\ncmd:"
+
+        def restore(v):
+            pass  # simulates a restore command the TNC silently rejected
+
+        def action():
+            state["value"] = "4"
+
+        log = hw_check.RunLog(None)
+        hw_check.run_with_restore("USERS", query, restore, action, log)
+
+        out = capsys.readouterr().out
+        assert "restored" not in out
+        assert "FAIL: USERS" in out
+        assert "restore of USERS failed" in out
+        assert "expected '1'" in out
+        assert "USERS 1" in out
