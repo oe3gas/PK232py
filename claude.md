@@ -701,6 +701,39 @@ Grows over time.
   `_apply_*()`/`_build_*()` forgot it (found for `HFPacketConfig.txsmt`/
   `aerpack`/`alfpack`, 2026-09-20). A new widget with only half the wiring
   fails this test immediately instead of shipping silently broken.
+- **The wiring chain has a FOURTH link the P12 audit above does not check
+  (P13, 2026-09-20): widget → config field → INI file → `_build_commands()`
+  → TNC.** `ParamsUploader._build_commands()` reads only the config
+  dataclasses, never the dialog widgets, and turns out to have its own,
+  independent gaps — a field can pass Tests A, B and C and still never
+  reach the TNC. `test_param_dialogs_roundtrip.py`'s Test D checks this the
+  same way as Test A (bump one config field, diff the built command list,
+  no command-name mapping needed); `AppConfig.tnc` is excluded as a whole
+  section (PC-side connection settings, not TNC parameters), not a
+  per-field filter. First run found `HFPacketConfig.resptime`/`txsmt`/
+  `aerpack` unsent, plus independent gaps in PACTOR (9 fields), AMTOR (4),
+  Baudot (5) and Misc (2) that are exempted with a Backlog pointer rather
+  than fixed blind — see Backlog.md "Upload coverage" for that follow-up.
+  **`AERPACK` does not exist as a PK-232 command** — the TRM Host Mode list
+  has `ACRPACK` (mnemonic `AK`) instead, so the field/dialog checkbox/
+  upload command were renamed to `acrpack`/`ACRPACK` (INI still accepts the
+  old `aerpack` key as a read fallback). **`TXSMT` does not appear in the
+  PK-232 TRM command list at all** — possibly a different AEA product (PK-
+  900, DSP-2232); the dialog spinbox is disabled with a tooltip explaining
+  this, the field/INI entry stay for compatibility, and it is never
+  uploaded. **`MBELL`** is absent from the TRM's 1987 list (may exist only
+  on later MBX firmware) — wired to the dialog/INI, not uploaded until
+  confirmed. Every new command name in `_build_commands()` needs a cited
+  source (TRM section or `pk232_mnemonic_table.txt`) in its commit message
+  — see the "never guess a mnemonic" rule elsewhere in this file, which
+  applies just as much to verbose-mode command *names* as to Host Mode
+  mnemonics.
+- **A parameter dialog's "parameters updated" log message used to imply the
+  TNC had just been reconfigured — it only saves the local config.**
+  `ParamsUploader` only runs before Host Mode is entered; a change made
+  through any `&Parameters` dialog reaches the TNC on the *next*
+  initialisation, not immediately. All six now log "parameters saved — sent
+  to TNC on next initialisation" instead.
 
 ### Repo / tooling
 

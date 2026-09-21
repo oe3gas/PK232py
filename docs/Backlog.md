@@ -121,11 +121,15 @@ NOTHING to the TNC yet)
   station connect on channel 2, confirm both chips go green with the
   right callsign, data routes to the right channel view, and TX buffers
   (P9) stay separate. Needs a real PK-232 **and** a second AX.25 station.
+- **Open:** T108 (P13) — access filters on real hardware: `CFROM YES
+  <station>`, confirm that station's connect is accepted and a different
+  station's is rejected, then reset to `CFROM ALL`. Needs a real PK-232
+  **and** a second AX.25 station.
 
 *Note: monitoring on 144.800 MHz has replaced most RX-only tests.
 The T35/T37 + T38/T39 + T41/T42 + T101 + T104 hardware re-tests still need
 a real station (T101/T104 need no second station, just a real PK-232);
-T105 additionally needs a second AX.25 station.*
+T105 and T108 additionally need a second AX.25 station.*
 
 ### Beta Release (v0.1-beta) — GitHub distribution
 - [ ] Windows build reproducible (decide: Nuitka onefile vs PyInstaller --onedir)
@@ -155,7 +159,7 @@ green in the meantime.
 
 | Dialog | Widgets |
 |--------|---------|
-| HF Packet | `8BITCONV`, `MBELL`, `MDIGI`, `MPROTO`, `MSTAMP`, `PASSALL`, `HID`, `BBSMSGS`, `FULLDP` flags; `CFROM`/`DFROM`/`MFROM`/`MTO` filter combos + their callsign filter fields; `MBX` |
+| HF Packet | `MDIGI`, `MPROTO`, `MSTAMP`, `PASSALL`, `BBSMSGS`, `FULLDP` flags; `MBX` (`8BITCONV`, `HID`, `MBELL` flags and the `CFROM`/`DFROM`/`MFROM`/`MTO` filters were wired in P13.3, 2026-09-20 — see the "Config: packet access filters and flags" / "HF packet params dialog: wire access filters and flags" commits) |
 | PACTOR | `8BITCONV`, `AFILTER`, `XGATEWAY` flags |
 | AMTOR/NAVTEX/TDM | `AAB`, `CODE`, `ERRCHAR`, `GUSERS`, `MID`, `MWEIGHT`, `UBIT`, `NAVMSG`, `NAVSTN`; `AFILTER`, `MARSDISP` flags |
 | BAUDOT/ASCII/CW | `ACRTTY`, `ATXRTTY`, `AUDELAY`, `ERRCHAR`, `UBIT`; `AFILTER`, `CRADD`, `MARSDISP`, `RFRAME`, `WRU` flags |
@@ -172,6 +176,45 @@ with reason `"read-only, TNC query result"`.
 (`QSpinBox`/`QDoubleSpinBox`/`QCheckBox`/`QLineEdit`/`QComboBox`) the audit
 scans — it is correctly wired (verified by Test B/C), just not exercised by
 Test A's mechanical widget walk.
+
+### Upload coverage — PACTOR/AMTOR/Baudot/Misc (P13 Test D, 2026-09-20)
+
+`test_param_dialogs_roundtrip.py::test_field_reaches_upload` (Test D) found
+21 config fields that are correctly wired to their dialog AND survive an
+INI round trip, but are never sent to the TNC by
+`ParamsUploader._build_commands()` — independent of the three HF Packet
+findings (`resptime`/`txsmt`/`aerpack`) fixed in this sprint. Each is listed
+in `UPLOAD_EXEMPT` with `"not yet audited for upload — see Backlog"`, since
+verifying 20 more command names against the TRM / `pk232_mnemonic_table.txt`
+(neither fully available in this session for every field) is its own
+follow-up, not something to guess at:
+
+| Section | Fields |
+|---------|--------|
+| PACTOR | `arqtmo`, `adelay`, `ptdown`, `ptup`, `ptsum`, `pttries`, `ptsend`, `ptround`, `xmitok` |
+| AMTOR/NAVTEX/TDM | `xlength`, `srxall`, `usos`, `wideshft` |
+| BAUDOT/ASCII/CW | `xlength`, `xbaud`, `usos`, `wideshft`, `xmitok` |
+| Misc | `mark`, `space` |
+
+`BaudotConfig.mid` is NOT in this list — it is sent live via
+`main_window._on_morse_mid_changed()` while operating, not part of the
+startup upload, so there is nothing to fix.
+
+**Also found, separately from HF's `aerpack`/`txsmt`:** `PACTORConfig.pthuff`
+is an `int` (compression level, dialog range 0–10) but
+`ParamsUploader._build_commands()` sends it with `self._bool(...)`, i.e. as
+an ON/OFF flag — Test D does not catch this because *some* change in value
+still changes the ON/OFF output at the zero/non-zero boundary. Needs the
+TRM's actual `PTHUFF` command syntax before it can be fixed correctly.
+
+### Runtime parameter upload in Host Mode
+
+Parameter dialogs only ever affect the *next* initialisation
+(`ParamsUploader` runs solely in verbose mode, before Host Mode) — see the
+"MainWindow: parameter dialogs report when changes reach the TNC" commit,
+2026-09-20. Whether changes should also be pushable into an *already
+running* Host Mode session via the equivalent Host Mode mnemonics is an
+open design question, not started.
 
 ### Packet — v0.2 follow-ups from the channel-model sprint
 

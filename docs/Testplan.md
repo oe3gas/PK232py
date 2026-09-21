@@ -1,5 +1,5 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix); +T103–T105 (P11 USERS parameter); +T106 (P12 parameter dialog wiring audit)**
+**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix); +T103–T105 (P11 USERS parameter); +T106 (P12 parameter dialog wiring audit); +T107–T109 (P13 upload coverage)**
 **Previous stand: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
 
 ---
@@ -36,6 +36,7 @@
 | **2026-09-20** | `main_window.py` | Bugfix: `_make_link_handler()` gated `set_link_state()` to the visible channel only, not every link message; +T102 |
 | **2026-09-20** | `config.py`, `params_hf.py`, `params_uploader.py`, `packet_screen.py`, `main_window.py` | P11: `USERS` parameter (max. simultaneous AX.25 connections) added to config, params dialog, upload, and `ChannelBar` advisory tooltips; +T103–T105 |
 | **2026-09-20** | `test_param_dialogs_roundtrip.py` *(new)*, `params_hf.py`, `config.py` | P12: mechanical wiring audit for all six `&Parameters` dialogs; found and fixed `HFPacketConfig.txsmt` (dialog-unwired) and `.aerpack`/`.alfpack` (INI-unwired); +T106 |
+| **2026-09-20** | `test_param_dialogs_roundtrip.py`, `params_uploader.py`, `config.py`, `params_hf.py`, `main_window.py` | P13: fourth wiring-chain link (upload) audited via Test D; sent `RESPTIME`, renamed `aerpack`→`acrpack`, disabled `TXSMT` (not a PK-232 command); closed the chain for `CFROM`/`DFROM`/`MFROM`/`MTO` access filters and `8BITCONV`/`HID`; corrected the post-dialog log message; +T107–T109 |
 
 ---
 
@@ -985,6 +986,51 @@ the Morse operating screen, not in the shared setup dialog).
 
 **Status:** ✅ PASS (2026-09-20 — all three checks green across all six
 dialogs after the TXSMT/AERPACK/ALFPACK fixes).
+
+### T107 — Upload coverage
+Automatic, via `test_param_dialogs_roundtrip.py::test_field_reaches_upload`
+(Test D — see "P12 checks" note in T106; this is the fourth link in the
+same chain: widget → config → INI → `ParamsUploader._build_commands()` →
+TNC). Not a manual test case — status follows the test run.
+
+**First-run findings (2026-09-20):**
+- `HFPacketConfig.resptime` / `.txsmt` / `.aerpack` — wired all the way to
+  the INI (T106/Test C passes) but never uploaded. `resptime` and `aerpack`
+  (renamed `acrpack`) are now sent; `txsmt` is not (see CLAUDE.md — absent
+  from the TRM command list).
+- 21 further fields never reach the TNC either, independently of the HF
+  findings above: PACTOR `arqtmo`/`adelay`/`ptdown`/`ptup`/`ptsum`/
+  `pttries`/`ptsend`/`ptround`/`xmitok` (9), AMTOR `xlength`/`srxall`/
+  `usos`/`wideshft` (4), Baudot `xlength`/`xbaud`/`usos`/`wideshft`/
+  `xmitok` (5, plus `mid` which is sent live from the Morse screen instead
+  and is not a gap), Misc `mark`/`space` (2). Exempted with a Backlog
+  pointer rather than fixed blind — verifying 20 more command names against
+  the TRM / `pk232_mnemonic_table.txt` is its own follow-up session (see
+  Backlog.md "Upload coverage — PACTOR/AMTOR/Baudot/Misc").
+- Also found and removed: `MYCALL` was sent twice per upload (Identity
+  block + an unconditional duplicate in Message params).
+
+**Status:** ✅ PASS (2026-09-20 — HF Packet's three named findings fixed;
+everything else formally exempted with a cited reason, not silently
+ignored).
+
+### T108 — Access filters on real hardware (hardware, OPEN)
+1. Set `CFROM YES <a station you control>`, initialise
+2. Connect from that station → accepted
+3. Connect from a different station → rejected
+4. Reset `CFROM ALL`
+
+**Status:** ⬜ OPEN — needs real hardware and a second AX.25 station.
+
+### T109 — Log message after a parameter dialog
+1. Change a parameter in any `&Parameters` dialog, click OK
+2. **Expected result:** the monitor log names the *next initialisation* as
+   when the TNC will see the change, not "updated" (which implied
+   immediately)
+
+**Status:** ✅ PASS (2026-09-20 — code-verified: all six dialogs' OK
+handlers in `main_window.py` now log "parameters saved — sent to TNC on
+next initialisation"). Live-GUI click-through still open.
 
 ---
 
