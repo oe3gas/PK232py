@@ -481,10 +481,28 @@ Grows over time.
 - **`MOPT` = Morse Option, `ARQTOL` = AMTOR ARQ tolerance** — both are
   PACTOR-firmware-only, despite the names suggesting CW/AMTOR.
 - **Host Mode mnemonics are a fixed table, NOT first-two-letters.** MYCALL=`ML`,
-  MYSELCAL=`MG`, MYPTCALL=`MK`, PACKET=`PA`, **PASSALL=`PS`**. Verify every new
+  MYSELCAL=`MG`, MYPTCALL=`MK`, PACKET=`PA`, **PASSALL=`PX`, PASS=`PS`**
+  (hardware-verified 21.09.2026, Testplan T86: raw Host Mode responses
+  `PXN` for `PX`, `PS$16` for `PS` — matches TRM 4.2.2). Verify every new
   mnemonic against the TRM Host Mode command table — never guess. *Bug fixed
   2026-06-22:* the PASSALL toggle was wired as `PA` (= PACKET activation), so a
   click would have re-entered Packet mode instead of toggling PASSALL.
+  *Correction 21.09.2026 (P16):* that 2026-06-22 fix replaced `PA` with `PS`
+  instead of `PX`, without a TRM citation — so PASSALL sent `PS Y`/`PS N`
+  for three months, overwriting the PASS masking character with the letter
+  `Y`/`N` instead of toggling PASSALL. **"Never guess" applies to fixes too,
+  not just new code** — a correction needs the same TRM citation as new code,
+  or it can just as easily introduce a new wrong mnemonic.
+- **A stale response frame from a PRIOR command can still be queued when the
+  next query goes out — never correlate a Host Mode response by arrival
+  order, always by its mnemonic prefix (`frame.data[:2]` /
+  `frame.mnemonic`).** Hardware-observed 21.09.2026 (T86): entering Host
+  Mode leaves a trailing `HP\x00` (HPOLL) response frame that arrives late
+  and was still in flight when the very next query's frame arrived,
+  masquerading as that query's answer (`tools/hw_check.py::query_host()` had
+  exactly this bug — fixed by `select_response_frame()`, P16.2). Any code
+  that sends a Host Mode query and reads "the next frame" instead of
+  filtering by mnemonic is exposed to the same failure mode.
 - **MHEARD in Host Mode = line-by-line poll, NOT a single `MH` frame** (TRM
   §4.11). `build_command(b'MH')` returns an empty response (the verbose list is
   too long for the small Host Mode response buffer). Instead poll `MH0`…`MH17`
@@ -517,10 +535,16 @@ Grows over time.
   `MTO`, `8BITCONV`, `HID`, plus every other command
   `ParamsUploader._build_commands()` sends. `ACRPack was ON` / `ACRPack
   now ON` confirms the P13 `AERPACK`→`ACRPACK` rename was correct.
+- **The TNC came up at factory defaults before the 21.09.2026 run**
+  (`MYCALL PK232`, `EXPERT OFF`, `PACLEN 128`, `MAXFRAME 4`, `FRACK 4`, the
+  stock AEA `MTEXT`) rather than whatever had been configured before. Likely
+  cause: the RAM buffer battery. `MYCALL` reading back `PK232` (the factory
+  value, not a real callsign) after a power cycle is the tell — see
+  Backlog.md's operator note to check/replace it.
 
 ### Packet (HF / VHF)
 
-- **PASSALL = `PS`, not `PA`** — see the mnemonic-table note above.
+- **PASSALL = `PX`, not `PA` and not `PS`** — see the mnemonic-table note above.
 - **HF/VHF init-frame inheritance trap.** `HFPacketMode.get_init_frames()` now
   emits `VH N` + `HB 300` + `MN Y` (selects the 300 Bd HF FSK modem).
   `VHFPacketMode` therefore must **NOT** call `super().get_init_frames()` — that

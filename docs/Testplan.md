@@ -39,6 +39,7 @@
 | **2026-09-20** | `test_param_dialogs_roundtrip.py`, `params_uploader.py`, `config.py`, `params_hf.py`, `main_window.py` | P13: fourth wiring-chain link (upload) audited via Test D; sent `RESPTIME`, renamed `aerpack`→`acrpack`, disabled `TXSMT` (not a PK-232 command); closed the chain for `CFROM`/`DFROM`/`MFROM`/`MTO` access filters and `8BITCONV`/`HID`; corrected the post-dialog log message; +T107–T109 |
 | **2026-09-21** | `tools/hw_check.py` *(new)* | P14: solo hardware CLI tool (T17/T86, T103, PTHUFF, T101), reuses `pk232py.comm` entirely; +T110 |
 | **21.09.2026** | `tools/hw_check.py`, `test_hw_check.py` | P15: first real hardware run found the tool's own bugs — T86 queried verbose mode instead of Host Mode, and the restore logic mistook a stray `cmd:` prompt for a value. Added `parse_query_value()` against real captured responses and a restore that verifies itself; results recorded at T86/T101/T103/T110 |
+| **21.09.2026** | `main_window.py`, `packet_screen.py`, `tools/hw_check.py` | P16: T86 second run found `hw_check.py` matching Host Mode responses by arrival order, so a stale `HP\x00` poll-ack was mistaken for the PX answer. Fixed with `select_response_frame()` (mnemonic-prefix match); real result: PASSALL is `PX`, not `PS` — the 2026-06-22 fix was itself wrong. `main_window._wire_packet_buttons()` toggle_map corrected; +T111/T112 |
 
 ---
 
@@ -165,11 +166,9 @@ and returns the UI to receive; the `_send_active` guard prevents a second `RC`
 from the blockSignals UI sync. Hardware verify pending.
 
 ### T86 — PASSALL mnemonic: verify correct frame byte on TNC (PS vs PX)
-The PASSALL toggle currently sends `build_command(b'PS', …)`. A Host Mode
-command-table reading suggests `PS` = PASS and **`PX` = PASSALL** — i.e. the
-toggle might need `PX`, not `PS`. This is NOT confirmed: AEA may map PASSALL to
-`PS` regardless. **No code change without hardware verification** — `b'PS'` is
-left in place until a real TNC confirms which byte toggles PASSALL.
+The PASSALL toggle sent `build_command(b'PS', …)` since the 2026-06-22 fix.
+A Host Mode command-table reading suggests `PS` = PASS and **`PX` =
+PASSALL** — i.e. the toggle needed `PX`, not `PS`.
 
 1. HF/VHF Packet (Host Mode) → toggle **PASSALL** ON, then OFF
 2. Observe on a real PK-232 whether PASSALL actually engages (receive bad-CRC
@@ -178,15 +177,22 @@ left in place until a real TNC confirms which byte toggles PASSALL.
 **Expected result:** the byte that actually toggles PASSALL is identified;
 `main_window._wire_packet_buttons()` toggle_map is set to it.
 
-**Preferred method (P14/P15, 21.09.2026):** `python tools/hw_check.py --port
-COM3 t17` — queries `PX` and `PS` in Host Mode (`SOH $4F PX ETB` /
+**Preferred method (P14/P15/P16, 21.09.2026):** `python tools/hw_check.py
+--port COM3 t17` — queries `PX` and `PS` in Host Mode (`SOH $4F PX ETB` /
 `SOH $4F PS ETB`; no write, no on-air observation needed) and classifies
 which one looks like a Y/N toggle. See `docs/HW_Solo_Tests.md`.
 
-**Status:** ⬜ OPEN — first run (21.09.2026) was invalid: the tool queried
-`PX`/`PS` in **verbose** mode, where two-letter mnemonics do not exist
-(`?What?` for both — see CLAUDE.md). Fixed in P15 to query in Host Mode;
-repeat with `python tools/hw_check.py --port COM6 t17`.
+**Status:** ✅ PASS, 21.09.2026. Raw Host Mode frames: `PX` -> `PXN` (a
+Y/N toggle), `PS` -> `PS$16` (the PASS masking character, factory default
+`$16`/Ctrl-V) — **`PX` = PASSALL**, matching TRM 4.2.2. Two invalid runs
+came before this result, same day: the first queried verbose mode, where
+two-letter mnemonics do not exist (`?What?` for both, fixed in P15 to
+query Host Mode); the second came back INCONCLUSIVE because a stale
+`HP\x00` poll-ack from Host Mode entry was mistaken for the PX answer
+(fixed in P16 — responses are now matched by mnemonic prefix, not arrival
+order). `main_window._wire_packet_buttons()` toggle_map now sends `PX`
+for `btn_passall` (was `PS`, itself a 2026-06-22 mistake — see the
+correction note in Backlog.md's "Known bug — fixed" section).
 
 ### T18 — Multi-cycle colour test
 **Status:** ⬜ OPEN
@@ -657,6 +663,10 @@ Refresh also clears before re-polling so the list never doubles.
 **Status:** ✅ PASS (2026-06-22, frame-verified) — **mnemonic fixed `PA` → `PS`**.
 `PA` is the PACKET-mode activation command, so the old `PA Y` would have
 re-entered Packet mode instead of toggling PASSALL. `btn_passall` → `PS Y` / `PS N`.
+**Correction (21.09.2026, P16, T86 hardware-verified):** `PS` was itself
+wrong — PASSALL is `PX`; `PS` is PASS, a masking character. `btn_passall`
+now sends `PX Y` / `PX N`. History kept for the record; see T86 and
+Backlog.md.
 
 ### T45 — HBAUD change
 **Status:** ✅ PASS (2026-06-22, frame-verified) — `combo_hbaud` change →
@@ -1099,6 +1109,38 @@ without a `?` error and leaves the value at `0` — it does not reject the
 wrong type, it silently misinterprets it. `PTHUFF ON` untested. See the
 Backlog.md item to change `PACTORConfig.pthuff` to a number with a real
 value range from the manual.
+
+### T111 — PASSALL button on the TNC, after the P16 fix (hardware, OPEN)
+Follow-up to T86 (PASS, hardware-verified via `hw_check.py t17`): confirm
+the actual button in the running app, not just the query tool.
+
+1. HF/VHF Packet (Host Mode) → click **PASSALL** ON, then OFF
+2. In a verbose-mode terminal, query `PASSALL` and `PASS`
+
+**Expected result:** `PASSALL` toggles with the button; `PASS` stays at
+its value (`$16` unless changed elsewhere) — the button must never move
+`PASS`.
+
+**Status:** ⬜ OPEN — needs real hardware and the app running (not just
+`hw_check.py`, which only queries — see Backlog.md renumbering note: this
+was T110 in `docs/P16_PASSALL_Fix_Spec.md`, renumbered to avoid colliding
+with the existing PTHUFF T110 above).
+
+### T112 — VHF → HF Packet parameter carry-over (hardware, OPEN)
+Suspected gap, derived from the code and not yet measured (see
+Backlog.md's VHF/HF correction note): `VHFPacketMode` sends `MX 4` + `SL 10`
+on activation; leaving VHF for HF Packet only sends `VH N` + `HB 300` +
+`MN Y` (`HFPacketMode.get_init_frames()`) — no `MAXFRAME`/`SLOTTIME` reset.
+
+1. Activate VHF Packet (Host Mode)
+2. Switch to HF Packet
+3. In a verbose-mode terminal, query `MAXFRAME` and `SLOTTIME`
+
+**Expected result:** both read back HF Packet's own configured values, not
+VHF's `MAXFRAME 4` / `SLOTTIME 10`.
+
+**Status:** ⬜ OPEN — needs real hardware. (`docs/P16_PASSALL_Fix_Spec.md`
+called this T111; renumbered for the same reason as T111 above.)
 
 ---
 

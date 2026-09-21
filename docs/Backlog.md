@@ -7,6 +7,48 @@
 
 ## Priority 1 — Next implementation sprint
 
+### `SignalMode.handle_frame()` reports any CMD_RESP as a SIAM result — open
+
+Found 21.09.2026 (P16.3, investigation only — no code changed) while
+checking the codebase for the same class of bug as T86's stale-`HP\x00`
+frame (a Host Mode response mistaken for the answer to a different query
+because it was matched by arrival order/type, not by mnemonic — see the
+CLAUDE.md Host Mode gotcha).
+
+- `src/pk232py/modes/signal_analysis.py::SignalMode.handle_frame()`
+  (~lines 97–104): on any `FrameKind.CMD_RESP` frame, if
+  `frame.text.strip()` is non-empty and does not end in `\x00`, it is
+  logged and passed to `on_result()` as a SIAM signal-identification
+  string — **without checking `frame.mnemonic`/`frame.data` against
+  anything Signal mode itself queried.**
+- `ModeManager` forwards every `CMD_RESP` to whichever mode is currently
+  active (`mode_manager.py::_handle_cmd_resp()` → `_active_mode.handle_frame()`),
+  so any stray CMD_RESP arriving while Signal/SIAM is the active mode — a
+  delayed `HP\x00` HPOLL flush from Host Mode entry, an ACK/NAK for some
+  other in-flight command, or an attribute-query echo like `PXN` — gets
+  surfaced as a bogus SIAM result. The `not text.endswith('\x00')` check
+  happens to filter out plain ACK frames ending in the `$00` OK byte (like
+  `HP\x00`) but nothing else — a response such as `PXN` would pass through
+  untouched.
+- Fix once confirmed: verify the frame is actually a SIAM analysis result
+  (distinguish it from other CMD_RESP frames — check with the TRM whether
+  SIAM results carry their own recognisable prefix) before calling
+  `on_result()`. Not fixed here — P16.3 was investigation only.
+
+**Landmine, not yet a live bug:** `mode_manager.py::_handle_cmd_resp()`
+(~lines 263–285) only logs "CMD ACK"/"CMD NAK" per CMD_RESP today — the
+opmode-switch sequence itself is timer-based (`_ACTIVATE_DELAY_MS`, 300 ms),
+not gated on receiving a specific ACK, so this logging cannot misdirect
+control flow yet. The module's own docstring says a proper ACK-wait state
+machine is planned for v0.2 — when that lands, it must filter by
+`frame.mnemonic` against the mnemonic it actually sent, not take the next/
+first CMD_RESP, or it will inherit the same T86-class bug.
+
+**Confirmed safe (P16.3):** the MHEARD poll (`packet_hf.py::_handle_cmd_resp()`,
+`main_window.py::_on_packet_mheard()`) already filters every CMD_RESP on
+`frame.mnemonic == b'MH'` before treating it as an MHEARD line — a stray
+frame in that window is dropped, not misattributed.
+
 ### `_make_host_frame()` misclassifies LINK_STATUS ($40–$4E) as CMD_RESP — open
 
 Discovered 2026-09-20 while fixing the channel-nibble bug (see the
@@ -221,13 +263,21 @@ truncated it to 4 characters. `MYALTCAL` is a 4-character AMTOR SELCAL, not
 a callsign; the config field and its dialog should validate/format it as
 one instead of accepting a full callsign that then gets mangled on upload.
 
-**VHF parameter upload sends HF values (found 21.09.2026, same hardware
-run):** the Packet parameter dialog's band switch shows `MAXFRAME 4` /
-`PACLEN 128` for VHF, but the upload always sent the HF values regardless
-of the selected band (observed: `PACLEN` 128→64, `MAXFRAME` 4→1, `FRACK`
-4→7 — i.e. exactly the HF numbers going out while VHF was selected). Needs
-its own package to fix the PR/Packet parameter module — not done as part
-of P15 (query-only hardware check, no `src/pk232py/` change).
+**VHF/HF parameter values — corrected 21.09.2026 (P16):** the P15 note here
+claimed the upload sent HF values (`PACLEN 128`, `MAXFRAME 4`, `FRACK 4`)
+while VHF was selected. That reading was wrong — the TNC was at **factory
+defaults** for that whole run (see the CLAUDE.md hardware note, RAM buffer
+battery), so those numbers were the stock AEA defaults, not proof of an
+HF-values-on-VHF bug. The suspected gap, derived from the code and NOT yet
+measured: `VHFPacketMode` sends `MX 4` + `SL 10` on activation, but leaving
+VHF for HF Packet only sends `VH N` + `HB 300` + `MN Y`
+(`HFPacketMode.get_init_frames()`) — no `MAXFRAME`/`SLOTTIME` reset. So HF
+Packet could keep running with VHF's `MAXFRAME 4` / `SLOTTIME 10` after a
+VHF→HF switch instead of its own values. Verify: activate VHF, switch back
+to HF, query `MAXFRAME` and `SLOTTIME` in the terminal (Testplan T111).
+Needs its own package to fix the PR/Packet parameter module once confirmed
+— not done as part of P15/P16 (query-only hardware checks, no
+`src/pk232py/` parameter-module change).
 
 **MTEXT overwritten by config defaults on init (found 21.09.2026, same
 hardware run):** the parameter upload sent the two-line `MTEXT` welcome
@@ -236,6 +286,13 @@ set on the device. Open question, not yet a confirmed bug: should the
 uploader skip sending default/empty text fields at all, so a station's own
 `MTEXT` (and similar free-text parameters) survives an app-driven init
 unless the operator has explicitly set one in the dialog?
+
+**Operator note (P16, 21.09.2026):** check/replace the PK-232's RAM buffer
+battery — the TNC came up at factory defaults for the whole 21.09.2026
+hardware run (`MYCALL PK232`, `EXPERT OFF`, `PACLEN 128`, `MAXFRAME 4`,
+`FRACK 4`, stock `MTEXT`). Power the TNC off and back on, then query
+`MYCALL` in the terminal: reading back `PK232` (the factory value, not a
+real callsign) means the configuration was lost, not just unusual.
 
 ### Runtime parameter upload in Host Mode
 
@@ -385,16 +442,20 @@ Kein neuer "Stop TX"-Button nötig — die vorhandenen Pfade decken alle Modes a
 - Name collisions resolved via SCREEN_TOOLTIPS (btn_connect AX.25↔PACTOR,
   btn_rxrev RTTY↔FAX, btn_lock Morse↔FAX, btn_stby AMTOR↔PACTOR,
   btn_clear FAX image↔MHEARD list).
-- **Open:** T86 PASSALL mnemonic `PS` vs `PX` — hardware verification. Per
-  the TRM mnemonic table (4.2.2), `PS` = PASS (a masking character, not a
-  toggle) and `PX` = PASSALL — the application's toggle currently sends
-  `PS`, which would set the PASS character instead of switching PASSALL.
-  Verify with `python tools/hw_check.py --port COM3 t17` (P14/P15,
-  21.09.2026; query-only, no on-air observation needed — see
-  `docs/HW_Solo_Tests.md`). **First run (21.09.2026) was invalid:** the
-  tool queried `PX`/`PS` in verbose mode, where two-letter mnemonics do not
-  exist (`?What?` for both). Fixed in P15 to query in Host Mode
-  (`SOH $4F PX ETB` / `SOH $4F PS ETB`) — re-run to get a real result.
+- **Done (21.09.2026, P16):** T86 PASSALL mnemonic `PS` vs `PX` — hardware
+  verification. Per the TRM mnemonic table (4.2.2), `PS` = PASS (a masking
+  character, not a toggle) and `PX` = PASSALL. `python tools/hw_check.py
+  --port COM3 t17` (P14/P15/P16; query-only, no on-air observation needed —
+  see `docs/HW_Solo_Tests.md`). Two invalid runs before the real result:
+  the first queried `PX`/`PS` in verbose mode, where two-letter mnemonics
+  do not exist (`?What?` for both, fixed in P15 to query Host Mode); the
+  second (still 21.09.2026) came back INCONCLUSIVE because a stale `HP\x00`
+  poll-ack from Host Mode entry was mistaken for the PX answer (fixed in
+  P16 — responses are now matched by mnemonic prefix, not arrival order,
+  see the Host Mode gotcha in CLAUDE.md). Third run: raw frames `PXN` (PX)
+  and `PS$16` (PS) confirm `PX` = PASSALL, matching the app's toggle after
+  the P16 fix. See the "Known bug — fixed (2026-06-22)" section's
+  21.09.2026 correction note above.
 
 ### MSPEED from TNC config
 - Auto-set `TxController.set_mspeed()` / `set_mspeed_ms()` from `PK232.INI` MSPEED
@@ -710,6 +771,18 @@ have re-entered Packet mode instead of toggling the PASSALL flag. Fixed in
 (MYCALL=`ML`, MYSELCAL=`MG`, MYPTCALL=`MK`, PACKET=`PA`, PASSALL=`PS`). Verify
 new mnemonics against the TRM Host Mode command table — never guess.
 
+**Correction (21.09.2026, P16, T86 hardware-verified):** this fix was itself
+wrong. `PS` is **PASS**, a masking character (factory default `$16`,
+Ctrl-V) — not PASSALL, and not a toggle. Real Host Mode raw frames: `PX` ->
+`PXN` (a Y/N toggle), `PS` -> `PS$16` (the masking character). PASSALL is
+`PX`. The PASSALL button sent `PS Y`/`PS N` from 2026-06-22 until this
+correction, overwriting the PASS character with the letter `Y`/`N` on every
+click instead of toggling PASSALL. Fixed in
+`main_window._wire_packet_buttons()` toggle_map (`b'PS'` -> `b'PX'`), see
+Testplan T86. **The lesson above applies to fixes too, not just new
+mnemonics** — this correction had no TRM citation when it was made, and
+introduced a second wrong mnemonic instead of the right one.
+
 ---
 
-*OE3GAS | PK232PY Project | 2026-06-22*
+*OE3GAS | PK232PY Project | 2026-06-22, corrected 21.09.2026*
