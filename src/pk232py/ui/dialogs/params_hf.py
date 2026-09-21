@@ -164,26 +164,37 @@ class HFPacketParamsDialog(QDialog):
 
         form.addRow(QLabel(""))  # spacer
 
-        # CFROM / DFROM / MFROM / MTO — filter combos
+        # CFROM / DFROM / MFROM / MTO — access filters (P13.3, TRM mnemonics
+        # CF/DF/MF/MT). Mode is ALL/NONE/YES/NO; YES/NO additionally use the
+        # comma-separated callsign list in the adjacent field (max 8 - see
+        # _on_accept()). Defaults per PCPackRatt/TRM factory settings.
         for attr, label, default in [
-            ("_cb_cfrom", "CFROM:", "All"),
-            ("_cb_dfrom", "DFROM:", "All"),
-            ("_cb_mfrom", "MFROM:", "All"),
-            ("_cb_mto",   "MTO:",   "None"),
+            ("_cb_cfrom", "CFROM:", "ALL"),
+            ("_cb_dfrom", "DFROM:", "ALL"),
+            ("_cb_mfrom", "MFROM:", "ALL"),
+            ("_cb_mto",   "MTO:",   "NONE"),
         ]:
             cb = QComboBox()
-            cb.addItems(["All", "None", "Callsign..."])
+            cb.addItems(["ALL", "NONE", "YES", "NO"])
             cb.setCurrentText(default)
             row = QHBoxLayout()
             row.addWidget(cb)
             le = QLineEdit()
-            le.setPlaceholderText("callsign filter")
-            le.setMaximumWidth(150)
+            le.setPlaceholderText("callsigns, comma-separated (YES/NO only)")
+            le.setMaximumWidth(180)
             row.addWidget(le)
             setattr(self, attr, cb)
             setattr(self, attr + "_le", le)
             container = QWidget(); container.setLayout(row)
             form.addRow(label, container)
+
+        self._cb_cfrom.setToolTip(
+            "Access filter for incoming AX.25 connect requests.\n"
+            "ALL = accept from anyone.\n"
+            "NONE = rejects every incoming connect.\n"
+            "YES = accept only from the listed callsigns.\n"
+            "NO = reject the listed callsigns, accept everyone else."
+        )
 
         self._le_mbx = QLineEdit()
         self._le_mbx.setPlaceholderText("None")
@@ -228,6 +239,22 @@ class HFPacketParamsDialog(QDialog):
         self._le_ctext.setText(c.ctext)
         self._le_unproto.setText(c.unproto)
 
+        for cb_attr, mode, calls in [
+            ("_cb_cfrom", c.cfrom_mode, c.cfrom_calls),
+            ("_cb_dfrom", c.dfrom_mode, c.dfrom_calls),
+            ("_cb_mfrom", c.mfrom_mode, c.mfrom_calls),
+            ("_cb_mto",   c.mto_mode,   c.mto_calls),
+        ]:
+            cb = getattr(self, cb_attr)
+            idx = cb.findText(mode)
+            if idx >= 0:
+                cb.setCurrentIndex(idx)
+            getattr(self, cb_attr + "_le").setText(calls)
+
+        self._chk_8bitconv.setChecked(c.bitconv8)
+        self._chk_hid.setChecked(c.hid)
+        self._chk_mbell.setChecked(c.mbell)
+
     def apply_to(self, config: HFPacketConfig) -> None:
         """Write dialog values back into config."""
         config.paclen   = self._sb_paclen.value()
@@ -260,6 +287,34 @@ class HFPacketParamsDialog(QDialog):
         config.ctext   = self._le_ctext.text()
         config.unproto = self._le_unproto.text()
 
+        config.cfrom_mode  = self._cb_cfrom.currentText()
+        config.cfrom_calls = self._cb_cfrom_le.text().strip().upper()
+        config.dfrom_mode  = self._cb_dfrom.currentText()
+        config.dfrom_calls = self._cb_dfrom_le.text().strip().upper()
+        config.mfrom_mode  = self._cb_mfrom.currentText()
+        config.mfrom_calls = self._cb_mfrom_le.text().strip().upper()
+        config.mto_mode    = self._cb_mto.currentText()
+        config.mto_calls   = self._cb_mto_le.text().strip().upper()
+
+        config.bitconv8 = self._chk_8bitconv.isChecked()
+        config.hid      = self._chk_hid.isChecked()
+        config.mbell    = self._chk_mbell.isChecked()
+
     def _on_accept(self) -> None:
+        # Validate the four access-filter callsign lists before writing
+        # anything back — max 8 callsigns each (P13.3).
+        for le_attr, label in [
+            ("_cb_cfrom_le", "CFROM"), ("_cb_dfrom_le", "DFROM"),
+            ("_cb_mfrom_le", "MFROM"), ("_cb_mto_le", "MTO"),
+        ]:
+            calls = [c for c in getattr(self, le_attr).text().split(",") if c.strip()]
+            if len(calls) > 8:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self, "Too many callsigns",
+                    f"{label}: at most 8 callsigns are allowed "
+                    f"(found {len(calls)})."
+                )
+                return
         self.apply_to(self._config)
         self.accept()
