@@ -111,3 +111,7 @@ pk232py_sources.txt
 *.pyc
 *.pyo
 Macro.txt
+
+# hw_check.py (P14) per-run hardware logs — local only; findings get copied
+# into Testplan.md by hand, the raw byte-level protocol stays on this machine.
+hw_logs/
