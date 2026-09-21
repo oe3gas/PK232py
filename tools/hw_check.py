@@ -60,6 +60,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import re
 import sys
 import time
 from pathlib import Path
@@ -74,6 +75,7 @@ from PyQt6.QtCore import QCoreApplication  # noqa: E402
 
 from pk232py.comm.serial_manager import SerialManager  # noqa: E402
 from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
+from pk232py.comm.frame import build_command  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
 
 
@@ -160,6 +162,73 @@ def evaluate_t17(px_response: str, ps_response: str) -> dict:
     }
 
 
+_EXPLANATION_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def parse_query_value(command: str, response: str) -> Optional[str]:
+    """Extract the value from a real PK-232 verbose-mode response (P15.1).
+
+    Real shape, confirmed against the TNC on 21.09.2026 (hw_logs/):
+        query   '<ECHO>\\r\\n<Name>   <Value>[ (<note>)]\\r\\ncmd:'
+        set     '<ECHO>\\r\\n<Name>   was <old>\\r\\n<Name>   now <new>\\r\\ncmd:'
+        error   any line starting with '?' ('?What?', '?bad', '?callsign')
+
+    Examples (command -> response -> result), all from the 21.09.2026 log::
+        'USERS'   'USERS\\r\\nUSers     1\\r\\ncmd:'                    -> '1'
+        'PTHUFF'  'PTHUFF\\r\\nPTHuff    0\\r\\ncmd:'                   -> '0'
+        'UNPROTO' 'UNPROTO\\r\\nUnproto   CQ\\r\\ncmd:'                 -> 'CQ'
+        'MONITOR' 'MONITOR\\r\\nMonitor   6 (seq, P/F + all)\\r\\ncmd:' -> '6'
+        'TXDELAY' 'TXDELAY\\r\\nTXdelay   30 (300 msec.)\\r\\ncmd:'     -> '30'
+        'CANLINE' 'CANLINE\\r\\nCANline   $18 (CTRL-X)\\r\\ncmd:'       -> '$18'
+
+    Returns None for an error response, an empty/unrecognised response, or a
+    genuinely multi-line value (e.g. MTEXT's two-line welcome message) -
+    returning a truncated value there would be worse than skipping the test
+    (P15.1: "None zuruckgeben ... statt einen abgeschnittenen Wert
+    zuruckzuschreiben").
+    """
+    if not response:
+        return None
+    stripped = [ln.strip() for ln in response.splitlines() if ln.strip()]
+    if not stripped or any(ln.startswith("?") for ln in stripped):
+        return None
+
+    # Drop the echoed command (always the first line) and the trailing
+    # 'cmd:' prompt.
+    body = stripped[1:]
+    if body and body[-1].lower() == "cmd:":
+        body = body[:-1]
+    if not body:
+        return None
+
+    cmd_word = command.strip().split()[0].upper()
+    now_value: Optional[str] = None
+    plain_values: list[str] = []
+    for line in body:
+        parts = line.split()
+        if len(parts) < 2 or parts[0].upper() != cmd_word:
+            # Not a 'Name ... value' line in the expected shape - bail out
+            # rather than guess (this is exactly how the old code mistook a
+            # stray 'cmd:' prompt for a value).
+            return None
+        keyword_and_rest = parts[1:]
+        keyword = keyword_and_rest[0].lower()
+        if keyword == "now":
+            now_value = " ".join(keyword_and_rest[1:])
+        elif keyword == "was":
+            continue
+        else:
+            plain_values.append(" ".join(keyword_and_rest))
+
+    if now_value is not None:
+        return _EXPLANATION_RE.sub("", now_value).strip()
+    if len(plain_values) == 1:
+        return _EXPLANATION_RE.sub("", plain_values[0]).strip()
+    # Zero or more-than-one plain value line: nothing to parse, or a
+    # multi-line value (MTEXT) we do not attempt to reconstruct.
+    return None
+
+
 def scan_for_tnc_errors(lines: list[str]) -> list[str]:
     """Return every response line that looks like a TNC error message
     ('?What?', '?bad', '?too many', or any other line starting with '?')."""
@@ -191,24 +260,50 @@ def evaluate_t101(target_a: Optional[str], target_b: Optional[str]) -> str:
 
 
 def run_with_restore(
+    command: str,
     query: Callable[[], str],
-    set_value: Callable[[str], None],
-    new_value: str,
+    restore: Callable[[str], None],
     action: Callable[[], None],
-) -> str:
-    """Query the current value, set *new_value*, run *action*, and ALWAYS
-    restore the original value afterwards - even if *action* raises
-    (hard rule #2). Returns the original value.
+    log: "RunLog",
+) -> Optional[str]:
+    """Read *command*'s original value, run *action*, then restore and
+    VERIFY it (P15.2) - even if *action* raises (hard rule #2).
 
-    Pure orchestration: query/set_value/action are plain callables, so this
-    is unit-testable with fakes, no serial interface involved.
+    - If the original value can't be parsed via parse_query_value(), the
+      test is SKIPPED and *action* never runs - no safe value to go back
+      to (P15.2 rule 1).
+    - *action* is solely responsible for whatever the test needs to change;
+      this function never sends a set command before it runs (P15.2 rule 2 -
+      the old code's premature restore-token write, e.g. 'PTHUFF cmd:', is
+      exactly what this rule forbids).
+    - After *action*, *restore* is called with the ORIGINAL value, then the
+      parameter is queried again and compared. Only a verified match is
+      ever logged as "restored"; a mismatch is a clearly flagged FAIL naming
+      the manual fix-up command, never silently claimed as success.
+
+    Pure orchestration apart from parse_query_value() and log calls, so it
+    stays unit-testable with fakes, no serial interface involved.
     """
-    original = query()
+    original = parse_query_value(command, query())
+    if original is None:
+        log.result(
+            command, "SKIPPED",
+            "original value not parseable via parse_query_value() - not touching it"
+        )
+        return None
     try:
-        set_value(new_value)
         action()
     finally:
-        set_value(original)
+        restore(original)
+        verified = parse_query_value(command, query())
+        if verified == original:
+            log.line(f"{command} restored to {original!r}")
+        else:
+            log.result(
+                command, "FAIL",
+                f"restore of {command} failed -- TNC now reports {verified!r}, "
+                f"expected {original!r} -- set it by hand: {command} {original}"
+            )
     return original
 
 
@@ -370,27 +465,58 @@ def confirm_tx(prompt: str) -> bool:
 # ===========================================================================
 
 def test_t17(session: Session, log: RunLog) -> None:
-    log.line("--- T17: PASSALL mnemonic (PS vs PX) ---")
+    log.line("--- T17: PASSALL mnemonic (PS vs PX) -- Host Mode query only ---")
+    log.line(
+        "Two-letter mnemonics only exist in Host Mode (P15 finding: 'PX' and "
+        "'PS' both answer '?What?' in verbose mode)"
+    )
     if session.dry_run:
-        log.line("[dry-run] would query PX, then PS, in verbose mode")
+        log.line("[dry-run] would enter Host Mode, send these query frames, "
+                  "log the raw response frames, then exit Host Mode:")
+        for mnemonic in (b"PX", b"PS"):
+            frame_bytes = build_command(mnemonic, b"")
+            log.line(
+                f"[dry-run]   >> {frame_bytes.hex(' ').upper()}  "
+                f"(SOH $4F {mnemonic.decode()} ETB)"
+            )
         log.result("T17", "INFO", "dry-run, nothing sent")
         return
 
-    px = session.query("PX")
-    ps = session.query("PS")
-    verdict = evaluate_t17(px, ps)
+    session.enter_host_mode()
+    try:
+        px_frames = session.query_host(b"PX")
+        ps_frames = session.query_host(b"PS")
+    finally:
+        session.exit_host_mode()
+
+    px_text = px_frames[0].text if px_frames else "<no response>"
+    ps_text = ps_frames[0].text if ps_frames else "<no response>"
+
+    if not px_frames or not ps_frames:
+        log.result(
+            "T17", "INCONCLUSIVE",
+            f"no response frame in Host Mode -- PX={px_text!r}, PS={ps_text!r}"
+        )
+        return
+
+    verdict = evaluate_t17(px_text, ps_text)
     if verdict["passall_mnemonic"] == "PX":
         log.result(
-            "T17", "FAIL",
-            "PASSALL is PX, not PS - the app's PASSALL toggle sends the "
-            "wrong mnemonic (see packet_screen.py toggle_map)"
+            "T17", "PASS",
+            f"PASSALL is PX, not PS (PX={px_text!r}, PS={ps_text!r}) - the "
+            f"app's PASSALL toggle sends the wrong mnemonic, see "
+            f"packet_screen.py toggle_map / Backlog.md"
         )
     elif verdict["passall_mnemonic"] == "PS":
-        log.result("T17", "PASS", "PASSALL is PS - the app's toggle is correct")
+        log.result(
+            "T17", "PASS",
+            f"PASSALL is PS (PX={px_text!r}, PS={ps_text!r}) - the app's "
+            f"toggle is correct"
+        )
     else:
         log.result(
             "T17", "INCONCLUSIVE",
-            f"could not classify from responses (PX={px!r}, PS={ps!r})"
+            f"could not classify from responses (PX={px_text!r}, PS={ps_text!r})"
         )
 
 
@@ -412,8 +538,6 @@ def test_t103(session: Session, log: RunLog, app_config: AppConfig) -> None:
         log.result("T103", "INFO", "dry-run, nothing sent")
         return
 
-    before = session.query("USERS")
-    log.line(f"USERS before: {before!r}")
     log.line(
         f"Sending the full parameter upload (USERS=4, everything else "
         f"matches the saved configuration) - {len(commands)} commands"
@@ -426,9 +550,9 @@ def test_t103(session: Session, log: RunLog, app_config: AppConfig) -> None:
             resp = session.verbose_bytes(cmd)
             for err in scan_for_tnc_errors(resp.splitlines()):
                 error_lines.append(f"{cmd!r} -> {err!r}")
-        after = session.query("USERS")
+        after = parse_query_value("USERS", session.query("USERS"))
         log.line(f"USERS after upload: {after!r}")
-        if "4" in after:
+        if after == "4":
             log.result("T103", "PASS", "USERS 4 confirmed after upload")
         else:
             log.result("T103", "FAIL", f"expected USERS to read back 4, got {after!r}")
@@ -445,12 +569,12 @@ def test_t103(session: Session, log: RunLog, app_config: AppConfig) -> None:
                       "commands were skipped by the uploader")
 
     run_with_restore(
-        query=lambda: before,
-        set_value=lambda v: session.set_verbose("USERS", str(real_users)),
-        new_value="4",
+        command="USERS",
+        query=lambda: session.query("USERS"),
+        restore=lambda v: session.set_verbose("USERS", v),
         action=do_upload,
+        log=log,
     )
-    log.line(f"USERS restored to {real_users}")
 
 
 def test_pthuff(session: Session, log: RunLog, app_config: AppConfig) -> None:
@@ -466,38 +590,36 @@ def test_pthuff(session: Session, log: RunLog, app_config: AppConfig) -> None:
         log.result("PTHUFF", "INFO", "no PACTOR option")
         return
 
-    before = session.query("PTHUFF")
-    fmt = detect_pthuff_format(before)
-    log.line(f"PTHUFF before: {before!r} (looks like: {fmt})")
-
-    # Best-effort restore value: the TNC's own reported format is not known
-    # until this test runs, so the last whitespace-separated token of the
-    # ORIGINAL response is replayed as-is. Logged clearly either way.
-    restore_token = before.split()[-1] if before.split() else "0"
+    before_response = session.query("PTHUFF")
+    fmt = detect_pthuff_format(before_response)
+    log.line(f"PTHUFF before: {before_response!r} (looks like: {fmt})")
 
     def do_set() -> None:
         session.verbose_bytes(sent_cmd)
-        after = session.query("PTHUFF")
+        after = parse_query_value("PTHUFF", session.query("PTHUFF"))
         log.line(f"PTHUFF after {sent_cmd!r}: {after!r}")
         if fmt == "numeric":
             log.result(
                 "PTHUFF", "FAIL",
-                f"TNC reports a numeric value ({before!r}) but the uploader "
-                f"sends ON/OFF ({sent_cmd!r}) - type mismatch confirmed "
-                f"(see PACTORConfig.pthuff / Backlog.md)"
+                f"TNC reports a numeric value ({before_response!r}) but the "
+                f"uploader sends ON/OFF ({sent_cmd!r}) - type mismatch "
+                f"confirmed (see PACTORConfig.pthuff / Backlog.md)"
             )
         elif fmt == "on_off":
             log.result("PTHUFF", "PASS", "TNC's own format is ON/OFF, matches the uploader")
         else:
-            log.result("PTHUFF", "INCONCLUSIVE", f"could not classify response {before!r}")
+            log.result(
+                "PTHUFF", "INCONCLUSIVE",
+                f"could not classify response {before_response!r}"
+            )
 
     run_with_restore(
-        query=lambda: before,
-        set_value=lambda v: session.set_verbose("PTHUFF", restore_token),
-        new_value="",
+        command="PTHUFF",
+        query=lambda: session.query("PTHUFF"),
+        restore=lambda v: session.set_verbose("PTHUFF", v),
         action=do_set,
+        log=log,
     )
-    log.line(f"PTHUFF restore attempted with {restore_token!r} (best effort - see log)")
 
 
 def test_t101(session: Session, log: RunLog) -> None:
@@ -513,7 +635,8 @@ def test_t101(session: Session, log: RunLog) -> None:
             "[dry-run] would query UNPROTO/MONITOR, set UNPROTO TEST1, enter "
             "Host Mode, ask to confirm, TRANSMIT a UI frame on channel 0, "
             "ask the operator what the decoder showed, repeat with TEST2, "
-            "then restore UNPROTO/MONITOR"
+            "then verify UNPROTO was restored (MONITOR is only read, never "
+            "changed)"
         )
         log.result("T101", "INFO", "dry-run, nothing sent")
         return
@@ -522,12 +645,12 @@ def test_t101(session: Session, log: RunLog) -> None:
         log.result("T101", "INFO", "skipped by operator")
         return
 
-    orig_unproto = session.query("UNPROTO")
-    orig_monitor = session.query("MONITOR")
-    log.line(f"UNPROTO before: {orig_unproto!r}")
-    log.line(f"MONITOR before: {orig_monitor!r}")
-    restore_unproto = orig_unproto.split()[-1] if orig_unproto.split() else "CQ"
-    restore_monitor = orig_monitor.split()[-1] if orig_monitor.split() else "4"
+    # MONITOR is only read for context here - this test never changes it,
+    # so there is nothing to restore.
+    log.line(
+        f"MONITOR (unchanged): "
+        f"{parse_query_value('MONITOR', session.query('MONITOR'))!r}"
+    )
 
     targets_seen: dict[str, Optional[str]] = {"A": None, "B": None}
 
@@ -576,13 +699,17 @@ def test_t101(session: Session, log: RunLog) -> None:
             finally:
                 session.exit_host_mode()
 
-    try:
-        run_rounds()
-    finally:
-        session.exit_host_mode()
-        session.set_verbose("UNPROTO", restore_unproto)
-        session.set_verbose("MONITOR", restore_monitor)
-        log.line("UNPROTO/MONITOR restored")
+    # run_rounds() enters/exits Host Mode per round and always exits it in
+    # its own finally block before returning or raising, so by the time
+    # run_with_restore() restores UNPROTO the TNC is already back in
+    # verbose mode.
+    run_with_restore(
+        command="UNPROTO",
+        query=lambda: session.query("UNPROTO"),
+        restore=lambda v: session.set_verbose("UNPROTO", v),
+        action=run_rounds,
+        log=log,
+    )
 
     verdict = evaluate_t101(targets_seen["A"], targets_seen["B"])
     log.result(
