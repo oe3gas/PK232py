@@ -38,6 +38,7 @@
 | **2026-09-20** | `test_param_dialogs_roundtrip.py` *(new)*, `params_hf.py`, `config.py` | P12: mechanical wiring audit for all six `&Parameters` dialogs; found and fixed `HFPacketConfig.txsmt` (dialog-unwired) and `.aerpack`/`.alfpack` (INI-unwired); +T106 |
 | **2026-09-20** | `test_param_dialogs_roundtrip.py`, `params_uploader.py`, `config.py`, `params_hf.py`, `main_window.py` | P13: fourth wiring-chain link (upload) audited via Test D; sent `RESPTIME`, renamed `aerpack`→`acrpack`, disabled `TXSMT` (not a PK-232 command); closed the chain for `CFROM`/`DFROM`/`MFROM`/`MTO` access filters and `8BITCONV`/`HID`; corrected the post-dialog log message; +T107–T109 |
 | **2026-09-21** | `tools/hw_check.py` *(new)* | P14: solo hardware CLI tool (T17/T86, T103, PTHUFF, T101), reuses `pk232py.comm` entirely; +T110 |
+| **21.09.2026** | `tools/hw_check.py`, `test_hw_check.py` | P15: first real hardware run found the tool's own bugs — T86 queried verbose mode instead of Host Mode, and the restore logic mistook a stray `cmd:` prompt for a value. Added `parse_query_value()` against real captured responses and a restore that verifies itself; results recorded at T86/T101/T103/T110 |
 
 ---
 
@@ -177,12 +178,15 @@ left in place until a real TNC confirms which byte toggles PASSALL.
 **Expected result:** the byte that actually toggles PASSALL is identified;
 `main_window._wire_packet_buttons()` toggle_map is set to it.
 
-**Preferred method (P14, 2026-09-21):** `python tools/hw_check.py --port
-COM3 t17` — queries `PX` and `PS` in verbose mode (no write, no on-air
-observation needed) and classifies which one looks like a Y/N toggle. See
-`docs/HW_Solo_Tests.md`.
+**Preferred method (P14/P15, 21.09.2026):** `python tools/hw_check.py --port
+COM3 t17` — queries `PX` and `PS` in Host Mode (`SOH $4F PX ETB` /
+`SOH $4F PS ETB`; no write, no on-air observation needed) and classifies
+which one looks like a Y/N toggle. See `docs/HW_Solo_Tests.md`.
 
-**Status:** ⬜ OPEN (requires hardware verification — see CLAUDE.md mnemonic note)
+**Status:** ⬜ OPEN — first run (21.09.2026) was invalid: the tool queried
+`PX`/`PS` in **verbose** mode, where two-letter mnemonics do not exist
+(`?What?` for both — see CLAUDE.md). Fixed in P15 to query in Host Mode;
+repeat with `python tools/hw_check.py --port COM6 t17`.
 
 ### T18 — Multi-cycle colour test
 **Status:** ⬜ OPEN
@@ -895,19 +899,27 @@ tests.
 `append_channel_data()`'s ALL/CH filter, gated on `UI_CHANNEL`).
 
 ### T101 — Hardware check: UI frame on an unconnected channel
-**Status:** ⬜ OPEN — needs real hardware. To confirm: does v7.1 actually
-transmit text that comes in over `$20` on the unconnected channel 0 as a UI
-frame along the configured UNPROTO path? This is standard AX.25 behaviour,
-but is not documented for v7.1's Host Mode. If not: log the error frame and
-record the finding in CLAUDE.md before relying on this channel assignment
-in the field.
+To confirm: does v7.1 actually transmit text that comes in over `$20` on
+the unconnected channel 0 as a UI frame along the configured UNPROTO path?
+This is standard AX.25 behaviour, but is not documented for v7.1's Host
+Mode.
 
-**Tool (P14, 2026-09-21):** `python tools/hw_check.py --port COM3 t101` —
+**Tool (P14, 21.09.2026):** `python tools/hw_check.py --port COM3 t101` —
 runs the two-round UNPROTO-path check (TEST1/TEST2) described above,
 transmitting under an explicit y/N confirmation each time. Needs a second
 receiver with an AX.25 decoder; see `docs/HW_Solo_Tests.md`. Excluded from
 `hw_check.py all` since it is the only one of the four checks that
 transmits.
+
+**Status:** ✅ PASS (21.09.2026, second run — `PK232PY T101 A ...` decoded
+with destination `TEST1`, `PK232PY T101 B ...` with destination `TEST2`,
+unambiguous). The first run's round A came back negative (destination not
+seen); the operator assessed this as a receiver effect (decoder/SDR not
+yet settled), not a TNC behaviour — all four transmissions in both runs
+produced an identical TNC response (`ctl=0x5F ch=15 data=b'XX\x00'`, see
+the CLAUDE.md note on this response). The same run also confirmed the PK-232
+does **not** echo its own transmissions as a `$3F` monitor frame in Host
+Mode, even at `MONITOR 6` — 0 monitor frames seen in every round.
 
 ### T102 — Link message for a channel that is not visible does not touch the buttons
 Bugfix (2026-09-20): `_make_link_handler()` used to call `set_link_state()`
@@ -949,12 +961,19 @@ above are unchanged.
 [`USERS 4\r\n` present in `_build_commands()`'s output]. Live-GUI
 click-through against a real TNC monitor still open.
 
-**Hardware confirmation (P14, 2026-09-21):** `python tools/hw_check.py
+**Hardware confirmation (P14, 21.09.2026):** `python tools/hw_check.py
 --port COM3 t103` — queries `USERS`, runs the real
 `ParamsUploader._build_commands()` against a copy of the saved
 configuration with `USERS=4`, queries again, restores the real value, and
 as a side effect scans every single upload response for a `?` error (the
 first hardware exercise of every P13 command). See `docs/HW_Solo_Tests.md`.
+
+**Hardware result:** ✅ PASS — `USERS` read back `4` after the upload,
+restored to `1` afterwards and verified. All 68 upload commands were
+acknowledged with no `?` error response, confirming `RESPTIME`, `ACRPACK`,
+`CFROM`, `DFROM`, `MFROM`, `MTO`, `8BITCONV`, `HID` (the P13 sprint) on the
+real TNC; the `AERPACK`→`ACRPACK` rename from P13 was confirmed correct
+(`ACRPack was ON` / `ACRPack now ON`).
 
 ### T104 — USERS while a connection is up (hardware, OPEN)
 1. Connect on channel 1
@@ -1073,7 +1092,13 @@ Backlog.md "Upload coverage" note).
 settles whether `PACTORConfig.pthuff` needs to become a bool or the
 uploader needs to send a level instead.
 
-**Status:** ⬜ OPEN — needs real PACTOR-capable hardware.
+**Status:** ❌ FAIL (type), 21.09.2026 — the TNC reports `PTHUFF` as
+**numeric** (`PTHuff 0`), confirming the P13-documented type mismatch:
+the uploader sends `PTHUFF ON`/`PTHUFF OFF`. The TNC accepts `PTHUFF OFF`
+without a `?` error and leaves the value at `0` — it does not reject the
+wrong type, it silently misinterprets it. `PTHUFF ON` untested. See the
+Backlog.md item to change `PACTORConfig.pthuff` to a number with a real
+value range from the manual.
 
 ---
 

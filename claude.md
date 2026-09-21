@@ -495,6 +495,28 @@ Grows over time.
   breaks for `i>=10` (the hex `$3A` trap). The poll is fire-and-forget (don't
   block the GUI thread; SerialManager is async). CAUTION: a Packet frame
   arriving mid-poll can garble the list — HBAUD-110 workaround deferred to v0.2.
+- **Verbose-mode response format, confirmed against real hardware
+  21.09.2026** (P15, `hw_logs/`): a query answers
+  `'<echo>\r\n<Name mixed-case>   <value>[ (<explanation>)]\r\ncmd:'`
+  (e.g. `'USERS\r\nUSers     1\r\ncmd:'`); a set answers
+  `'<echo>\r\n<Name>   was <old>\r\n<Name>   now <new>\r\ncmd:'`; an error is
+  any line starting with `?` (`?What?`, `?bad`, `?callsign`). `tools/
+  hw_check.py::parse_query_value()` is the single place that parses this —
+  do not re-derive it ad hoc (`str.split()[-1]`-style parsing on the raw,
+  multi-line response was the root cause of three of the four bugs found in
+  the first hardware run, see Backlog.md/P15 history).
+- **Every Host Mode data frame answers `ctl=0x5F ch=15 data=b'XX\x00'`**
+  (observed 21.09.2026, T101). Not an error frame — meaning pending a TRM
+  §4.4 check.
+- **No `$3F` self-echo of the app's own transmissions, even at `MONITOR
+  6`** (observed 21.09.2026, T101) — the PK-232 does not show frames it
+  transmitted itself back through the Host Mode monitor path, so code must
+  not wait for a `$3F` echo of its own TX as a "sent" confirmation.
+- **68 P13 upload commands hardware-confirmed, zero `?` errors (T103,
+  21.09.2026):** `USERS`, `RESPTIME`, `ACRPACK`, `CFROM`, `DFROM`, `MFROM`,
+  `MTO`, `8BITCONV`, `HID`, plus every other command
+  `ParamsUploader._build_commands()` sends. `ACRPack was ON` / `ACRPack
+  now ON` confirms the P13 `AERPACK`→`ACRPACK` rename was correct.
 
 ### Packet (HF / VHF)
 

@@ -206,8 +206,36 @@ is an `int` (compression level, dialog range 0–10) but
 an ON/OFF flag — Test D does not catch this because *some* change in value
 still changes the ON/OFF output at the zero/non-zero boundary. Needs the
 TRM's actual `PTHUFF` command syntax before it can be fixed correctly.
-Verify with `python tools/hw_check.py --port COM3 pthuff` (P14, 2026-09-21;
-Testplan T110) — needs real PACTOR-capable hardware.
+
+**Confirmed on real hardware, 21.09.2026 (Testplan T110, FAIL):** the TNC
+reports `PTHUFF` as numeric (`PTHuff 0`), not ON/OFF. It accepts `PTHUFF
+OFF` without a `?` error and just leaves the value at `0` — it does not
+reject the wrong type, so the mismatch was invisible until this test read
+the value back. `PTHUFF ON` is still untested. Fix: change
+`PACTORConfig.pthuff` to a number and make `ParamsUploader` send it as one,
+using the real value range from the manual — do not guess the range.
+
+**MYALTCAL truncation (found 21.09.2026, same hardware run):** sending
+`MYALTCAL OE3GAS` came back as `MYALTcal now OGAS` — the TNC silently
+truncated it to 4 characters. `MYALTCAL` is a 4-character AMTOR SELCAL, not
+a callsign; the config field and its dialog should validate/format it as
+one instead of accepting a full callsign that then gets mangled on upload.
+
+**VHF parameter upload sends HF values (found 21.09.2026, same hardware
+run):** the Packet parameter dialog's band switch shows `MAXFRAME 4` /
+`PACLEN 128` for VHF, but the upload always sent the HF values regardless
+of the selected band (observed: `PACLEN` 128→64, `MAXFRAME` 4→1, `FRACK`
+4→7 — i.e. exactly the HF numbers going out while VHF was selected). Needs
+its own package to fix the PR/Packet parameter module — not done as part
+of P15 (query-only hardware check, no `src/pk232py/` change).
+
+**MTEXT overwritten by config defaults on init (found 21.09.2026, same
+hardware run):** the parameter upload sent the two-line `MTEXT` welcome
+message from the saved config even where the TNC already had its own text
+set on the device. Open question, not yet a confirmed bug: should the
+uploader skip sending default/empty text fields at all, so a station's own
+`MTEXT` (and similar free-text parameters) survives an app-driven init
+unless the operator has explicitly set one in the dialog?
 
 ### Runtime parameter upload in Host Mode
 
@@ -361,8 +389,12 @@ Kein neuer "Stop TX"-Button nötig — die vorhandenen Pfade decken alle Modes a
   the TRM mnemonic table (4.2.2), `PS` = PASS (a masking character, not a
   toggle) and `PX` = PASSALL — the application's toggle currently sends
   `PS`, which would set the PASS character instead of switching PASSALL.
-  Verify with `python tools/hw_check.py --port COM3 t17` (P14, 2026-09-21;
-  query-only, no on-air observation needed — see `docs/HW_Solo_Tests.md`).
+  Verify with `python tools/hw_check.py --port COM3 t17` (P14/P15,
+  21.09.2026; query-only, no on-air observation needed — see
+  `docs/HW_Solo_Tests.md`). **First run (21.09.2026) was invalid:** the
+  tool queried `PX`/`PS` in verbose mode, where two-letter mnemonics do not
+  exist (`?What?` for both). Fixed in P15 to query in Host Mode
+  (`SOH $4F PX ETB` / `SOH $4F PS ETB`) — re-run to get a real result.
 
 ### MSPEED from TNC config
 - Auto-set `TxController.set_mspeed()` / `set_mspeed_ms()` from `PK232.INI` MSPEED
