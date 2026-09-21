@@ -106,6 +106,27 @@ class HFPacketConfig:
     ppersist:   bool = True
     xmitok:     bool = True
 
+    # Access filters (P13.3, TRM mnemonics CF/DF/MF/MT). mode is one of
+    # "ALL"/"NONE"/"YES"/"NO"; *_calls is a comma-separated list of up to
+    # 8 callsigns, used only when mode is "YES" or "NO".
+    cfrom_mode:  str = "ALL"
+    cfrom_calls: str = ""
+    dfrom_mode:  str = "ALL"
+    dfrom_calls: str = ""
+    mfrom_mode:  str = "ALL"
+    mfrom_calls: str = ""
+    mto_mode:    str = "NONE"
+    mto_calls:   str = ""
+
+    # Individual flags (P13.3). "bitconv8" because a Python identifier
+    # cannot start with a digit — the TNC command name is "8BITCONV".
+    bitconv8: bool = False
+    hid:      bool = False
+    # MBELL is not in the TRM's 1987 Host Mode command list (may exist only
+    # on later MBX firmware) - wired to the dialog/INI like the others, but
+    # never uploaded until confirmed (see ParamsUploader / UPLOAD_EXEMPT).
+    mbell:    bool = False
+
 
 # ---------------------------------------------------------------------------
 # PACTOR parameters
@@ -343,6 +364,17 @@ class ConfigManager:
         hf.mrpt      = s.getboolean("mrpt",      hf.mrpt)
         hf.ppersist  = s.getboolean("ppersist",  hf.ppersist)
         hf.xmitok    = s.getboolean("xmitok",    hf.xmitok)
+        hf.cfrom_mode  = s.get("cfrom_mode",  hf.cfrom_mode)
+        hf.cfrom_calls = s.get("cfrom_calls", hf.cfrom_calls)
+        hf.dfrom_mode  = s.get("dfrom_mode",  hf.dfrom_mode)
+        hf.dfrom_calls = s.get("dfrom_calls", hf.dfrom_calls)
+        hf.mfrom_mode  = s.get("mfrom_mode",  hf.mfrom_mode)
+        hf.mfrom_calls = s.get("mfrom_calls", hf.mfrom_calls)
+        hf.mto_mode    = s.get("mto_mode",    hf.mto_mode)
+        hf.mto_calls   = s.get("mto_calls",   hf.mto_calls)
+        hf.bitconv8  = s.getboolean("bitconv8", hf.bitconv8)
+        hf.hid       = s.getboolean("hid",      hf.hid)
+        hf.mbell     = s.getboolean("mbell",    hf.mbell)
 
     def _apply_pactor(self) -> None:
         if not self._config.has_section("PACTOR"):
@@ -425,6 +457,17 @@ class ConfigManager:
             "mrpt":     str(hf.mrpt).lower(),
             "ppersist": str(hf.ppersist).lower(),
             "xmitok":   str(hf.xmitok).lower(),
+            "cfrom_mode":  hf.cfrom_mode,
+            "cfrom_calls": hf.cfrom_calls,
+            "dfrom_mode":  hf.dfrom_mode,
+            "dfrom_calls": hf.dfrom_calls,
+            "mfrom_mode":  hf.mfrom_mode,
+            "mfrom_calls": hf.mfrom_calls,
+            "mto_mode":    hf.mto_mode,
+            "mto_calls":   hf.mto_calls,
+            "bitconv8": str(hf.bitconv8).lower(),
+            "hid":      str(hf.hid).lower(),
+            "mbell":    str(hf.mbell).lower(),
         }
 
     def _build_pactor(self) -> None:
