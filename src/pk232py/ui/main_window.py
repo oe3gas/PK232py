@@ -2485,12 +2485,16 @@ class MainWindow(QMainWindow):
                 self._on_packet_monitor_changed)
 
         # Toggle buttons: EAS / PASSALL / MRPT / MID / SQUELCH
-        # NOTE: PASSALL is mnemonic 'PS', NOT 'PA' — 'PA' is the PACKET-mode
-        # activation command (host_command). Sending 'PA Y' here would re-enter
-        # Packet mode instead of toggling PASSALL (TRM Host Mode command table).
+        # NOTE: PASSALL is mnemonic 'PX', NOT 'PA' and NOT 'PS'. 'PA' is the
+        # PACKET-mode activation command (host_command) — sending 'PA Y' here
+        # would re-enter Packet mode instead of toggling PASSALL. 'PS' is
+        # PASS, a masking CHARACTER (factory default $16 / Ctrl-V), not a
+        # toggle — this was the 2026-06-22 fix's own mistake (PA -> PS
+        # instead of PA -> PX), corrected 21.09.2026 against real hardware
+        # (Testplan T86: Host Mode raw frames 'PXN' for PX, 'PS$16' for PS).
         toggle_map = [
             (screen.btn_eas,     b'EA'),
-            (screen.btn_passall, b'PS'),
+            (screen.btn_passall, b'PX'),
             (screen.btn_mrpt,    b'MR'),
             (screen.btn_mid,     b'MI'),
             (screen.btn_squelch, b'SQ'),
