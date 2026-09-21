@@ -163,6 +163,20 @@ class ParamsUploader:
         if hf.ctext:
             cmds.append(self._cmd("CTEXT",   hf.ctext))
 
+        # Access filters (P13.3, TRM mnemonics CF/DF/MF/MT)
+        cmds += self._access_filter_cmds("CFROM", hf.cfrom_mode, hf.cfrom_calls)
+        cmds += self._access_filter_cmds("DFROM", hf.dfrom_mode, hf.dfrom_calls)
+        cmds += self._access_filter_cmds("MFROM", hf.mfrom_mode, hf.mfrom_calls)
+        cmds += self._access_filter_cmds("MTO",   hf.mto_mode,   hf.mto_calls)
+
+        # Individual flags (P13.3) - 8BITCONV (8B) and HID (HI) confirmed
+        # against the TRM. MBELL is deliberately NOT sent: it is absent from
+        # the TRM's 1987 Host Mode command list (see HFPacketConfig.mbell).
+        cmds += [
+            self._bool("8BITCONV", hf.bitconv8),
+            self._bool("HID",      hf.hid),
+        ]
+
         # - PACTOR -
         # PACTOR commands: only send when TNC has the PACTOR option.
         # On a PK-232MBX without PACTOR, these return ?What? errors.
@@ -278,3 +292,26 @@ class ParamsUploader:
     def _bool(name: str, value: bool) -> bytes:
         """Build a verbose-mode boolean command: b'NAME ON\\r\\n'"""
         return f"{name} {'ON' if value else 'OFF'}\r\n".encode('ascii')
+
+    def _access_filter_cmds(self, name: str, mode: str, calls: str) -> list[bytes]:
+        """Build the command(s) for one access filter (CFROM/DFROM/MFROM/MTO,
+        P13.3):
+            ALL / NONE  -> "NAME ALL" / "NAME NONE"
+            YES / NO    -> "NAME YES <calls>" / "NAME NO <calls>"
+            YES/NO with no callsigns configured -> nothing is sent (a bare
+            "NAME YES" with no list is ambiguous at best, so log a warning
+            and skip rather than guess what the TNC would do with it).
+        """
+        mode = (mode or "").upper()
+        if mode in ("ALL", "NONE"):
+            return [self._cmd(name, mode)]
+        if mode in ("YES", "NO"):
+            if not calls:
+                logger.warning(
+                    "ParamsUploader: %s mode=%s but no callsigns configured "
+                    "- skipping", name, mode
+                )
+                return []
+            return [self._cmd(name, f"{mode} {calls}")]
+        logger.warning("ParamsUploader: unknown %s mode %r - skipping", name, mode)
+        return []

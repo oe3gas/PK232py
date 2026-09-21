@@ -109,23 +109,14 @@ UNWIRED_OK: dict[tuple[str, str], str] = {
     ("MiscParamsDialog", "_sb_threshold"): "read-only, TNC query result",
 
     # --- HF Packet: widgets with no HFPacketConfig field -- see Backlog.md ---
-    ("HFPacketParamsDialog", "_chk_8bitconv"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_chk_mbell"): "no config field yet — see Backlog",
+    # (8BITCONV, HID, MBELL and the CFROM/DFROM/MFROM/MTO filters were wired
+    # in P13.3 and are no longer exceptions here.)
     ("HFPacketParamsDialog", "_chk_mdigi"): "no config field yet — see Backlog",
     ("HFPacketParamsDialog", "_chk_mproto"): "no config field yet — see Backlog",
     ("HFPacketParamsDialog", "_chk_mstamp"): "no config field yet — see Backlog",
     ("HFPacketParamsDialog", "_chk_passall"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_chk_hid"): "no config field yet — see Backlog",
     ("HFPacketParamsDialog", "_chk_bbsmsgs"): "no config field yet — see Backlog",
     ("HFPacketParamsDialog", "_chk_fulldp"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_cb_cfrom"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_cb_dfrom"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_cb_mfrom"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_cb_mto"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_cb_cfrom_le"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_cb_dfrom_le"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_cb_mfrom_le"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_cb_mto_le"): "no config field yet — see Backlog",
     ("HFPacketParamsDialog", "_le_mbx"): "no config field yet — see Backlog",
 
     # --- PACTOR: no PACTORConfig field -- see Backlog.md ---
@@ -193,6 +184,22 @@ UPLOAD_EXEMPT: dict[tuple[str, str], str] = {
         "likely a command from a different AEA product. Field/INI kept for "
         "compatibility, dialog spinbox disabled, never uploaded."
     ),
+    ("hf_packet", "mbell"): (
+        "MBELL is not in the TRM's 1987 Host Mode command list (may exist "
+        "only on later MBX firmware, P13.3) - wired to the dialog/INI but "
+        "not uploaded until confirmed. See Backlog."
+    ),
+    # The four *_calls fields only affect the upload when their paired
+    # *_mode field is YES/NO (_access_filter_cmds ignores calls entirely for
+    # ALL/NONE, P13.3). Test D bumps exactly one field at a time, so bumping
+    # a *_calls field alone while mode stays at its ALL/NONE default cannot
+    # change the built command list - not a wiring gap, a structural
+    # consequence of the two fields being coupled by design (confirmed by
+    # the *_mode fields themselves passing Test D on their own).
+    ("hf_packet", "cfrom_calls"): "only takes effect when cfrom_mode is YES/NO",
+    ("hf_packet", "dfrom_calls"): "only takes effect when dfrom_mode is YES/NO",
+    ("hf_packet", "mfrom_calls"): "only takes effect when mfrom_mode is YES/NO",
+    ("hf_packet", "mto_calls"):   "only takes effect when mto_mode is YES/NO",
 
     # --- PACTOR: none of these are sent yet. Not fixed in this session --
     # verifying 9 more command names against the TRM / pk232_mnemonic_
@@ -375,8 +382,25 @@ def _snapshot(widget):
     return None
 
 
-def _bump_field_value(value):
+# Fields whose legal values are a small fixed set (a QComboBox with a
+# closed item list, not free text) -- bumping them the generic string way
+# ("ALL" -> "ALLTEST") produces a value the combobox cannot represent, so
+# setCurrentText() silently does nothing and the round-trip looks broken
+# even though the wiring is fine. Rotate through the real choices instead.
+_ENUM_FIELDS: dict[str, list[str]] = {
+    "cfrom_mode": ["ALL", "NONE", "YES", "NO"],
+    "dfrom_mode": ["ALL", "NONE", "YES", "NO"],
+    "mfrom_mode": ["ALL", "NONE", "YES", "NO"],
+    "mto_mode":   ["ALL", "NONE", "YES", "NO"],
+}
+
+
+def _bump_field_value(value, field_name: str | None = None):
     """Change a config field's value per its type (P12.1 Test B)."""
+    if field_name in _ENUM_FIELDS:
+        choices = _ENUM_FIELDS[field_name]
+        idx = choices.index(value) if value in choices else -1
+        return choices[(idx + 1) % len(choices)]
     if isinstance(value, bool):
         return not value
     if isinstance(value, int):
@@ -467,7 +491,7 @@ def test_config_field_reaches_dialog_and_back(spec: _DialogSpec):
 
         cfg = spec.config_cls()
         original = getattr(cfg, f.name)
-        changed_value = _bump_field_value(original)
+        changed_value = _bump_field_value(original, f.name)
         setattr(cfg, f.name, changed_value)
 
         dlg = spec.make()
@@ -521,7 +545,7 @@ def test_ini_roundtrip(tmp_path):
     for attr, config_cls in _INI_SECTIONS:
         cfg = getattr(mgr.app, attr)
         for f in dataclasses.fields(config_cls):
-            setattr(cfg, f.name, _bump_field_value(getattr(cfg, f.name)))
+            setattr(cfg, f.name, _bump_field_value(getattr(cfg, f.name), f.name))
 
     mgr.save()
 
@@ -569,7 +593,7 @@ def test_field_reaches_upload(attr, config_cls):
         before = ParamsUploader(serial=None, config=app)._build_commands(has_pactor=True)
 
         cfg = getattr(app, attr)
-        setattr(cfg, f.name, _bump_field_value(getattr(cfg, f.name)))
+        setattr(cfg, f.name, _bump_field_value(getattr(cfg, f.name), f.name))
 
         after = ParamsUploader(serial=None, config=app)._build_commands(has_pactor=True)
 
