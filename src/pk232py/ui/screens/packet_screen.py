@@ -1270,7 +1270,7 @@ class PacketBaseScreen(QWidget):
         self.btn_mid      = make_toggle_button("MID")
         self.btn_squelch  = make_toggle_button("SQUELCH")
         self.btn_eas.setToolTip("Echo As Sent (EA) — show confirmed TX chars in RX window.")
-        self.btn_passall.setToolTip("PASSALL (PS) — receive all frames regardless of CRC.")
+        self.btn_passall.setToolTip("PASSALL (PX) — receive all frames regardless of CRC.")
         self.btn_mrpt.setToolTip("Monitor Repeat (MR) — show digipeated frames.")
         self.btn_mid.setToolTip(
             "Morse ID beacon (MI) — enable periodic Morse ID.\n"
