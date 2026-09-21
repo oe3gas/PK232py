@@ -23,7 +23,7 @@ The dialogs have TWO different APIs:
     changed here - _DialogSpec below is the adapter the spec asked for,
     not a refactor of the dialogs.
 
-Three tests, run once per dialog:
+Four tests, run once per dialog (A-C) or per config section (D):
   A. test_widget_writes_back_to_config - read direction. Every QSpinBox/
      QDoubleSpinBox/QCheckBox/QLineEdit/QComboBox found via findChildren()
      must change SOME config field when its value changes. This needs no
@@ -38,6 +38,15 @@ Three tests, run once per dialog:
      get lost on restart if ConfigManager's _apply_*()/_build_*() forgot
      it (this is exactly the class of bug found for HFPacketConfig.aerpack/
      alfpack/txsmt - see the "Config: ..." fix commit alongside this one).
+  D. test_field_reaches_upload (P13) - a field can pass A, B and C and
+     still never reach the TNC: ParamsUploader._build_commands() reads
+     ONLY the config dataclasses, never the dialog widgets, and it turns
+     out to have its own, independent gaps (found for HFPacketConfig.
+     resptime/txsmt/aerpack - see the "Params uploader: ..." fix commit).
+     Same mechanism as Test A: bump one field, diff the built command
+     list, no command-name mapping needed. AppConfig.tnc is excluded as a
+     whole section (PC-side connection settings, not TNC parameters) -
+     a section decision, not a name filter.
 
 Needs a QApplication; forced to the offscreen platform (see
 test_packet_screen.py for why this is done at module level, before any
@@ -59,8 +68,9 @@ from PyQt6.QtWidgets import (
     QFormLayout, QLineEdit, QSpinBox,
 )
 
+from pk232py.comm.params_uploader import ParamsUploader
 from pk232py.config import (
-    AMTORConfig, BaudotConfig, ConfigManager, HFPacketConfig,
+    AMTORConfig, AppConfig, BaudotConfig, ConfigManager, HFPacketConfig,
     MailDropConfig, MiscConfig, PACTORConfig,
 )
 from pk232py.ui.dialogs.params_amtor import AMTORParamsDialog
@@ -170,6 +180,51 @@ FIELD_HAS_NO_WIDGET: dict[tuple[str, str], str] = {
         "handled live on the Morse operating screen (MorseScreen.sb_mid via "
         "main_window._on_morse_mid_changed), not in this setup dialog"
     ),
+}
+
+# Config fields that deliberately never produce an upload command (P13,
+# Test D). Keyed by (config section attribute on AppConfig, field name).
+UPLOAD_EXEMPT: dict[tuple[str, str], str] = {
+    # hf_packet.resptime / .txsmt / .aerpack are DELIBERATELY left out of
+    # this list: they are real gaps fixed in the "Params uploader: ..."
+    # commit, and Test D must stay red for them until that commit lands.
+
+    # --- PACTOR: none of these are sent yet. Not fixed in this session --
+    # verifying 9 more command names against the TRM / pk232_mnemonic_
+    # table.txt is out of scope for P13 (which only closes the HF Packet
+    # and access-filter/flag gaps); see Backlog.md "Upload coverage —
+    # PACTOR/AMTOR/Baudot/Misc" for the follow-up. ---
+    ("pactor", "arqtmo"): "not yet audited for upload — see Backlog",
+    ("pactor", "adelay"): "not yet audited for upload — see Backlog",
+    ("pactor", "ptdown"): "not yet audited for upload — see Backlog",
+    ("pactor", "ptup"): "not yet audited for upload — see Backlog",
+    ("pactor", "ptsum"): "not yet audited for upload — see Backlog",
+    ("pactor", "pttries"): "not yet audited for upload — see Backlog",
+    ("pactor", "ptsend"): "not yet audited for upload — see Backlog",
+    ("pactor", "ptround"): "not yet audited for upload — see Backlog",
+    ("pactor", "xmitok"): "not yet audited for upload — see Backlog",
+
+    # --- AMTOR: same follow-up ---
+    ("amtor", "xlength"): "not yet audited for upload — see Backlog",
+    ("amtor", "srxall"): "not yet audited for upload — see Backlog",
+    ("amtor", "usos"): "not yet audited for upload — see Backlog",
+    ("amtor", "wideshft"): "not yet audited for upload — see Backlog",
+
+    # --- Baudot/ASCII/CW: same follow-up, except mid (see its own reason) ---
+    ("baudot", "mid"): (
+        "sent live via main_window._on_morse_mid_changed while operating, "
+        "not part of the startup upload — see FIELD_HAS_NO_WIDGET above "
+        "for the same reasoning on the dialog side"
+    ),
+    ("baudot", "xlength"): "not yet audited for upload — see Backlog",
+    ("baudot", "xbaud"): "not yet audited for upload — see Backlog",
+    ("baudot", "usos"): "not yet audited for upload — see Backlog",
+    ("baudot", "wideshft"): "not yet audited for upload — see Backlog",
+    ("baudot", "xmitok"): "not yet audited for upload — see Backlog",
+
+    # --- Misc: same follow-up ---
+    ("misc", "mark"): "not yet audited for upload — see Backlog",
+    ("misc", "space"): "not yet audited for upload — see Backlog",
 }
 
 
@@ -484,4 +539,43 @@ def test_ini_roundtrip(tmp_path):
     assert not failures, (
         f"{len(failures)} field(s) did not survive an INI save()/load() "
         f"round trip:\n  " + "\n  ".join(failures)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test D — upload direction: every config field must reach _build_commands()
+# ---------------------------------------------------------------------------
+#
+# AppConfig.tnc is excluded as a WHOLE SECTION, not a per-field name filter:
+# it holds PC-side connection settings (port, baud rate, echo, fast init,
+# ...), not TNC operating parameters, so it has no business in the upload
+# command list at all.
+
+@pytest.mark.parametrize("attr,config_cls", _INI_SECTIONS, ids=[a for a, _ in _INI_SECTIONS])
+def test_field_reaches_upload(attr, config_cls):
+    failures: list[str] = []
+
+    for f in dataclasses.fields(config_cls):
+        key = (attr, f.name)
+        if key in UPLOAD_EXEMPT:
+            continue
+
+        app = AppConfig()
+        before = ParamsUploader(serial=None, config=app)._build_commands(has_pactor=True)
+
+        cfg = getattr(app, attr)
+        setattr(cfg, f.name, _bump_field_value(getattr(cfg, f.name)))
+
+        after = ParamsUploader(serial=None, config=app)._build_commands(has_pactor=True)
+
+        if after == before:
+            failures.append(
+                f"{attr}.{f.name} -- changed but no command in "
+                f"_build_commands() reflects it. Either send it, or add "
+                f'("{attr}", "{f.name}") to UPLOAD_EXEMPT with a reason.'
+            )
+
+    assert not failures, (
+        f"{config_cls.__name__} ({attr}): {len(failures)} field(s) never "
+        f"reach the TNC:\n  " + "\n  ".join(failures)
     )
