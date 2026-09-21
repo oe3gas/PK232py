@@ -1,6 +1,6 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix); +T103–T105 (P11 USERS parameter); +T106 (P12 parameter dialog wiring audit); +T107–T109 (P13 upload coverage)**
-**Previous stand: 2026-06-16 (v16) — Paket 2a/2b TxController (Morse + AMTOR), T69–T79; FAX closed-loop T66–T68; clear buttons; +T81 (FAX hardware, WAV→TNC); +T82 (FAX hardware, live Epson decode); +T33–T37 PASS & +T83–T84 (mock-TNC BBS sprint)**
+**Updated: 2026-09-21 — +T110 (P14 solo hardware check tool); links T17/T86, T101, T103 to tools/hw_check.py**
+**Previous stand: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix); +T103–T105 (P11 USERS parameter); +T106 (P12 parameter dialog wiring audit); +T107–T109 (P13 upload coverage)**
 
 ---
 
@@ -37,6 +37,7 @@
 | **2026-09-20** | `config.py`, `params_hf.py`, `params_uploader.py`, `packet_screen.py`, `main_window.py` | P11: `USERS` parameter (max. simultaneous AX.25 connections) added to config, params dialog, upload, and `ChannelBar` advisory tooltips; +T103–T105 |
 | **2026-09-20** | `test_param_dialogs_roundtrip.py` *(new)*, `params_hf.py`, `config.py` | P12: mechanical wiring audit for all six `&Parameters` dialogs; found and fixed `HFPacketConfig.txsmt` (dialog-unwired) and `.aerpack`/`.alfpack` (INI-unwired); +T106 |
 | **2026-09-20** | `test_param_dialogs_roundtrip.py`, `params_uploader.py`, `config.py`, `params_hf.py`, `main_window.py` | P13: fourth wiring-chain link (upload) audited via Test D; sent `RESPTIME`, renamed `aerpack`→`acrpack`, disabled `TXSMT` (not a PK-232 command); closed the chain for `CFROM`/`DFROM`/`MFROM`/`MTO` access filters and `8BITCONV`/`HID`; corrected the post-dialog log message; +T107–T109 |
+| **2026-09-21** | `tools/hw_check.py` *(new)* | P14: solo hardware CLI tool (T17/T86, T103, PTHUFF, T101), reuses `pk232py.comm` entirely; +T110 |
 
 ---
 
@@ -175,6 +176,11 @@ left in place until a real TNC confirms which byte toggles PASSALL.
 
 **Expected result:** the byte that actually toggles PASSALL is identified;
 `main_window._wire_packet_buttons()` toggle_map is set to it.
+
+**Preferred method (P14, 2026-09-21):** `python tools/hw_check.py --port
+COM3 t17` — queries `PX` and `PS` in verbose mode (no write, no on-air
+observation needed) and classifies which one looks like a Y/N toggle. See
+`docs/HW_Solo_Tests.md`.
 
 **Status:** ⬜ OPEN (requires hardware verification — see CLAUDE.md mnemonic note)
 
@@ -896,6 +902,13 @@ but is not documented for v7.1's Host Mode. If not: log the error frame and
 record the finding in CLAUDE.md before relying on this channel assignment
 in the field.
 
+**Tool (P14, 2026-09-21):** `python tools/hw_check.py --port COM3 t101` —
+runs the two-round UNPROTO-path check (TEST1/TEST2) described above,
+transmitting under an explicit y/N confirmation each time. Needs a second
+receiver with an AX.25 decoder; see `docs/HW_Solo_Tests.md`. Excluded from
+`hw_check.py all` since it is the only one of the four checks that
+transmits.
+
 ### T102 — Link message for a channel that is not visible does not touch the buttons
 Bugfix (2026-09-20): `_make_link_handler()` used to call `set_link_state()`
 for every link message regardless of channel, so a CONNECTED on one channel
@@ -935,6 +948,13 @@ above are unchanged.
 `TestUsersUploaded` in `test_params_uploader.py` covers steps 2/3
 [`USERS 4\r\n` present in `_build_commands()`'s output]. Live-GUI
 click-through against a real TNC monitor still open.
+
+**Hardware confirmation (P14, 2026-09-21):** `python tools/hw_check.py
+--port COM3 t103` — queries `USERS`, runs the real
+`ParamsUploader._build_commands()` against a copy of the saved
+configuration with `USERS=4`, queries again, restores the real value, and
+as a side effect scans every single upload response for a `?` error (the
+first hardware exercise of every P13 command). See `docs/HW_Solo_Tests.md`.
 
 ### T104 — USERS while a connection is up (hardware, OPEN)
 1. Connect on channel 1
@@ -1031,6 +1051,29 @@ ignored).
 **Status:** ✅ PASS (2026-09-20 — code-verified: all six dialogs' OK
 handlers in `main_window.py` now log "parameters saved — sent to TNC on
 next initialisation"). Live-GUI click-through still open.
+
+---
+
+## Test Block 6g — Solo Hardware Checks (P14)
+
+From `docs/P14_HW_Solo_Check_Spec.md` / `docs/HW_Solo_Tests.md`.
+
+### T110 — PTHUFF: does the TNC's own format match what the uploader sends?
+`PACTORConfig.pthuff` is an `int` (dialog range 0–10, a compression level)
+but `ParamsUploader._build_commands()` sends it with `self._bool(...)`, i.e.
+as `PTHUFF ON`/`PTHUFF OFF` (found during the P13 upload-coverage audit,
+Backlog.md "Upload coverage" note).
+
+1. `python tools/hw_check.py --port COM3 pthuff`
+2. Tool queries `PTHUFF`, sends exactly what the uploader would send, queries
+   again, restores the original value
+3. Skipped with `INFO: no PACTOR option` if the TNC has no PACTOR hardware
+
+**Expected result:** the TNC's own response format (numeric vs ON/OFF)
+settles whether `PACTORConfig.pthuff` needs to become a bool or the
+uploader needs to send a level instead.
+
+**Status:** ⬜ OPEN — needs real PACTOR-capable hardware.
 
 ---
 
@@ -1292,8 +1335,9 @@ Diagnose bei Fehler:
 | Medium | CW/Morse TxController (Paket 2a) | T69–T72 |
 | Medium | AMTOR TxController (Paket 2b) — T73 zuerst! | T73–T79 |
 | Medium | Packet channel model — interactive mock-GUI + hardware re-test (software/mock PASS) | T87–T100, T102, T103 |
-| High | UI-channel unproto behaviour — needs real hardware | T101 |
+| High | UI-channel unproto behaviour — needs real hardware, tool: `hw_check.py t101` | T101 |
 | High | USERS while connected / second simultaneous connection — needs real hardware (+ 2nd station for T105) | T104, T105 |
+| Medium | PACTOR PTHUFF type mismatch (int vs ON/OFF) — needs real PACTOR hardware, tool: `hw_check.py pthuff` | T110 |
 
 ---
 

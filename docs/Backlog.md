@@ -206,6 +206,8 @@ is an `int` (compression level, dialog range 0–10) but
 an ON/OFF flag — Test D does not catch this because *some* change in value
 still changes the ON/OFF output at the zero/non-zero boundary. Needs the
 TRM's actual `PTHUFF` command syntax before it can be fixed correctly.
+Verify with `python tools/hw_check.py --port COM3 pthuff` (P14, 2026-09-21;
+Testplan T110) — needs real PACTOR-capable hardware.
 
 ### Runtime parameter upload in Host Mode
 
@@ -355,7 +357,12 @@ Kein neuer "Stop TX"-Button nötig — die vorhandenen Pfade decken alle Modes a
 - Name collisions resolved via SCREEN_TOOLTIPS (btn_connect AX.25↔PACTOR,
   btn_rxrev RTTY↔FAX, btn_lock Morse↔FAX, btn_stby AMTOR↔PACTOR,
   btn_clear FAX image↔MHEARD list).
-- **Open:** T86 PASSALL mnemonic `PS` vs `PX` — hardware verification.
+- **Open:** T86 PASSALL mnemonic `PS` vs `PX` — hardware verification. Per
+  the TRM mnemonic table (4.2.2), `PS` = PASS (a masking character, not a
+  toggle) and `PX` = PASSALL — the application's toggle currently sends
+  `PS`, which would set the PASS character instead of switching PASSALL.
+  Verify with `python tools/hw_check.py --port COM3 t17` (P14, 2026-09-21;
+  query-only, no on-air observation needed — see `docs/HW_Solo_Tests.md`).
 
 ### MSPEED from TNC config
 - Auto-set `TxController.set_mspeed()` / `set_mspeed_ms()` from `PK232.INI` MSPEED
