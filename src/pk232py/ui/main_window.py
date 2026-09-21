@@ -3800,7 +3800,7 @@ class MainWindow(QMainWindow):
         from pk232py.config import ConfigManager
         dlg = HFPacketParamsDialog(self._app_config.hf_packet, parent=self)
         if dlg.exec() == HFPacketParamsDialog.DialogCode.Accepted:
-            self._log_monitor("[SYS] HF Packet parameters updated")
+            self._log_monitor("[SYS] HF Packet parameters saved — sent to TNC on next initialisation")
             # Refresh the USERS tooltip immediately (P11.5) rather than
             # waiting for the next mode (re)activation — HF and VHF Packet
             # share hf_packet config, so update both if either is built.
@@ -3823,13 +3823,13 @@ class MainWindow(QMainWindow):
             mi.command  = v["command"];  mi.sendpac = v["sendpac"]
             mi.mark     = v["mark"];     mi.space   = v["space"]
             self._config_mgr.save()
-            self._log_monitor("[SYS] Misc parameters updated")
+            self._log_monitor("[SYS] Misc parameters saved — sent to TNC on next initialisation")
 
     def _on_params_pactor(self) -> None:
         """Open PACTOR Parameters dialog."""
         dlg = PACTORParamsDialog(self._app_config.pactor, parent=self)
         if dlg.exec() == PACTORParamsDialog.DialogCode.Accepted:
-            self._log_monitor("[SYS] PACTOR parameters updated")
+            self._log_monitor("[SYS] PACTOR parameters saved — sent to TNC on next initialisation")
 
     def _on_params_amtor(self) -> None:
         """Open AMTOR / NAVTEX / TDM Parameters dialog."""
@@ -3853,7 +3853,7 @@ class MainWindow(QMainWindow):
             am.txrev    = v["txrev"];    am.usos     = v["usos"]
             am.wideshft = v["wideshft"]; am.xmitok   = v["xmitok"]
             self._config_mgr.save()
-            self._log_monitor("[SYS] AMTOR/NAVTEX/TDM parameters updated")
+            self._log_monitor("[SYS] AMTOR/NAVTEX/TDM parameters saved — sent to TNC on next initialisation")
 
     def _on_params_baudot(self) -> None:
         """Open BAUDOT / ASCII / CW Parameters dialog."""
@@ -3876,7 +3876,7 @@ class MainWindow(QMainWindow):
             ba.txrev   = v["txrev"];   ba.usos    = v["usos"]
             ba.wideshft= v["wideshft"]; ba.xmitok  = v["xmitok"]
             self._config_mgr.save()
-            self._log_monitor("[SYS] BAUDOT/ASCII/CW parameters updated")
+            self._log_monitor("[SYS] BAUDOT/ASCII/CW parameters saved — sent to TNC on next initialisation")
 
     def _on_params_maildrop(self) -> None:
         """Open MailDrop Parameters dialog."""
@@ -3895,7 +3895,7 @@ class MainWindow(QMainWindow):
             md.mmsg        = v["mmsg"];        md.tmail       = v["tmail"]
             md.third_party = v["third_party"]
             self._config_mgr.save()
-            self._log_monitor("[SYS] MailDrop parameters updated")
+            self._log_monitor("[SYS] MailDrop parameters saved — sent to TNC on next initialisation")
 
     def _on_toggle_serial_status(self) -> None:
         """Show/hide serial signal status rows (rows 2+3)."""
