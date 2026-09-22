@@ -500,19 +500,24 @@ _MAILDROP_QUERY_COMMANDS = [
 ]
 
 _MAILDROP_SUGGESTED_SEQUENCE = """\
-Suggested sequence (SysOp command set is B,E,K,L,R,S - TRM/STABO
-handbook ch.5; 'H'/'?' help is only for OTHER users logging in, NOT the
-SysOp - hardware-confirmed 22.09.2026, 'H' answers '*** What?'):
-  L                list - probably empty after power-up
-  S OE3GAS         new message - answer the subject prompt, then the
-                   text, end with /EX on its own line
-  L                list - note number, status letter (P/T/B), size, format
-  R <n>            read it
-  S OE3GAS         second message
-  L                list - does numbering continue?
-  K <n>            kill the FIRST message
-  L                list - does the gap stay, or are numbers reassigned?
-  B                leave the mailbox - the terminal ends at cmd:
+Round 2 - questions for the restore feature (round 1, 22.09.2026 18:43,
+already confirmed L/S/R/K/B, the list format, numbering and free-memory
+accounting - see CLAUDE.md's MailDrop facts):
+
+  S OE3GAS < DL1ABC      does the SysOp keep a foreign FROM callsign?
+  (subject, text, /EX)
+  S OE1XYZ @ DB0MUC      does @BBS appear in the list?
+  (subject, text, ^Z)    ^Z instead of /EX - is there still a '/E' line?
+  SB ALL                 can the SysOp create a bulletin directly?
+  (subject, text, /EX)
+  ST OE3GAS              traffic type?
+  (subject, text, /EX)
+  L                      FROM, @BBS, type letters, date/time format
+  R <n>                  for the ^Z message - trailing '/E' or not?
+  E <n>                  OPTIONAL, last: see what EDIT asks; keep every
+                         field with Enter, or abort with Ctrl-X
+  B                      the terminal ends at cmd:
+  then the power-cycle test
 """
 
 # ^Z/^D/^C typed at the md> prompt are sent as the matching single
@@ -629,17 +634,102 @@ def classify_maildrop_response(
     return previous_state, False
 
 
+# ---------------------------------------------------------------------------
+# P22 -- MailDrop protocol facts from the first full hardware run
+# (hw_logs/20260922_184337_maildrop.log, tool-only helpers, not used by the
+# application yet - there is no MailDrop dialog, see Backlog.md)
+# ---------------------------------------------------------------------------
+
+def parse_maildrop_list_row(line: str) -> Optional[dict]:
+    """Parse one data row of a MailDrop 'L' listing into its fixed-width
+    columns (P22.5). Hardware-confirmed 22.09.2026: columns are FIXED
+    WIDTH regardless of content - an empty '@ BBS' still occupies its own
+    blank columns, so this slices by position rather than splitting on
+    whitespace (which would misalign once a field is empty).
+
+    Column layout (0-indexed, confirmed against three real listings):
+      [0:3]   Msg# (right-aligned)      [34:43]  Date (or dots)
+      [4:6]   status: type + read       [45:50]  Time (or dots)
+      [6:12]  Size                      [52:]    Title (rest of line)
+      [13:19] To            [20:26] From          [26:34] @ BBS
+
+    Date/Time show as dots ('.........'/'.....') until the TNC clock is
+    set (no RAM buffer battery, CLAUDE.md) - returned as None, not the
+    literal dots, since they are not a real date/time.
+
+    Returns None if *line* is not a data row (too short, or its first
+    field is not a number - e.g. the header line or the mailbox prompt).
+    """
+    if len(line) < 58:
+        return None
+    msg_no_text = line[0:3].strip()
+    if not msg_no_text.isdigit():
+        return None
+
+    def _dots_to_none(value: str) -> Optional[str]:
+        return None if value and set(value) <= {"."} else (value or None)
+
+    status = line[4:6].strip()
+    size_text = line[6:12].strip()
+    return {
+        "number": int(msg_no_text),
+        "type": status[0] if status else "",
+        "read": status[1] if len(status) > 1 else "",
+        "size": int(size_text) if size_text.isdigit() else None,
+        "to": line[13:19].strip(),
+        "from": line[20:26].strip(),
+        "bbs": line[26:34].strip() or None,
+        "date": _dots_to_none(line[34:43].strip()),
+        "time": _dots_to_none(line[45:50].strip()),
+        "title": line[52:].strip(),
+    }
+
+
+def parse_maildrop_list(response_text: str) -> list[dict]:
+    """Parse every data row out of one 'L' response's raw text (P22.5) -
+    skips the echo, the header line, the mailbox prompt, and anything
+    else that is not a data row (parse_maildrop_list_row() returns None
+    for those). Tool-only measurement helper."""
+    rows = []
+    for line in response_text.replace("\r\n", "\n").split("\n"):
+        parsed = parse_maildrop_list_row(line)
+        if parsed is not None:
+            rows.append(parsed)
+    return rows
+
+
+def maildrop_response_has_e_trailer(response_text: str) -> bool:
+    """True if a MailDrop response ends with the firmware's own stray
+    '/E' line just before the mailbox prompt (P22.1 finding, confirmed on
+    'R <n>' responses 22.09.2026) - a remnant of the '/EX' end-of-message
+    marker. Not part of the real message text; strip it before archiving
+    the message."""
+    lines = [
+        ln for ln in response_text.replace("\r\n", "\n").split("\n") if ln != ""
+    ]
+    if not lines:
+        return False
+    if _MAILBOX_PROMPT_RE.search(lines[-1]):
+        lines = lines[:-1]
+    return bool(lines) and lines[-1].strip() == "/E"
+
+
 def run_maildrop_interactive(
     initial_state: str,
     initial_free: Optional[int],
     read_line: Callable[[str, Optional[int]], Optional[str]],
     send: Callable[[bytes, str], bytes],
     log: "RunLog",
-) -> tuple[str, Optional[bytes]]:
+) -> tuple[str, Optional[bytes], bool]:
     """Drive the mailbox terminal's interactive loop (P21.3). Pure of any
     real I/O - *read_line(state, free)* returns the next typed line (or
     None on EOF), *send(payload, note)* writes it and returns the raw
-    response bytes. Returns (final_state, last_sent_payload).
+    response bytes. Returns (final_state, last_sent_payload,
+    message_stored) - the third value is True if any response during
+    this session contained 'Message stored as #' (P22.2: the power-cycle
+    test's PASS needs to know at least one real message existed before
+    the cycle, not just that 'L' comes back empty afterwards, which an
+    already-empty mailbox would also show).
 
     SAFETY (the reason this function exists as a single, testable unit):
     the moment a response's state becomes CMD, this returns IMMEDIATELY,
@@ -653,17 +743,18 @@ def run_maildrop_interactive(
     state = initial_state
     free = initial_free
     last_sent: Optional[bytes] = None
+    message_stored = False
 
     while True:
         line = read_line(state, free)
         if line is None:
             log.line("INFO: input closed (EOF) - leaving the terminal")
-            return state, last_sent
+            return state, last_sent, message_stored
 
         kind, payload = classify_maildrop_input(line)
         if kind == "quit":
             log.line("INFO: operator typed /quit - leaving the terminal")
-            return state, last_sent
+            return state, last_sent, message_stored
 
         last_sent = payload
         resp_bytes = send(payload, f"[{state}] {line.strip()!r}")
@@ -671,6 +762,8 @@ def run_maildrop_interactive(
 
         if "*** No free memory" in resp_text:
             log.line("WARNING: mailbox reports *** No free memory")
+        if "Message stored as #" in resp_text:
+            message_stored = True
 
         new_state, recognised = classify_maildrop_response(resp_text, state, line)
         if not recognised:
@@ -690,7 +783,34 @@ def run_maildrop_interactive(
                 "INFO: 'cmd:' prompt seen - interactive phase stopped "
                 "immediately (safety rule, P21.3)"
             )
-            return state, last_sent
+            return state, last_sent, message_stored
+
+
+def read_power_cycle_confirmation(read_line: Callable[[], str]) -> bool:
+    """Repeatedly call *read_line()* until it answers 'done' or 'skip'
+    (case-insensitive, whitespace-tolerant) - P22.2. Returns True for
+    'done' (proceed with the power-cycle check), False for 'skip'.
+    Anything else re-asks: an earlier run's blank Enter was silently
+    read as "not yes" and skipped the test before this confirm loop
+    existed, before the operator had actually power-cycled the TNC."""
+    while True:
+        answer = read_line().strip().lower()
+        if answer == "done":
+            return True
+        if answer == "skip":
+            return False
+
+
+def evaluate_power_cycle_loss(
+    had_message_before: bool, list_response_after: str
+) -> str:
+    """P22.2's power-cycle decision: PASS only if a message genuinely
+    existed before the cycle AND 'L' now reports the mailbox empty
+    ('*** Message not found.') - an already-empty mailbox reporting
+    empty again would prove nothing. INCONCLUSIVE otherwise."""
+    if had_message_before and "Message not found" in list_response_after:
+        return "PASS"
+    return "INCONCLUSIVE"
 
 
 def scan_for_tnc_errors(lines: list[str]) -> list[str]:
@@ -1748,17 +1868,18 @@ def _maildrop_leave_mailbox(
         )
 
 
-def _maildrop_confirm_loss_on_power_cycle(session: Session, log: RunLog) -> None:
+def _maildrop_confirm_loss_on_power_cycle(
+    session: Session, log: RunLog, had_message_before: bool
+) -> None:
+    """Re-open the connection after the operator power-cycled the TNC
+    (confirmed via read_power_cycle_confirmation() in the caller),
+    re-run normalize() (resets MYCALL from config), then MDCHECK/L/B to
+    see whether the mailbox survived (P22.2). *had_message_before* comes
+    from run_maildrop_interactive()'s tracking of this same session -
+    'L' reporting empty proves nothing if the mailbox was already empty
+    beforehand."""
     log.line("--- MailDrop: confirming loss on power-cycle ---")
     session.disconnect()
-    print()
-    print("Power-cycle the TNC now (off, wait, back on).")
-    if input(
-        "Ready to continue once it has powered back up? [y/N] "
-    ).strip().lower() != "y":
-        log.result("MAILDROP", "INFO", "power-cycle confirmation skipped by operator")
-        return
-
     session.connect()
     session.normalize()  # re-sets MYCALL from config (P21.2)
 
@@ -1766,15 +1887,31 @@ def _maildrop_confirm_loss_on_power_cycle(session: Session, log: RunLog) -> None
     print(resp.decode("ascii", errors="replace"))
     list_resp = session.send_and_read_until_idle(b"L\r")
     print(list_resp.decode("ascii", errors="replace"))
+    list_text = list_resp.decode("ascii", errors="replace")
     b_resp = session.send_and_read_until_idle(MAILBOX_EXIT_COMMAND)
     print(b_resp.decode("ascii", errors="replace"))
 
+    verdict = evaluate_power_cycle_loss(had_message_before, list_text)
     log.result(
-        "MAILDROP", "INFO",
-        f"post-power-cycle -- mailbox 'L' response={list_resp!r} -- "
-        f"compare against the pre-power-cycle state recorded above to "
-        f"confirm the mailbox was lost"
+        "MAILDROP", verdict,
+        f"a message was stored during this session: {had_message_before} "
+        f"-- post-power-cycle 'L': {list_text!r}"
     )
+
+
+def _maildrop_set_daytime(session: Session, log: RunLog) -> None:
+    """Set the TNC clock (DAYTIME) before opening the mailbox (P22.3) -
+    with no RAM buffer battery, DAYTIME reads back as all dots after
+    every power-on (CLAUDE.md), so the mailbox's own date/time column
+    would too. Not part of normalize(): every OTHER hardware subcommand
+    has no use for the clock, only maildrop's own 'L' listing does.
+
+    Reuses ParamsUploader._cmd() and its exact 'yymmddHHMMSS' UTC format
+    (comm/params_uploader.py) rather than rebuilding the command."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cmd = ParamsUploader._cmd("DAYTIME", now.strftime("%y%m%d%H%M%S"))
+    resp = session.verbose_bytes(cmd)
+    log.line(f"DAYTIME set to {now:%y%m%d%H%M%S} (UTC): {resp!r}")
 
 
 def test_maildrop(session: Session, log: RunLog) -> None:
@@ -1788,12 +1925,17 @@ def test_maildrop(session: Session, log: RunLog) -> None:
     if session.dry_run:
         log.line(
             "[dry-run] would query " + ", ".join(_MAILDROP_QUERY_COMMANDS)
-            + ", warn if XMITOK is ON, send MDCHECK, then open an "
+            + ", warn if XMITOK is ON, set the TNC clock (DAYTIME, UTC, "
+              "same format as ParamsUploader) so the mailbox list shows "
+              "real date/time values (P22.3), send MDCHECK, then open an "
               "interactive md>/md-text> terminal that tracks MAILBOX/"
               "ENTRY/CMD state and stops the instant a 'cmd:' prompt is "
-              "seen (P21.3) - nothing is sent in dry-run, the interactive "
-              "phase never starts."
+              "seen (P21.3), then the round-2 sequence and the power-cycle "
+              "test - nothing is sent in dry-run, the interactive phase "
+              "never starts."
         )
+        _maildrop_set_daytime(session, log)
+        log.line(_MAILDROP_SUGGESTED_SEQUENCE)
         log.result("MAILDROP", "INFO", "dry-run, nothing sent")
         return
 
@@ -1820,6 +1962,8 @@ def test_maildrop(session: Session, log: RunLog) -> None:
             "XMITOK ON means the TNC would key the transmitter."
         )
         log.line("WARNING: XMITOK is ON")
+
+    _maildrop_set_daytime(session, log)
 
     print()
     print("Opening the local MailDrop with MDCHECK.")
@@ -1859,7 +2003,7 @@ def test_maildrop(session: Session, log: RunLog) -> None:
         print(resp.decode("ascii", errors="replace"))
         return resp
 
-    final_state, last_sent = run_maildrop_interactive(
+    final_state, last_sent, message_stored = run_maildrop_interactive(
         state, free, _maildrop_read_line, _send, log
     )
     if final_state == "CMD":
@@ -1871,10 +2015,21 @@ def test_maildrop(session: Session, log: RunLog) -> None:
 
     _maildrop_leave_mailbox(session, log, final_state, last_sent)
 
-    if input(
-        "Power-cycle the TNC now to confirm the mailbox is lost? [y/N] "
-    ).strip().lower() == "y":
-        _maildrop_confirm_loss_on_power_cycle(session, log)
+    print()
+    print("Power-cycle test.")
+    print("  1. Switch the TNC OFF now.")
+    print("  2. Wait 5 seconds.")
+    print("  3. Switch it back ON.")
+    proceed = read_power_cycle_confirmation(
+        lambda: input(
+            "Type 'done' when the TNC is back on (or 'skip' to skip "
+            "this test): "
+        )
+    )
+    if proceed:
+        _maildrop_confirm_loss_on_power_cycle(session, log, message_stored)
+    else:
+        log.result("MAILDROP", "INFO", "power-cycle test skipped by operator")
 
 
 # ===========================================================================
