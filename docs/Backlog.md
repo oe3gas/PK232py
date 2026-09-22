@@ -7,6 +7,51 @@
 
 ## Priority 1 — Next implementation sprint
 
+### `maildrop/maildrop.py`'s mnemonic table is unverified and CAN be sent — open (P24.1, 2026-09-22)
+
+`MailDropController`'s module docstring lists a "MailDrop Host Mode
+mnemonics (STABO manual Ch. 12)" table (`HB`/`MY`/`LM`/`MD`/`TP`/`MT`/
+`TL`/`3P`/`KF`/`MM`/`DM`) that has **never been confirmed against real
+hardware** — the exact same class of error as `MI` (believed to be
+MailDrop login, hardware-confirmed 22.09.2026 to actually be MFILTER,
+T115). `MD` in particular is documented in the TRM as MDIGI, not
+MDPROMPT. Marked `UNVERIFIED` in the docstring itself (P24.1) — nothing
+renamed or corrected, per the "never guess a mnemonic" rule; that needs
+its own measurement package, not a guess-fix.
+
+**This is not hypothetical — the code CAN send all eight of these right
+now:** `MailDropController.upload_config()` (`maildrop.py`) calls
+`self._serial.send_command(mnemonic, args)` for every frame
+`_build_config_frames()` builds (`TL`, `3P`, `KF`, `DM`, `MM`, and
+conditionally `HB`, `MY`, `MT`) — eight unverified mnemonics sent in one
+call, the moment something calls `upload_config()`. The seven
+`*_frame()` static methods (`tmail_frame`, `homebbs_frame`,
+`mymail_frame`, `mtext_frame`, `third_party_frame`, `kilonfwd_frame`,
+`mdmon_frame`) build the same frames individually for any other caller.
+**Currently NOT wired into the running app** — `MailDropController` is
+exported from `maildrop/__init__.py` but never instantiated anywhere in
+`main_window.py`/`mode_manager.py`, so none of this runs today. That
+makes it dead code, not a live bug — but the moment any future MailDrop
+feature wires this controller in (see the "MailDrop management dialog"
+entry elsewhere in this file), it would send eight unverified mnemonics
+with no measurement behind any of them. Verify each one with
+`tools/hw_check.py` (or the TRM) before wiring `MailDropController` into
+anything, and add each confirmed mnemonic to CLAUDE.md's "Hardware-
+confirmed Host Mode mnemonics" table as it is measured.
+
+**Also found while looking at this file (unrelated to the mnemonics,
+noted for whoever picks this module up next):** `src/pk232py/maildrop/`
+(`maildrop.py`, `message_store.py`, `__init__.py`) is matched by the
+bare `maildrop/` line in `.gitignore` (added alongside `pk232py.ini`/
+`qso_log.db`/other runtime-data exclusions) and has **never been
+committed to git** — `git log --all -- src/pk232py/maildrop/` returns
+nothing. This looks like the pattern was meant for a runtime data
+directory (where the app might store downloaded mail), not this source
+package, but it was not changed here since fixing a `.gitignore` pattern
+is a separate decision from documenting a mnemonic-table finding — flag
+it for the operator to confirm before anyone relies on git history for
+this module.
+
 ### `SignalMode.handle_frame()` reports any CMD_RESP as a SIAM result — ✅ FIXED (P18.2, 2026-09-22)
 
 Found 21.09.2026 (P16.3, investigation only — no code changed at the
