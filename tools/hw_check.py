@@ -500,24 +500,25 @@ _MAILDROP_QUERY_COMMANDS = [
 ]
 
 _MAILDROP_SUGGESTED_SEQUENCE = """\
-Round 2 - questions for the restore feature (round 1, 22.09.2026 18:43,
-already confirmed L/S/R/K/B, the list format, numbering and free-memory
-accounting - see CLAUDE.md's MailDrop facts):
+Round 3 - two open questions (rounds 1+2, 22.09.2026, already confirmed
+L/S/R/K/B, @BBS, bulletins (SB), traffic (ST), the list format/date-time,
+and the power-cycle test - see CLAUDE.md's MailDrop facts):
 
-  S OE3GAS < DL1ABC      does the SysOp keep a foreign FROM callsign?
-  (subject, text, /EX)
-  S OE1XYZ @ DB0MUC      does @BBS appear in the list?
-  (subject, text, ^Z)    ^Z instead of /EX - is there still a '/E' line?
-  SB ALL                 can the SysOp create a bulletin directly?
-  (subject, text, /EX)
-  ST OE3GAS              traffic type?
-  (subject, text, /EX)
-  L                      FROM, @BBS, type letters, date/time format
-  R <n>                  for the ^Z message - trailing '/E' or not?
-  E <n>                  OPTIONAL, last: see what EDIT asks; keep every
-                         field with Enter, or abort with Ctrl-X
+  S OE3GAS < DL1ABC      foreign FROM - note: '<' (less-than), not '>'
+  (subject, text, /EX)   (round 2 typo'd '>' and the TNC silently
+                         accepted the line up to it, so this is still
+                         unanswered)
+  S OE3GAS               end the text with ^Z - type the TWO CHARACTERS
+  (subject, text)        '^' and 'Z'. Do NOT press Ctrl-Z: on Windows
+  ^Z                     that ends console input (EOFError), not a
+                         literal ^Z - the terminal now recovers from
+                         that automatically if it happens anyway.
+  L                      is FROM = DL1ABC for the first one?
+  R <n>                  read the ^Z message - the tool reports whether
+                         it also ends with a stray '/E' line
+  R <n>                  read the /EX message - same check, for
+                         comparison (round 1 found '/E' after '/EX')
   B                      the terminal ends at cmd:
-  then the power-cycle test
 """
 
 # ^Z/^D/^C typed at the md> prompt are sent as the matching single
@@ -599,18 +600,34 @@ def extract_mailbox_free(response_text: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+_MAILDROP_SUBJECT_PROMPT = "Subject:"
+_MAILDROP_TEXT_PROMPT = "Enter message, ^Z (CTRL-Z) or /EX to end"
+
+
 def classify_maildrop_response(
-    response_text: str, previous_state: str, sent_command: str = "",
+    response_text: str, previous_state: str,
 ) -> tuple[str, bool]:
     """Redetermine the mailbox terminal's state from ONE response
-    (P21.3). Returns (new_state, recognised).
+    (P21.3, reworked P23.2). Returns (new_state, recognised).
+
+    P23.2: the ENTRY transition is detected from the TNC's OWN response
+    text now, never from what was typed to trigger it. Hardware-found
+    22.09.2026 19:16: 'SB ALL' and 'ST OE3GAS' both got a real 'Subject:'
+    prompt, but the old input-based check only recognised a literal
+    'S ...' command, so the state stayed MAILBOX ("unrecognised
+    response") for both. Had the operator stopped there, cleanup would
+    have sent 'B' as a bare command instead of '/EX' - 'B' would have
+    become a text LINE inside the still-open message body instead of
+    leaving the mailbox.
 
     States:
       MAILBOX - the '(...)  <n> free  (...) >' prompt was seen
-      ENTRY   - inside message entry (started by sending 'S ...' while
-                in MAILBOX; lasts until a MAILBOX prompt returns) - free-
-                form subject/text prompts here are the NORM, not a
-                warning-worthy anomaly
+      ENTRY   - the mailbox is asking for a subject ('Subject:') or a
+                message body ('Enter message, ^Z (CTRL-Z) or /EX to
+                end'), or an earlier response already put it there and
+                this one is just a plain text echo with no prompt of
+                its own - free-form subject/text prompts here are the
+                NORM, not a warning-worthy anomaly
       CMD     - a 'cmd:' prompt was seen. SAFETY: the caller must stop
                 the interactive phase immediately when this is returned
                 - once the TNC is back at its own command interpreter, a
@@ -618,16 +635,18 @@ def classify_maildrop_response(
                 completely different there (e.g. 'K' = CONVERSE,
                 22.09.2026 finding).
 
-    'recognised' is False only when the response matches neither known
-    prompt AND no ENTRY transition applies - i.e. in MAILBOX state, where
-    exactly one of the two known prompts is always expected. Never False
-    while already in ENTRY (see above).
+    'recognised' is False only when the response matches nothing above
+    AND there was no ENTRY state to fall back on - i.e. in MAILBOX
+    state, where exactly one of the known prompts is always expected.
     """
     if maildrop_session_left(response_text):
         return "CMD", True
     if _MAILBOX_PROMPT_RE.search(response_text):
         return "MAILBOX", True
-    if previous_state == "MAILBOX" and sent_command.strip().upper().split()[:1] == ["S"]:
+    stripped = response_text.rstrip()
+    if stripped.endswith(_MAILDROP_SUBJECT_PROMPT):
+        return "ENTRY", True
+    if stripped.endswith(_MAILDROP_TEXT_PROMPT):
         return "ENTRY", True
     if previous_state == "ENTRY":
         return "ENTRY", True
@@ -714,6 +733,19 @@ def maildrop_response_has_e_trailer(response_text: str) -> bool:
     return bool(lines) and lines[-1].strip() == "/E"
 
 
+_STORED_MESSAGE_RE = re.compile(r"Message stored as #\s*(\d+)")
+
+
+def parse_stored_message_number(response_text: str) -> Optional[int]:
+    """Return the message number from a 'Message stored as # <n>'
+    response (P23.4), or None if the response does not contain one -
+    used to remember whether a message was ended with '/EX' or with
+    '^Z' ($1A), so a later 'R <n>' can report the '/E' trailer finding
+    against the right ending method."""
+    m = _STORED_MESSAGE_RE.search(response_text)
+    return int(m.group(1)) if m else None
+
+
 def run_maildrop_interactive(
     initial_state: str,
     initial_free: Optional[int],
@@ -739,33 +771,74 @@ def run_maildrop_interactive(
     interpreter, where single letters mean something else entirely ('K'
     = CONVERSE) - with MYCALL set and XMITOK ON, that would have
     transmitted.
+
+    P23.3: a Windows console turns a typed Ctrl-Z into an EOFError, not
+    the two literal characters '^'/'Z' - read_line() reports that the
+    same way as a real "input closed" (returns None), so this function
+    tells them apart by STATE: None while in ENTRY is read as "the
+    operator meant to end the message" and sends $1A instead of
+    stopping; None anywhere else is still a real EOF, same as before.
+
+    P23.4: tracks which ending method (('/EX' or '^Z') each stored
+    message used, so a later 'R <n>' typed by the operator can report
+    the maildrop_response_has_e_trailer() finding against the right one
+    in the run's summary (log.result()), separately for each method.
     """
     state = initial_state
     free = initial_free
     last_sent: Optional[bytes] = None
     message_stored = False
+    end_method_by_number: dict[int, str] = {}
+    pending_end_method: Optional[str] = None
 
     while True:
         line = read_line(state, free)
         if line is None:
-            log.line("INFO: input closed (EOF) - leaving the terminal")
-            return state, last_sent, message_stored
-
-        kind, payload = classify_maildrop_input(line)
-        if kind == "quit":
-            log.line("INFO: operator typed /quit - leaving the terminal")
-            return state, last_sent, message_stored
+            if state != "ENTRY":
+                log.line("INFO: input closed (EOF) - leaving the terminal")
+                return state, last_sent, message_stored
+            log.line(
+                "INFO: console Ctrl-Z interpreted as message end "
+                "(EOFError in ENTRY state)"
+            )
+            payload = b"\x1a"
+            note = f"[{state}] console Ctrl-Z (EOF)"
+            pending_end_method = "^Z"
+        else:
+            kind, payload = classify_maildrop_input(line)
+            if kind == "quit":
+                log.line("INFO: operator typed /quit - leaving the terminal")
+                return state, last_sent, message_stored
+            note = f"[{state}] {line.strip()!r}"
+            if payload == b"\x1a":
+                pending_end_method = "^Z"
+            elif line.strip().upper() == "/EX":
+                pending_end_method = "/EX"
 
         last_sent = payload
-        resp_bytes = send(payload, f"[{state}] {line.strip()!r}")
+        resp_bytes = send(payload, note)
         resp_text = resp_bytes.decode("ascii", errors="replace")
 
         if "*** No free memory" in resp_text:
             log.line("WARNING: mailbox reports *** No free memory")
-        if "Message stored as #" in resp_text:
+        stored_number = parse_stored_message_number(resp_text)
+        if stored_number is not None:
             message_stored = True
+            if pending_end_method is not None:
+                end_method_by_number[stored_number] = pending_end_method
+            pending_end_method = None
 
-        new_state, recognised = classify_maildrop_response(resp_text, state, line)
+        if line is not None and line.strip().upper().split()[:1] == ["R"]:
+            parts = line.strip().split()
+            msg_num = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+            has_trailer = maildrop_response_has_e_trailer(resp_text)
+            method = end_method_by_number.get(msg_num, "unknown")
+            log.result(
+                f"MAILDROP R{msg_num if msg_num is not None else '?'}", "INFO",
+                f"/E trailer={has_trailer} (message ended via {method})"
+            )
+
+        new_state, recognised = classify_maildrop_response(resp_text, state)
         if not recognised:
             log.line(
                 f"WARNING: unrecognised response (state stays {state!r}): "
@@ -1914,7 +1987,9 @@ def _maildrop_set_daytime(session: Session, log: RunLog) -> None:
     log.line(f"DAYTIME set to {now:%y%m%d%H%M%S} (UTC): {resp!r}")
 
 
-def test_maildrop(session: Session, log: RunLog) -> None:
+def test_maildrop(
+    session: Session, log: RunLog, skip_power_cycle: bool = False,
+) -> None:
     log.line("--- MailDrop: guided recording terminal (P20 Teil B / P21.3) ---")
     session.normalize()
     log.line(
@@ -1928,11 +2003,12 @@ def test_maildrop(session: Session, log: RunLog) -> None:
             + ", warn if XMITOK is ON, set the TNC clock (DAYTIME, UTC, "
               "same format as ParamsUploader) so the mailbox list shows "
               "real date/time values (P22.3), send MDCHECK, then open an "
-              "interactive md>/md-text> terminal that tracks MAILBOX/"
-              "ENTRY/CMD state and stops the instant a 'cmd:' prompt is "
-              "seen (P21.3), then the round-2 sequence and the power-cycle "
-              "test - nothing is sent in dry-run, the interactive phase "
-              "never starts."
+              "interactive md>/md-text> terminal that tracks MAILBOX/ENTRY "
+              "state from the TNC's OWN response text (P23.2) and stops "
+              "the instant a 'cmd:' prompt is seen (P21.3), then the "
+              "round-3 sequence and (unless --skip-power-cycle) the "
+              "power-cycle test - nothing is sent in dry-run, the "
+              "interactive phase never starts."
         )
         _maildrop_set_daytime(session, log)
         log.line(_MAILDROP_SUGGESTED_SEQUENCE)
@@ -1991,7 +2067,11 @@ def test_maildrop(session: Session, log: RunLog) -> None:
     print(_MAILDROP_SUGGESTED_SEQUENCE)
     print(
         "Type mailbox commands at the prompt below (not a requirement, "
-        "just a starting point). ^Z/^D/^C are sent as the matching "
+        "just a starting point). To end a message with ^Z: type the TWO "
+        "CHARACTERS '^' and 'Z' -- do NOT press the real Ctrl-Z key, on "
+        "Windows that ends console input instead of sending the "
+        "character (the terminal now recovers automatically if it "
+        "happens anyway, P23.3). ^D/^C are sent as their matching "
         "control byte. Type /quit to leave this terminal (this does NOT "
         "itself log out of the mailbox). The terminal stops on its own "
         "the instant the mailbox reports 'cmd:' -- see the safety note "
@@ -2014,6 +2094,14 @@ def test_maildrop(session: Session, log: RunLog) -> None:
         )
 
     _maildrop_leave_mailbox(session, log, final_state, last_sent)
+
+    if skip_power_cycle:
+        log.result(
+            "MAILDROP", "INFO",
+            "power-cycle test skipped (--skip-power-cycle) -- already "
+            "PASSed in round 2, see Testplan T116"
+        )
+        return
 
     print()
     print("Power-cycle test.")
@@ -2064,6 +2152,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--seconds", type=float, default=60.0,
         help="siam only: capture duration in seconds (default: 60)"
     )
+    p.add_argument(
+        "--skip-power-cycle", action="store_true",
+        help="maildrop only: skip the power-cycle test (already PASSed "
+             "in an earlier round, Testplan T116)"
+    )
     return p
 
 
@@ -2107,7 +2200,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "t111":   [lambda s, l: test_t111(s, l)],
         "t112":   [lambda s, l: test_t112(s, l, app_config)],
         "mi":       [lambda s, l: test_mi(s, l)],
-        "maildrop": [lambda s, l: test_maildrop(s, l)],
+        "maildrop": [lambda s, l: test_maildrop(s, l, args.skip_power_cycle)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
