@@ -92,7 +92,6 @@ desktop.ini
 pk232py.ini
 *.log
 qso_log.db
-maildrop/
 *.bak
 
 # Generated WEFAX test WAVs (tools/fax_wav_generator.py — regenerate on demand)
