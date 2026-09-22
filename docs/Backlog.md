@@ -39,18 +39,33 @@ with no measurement behind any of them. Verify each one with
 anything, and add each confirmed mnemonic to CLAUDE.md's "Hardware-
 confirmed Host Mode mnemonics" table as it is measured.
 
-**Also found while looking at this file (unrelated to the mnemonics,
-noted for whoever picks this module up next):** `src/pk232py/maildrop/`
-(`maildrop.py`, `message_store.py`, `__init__.py`) is matched by the
-bare `maildrop/` line in `.gitignore` (added alongside `pk232py.ini`/
-`qso_log.db`/other runtime-data exclusions) and has **never been
-committed to git** — `git log --all -- src/pk232py/maildrop/` returns
-nothing. This looks like the pattern was meant for a runtime data
-directory (where the app might store downloaded mail), not this source
-package, but it was not changed here since fixing a `.gitignore` pattern
-is a separate decision from documenting a mnemonic-table finding — flag
-it for the operator to confirm before anyone relies on git history for
-this module.
+**`.gitignore` finding above — ✅ FIXED (P25, 2026-09-22):** the bare
+`maildrop/` line was removed (`Fix gitignore: anchored data dir
+patterns, maildrop source was excluded`) and
+`src/pk232py/maildrop/` (`maildrop.py`, `message_store.py`,
+`__init__.py`) is now tracked in git (`Track maildrop module
+(unverified mnemonics, to be rewritten after T117)`). Git archaeology
+found no evidence the line ever guarded a real data directory — the
+very same initial commit (15f9a4f) both added the `maildrop/` line
+*and* documented `src/pk232py/maildrop/` as a source directory in
+README.md, and `message_store.py` has always stored its SQLite file
+at `~/.pk232py/maildrop.db`, outside the repo. Most likely an
+unverified, unnoticed mistake from day one. See CLAUDE.md's "Repo /
+tooling" gotchas for the general lesson (unanchored `.gitignore`
+patterns match at any depth).
+
+**Confirmed while checking it in (P25.2):** `MailDropController` and
+`MessageStore` are exported from `maildrop/__init__.py` but are not
+imported anywhere else in `src/pk232py/` (checked `main_window.py`,
+`mode_manager.py`, every other module — no `from .maildrop import`,
+no `from pk232py.maildrop`, no bare `MailDropController`/
+`MessageStore` reference outside the package itself). The module is
+dead code today, not a live bug — the unverified-mnemonics risk above
+only becomes real the moment something wires it in. **Plan:** leave
+it unwired until T117 (MailDrop over Host Mode, `docs/Testplan.md`)
+is measured on real hardware; then replace this module's guessed
+mnemonic table with a version built on the measured `$60`/`$70`
+protocol, rather than fixing individual mnemonics piecemeal.
 
 ### `SignalMode.handle_frame()` reports any CMD_RESP as a SIAM result — ✅ FIXED (P18.2, 2026-09-22)
 
