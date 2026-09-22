@@ -1099,6 +1099,31 @@ Grows over time.
   use `git add claude.md`.
 - **Project docs are not in `pk232py_sources.txt`** — upload them to the Claude
   project knowledge separately. See §1.
+- **A `.gitignore` pattern with no leading slash matches at every depth,
+  not just the repo root** (found P25, 2026-09-22): a bare `maildrop/`
+  line, added in the very first commit alongside genuine runtime-data
+  exclusions (`pk232py.ini`, `qso_log.db`), silently matched
+  `src/pk232py/maildrop/` too and excluded that whole source module from
+  git from day one — with no error, no warning, nothing to notice short
+  of `git log --all -- <path>` coming back empty. Any new `.gitignore`
+  entry meant for a specific data directory must be anchored (`/name/`),
+  never a bare directory name, or it can just as easily swallow a future
+  source directory that happens to share the name.
+- **Tests run via `.venv\Scripts\python.exe`, not the bare `python` on
+  PATH** (found P25, 2026-09-22): this machine's plain `python` resolves
+  to a system Python 3.14 install with no PyQt6 DLLs, so `python -m
+  pytest` fails at collection with `ImportError: DLL load failed while
+  importing QtCore` for every module that touches `comm/serial_manager.py`
+  — a red herring that looks like a code regression. Always run
+  `.venv\Scripts\python.exe -m pytest` (or activate the venv first).
+- **The `Sources2Text.ps1` export is not evidence that a file is
+  tracked by git — it reads the filesystem, not git.** A module can be
+  fully present in `pk232py_sources.txt` and in the Claude project
+  knowledge while never having been committed at all (exactly what
+  happened to `src/pk232py/maildrop/`, above) — export coverage and git
+  history are two independent questions; always check the latter with
+  `git log --all -- <path>` / `git ls-files <path>` before trusting that
+  a module's history exists.
 
 ### Dead Code / Cleanup
 
