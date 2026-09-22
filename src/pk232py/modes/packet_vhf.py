@@ -48,6 +48,15 @@ class VHFPacketMode(HFPacketMode):
       - HBAUD 1200 sets the host baud rate
       - MAXFRAME 4 is appropriate for reliable VHF links
       - SLOTTIME 10 (shorter than HF) for faster channel access
+
+    P19.3: the inherited ``maxframe``/``slottime`` constructor
+    parameters (from :class:`HFPacketMode`) are **NOT used here** —
+    ``get_init_frames()`` below deliberately sends VHF's own fixed
+    ``MX 4`` / ``SL 10`` regardless of what a ``VHFPacketMode(maxframe=...,
+    slottime=...)`` call was given. VHF Packet has no config-driven
+    parameter set of its own yet (there is no ``VHFPacketConfig`` —
+    HF Packet's dialog/config is shared, per CLAUDE.md's "USERS" gotcha);
+    adding one is tracked in Backlog.md.
     """
 
     name         = "VHF Packet"
