@@ -777,7 +777,7 @@ class TestClassifyMaildropResponse:
         # reprints its own prompt, so this must NOT be flagged.
         resp = f"h\r\n*** What?\r\n{_MAILBOX_PROMPT}"
         state, recognised = hw_check.classify_maildrop_response(
-            resp, previous_state="MAILBOX", sent_command="h"
+            resp, previous_state="MAILBOX"
         )
         assert (state, recognised) == ("MAILBOX", True)
 
@@ -791,29 +791,70 @@ class TestClassifyMaildropResponse:
         )
         assert (state, recognised) == ("MAILBOX", True)
 
-    def test_s_command_from_mailbox_enters_text_entry(self):
+    def test_subject_prompt_enters_text_entry(self):
+        # P23.2: detected from the RESPONSE ('Subject:'), not from
+        # having typed a literal 'S ...' command.
         state, recognised = hw_check.classify_maildrop_response(
-            "Subject: ", previous_state="MAILBOX", sent_command="S OE3GAS"
+            "s oe3gas\r\nSubject:\r\n", previous_state="MAILBOX"
+        )
+        assert (state, recognised) == ("ENTRY", True)
+
+    def test_sb_bulletin_prompt_enters_text_entry(self):
+        # P23.2 hardware finding, 22.09.2026 19:16: 'sb all' got a real
+        # 'Subject:' prompt, but the old input-only check (looking only
+        # for 'S ...') left the state at MAILBOX and flagged it as
+        # unrecognised - fixed by reading the response instead.
+        state, recognised = hw_check.classify_maildrop_response(
+            "sb all\r\nSubject:\r\n", previous_state="MAILBOX"
+        )
+        assert (state, recognised) == ("ENTRY", True)
+
+    def test_st_traffic_prompt_enters_text_entry(self):
+        state, recognised = hw_check.classify_maildrop_response(
+            "st oe3gas\r\nSubject:\r\n", previous_state="MAILBOX"
+        )
+        assert (state, recognised) == ("ENTRY", True)
+
+    def test_text_body_prompt_enters_text_entry(self):
+        resp = (
+            "Test Bulletin\r\nEnter message, ^Z (CTRL-Z) or /EX to "
+            "end\r\n\r\n"
+        )
+        state, recognised = hw_check.classify_maildrop_response(
+            resp, previous_state="ENTRY"
         )
         assert (state, recognised) == ("ENTRY", True)
 
     def test_free_form_prompt_inside_entry_is_not_flagged(self):
         state, recognised = hw_check.classify_maildrop_response(
-            "Text: ", previous_state="ENTRY", sent_command="Test subject"
+            "Text: ", previous_state="ENTRY"
         )
         assert (state, recognised) == ("ENTRY", True)
 
     def test_mailbox_prompt_returns_from_entry(self):
         state, recognised = hw_check.classify_maildrop_response(
-            _MAILBOX_PROMPT, previous_state="ENTRY", sent_command="/EX"
+            _MAILBOX_PROMPT, previous_state="ENTRY"
         )
         assert (state, recognised) == ("MAILBOX", True)
 
     def test_unrecognised_response_in_mailbox_state_is_flagged(self):
         state, recognised = hw_check.classify_maildrop_response(
-            "???garbled???", previous_state="MAILBOX", sent_command="L"
+            "???garbled???", previous_state="MAILBOX"
         )
         assert (state, recognised) == ("MAILBOX", False)
+
+    def test_you_have_mail_before_prompt_is_mailbox_and_free_memory_parsed(self):
+        # P23.5: real MDCHECK response, 22.09.2026 19:16, unread mail
+        # present.
+        resp = (
+            "MDCHECK\r\nYou have mail.\r\n"
+            "(AEA PK-232M)  18452 free  (B,E,K,L,R,S) >\r\n"
+        )
+        state, recognised = hw_check.classify_maildrop_response(
+            resp, previous_state="MAILBOX"
+        )
+        assert (state, recognised) == ("MAILBOX", True)
+        assert hw_check.extract_mailbox_free(resp) == 18452
 
 
 class TestRunMaildropInteractiveSafety:
@@ -925,3 +966,189 @@ class TestRunMaildropInteractiveSafety:
 
         assert final_state == "MAILBOX"
         assert last_sent == b"\x1a"
+
+
+class TestParseStoredMessageNumber:
+    def test_extracts_number(self):
+        assert hw_check.parse_stored_message_number(
+            "Message stored as # 7\r\n"
+        ) == 7
+
+    def test_none_when_absent(self):
+        assert hw_check.parse_stored_message_number("no message here") is None
+
+
+class TestRunMaildropInteractiveCtrlZEof:
+    """P23.3: a Windows console turns a typed Ctrl-Z into an EOFError
+    (found 22.09.2026, 19:16 - the operator's real attempt at ^Z closed
+    the whole terminal instead of ending the message). An EOFError while
+    in ENTRY is now read as "end the message" and sends $1A instead of
+    stopping; outside ENTRY it is still treated as a real EOF."""
+
+    def test_eof_in_entry_sends_ctrl_z_and_continues_reading(self):
+        calls = iter([None, "/quit"])
+        sent_payloads: list[bytes] = []
+
+        def read_line(state, free):
+            return next(calls)
+
+        def send(payload, note):
+            sent_payloads.append(payload)
+            return f"Message stored as # 7\r\n{_MAILBOX_PROMPT}".encode("ascii")
+
+        log = hw_check.RunLog(None)
+        final_state, last_sent, message_stored = hw_check.run_maildrop_interactive(
+            "ENTRY", 17976, read_line, send, log
+        )
+
+        assert sent_payloads == [b"\x1a"]
+        assert last_sent == b"\x1a"
+        assert message_stored is True
+        assert final_state == "MAILBOX"
+
+    def test_eof_outside_entry_still_stops_without_sending(self):
+        def read_line(state, free):
+            return None
+
+        def send(payload, note):
+            raise AssertionError("must never send on a real EOF")
+
+        log = hw_check.RunLog(None)
+        final_state, last_sent, message_stored = hw_check.run_maildrop_interactive(
+            "MAILBOX", 18536, read_line, send, log
+        )
+
+        assert final_state == "MAILBOX"
+        assert last_sent is None
+        assert message_stored is False
+
+    def test_eof_in_entry_then_input_still_broken_stops_cleanly(self):
+        # If input() never recovers after the console EOFError, the next
+        # read_line() call also returns None - but by then the state has
+        # already moved to MAILBOX, so the ordinary "real EOF" path
+        # applies and the terminal ends cleanly instead of looping.
+        calls = iter([None, None])
+
+        def read_line(state, free):
+            return next(calls)
+
+        def send(payload, note):
+            return f"Message stored as # 7\r\n{_MAILBOX_PROMPT}".encode("ascii")
+
+        log = hw_check.RunLog(None)
+        final_state, last_sent, message_stored = hw_check.run_maildrop_interactive(
+            "ENTRY", 17976, read_line, send, log
+        )
+
+        assert final_state == "MAILBOX"
+        assert last_sent == b"\x1a"
+
+
+class TestMaildropReadTrailerTracking:
+    """P23.4: after 'R <n>' is typed, the run records (via
+    log.result(), so it lands in the summary) whether the response has
+    an '/E' trailer, and which ending method ('/EX' or '^Z') that
+    message was originally stored with."""
+
+    def test_reports_trailer_and_ex_end_method(self):
+        typed = iter(["/EX", "R 1", "/quit"])
+        responses = iter([
+            f"Message stored as # 1\r\n{_MAILBOX_PROMPT}",
+            f"some text\r\n/E\r\n{_MAILBOX_PROMPT}",
+        ])
+
+        def read_line(state, free):
+            return next(typed, None)
+
+        def send(payload, note):
+            return next(responses).encode("ascii")
+
+        log = hw_check.RunLog(None)
+        hw_check.run_maildrop_interactive("ENTRY", 18452, read_line, send, log)
+
+        matches = [f for f in log.findings if f[0] == "MAILDROP R1"]
+        assert len(matches) == 1
+        _, verdict, detail = matches[0]
+        assert verdict == "INFO"
+        assert "trailer=True" in detail
+        assert "/EX" in detail
+
+    def test_reports_no_trailer_and_ctrl_z_end_method(self):
+        typed = iter(["^Z", "R 7", "/quit"])
+        responses = iter([
+            f"Message stored as # 7\r\n{_MAILBOX_PROMPT}",
+            f"some text\r\n{_MAILBOX_PROMPT}",
+        ])
+
+        def read_line(state, free):
+            return next(typed, None)
+
+        def send(payload, note):
+            return next(responses).encode("ascii")
+
+        log = hw_check.RunLog(None)
+        hw_check.run_maildrop_interactive("ENTRY", 17976, read_line, send, log)
+
+        matches = [f for f in log.findings if f[0] == "MAILDROP R7"]
+        assert len(matches) == 1
+        _, verdict, detail = matches[0]
+        assert "trailer=False" in detail
+        assert "^Z" in detail
+
+
+# Real 'L' response with six messages, hw_logs/20260922_191657_maildrop.log
+# (P23, round 2) - types P/B/T, a populated '@ BBS', and real dates/times
+# now that DAYTIME has been set, alongside one message still showing dots
+# (stored before the clock was set, round 1).
+_MAILDROP_LIST_ROUND2 = (
+    "l\r\nMsg#    Size To     From   @ BBS  Date       Time   Title\r\n"
+    "  6 TN    33 OE3GAS OE3GAS        22-Sep-26  17:20  test traffic\r\n"
+    "  5 BN    52 ALL    OE3GAS        22-Sep-26  17:19  Test Bulletin\r\n"
+    "  4 PN    41 OE1XYZ OE3GAS DB0MUC 22-Sep-26  17:18  ein @ test\r\n"
+    "  3 PN    37 OE3GAS OE3GAS        22-Sep-26  17:17  From Test 1\r\n"
+    "  2 PN    35 OE3GAS OE3GAS        .........  .....  Test 2\r\n"
+    "(AEA PK-232M)  18088 free  (B,E,K,L,R,S) >\r\n"
+)
+
+
+class TestParseMaildropListRound2:
+    """P23.5: the round-2 full listing - traffic (T), bulletin (B) and
+    personal (P) types, a populated '@ BBS' column, real dates/times now
+    that DAYTIME has been set, and one still-dotted row from round 1
+    (stored before the clock was set)."""
+
+    def test_all_six_rows_in_newest_first_order(self):
+        rows = hw_check.parse_maildrop_list(_MAILDROP_LIST_ROUND2)
+        assert [r["number"] for r in rows] == [6, 5, 4, 3, 2]
+
+    def test_traffic_type(self):
+        rows = hw_check.parse_maildrop_list(_MAILDROP_LIST_ROUND2)
+        traffic = next(r for r in rows if r["number"] == 6)
+        assert traffic["type"] == "T"
+        assert traffic["to"] == "OE3GAS"
+        assert traffic["bbs"] is None
+
+    def test_bulletin_type_and_all_recipient(self):
+        rows = hw_check.parse_maildrop_list(_MAILDROP_LIST_ROUND2)
+        bulletin = next(r for r in rows if r["number"] == 5)
+        assert bulletin["type"] == "B"
+        assert bulletin["to"] == "ALL"
+
+    def test_bbs_column_populated(self):
+        rows = hw_check.parse_maildrop_list(_MAILDROP_LIST_ROUND2)
+        via_bbs = next(r for r in rows if r["number"] == 4)
+        assert via_bbs["type"] == "P"
+        assert via_bbs["to"] == "OE1XYZ"
+        assert via_bbs["bbs"] == "DB0MUC"
+
+    def test_real_date_and_time_format(self):
+        rows = hw_check.parse_maildrop_list(_MAILDROP_LIST_ROUND2)
+        msg3 = next(r for r in rows if r["number"] == 3)
+        assert msg3["date"] == "22-Sep-26"
+        assert msg3["time"] == "17:17"
+
+    def test_dotted_row_from_before_daytime_still_none(self):
+        rows = hw_check.parse_maildrop_list(_MAILDROP_LIST_ROUND2)
+        msg2 = next(r for r in rows if r["number"] == 2)
+        assert msg2["date"] is None
+        assert msg2["time"] is None
