@@ -4,7 +4,7 @@
 #
 # This is a DEV-ONLY hardware verification tool. It is never shipped with
 # the application. GPL v2, same as the rest of tools/ (see tools/README.md).
-"""hw_check.py - solo hardware checks for a real PK-232MBX (P14/P17).
+"""hw_check.py - solo hardware checks for a real PK-232MBX (P14/P17/P20).
 
 Checks an operator can run alone, with the real TNC, no second station
 required except for T101:
@@ -32,10 +32,21 @@ required except for T101:
             neutral value (neither HF's nor VHF's own) so each is judged
             separately, then replays the real frames _on_mode_selected()
             sends, in the same order.
+    mi      Does the app's MailDrop button (mnemonic MI) actually query
+            MFILTER instead? Host Mode query only, no writes.
+    maildrop
+            Guided, mitschreib-style local MailDrop terminal (verbose
+            mode, serial only - never transmits on the air). The real
+            mailbox command set/prompts/message-end sequence are NOT
+            known in advance; this records every byte in both directions
+            while the operator drives an interactive md> prompt. See
+            docs/P20_MailDrop_Measure_Spec.md and docs/HW_Solo_Tests.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
-            needs a second receiver) and NOT siam/t111/t112 (siam needs a
+            needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
-            and recorded individually), so it must be run on its own.
+            and recorded individually), and NOT mi/maildrop (mi is fine
+            alone but grouped with its guided counterpart; maildrop is
+            fully interactive), so each must be run on its own.
 
 Usage::
 
@@ -46,6 +57,8 @@ Usage::
     python tools/hw_check.py --port COM6 siam --seconds 120
     python tools/hw_check.py --port COM6 t111
     python tools/hw_check.py --port COM6 t112
+    python tools/hw_check.py --port COM6 mi
+    python tools/hw_check.py --port COM6 maildrop
     python tools/hw_check.py --dry-run all      # no port opened at all
 
 ------------------------------------------------------------------------------
@@ -394,6 +407,122 @@ def build_t112_frame_sequence(
     )
 
 
+# ---------------------------------------------------------------------------
+# P20 Teil C -- MI probe (does the MailDrop button actually send MFILTER?)
+# ---------------------------------------------------------------------------
+
+# The mnemonic the app's MailDrop button sends - must always equal whatever
+# main_window.py's _on_packet_maildrop() actually builds, or the probe
+# measures a different command than the one the app sends (P17.2 pattern).
+# TestMiProbeMnemonic in test_hw_check.py enforces this against the real
+# source file.
+MI_PROBE_MNEMONIC = b'MI'
+
+_MAILDROP_BUTTON_FUNC_RE = re.compile(
+    r"def _on_packet_maildrop\(self\).*?(?=\n    def )", re.DOTALL
+)
+_BUILD_COMMAND_RE = re.compile(r"build_command\(b'([A-Za-z]{2})'\)")
+
+
+def extract_maildrop_button_mnemonic(main_window_source: str) -> Optional[str]:
+    """Pull the mnemonic _on_packet_maildrop() actually sends out of
+    main_window.py's SOURCE TEXT (P20 Teil C) - reading the file as text
+    rather than importing main_window.py, which would pull the entire
+    PyQt6 widget tree in just to compare two bytes literals (same
+    approach as extract_passall_toggle_mnemonic(), P17.2). Returns None
+    if the function or its build_command() call is not found (source
+    reshaped)."""
+    func_match = _MAILDROP_BUTTON_FUNC_RE.search(main_window_source)
+    if not func_match:
+        return None
+    cmd_match = _BUILD_COMMAND_RE.search(func_match.group(0))
+    return cmd_match.group(1) if cmd_match else None
+
+
+def evaluate_mi_probe(
+    mi_value: Optional[str], mfilter_value: Optional[str]
+) -> str:
+    """P20 Teil C's decision: does Host Mode query MI read back the same
+    value as verbose query MFILTER? FAIL confirms the mnemonic-table claim
+    (MI = MFILTER, not MailDrop login) and that the app's MailDrop button
+    sends the wrong command; PASS means no evidence for that; INCONCLUSIVE
+    if either query failed."""
+    if mi_value is None or mfilter_value is None:
+        return "INCONCLUSIVE"
+    return "FAIL" if mi_value == mfilter_value else "PASS"
+
+
+# ---------------------------------------------------------------------------
+# P20 Teil B -- MailDrop recorder (guided, mitschreib-style terminal)
+# ---------------------------------------------------------------------------
+
+_MAILDROP_QUERY_COMMANDS = [
+    "MAILDROP", "MYMAIL", "MYCALL", "MTEXT", "MMSG",
+    "3RDPARTY", "KILONFWD", "TMAIL", "MDMON", "XMITOK",
+]
+
+_MAILDROP_SUGGESTED_SEQUENCE = """\
+Suggested sequence (follow the mailbox's own prompts):
+  H           help - learn the real command set first
+  L           list (probably empty after power-up)
+  S OE3GAS    write a test message to yourself - follow the prompts
+              for subject and text; the help tells how to end the text
+  L           list again - note number, status letters, format
+  R <n>       read it
+  S OE3GAS    a second message
+  K <n>       kill the first one
+  L           list again
+  B           leave the mailbox (or whatever the help says)
+"""
+
+# ^Z/^D/^C typed at the md> prompt are sent as the matching single
+# control byte, not as literal text.
+_MAILDROP_CTRL_TOKENS = {"^Z": b"\x1a", "^D": b"\x04", "^C": b"\x03"}
+
+_CONTROL_CHAR_LABELS = {
+    0x03: "<^C>", 0x04: "<^D>", 0x0A: "<LF>", 0x0D: "<CR>", 0x1A: "<^Z>",
+}
+
+
+def classify_maildrop_input(line: str) -> tuple[str, Optional[bytes]]:
+    """Classify one line typed at the maildrop recorder's md> prompt
+    (P20 Teil B). Returns (kind, payload):
+
+      ("quit", None)       - the tool's own exit command, never sent
+      ("control", b'...')  - ^Z/^D/^C, sent as the single matching byte
+      ("text", b'...\\r')   - a plain line, sent with a trailing CR
+    """
+    stripped = line.strip()
+    if stripped == "/quit":
+        return ("quit", None)
+    if stripped in _MAILDROP_CTRL_TOKENS:
+        return ("control", _MAILDROP_CTRL_TOKENS[stripped])
+    return ("text", (line + "\r").encode("ascii", errors="replace"))
+
+
+def format_bytes_with_controls(data: bytes) -> str:
+    """Render *data* as text with control bytes shown as visible labels
+    (<CR>, <LF>, <^Z>, ...) instead of invisible or garbled characters -
+    the maildrop recorder's protocol format (P20 Teil B)."""
+    out = []
+    for b in data:
+        if b in _CONTROL_CHAR_LABELS:
+            out.append(_CONTROL_CHAR_LABELS[b])
+        elif 0x20 <= b < 0x7F:
+            out.append(chr(b))
+        else:
+            out.append(f"<${b:02X}>")
+    return "".join(out)
+
+
+def maildrop_session_left(tail_text: str) -> bool:
+    """True if a verbose-mode 'cmd:' prompt appears anywhere in
+    *tail_text* - the only observable signal that the local MailDrop
+    session was left (P20 Teil B step 5). No Host Mode/verbose command is
+    known to exit MailDrop, so this is a detection, not a control."""
+    return "cmd:" in tail_text
+
+
 def scan_for_tnc_errors(lines: list[str]) -> list[str]:
     """Return every response line that looks like a TNC error message
     ('?What?', '?bad', '?too many', or any other line starting with '?')."""
@@ -600,6 +729,58 @@ class Session:
 
     def set_verbose(self, name: str, value: str, timeout: float = 3.0) -> str:
         return self.verbose(f"{name} {value}", timeout=timeout)
+
+    def read_until_idle(self, idle: float = 1.5, max_total: float = 10.0) -> bytes:
+        """Read from the same raw_data_received-fed _raw_buf as
+        verbose_bytes(), but stop on an IDLE GAP instead of the normal
+        'cmd:' prompt (P20 Teil B). The local MailDrop session uses its
+        own prompt, unknown in advance - write_verbose_wait() would wait
+        for 'cmd:' forever. Does NOT clear the buffer first, so callers
+        control when a fresh read window starts (send_and_read_until_idle()
+        below does that for the normal case)."""
+        if self.dry_run:
+            return b""
+        deadline = time.monotonic() + max_total
+        last_len = len(self._raw_buf)
+        idle_since = time.monotonic()
+        while time.monotonic() < deadline:
+            self._pump(0.05)
+            cur_len = len(self._raw_buf)
+            if cur_len != last_len:
+                last_len = cur_len
+                idle_since = time.monotonic()
+            elif time.monotonic() - idle_since >= idle:
+                break
+        return bytes(self._raw_buf)
+
+    def send_and_read_until_idle(
+        self, data: bytes, note: str = "",
+        idle: float = 1.5, max_total: float = 10.0,
+    ) -> bytes:
+        """Write raw bytes with write_verbose() (no 'cmd:' wait) and read
+        the response with read_until_idle() (P20 Teil B) - the MailDrop
+        recorder's one send/receive primitive. Logs hex + text-with-
+        visible-controls in both directions, matching the protocol format
+        Teil B asks for."""
+        label = f"  ({note})" if note else ""
+        if self.dry_run:
+            self.log.line(
+                f"[dry-run] >> hex={data.hex(' ').upper()} "
+                f"text={format_bytes_with_controls(data)}{label}"
+            )
+            return b""
+        del self._raw_buf[:]
+        self.log.line(
+            f">> hex={data.hex(' ').upper()} "
+            f"text={format_bytes_with_controls(data)}{label}"
+        )
+        self.sm.write_verbose(data)
+        resp = self.read_until_idle(idle=idle, max_total=max_total)
+        self.log.line(
+            f"<< hex={resp.hex(' ').upper()} "
+            f"text={format_bytes_with_controls(resp)}"
+        )
+        return resp
 
     # -- Host-mode frames ----------------------------------------------------
 
@@ -1231,6 +1412,174 @@ def test_t112(session: Session, log: RunLog, app_config: AppConfig) -> None:
             )
 
 
+def test_mi(session: Session, log: RunLog) -> None:
+    log.line("--- MI: does the MailDrop button actually query MFILTER? ---")
+    mnemonic = MI_PROBE_MNEMONIC
+
+    if session.dry_run:
+        log.line(
+            f"[dry-run] would enter Host Mode, query {mnemonic.decode()} "
+            f"(no argument), exit Host Mode, then verbose-query MFILTER:"
+        )
+        log.line(f"[dry-run]   >> {build_command(mnemonic).hex(' ').upper()}")
+        log.result("MI", "INFO", "dry-run, nothing sent")
+        return
+
+    session.enter_host_mode()
+    try:
+        session.drain_pending_frames()
+        mi_frame = session.query_host(mnemonic)
+    finally:
+        session.exit_host_mode()
+
+    mi_value = host_query_value(mi_frame, mnemonic)
+    log.line(f"{mnemonic.decode()} (Host Mode): {mi_value!r}")
+
+    mfilter_value = parse_query_value("MFILTER", session.query("MFILTER"))
+    log.line(f"MFILTER (verbose): {mfilter_value!r}")
+
+    verdict = evaluate_mi_probe(mi_value, mfilter_value)
+    if verdict == "PASS":
+        log.result(
+            "MI", "PASS",
+            f"MI ({mi_value!r}) does not match MFILTER ({mfilter_value!r}) "
+            f"-- no evidence MI is actually MFILTER"
+        )
+    elif verdict == "FAIL":
+        log.result(
+            "MI", "FAIL",
+            f"MI ({mi_value!r}) matches MFILTER ({mfilter_value!r}) -- MI "
+            f"is MFILTER, not MailDrop login; "
+            f"main_window._on_packet_maildrop() sends the wrong command "
+            f"for the MailDrop button"
+        )
+    else:
+        log.result(
+            "MI", "INCONCLUSIVE",
+            f"MI={mi_value!r} MFILTER={mfilter_value!r} -- one of the two "
+            f"queries did not return a usable value"
+        )
+
+
+def _maildrop_confirm_loss_on_power_cycle(session: Session, log: RunLog) -> None:
+    log.line("--- MailDrop: confirming loss on power-cycle ---")
+    session.disconnect()
+    print()
+    print("Power-cycle the TNC now (off, wait, back on).")
+    if input(
+        "Ready to continue once it has powered back up? [y/N] "
+    ).strip().lower() != "y":
+        log.result("MAILDROP", "INFO", "power-cycle confirmation skipped by operator")
+        return
+
+    session.connect()
+    mycall = parse_query_value("MYCALL", session.query("MYCALL"))
+    log.line(f"MYCALL after power-cycle: {mycall!r}")
+
+    resp = session.send_and_read_until_idle(b"MDCHECK\r\n")
+    print(resp.decode("ascii", errors="replace"))
+    list_resp = session.send_and_read_until_idle(b"L\r")
+    print(list_resp.decode("ascii", errors="replace"))
+
+    log.result(
+        "MAILDROP", "INFO",
+        f"post-power-cycle -- MYCALL={mycall!r}, mailbox 'L' response="
+        f"{list_resp!r} -- compare against the pre-power-cycle state "
+        f"recorded above to confirm the mailbox was lost. This second "
+        f"session is also left open in the mailbox -- exit it manually."
+    )
+
+
+def test_maildrop(session: Session, log: RunLog) -> None:
+    log.line("--- MailDrop: guided recording terminal (P20 Teil B) ---")
+    log.line(
+        "Local MailDrop session over the serial link, verbose mode only "
+        "- never transmits on the air."
+    )
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would query " + ", ".join(_MAILDROP_QUERY_COMMANDS)
+            + ", warn if XMITOK is ON, send MDCHECK, then open an "
+              "interactive md> terminal (exit with /quit) - nothing is "
+              "sent in dry-run, the interactive phase never starts."
+        )
+        log.result("MAILDROP", "INFO", "dry-run, nothing sent")
+        return
+
+    log.line("Step 1: querying MailDrop-related parameters")
+    values: dict[str, Optional[str]] = {}
+    for cmd in _MAILDROP_QUERY_COMMANDS:
+        resp = session.query(cmd)
+        value = parse_query_value(cmd, resp)
+        values[cmd] = value
+        log.line(f"{cmd}: {value!r} (raw: {resp!r})")
+
+    xmitok = values.get("XMITOK")
+    if xmitok is not None and xmitok.strip().upper() == "ON":
+        print()
+        print("*** XMITOK is ON ***")
+        print(
+            "This session stays on the serial link, not radio - but if "
+            "the mailbox unexpectedly transmits (e.g. auto-forwarding), "
+            "XMITOK ON means the TNC would key the transmitter."
+        )
+        log.line("WARNING: XMITOK is ON")
+
+    print()
+    print("Opening the local MailDrop with MDCHECK.")
+    resp = session.send_and_read_until_idle(b"MDCHECK\r\n")
+    print(resp.decode("ascii", errors="replace"))
+
+    print()
+    print(_MAILDROP_SUGGESTED_SEQUENCE)
+    print(
+        "Type mailbox commands at the md> prompt below (not a "
+        "requirement, just a starting point - follow the mailbox's own "
+        "help). ^Z/^D/^C are sent as the matching control byte. Type "
+        "/quit to leave this terminal (this does NOT itself log out of "
+        "the mailbox - the exit command, if any, is unknown)."
+    )
+
+    last_sent: Optional[bytes] = None
+    while True:
+        try:
+            line = input("md> ")
+        except EOFError:
+            log.line("INFO: input closed (EOF) - leaving the terminal")
+            break
+        kind, payload = classify_maildrop_input(line)
+        if kind == "quit":
+            log.line("INFO: operator typed /quit - leaving the terminal")
+            break
+        last_sent = payload
+        note = f"typed {line.strip()!r}" if kind == "control" else ""
+        resp = session.send_and_read_until_idle(payload, note=note)
+        print(resp.decode("ascii", errors="replace"))
+
+    log.line("Reading for 1s to check whether the mailbox was left")
+    tail = session.read_until_idle(idle=1.0, max_total=1.0)
+    tail_text = tail.decode("ascii", errors="replace")
+    if maildrop_session_left(tail_text):
+        log.result(
+            "MAILDROP", "INFO",
+            "verbose 'cmd:' prompt seen -- mailbox left cleanly"
+        )
+    else:
+        log.result(
+            "MAILDROP", "INFO",
+            f"no 'cmd:' prompt seen -- the session may still be inside "
+            f"the mailbox; last input sent: {last_sent!r} -- leave the "
+            f"mailbox manually in a normal terminal before running "
+            f"anything else on this port"
+        )
+
+    if input(
+        "Power-cycle the TNC now to confirm the mailbox is lost? [y/N] "
+    ).strip().lower() == "y":
+        _maildrop_confirm_loss_on_power_cycle(session, log)
+
+
 # ===========================================================================
 # CLI
 # ===========================================================================
@@ -1239,15 +1588,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="hw_check.py",
         description=(
-            "Solo hardware verification for a real PK-232MBX (P14/P17). "
-            "t17/t103/pthuff/t111/t112 only query/set parameters; siam is "
-            "receive-only but needs a tuned receiver; t101 TRANSMITS and "
-            "needs a second receiver."
+            "Solo hardware verification for a real PK-232MBX (P14/P17/P20). "
+            "t17/t103/pthuff/t111/t112/mi only query/set parameters; siam "
+            "is receive-only but needs a tuned receiver; maildrop is an "
+            "interactive local (serial, not radio) recording terminal; "
+            "t101 TRANSMITS and needs a second receiver."
         ),
     )
     p.add_argument(
         "test",
-        choices=["t17", "t103", "pthuff", "t101", "siam", "t111", "t112", "all"],
+        choices=[
+            "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
+            "mi", "maildrop", "all",
+        ],
     )
     p.add_argument("--port", help="Serial port, e.g. COM3 (default: pk232py.ini)")
     p.add_argument("--baud", type=int, help="Baud rate (default: pk232py.ini)")
@@ -1301,6 +1654,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         "siam":   [lambda s, l: test_siam(s, l, args.seconds)],
         "t111":   [lambda s, l: test_t111(s, l)],
         "t112":   [lambda s, l: test_t112(s, l, app_config)],
+        "mi":       [lambda s, l: test_mi(s, l)],
+        "maildrop": [lambda s, l: test_maildrop(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
