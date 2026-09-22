@@ -1280,8 +1280,20 @@ class MainWindow(QMainWindow):
             self._serial.send_command(vh_off[2:4], vh_off[4:-1])
             self._log_monitor("[PACKET] Leaving VHF Packet — VHF OFF (VH N)")
 
+        # HF Packet's own MAXFRAME/SLOTTIME must reach the mode's init
+        # frames (T112, P18.1) - a fresh HFPacketMode() has no config
+        # access, so build one with the real configured values and pass it
+        # via set_mode()'s existing pre-configured-instance mechanism.
+        mode_instance = None
+        if mm_name == "HF Packet":
+            from pk232py.modes.packet_hf import HFPacketMode
+            hf_cfg = self._app_config.hf_packet
+            mode_instance = HFPacketMode(
+                maxframe=hf_cfg.maxframe, slottime=hf_cfg.slottime
+            )
+
         self._log_monitor(f"[SYS] Switching to mode: {mm_name}")
-        self._modes.set_mode(mm_name)
+        self._modes.set_mode(mm_name, mode_instance=mode_instance)
 
     def _on_mode_changed(self, name: str) -> None:
         """Called by ModeManager when mode switch completes.

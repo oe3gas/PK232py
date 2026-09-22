@@ -11,8 +11,9 @@ Covers:
 
 from __future__ import annotations
 
-from pk232py.comm.frame import FrameKind
+from pk232py.comm.frame import FrameKind, build_command
 from pk232py.modes.packet_hf import HFPacketMode, _extract_partner
+from pk232py.modes.packet_vhf import VHFPacketMode
 
 
 class _FakeFrame:
@@ -93,3 +94,37 @@ class TestOnChannelState:
         mode, calls = self._mode_with_spy()
         mode._handle_link_msg(_FakeFrame(4, "CONNECTED to: OE1XYZ-5"))
         assert calls == [(4, "connected", "OE1XYZ-5")]
+
+
+# ---------------------------------------------------------------------------
+# get_init_frames() — MAXFRAME/SLOTTIME reset from the HF config (T112, P18.1)
+# ---------------------------------------------------------------------------
+
+class TestGetInitFrames:
+
+    def test_default_maxframe_and_slottime(self):
+        frames = HFPacketMode().get_init_frames()
+        assert build_command(b'MX', b'1') in frames
+        assert build_command(b'SL', b'30') in frames
+
+    def test_configured_maxframe_and_slottime(self):
+        frames = HFPacketMode(maxframe=2, slottime=20).get_init_frames()
+        assert build_command(b'MX', b'2') in frames
+        assert build_command(b'SL', b'20') in frames
+        # Neither the default nor VHF's own values must sneak in.
+        assert build_command(b'MX', b'1') not in frames
+        assert build_command(b'MX', b'4') not in frames
+        assert build_command(b'SL', b'10') not in frames
+        assert build_command(b'SL', b'30') not in frames
+
+    def test_vhf_sequence_unaffected(self):
+        # VHFPacketMode deliberately does not inherit HFPacketMode's
+        # get_init_frames() - confirm the VH Y / VH N split still holds
+        # after the HF side gained MX/SL.
+        vhf = VHFPacketMode()
+        activate = vhf.get_activate_frames()
+        init = vhf.get_init_frames()
+        assert build_command(b'VH', b'Y') in activate
+        assert build_command(b'VH', b'N') not in init
+        assert build_command(b'MX', b'4') in init
+        assert build_command(b'SL', b'10') in init

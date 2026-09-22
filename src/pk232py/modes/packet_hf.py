@@ -119,8 +119,22 @@ class HFPacketMode(BaseMode):
     host_command = b'PA'
     verbose_command = b"PACKET\r\n"
 
-    def __init__(self) -> None:
+    def __init__(self, maxframe: int = 1, slottime: int = 30) -> None:
+        """
+        Args:
+            maxframe: MAXFRAME to send in get_init_frames() (mnemonic MX).
+                      Defaults match HFPacketConfig.maxframe (config.py).
+            slottime: SLOTTIME to send in get_init_frames() (mnemonic SL).
+                      Defaults match HFPacketConfig.slottime (config.py).
+                      Callers that know the real configured values (e.g.
+                      main_window.py) should pass them in here via
+                      ModeManager.set_mode(name, mode_instance=...) — see
+                      T112 (P18.1): without this, HF Packet kept whatever
+                      MAXFRAME/SLOTTIME VHF Packet last set.
+        """
         super().__init__()
+        self.maxframe = maxframe
+        self.slottime = slottime
         # Callbacks — set by the UI or mode manager
         self.on_data_received: Optional[Callable[[int, bytes], None]] = None
         self.on_monitor_frame: Optional[Callable[[bytes], None]]      = None
@@ -146,18 +160,27 @@ class HFPacketMode(BaseMode):
     def get_init_frames(self) -> list[bytes]:
         """Return parameter frames sent after Packet mode is confirmed.
 
-        HF Packet selects the 300 Bd HF FSK modem (VHF OFF) and enables the
-        frame monitor.  Sequence (Testplan T32): VH N, HB 300, MN Y.
+        HF Packet selects the 300 Bd HF FSK modem (VHF OFF), resets
+        MAXFRAME/SLOTTIME to its own configured values, and enables the
+        frame monitor.  Sequence: VH N, HB 300, MX <maxframe>,
+        SL <slottime>, MN Y.
 
         Lernmodus: ``VH N`` is essential here — without it, switching to HF
         Packet *after* VHF Packet would leave the TNC on the 1200 Bd Bell-202
         modem (VHF stays ON until explicitly cleared), so HF would never decode.
-        VHFPacketMode deliberately does NOT inherit this list (it would undo its
-        own ``VH Y``); it builds its own — see VHFPacketMode.get_init_frames().
+        ``MX``/``SL`` are the same rule applied to MAXFRAME/SLOTTIME
+        (Testplan T112, hardware-confirmed for SLOTTIME 2026-09-22): VHF
+        Packet sets MX 4 / SL 10 on activation, and without HF Packet
+        resetting them here, HF Packet kept running with VHF's values after
+        a VHF -> HF switch. VHFPacketMode deliberately does NOT inherit this
+        list (it would undo its own ``VH Y``); it builds its own — see
+        VHFPacketMode.get_init_frames().
         """
         return [
             build_command(b'VH', b'N'),   # VHF OFF — select 300 Bd HF FSK modem
             build_command(b'HB', b'300'), # HBAUD 300
+            build_command(b'MX', str(self.maxframe).encode('ascii')),  # MAXFRAME
+            build_command(b'SL', str(self.slottime).encode('ascii')),  # SLOTTIME
             build_command(b'MN', b'Y'),   # MONITOR ON — receive unproto frames
         ]
 
