@@ -4,10 +4,10 @@
 #
 # This is a DEV-ONLY hardware verification tool. It is never shipped with
 # the application. GPL v2, same as the rest of tools/ (see tools/README.md).
-"""hw_check.py - solo hardware checks for a real PK-232MBX (P14).
+"""hw_check.py - solo hardware checks for a real PK-232MBX (P14/P17).
 
-Four checks an operator can run alone, with the real TNC, no second
-station required except for T101:
+Checks an operator can run alone, with the real TNC, no second station
+required except for T101:
 
     t17     Is PASSALL the Host Mode mnemonic PS or PX? (query only)
     t103    Does USERS actually reach the TNC via ParamsUploader? (query +
@@ -19,14 +19,31 @@ station required except for T101:
             frame along the UNPROTO path? TRANSMITS ON THE AIR - needs a
             second receiver with an AX.25 decoder (Direwolf, multimon-ng,
             ...) tuned to the TNC's frequency.
+    siam    Receive-only, 60s (default) unfiltered capture of every Host
+            Mode frame the TNC sends after SignalMode's real activation
+            frames go out. No filtering, no assumption about frame type or
+            output format (see docs/P17_HW_Measure_Spec.md - the module
+            docstring and handle_frame() disagree on both). Needs a
+            receiver tuned to a KNOWN FSK signal beforehand.
+    t111    Does PX toggle PASSALL while PS (PASS) stays untouched? Sends
+            the same mnemonic as the app's PASSALL button (P17.2).
+    t112    Does a VHF Packet -> HF Packet switch leave MAXFRAME/SLOTTIME
+            at HF Packet's own values, or at VHF's? Replays the real frames
+            _on_mode_selected() sends, in the same order.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
-            needs a second receiver, so it must be run on its own).
+            needs a second receiver) and NOT siam/t111/t112 (siam needs a
+            tuned receiver and an operator comparison; t111/t112 are run
+            and recorded individually), so it must be run on its own.
 
 Usage::
 
     python tools/hw_check.py --port COM3 t17
     python tools/hw_check.py --port COM3 all
     python tools/hw_check.py --port COM3 t101
+    python tools/hw_check.py --port COM6 siam
+    python tools/hw_check.py --port COM6 siam --seconds 120
+    python tools/hw_check.py --port COM6 t111
+    python tools/hw_check.py --port COM6 t112
     python tools/hw_check.py --dry-run all      # no port opened at all
 
 ------------------------------------------------------------------------------
@@ -77,6 +94,10 @@ from pk232py.comm.serial_manager import SerialManager  # noqa: E402
 from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
 from pk232py.comm.frame import build_command  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
+from pk232py.modes.signal_analysis import SignalMode  # noqa: E402
+from pk232py.modes.packet_hf import HFPacketMode  # noqa: E402
+from pk232py.modes.packet_vhf import VHFPacketMode  # noqa: E402
+from pk232py.ui.screens.signal_screen import KNOWN_MODES  # noqa: E402
 
 
 class HWCheckError(RuntimeError):
@@ -250,6 +271,114 @@ def parse_query_value(command: str, response: str) -> Optional[str]:
     return None
 
 
+def host_query_value(frame: Optional[object], mnemonic: bytes) -> Optional[str]:
+    """Strip the mnemonic echo from a Host Mode query response's text
+    (P17.2), e.g. a frame with ``data=b'PXN'`` for mnemonic ``b'PX'`` ->
+    ``'N'``, or ``data=b'PS$16'`` for ``b'PS'`` -> ``'$16'`` (the exact
+    T86 hardware shapes). Falls back to the frame's full text if it does
+    not start with the mnemonic - better to hand back something to log
+    than raise on an unexpected reply. Returns None for no frame."""
+    if frame is None:
+        return None
+    prefix = mnemonic.decode("ascii")
+    text = frame.text
+    return text[len(prefix):] if text.startswith(prefix) else text
+
+
+_PASSALL_TOGGLE_RE = re.compile(
+    r"\(\s*screen\.btn_passall\s*,\s*b'([A-Za-z]{2})'\s*\)"
+)
+
+# The mnemonic t111 sends to toggle PASSALL - must always equal whatever
+# main_window.py's packet toggle_map actually wires to btn_passall, or the
+# tool measures a different command than the one the app sends (P17.2).
+# TestT111Mnemonic in test_hw_check.py enforces this against the real
+# source file.
+PASSALL_TOGGLE_MNEMONIC = b'PX'
+
+
+def extract_passall_toggle_mnemonic(main_window_source: str) -> Optional[str]:
+    """Pull the ``(screen.btn_passall, b'XX')`` mnemonic out of
+    main_window.py's packet toggle_map SOURCE TEXT (P17.2) - reading the
+    file as text rather than importing main_window.py, which would pull
+    the entire PyQt6 widget tree in just to compare two bytes literals.
+    Returns None if the tuple is not found (source reshaped)."""
+    m = _PASSALL_TOGGLE_RE.search(main_window_source)
+    return m.group(1) if m else None
+
+
+def looks_like_siam_result(text: str, known_modes: Optional[list[str]] = None) -> bool:
+    """Classify one captured frame's text as "looks like a SIAM analysis
+    result" (P17.1) - a loose heuristic, not a decision: the module
+    docstring (STABO manual) and the mockup screen disagree on the exact
+    output shape (``'BAUDOT 45 170'`` vs. ``'0.47: 50 Baud, Baudot, RXREV
+    OFF'``), so this only flags candidates for the operator to compare
+    against the known signal, matching either "Baud" (covers "BAUDOT" too -
+    it contains "baud" as a substring) or one of the mode names the mockup
+    already lists (KNOWN_MODES in ui/screens/signal_screen.py)."""
+    if known_modes is None:
+        known_modes = KNOWN_MODES
+    lower = text.lower()
+    if "baud" in lower:
+        return True
+    return any(mode.lower() in lower for mode in known_modes)
+
+
+def summarize_siam_frames(frames: list) -> dict:
+    """Pure summary of a SIAM capture window (P17.1): a count per
+    FrameKind, plus every frame that looks_like_siam_result(). No other
+    filtering - this is a measurement, not a decision, see
+    docs/P17_HW_Measure_Spec.md."""
+    counts: dict[str, int] = {}
+    candidates: list = []
+    for f in frames:
+        counts[f.kind.name] = counts.get(f.kind.name, 0) + 1
+        if looks_like_siam_result(f.text):
+            candidates.append(f)
+    return {"counts": counts, "candidates": candidates}
+
+
+_VHF_MAXFRAME = "4"
+_VHF_SLOTTIME = "10"
+
+
+def evaluate_t112(
+    maxframe_after: Optional[str],
+    slottime_after: Optional[str],
+    hf_maxframe: str,
+    hf_slottime: str,
+) -> str:
+    """T112's decision table (docs/P17_HW_Measure_Spec.md): after a VHF ->
+    HF Packet switch, do MAXFRAME/SLOTTIME read back HF Packet's own
+    configured values (no gap), VHF's hardcoded 4/10 (confirmed gap), or
+    something else (inconclusive)?"""
+    if maxframe_after is None or slottime_after is None:
+        return "INCONCLUSIVE"
+    if maxframe_after == hf_maxframe and slottime_after == hf_slottime:
+        return "PASS"
+    if maxframe_after == _VHF_MAXFRAME and slottime_after == _VHF_SLOTTIME:
+        return "FAIL"
+    return "INCONCLUSIVE"
+
+
+def build_t112_frame_sequence() -> list[bytes]:
+    """The exact frame sequence _on_mode_selected() (main_window.py) sends
+    for a VHF Packet -> HF Packet switch, built from the REAL mode classes,
+    never hand-reconstructed (P17.3): VHF's activate + init frames, then
+    VHFPacketMode.vhf_off_frame() (T51, leaving VHF), then HF Packet's
+    activate + init frames. TestT112FrameSequence in test_hw_check.py pins
+    this order against the mode classes directly."""
+    vhf = VHFPacketMode()
+    hf = HFPacketMode()
+    return (
+        vhf.get_activate_frames()
+        + vhf.get_init_frames()
+        + [VHFPacketMode.vhf_off_frame()]
+        + hf.get_activate_frames()
+        + hf.get_init_frames()
+    )
+
+
 def scan_for_tnc_errors(lines: list[str]) -> list[str]:
     """Return every response line that looks like a TNC error message
     ('?What?', '?bad', '?too many', or any other line starting with '?')."""
@@ -278,6 +407,31 @@ def evaluate_t101(target_a: Optional[str], target_b: Optional[str]) -> str:
     if target_a == target_b:
         return "FAIL"
     return "INCONCLUSIVE"
+
+
+def verify_restore(
+    command: str,
+    query: Callable[[], str],
+    restore: Callable[[str], None],
+    original: str,
+    log: "RunLog",
+) -> None:
+    """Restore *command* to *original* and confirm it stuck (P15.2) - the
+    common tail of run_with_restore(), pulled out so a test that must
+    restore SEVERAL parameters around ONE action (T112: MAXFRAME, SLOTTIME,
+    VHF, HBAUD around a single mode-switch action) can call this once per
+    parameter instead of nesting run_with_restore() several times around
+    the same action."""
+    restore(original)
+    verified = parse_query_value(command, query())
+    if verified == original:
+        log.line(f"{command} restored to {original!r}")
+    else:
+        log.result(
+            command, "FAIL",
+            f"restore of {command} failed -- TNC now reports {verified!r}, "
+            f"expected {original!r} -- set it by hand: {command} {original}"
+        )
 
 
 def run_with_restore(
@@ -315,16 +469,7 @@ def run_with_restore(
     try:
         action()
     finally:
-        restore(original)
-        verified = parse_query_value(command, query())
-        if verified == original:
-            log.line(f"{command} restored to {original!r}")
-        else:
-            log.result(
-                command, "FAIL",
-                f"restore of {command} failed -- TNC now reports {verified!r}, "
-                f"expected {original!r} -- set it by hand: {command} {original}"
-            )
+        verify_restore(command, query, restore, original, log)
     return original
 
 
@@ -488,6 +633,22 @@ class Session:
             if f is not match:
                 self.log.line(f"INFO: unrelated frame {f.data.hex()}")
         return match
+
+    def send_frame(self, frame: bytes, note: str = "") -> None:
+        """Send one already-built Host Mode frame exactly as the app would.
+
+        mode_manager.py sends every frame from get_activate_frames() /
+        get_init_frames() as ``send_command(frame[2:4], frame[4:-1])`` (see
+        ModeManager.set_mode() / _send_init_frames()) - this mirrors that,
+        so siam/t112 replay the REAL frames the mode classes build, never
+        reconstructed ones (P17.1/P17.3).
+        """
+        label = f"  ({note})" if note else ""
+        if self.dry_run:
+            self.log.line(f"[dry-run] >> {frame.hex(' ').upper()}{label}")
+            return
+        self.log.line(f">> HOST frame {frame.hex(' ').upper()}{label}")
+        self.sm.send_command(frame[2:4], frame[4:-1])
 
     def send_data_channel0(self, text: str) -> None:
         if self.dry_run:
@@ -770,6 +931,272 @@ def test_t101(session: Session, log: RunLog) -> None:
     )
 
 
+def test_siam(session: Session, log: RunLog, seconds: float = 60.0) -> None:
+    log.line("--- SIAM: unfiltered Host Mode frame capture (P17.1) ---")
+    log.line(
+        "Module docstring vs. handle_frame() disagree on frame type ($4F "
+        "CMD_RESP vs. $50 LINK_MSG) and output format (STABO manual vs. "
+        "mockup) - this test logs EVERYTHING unfiltered, no assumption."
+    )
+    mode = SignalMode()
+    frames = mode.get_activate_frames() + mode.get_init_frames()
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would ask the operator to tune a known FSK signal "
+            "and record its mode/baud/shift, enter Host Mode, send the "
+            "real SignalMode activation frames, then log every incoming "
+            f"frame unfiltered for {seconds:.0f}s:"
+        )
+        for frame in frames:
+            session.send_frame(frame, note="SignalMode")
+        log.result("SIAM", "INFO", "dry-run, nothing sent")
+        return
+
+    print()
+    print("SIAM measurement -- receive only, nothing is transmitted.")
+    print(
+        "Tune the receiver to a KNOWN FSK signal first (Amateur RTTY "
+        "45 Bd / 170 Hz shift is the simplest case) so the result is "
+        "comparable."
+    )
+    known_mode  = input("Known operating mode of the tuned signal: ").strip()
+    known_baud  = input("Known baud rate: ").strip()
+    known_shift = input("Known shift (Hz): ").strip()
+    log.line(
+        f"Operator-reported reference signal: mode={known_mode!r} "
+        f"baud={known_baud!r} shift={known_shift!r}"
+    )
+    if input("Ready to continue? [y/N] ").strip().lower() != "y":
+        log.result("SIAM", "INFO", "skipped by operator")
+        return
+
+    captured: list = []
+    session.enter_host_mode()
+    try:
+        session.drain_pending_frames()
+        for frame in frames:
+            session.send_frame(frame, note="SignalMode")
+
+        session.sm.frame_received.connect(captured.append)
+        try:
+            elapsed = 0.0
+            while elapsed < seconds:
+                step = min(10.0, seconds - elapsed)
+                session._pump(step)
+                elapsed += step
+                log.line(
+                    f"... {len(captured)} frame(s) so far "
+                    f"({elapsed:.0f}/{seconds:.0f}s)"
+                )
+        finally:
+            session.sm.frame_received.disconnect(captured.append)
+    finally:
+        # Ctrl-C during the capture loop still lands here before the
+        # KeyboardInterrupt propagates - Host Mode is always left cleanly.
+        session.exit_host_mode()
+
+    summary = summarize_siam_frames(captured)
+    log.line("Frame counts by kind:")
+    for kind_name, count in sorted(summary["counts"].items()):
+        log.line(f"  {kind_name}: {count}")
+    if summary["candidates"]:
+        log.line("Frames that look like an analysis result:")
+        for f in summary["candidates"]:
+            log.line(
+                f"  ctl=0x{f.ctl:02X} kind={f.kind.name} ch={f.channel} "
+                f"hex={f.data.hex(' ').upper()} text={f.text!r}"
+            )
+    else:
+        log.line(
+            "No frame looked like an analysis result (no 'Baud' / known "
+            "mode text in any captured frame)"
+        )
+    log.result(
+        "SIAM", "INFO",
+        f"{len(captured)} frame(s) captured in {seconds:.0f}s -- compare "
+        f"the summary above against the known reference signal "
+        f"(mode={known_mode!r} baud={known_baud!r} shift={known_shift!r}) "
+        f"and record the comparison in Testplan.md"
+    )
+
+
+def test_t111(session: Session, log: RunLog) -> None:
+    log.line("--- T111: does PX toggle PASSALL while PS (PASS) stays put? ---")
+    mnemonic = PASSALL_TOGGLE_MNEMONIC
+
+    if session.dry_run:
+        log.line(
+            f"[dry-run] would query PX and PS, send {mnemonic.decode()} Y, "
+            f"query PX and PS again, then restore PX to its original value:"
+        )
+        for m in (b'PX', b'PS'):
+            log.line(f"[dry-run]   >> {build_command(m).hex(' ').upper()}")
+        log.line(
+            f"[dry-run]   >> {build_command(mnemonic, b'Y').hex(' ').upper()}"
+            f"  ({mnemonic.decode()} Y)"
+        )
+        log.result("T111", "INFO", "dry-run, nothing sent")
+        return
+
+    session.enter_host_mode()
+    try:
+        session.drain_pending_frames()
+        px_before = host_query_value(session.query_host(b'PX'), b'PX')
+        ps_before = host_query_value(session.query_host(b'PS'), b'PS')
+        log.line(f"Before: PX={px_before!r} PS={ps_before!r}")
+
+        if px_before is None or ps_before is None:
+            log.result(
+                "T111", "INCONCLUSIVE",
+                f"no matching PX/PS response before the toggle -- "
+                f"PX={px_before!r} PS={ps_before!r}"
+            )
+            return
+
+        try:
+            session.log.line(f">> HOST set {mnemonic!r} Y")
+            session.sm.send_command(mnemonic, b'Y')
+            session._pump(0.3)
+
+            px_after = host_query_value(session.query_host(b'PX'), b'PX')
+            ps_after = host_query_value(session.query_host(b'PS'), b'PS')
+            log.line(
+                f"After {mnemonic.decode()} Y: PX={px_after!r} "
+                f"PS={ps_after!r}"
+            )
+
+            if px_after is None or ps_after is None:
+                log.result(
+                    "T111", "INCONCLUSIVE",
+                    f"no matching PX/PS response after the toggle -- "
+                    f"PX={px_after!r} PS={ps_after!r}"
+                )
+                return
+
+            if px_after != px_before and ps_after == ps_before:
+                log.result(
+                    "T111", "PASS",
+                    f"PASSALL toggled ({px_before!r} -> {px_after!r}), "
+                    f"PASS unchanged ({ps_after!r})"
+                )
+            elif ps_after != ps_before:
+                log.result(
+                    "T111", "FAIL",
+                    f"PASS changed too ({ps_before!r} -> {ps_after!r}) -- "
+                    f"{mnemonic.decode()} is masking PASS, not toggling "
+                    f"PASSALL"
+                )
+            else:
+                log.result(
+                    "T111", "FAIL",
+                    f"PX did not change ({px_before!r} -> {px_after!r})"
+                )
+        finally:
+            session.log.line(f">> HOST restore {mnemonic!r} {px_before}")
+            session.sm.send_command(mnemonic, px_before.encode("ascii"))
+            session._pump(0.3)
+            px_restored = host_query_value(session.query_host(b'PX'), b'PX')
+            if px_restored == px_before:
+                log.line(f"PX restored to {px_before!r}")
+            else:
+                log.result(
+                    "T111", "FAIL",
+                    f"restore of PX failed -- TNC now reports "
+                    f"{px_restored!r}, expected {px_before!r} -- set it by "
+                    f"hand: PX {px_before}"
+                )
+    finally:
+        session.exit_host_mode()
+
+
+def test_t112(session: Session, log: RunLog, app_config: AppConfig) -> None:
+    log.line("--- T112: VHF -> HF Packet parameter carry-over ---")
+    hf_maxframe = str(app_config.hf_packet.maxframe)
+    hf_slottime = str(app_config.hf_packet.slottime)
+    frames = build_t112_frame_sequence()
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would query MAXFRAME/SLOTTIME/VHF/HBAUD, enter Host "
+            "Mode, send this exact frame sequence (order taken from "
+            "_on_mode_selected() in main_window.py: VHF activate+init, "
+            "VHF OFF, HF activate+init), exit Host Mode, query MAXFRAME/"
+            "SLOTTIME again, then restore all four:"
+        )
+        for frame in frames:
+            session.send_frame(frame)
+        log.result("T112", "INFO", "dry-run, nothing sent")
+        return
+
+    commands = ["MAXFRAME", "SLOTTIME", "VHF", "HBAUD"]
+    originals: dict[str, Optional[str]] = {
+        cmd: parse_query_value(cmd, session.query(cmd)) for cmd in commands
+    }
+    missing = [c for c in commands if originals[c] is None]
+    if missing:
+        log.result(
+            "T112", "SKIPPED",
+            f"original value(s) not parseable via parse_query_value() -- "
+            f"not touching them: {missing}"
+        )
+        return
+
+    log.line(f"Originals: {originals}")
+    log.line(
+        f"HF Packet config (reference values): MAXFRAME={hf_maxframe} "
+        f"SLOTTIME={hf_slottime}"
+    )
+
+    try:
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            for frame in frames:
+                session.send_frame(frame)
+            session._pump(0.5)
+        finally:
+            session.exit_host_mode()
+
+        maxframe_after = parse_query_value("MAXFRAME", session.query("MAXFRAME"))
+        slottime_after = parse_query_value("SLOTTIME", session.query("SLOTTIME"))
+        log.line(
+            f"After VHF->HF switch: MAXFRAME={maxframe_after!r} "
+            f"SLOTTIME={slottime_after!r}"
+        )
+
+        verdict = evaluate_t112(maxframe_after, slottime_after, hf_maxframe, hf_slottime)
+        if verdict == "PASS":
+            log.result(
+                "T112", "PASS",
+                f"MAXFRAME={maxframe_after!r} SLOTTIME={slottime_after!r} "
+                f"match HF Packet's own config -- no gap, close the "
+                f"Backlog item"
+            )
+        elif verdict == "FAIL":
+            log.result(
+                "T112", "FAIL",
+                f"MAXFRAME={maxframe_after!r} SLOTTIME={slottime_after!r} "
+                f"-- VHF's values ({_VHF_MAXFRAME}/{_VHF_SLOTTIME}) leaked "
+                f"into HF Packet, gap confirmed"
+            )
+        else:
+            log.result(
+                "T112", "INCONCLUSIVE",
+                f"MAXFRAME={maxframe_after!r} SLOTTIME={slottime_after!r} "
+                f"(neither HF Packet's nor VHF's known values)"
+            )
+    finally:
+        for cmd in commands:
+            verify_restore(
+                cmd,
+                lambda c=cmd: session.query(c),
+                lambda v, c=cmd: session.set_verbose(c, v),
+                originals[cmd],
+                log,
+            )
+
+
 # ===========================================================================
 # CLI
 # ===========================================================================
@@ -778,17 +1205,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="hw_check.py",
         description=(
-            "Solo hardware verification for a real PK-232MBX (P14). "
-            "t17/t103/pthuff only query/set parameters; t101 TRANSMITS "
-            "and needs a second receiver."
+            "Solo hardware verification for a real PK-232MBX (P14/P17). "
+            "t17/t103/pthuff/t111/t112 only query/set parameters; siam is "
+            "receive-only but needs a tuned receiver; t101 TRANSMITS and "
+            "needs a second receiver."
         ),
     )
-    p.add_argument("test", choices=["t17", "t103", "pthuff", "t101", "all"])
+    p.add_argument(
+        "test",
+        choices=["t17", "t103", "pthuff", "t101", "siam", "t111", "t112", "all"],
+    )
     p.add_argument("--port", help="Serial port, e.g. COM3 (default: pk232py.ini)")
     p.add_argument("--baud", type=int, help="Baud rate (default: pk232py.ini)")
     p.add_argument(
         "--dry-run", action="store_true",
         help="Show what each test would send; never opens the port"
+    )
+    p.add_argument(
+        "--seconds", type=float, default=60.0,
+        help="siam only: capture duration in seconds (default: 60)"
     )
     return p
 
@@ -829,6 +1264,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         "t103":   [lambda s, l: test_t103(s, l, app_config)],
         "pthuff": [lambda s, l: test_pthuff(s, l, app_config)],
         "t101":   [lambda s, l: test_t101(s, l)],
+        "siam":   [lambda s, l: test_siam(s, l, args.seconds)],
+        "t111":   [lambda s, l: test_t111(s, l)],
+        "t112":   [lambda s, l: test_t112(s, l, app_config)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
