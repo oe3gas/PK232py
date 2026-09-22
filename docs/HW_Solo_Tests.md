@@ -2,8 +2,9 @@
 
 Printable operator guide for running the `tools/hw_check.py` checks against
 a real PK-232MBX. See `docs/P14_HW_Solo_Check_Spec.md` for the original four
-checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`, and
-`docs/P20_MailDrop_Measure_Spec.md` for `mi`/`maildrop`; `CLAUDE.md` /
+checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`,
+`docs/P20_MailDrop_Measure_Spec.md` for `mi`/`maildrop`, and
+`docs/P24_MailDrop_HostMode_Spec.md` for `maildrop_host`; `CLAUDE.md` /
 `Backlog.md` have background on each finding.
 
 ---
@@ -36,6 +37,12 @@ checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`, and
   mailbox's own `H` (help) shows, and expect to type at its `md>` prompt
   yourself. No second receiver needed (it never transmits — the session
   runs over the serial link, not radio).
+- **Only for `maildrop_host`:** run `maildrop` first at least once (this
+  test relies on the same known-safe verbose commands to create one test
+  message). It is read-only in Host Mode — it never sends `S`/`K`/`E` and
+  never transmits — but it does send unknown, previously-unmeasured Host
+  Mode frames, so you get exactly one `y/N` confirmation before that
+  happens. No second receiver needed.
 
 ## 2. Order
 
@@ -48,6 +55,8 @@ checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`, and
    deliberately not part of `all` (see `docs/P17_HW_Measure_Spec.md`).
 5. Run `maildrop` last, on its own, once you have time for the
    interactive session (see `docs/P20_MailDrop_Measure_Spec.md`).
+6. Run `maildrop_host` afterwards, on its own (see
+   `docs/P24_MailDrop_HostMode_Spec.md`).
 
 ```
 python tools/hw_check.py --port COM3 all
@@ -57,6 +66,7 @@ python tools/hw_check.py --port COM6 t112
 python tools/hw_check.py --port COM6 siam
 python tools/hw_check.py --port COM6 mi
 python tools/hw_check.py --port COM6 maildrop
+python tools/hw_check.py --port COM6 maildrop_host
 ```
 
 Add `--dry-run` to any command first if you just want to see what each
@@ -189,6 +199,37 @@ test *would* do without touching the TNC at all — it never opens the port.
   format from `L`, and whatever else you found into `Testplan.md`
   yourself.
 
+### `maildrop_host` — is there a MailDrop data channel in Host Mode?
+- **What happens:** queries and warns on `XMITOK`, then creates one test
+  message via the same known-safe verbose path `maildrop` uses (`MDCHECK`,
+  `S OE3GAS`, subject `Host Mode Test`, one text line, `/EX`, `L` to note
+  its number, `B` to leave the mailbox), then verbose-queries `HOST` and
+  logs it. It enters Host Mode via the app's own connection path and drains
+  any pending frames, then asks **one** `y/N` confirmation naming exactly
+  what is about to be sent (unknown, read-only mailbox commands: no
+  transmission, no `S`/`K`/`E`). **Probe A** sends a bare `L` (list) as a
+  `$60`-CTL Host Mode frame and logs everything that arrives for 3 seconds.
+  **Probe B** (only if Probe A got nothing at all) sends `MDCHECK` first,
+  then `L` again, same logging. If a message list came back, it sends
+  `R <n>` for the number noted earlier, then always sends `B`, then leaves
+  Host Mode. **Probe C**, only if A and B both got nothing, re-queries
+  verbose `HOST` afterwards (no guessed mnemonic — just the same `HOST`
+  query as before, to see if leaving Host Mode changed anything observable).
+  `finally` always leaves Host Mode and verbose-checks for a `cmd:` prompt.
+- **No PASS/FAIL** — like `siam`/`maildrop`, this is a measurement of an
+  unmeasured protocol area, not a verdict. The printed summary answers four
+  questions — copy all four into `Testplan.md`:
+  1. Which frame type carried the response — `$70`, some other `$7x`, or
+     something else entirely (or nothing at all)?
+  2. Is the mailbox prompt/banner identical to the verbose-mode version, or
+     different?
+  3. Was a login needed — did Probe A's bare `L` already work, or was
+     `MDCHECK` (Probe B) required first?
+  4. Does the list/read output match the verbose-mode path byte-for-byte,
+     or does the framing/format differ?
+- Add `--dry-run` first to see all five planned frames (`L`, `MDCHECK`,
+  `L`, `R <n>`, `B`) in hex without touching the TNC.
+
 ## 4. Checklist
 
 | Test | Date | Result | Notes |
@@ -202,6 +243,7 @@ test *would* do without touching the TNC at all — it never opens the port.
 | T112 |  |  |  |
 | MI |  |  |  |
 | MAILDROP |  |  |  |
+| MAILDROP_HOST |  |  |  |
 
 ## 5. Where results go
 

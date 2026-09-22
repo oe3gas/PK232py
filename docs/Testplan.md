@@ -47,6 +47,7 @@
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py`, `main_window.py`, `packet_screen.py` | P21: real hardware run (T115/T116) found MI = MFILTER confirmed (FAIL) and a tool safety bug — after MailDrop's `B` silently closed the mailbox, typed input reached the TNC command interpreter, where `K` = CONVERSE. `parse_query_value()` now finds the value line by content, not position (async SIAM output interleaves into other responses); `Session.normalize()` runs before every hardware subcommand; the mailbox terminal is a MAILBOX/ENTRY/CMD state machine that stops the instant `cmd:` is seen; `btn_maildrop` disabled, `_on_packet_maildrop()` is a no-op |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P22: first full MailDrop hardware run (18:43, fixed tool) — T116 PASS for `L`/`S`/`R`/`K`/`B`, list format, numbering, memory accounting; all recorded in CLAUDE.md. Power-cycle confirmation reworked to a `done`/`skip` loop (a blank Enter used to be silently read as skip); recorder now sets `DAYTIME` (reusing `ParamsUploader._cmd()`) before `MDCHECK` so the list shows real dates; suggested sequence replaced with round-2's foreign-FROM/@BBS/bulletin/traffic-type/EDIT questions; added tool-only `parse_maildrop_list()`/`maildrop_response_has_e_trailer()` |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P23: round-2 hardware run (19:16) confirmed `@BBS`, `SB`/`ST`, the date/time format and the power-cycle test - T116 PASS extended; the P22 "size + ~48 bytes" memory formula withdrawn (7 messages show 84 or 112 bytes, unrelated to size). Found and fixed two tool bugs the run itself exposed: `SB`/`ST` left the state machine at MAILBOX because ENTRY was detected from the typed command, not the response (now response-based, P23.2); a real Ctrl-Z keypress produces an `EOFError` on a Windows console, so `^Z` was never actually sent - `EOFError` in ENTRY now sends `$1A` instead of closing the terminal (P23.3). Round 3 sequence targets the two still-open questions (foreign FROM, `^Z` message end); `--skip-power-cycle` added since round 2 already passed it |
+| **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py`, `src/pk232py/maildrop/maildrop.py` (docstring only), `CLAUDE.md`, `Backlog.md` | P24: round-3 hardware run (20:00) closed T116 (foreign FROM confirmed, `^Z` confirmed NOT ending a message, `/E` trailer corrected to non-general, R-needs-a-space and non-ASCII-is-the-tool's-own-encoding findings); `maildrop.py`'s MailDrop Host Mode mnemonic table marked UNVERIFIED (same class of error as `MI`/T47 — nothing renamed, a future package's job) and filed as a Backlog Priority 1 (it is dead code today, but the 8 mnemonics it would send were never measured); new read-only `maildrop_host` subcommand (P24.2) probes the `$60`/`$70` MailDrop-login Host Mode data channel implied by `HOST 3`'s bit 1, never sends `S`/`K`/`E`, one `y/N` confirmation before any unknown frame goes out; +T117 (OPEN — not yet run) |
 
 ---
 
@@ -1358,6 +1359,33 @@ facts. **T116 is now closed** — round 4 would only be needed if a
 future `8BITCONV` or Host Mode measurement opens new questions (see
 T117 for the Host Mode side, `docs/P24_MailDrop_HostMode_Spec.md`).
 
+### T117 — MailDrop over Host Mode ($60/$70 data channel), OPEN
+`T116` measured MailDrop entirely over the verbose-mode serial link.
+`HOST 3` (the mode pk232py already enters with) sets bit 1 of the `HOST`
+command, which the TRM's Host Mode bit table documents as switching the
+MailDrop-login data channel from `$2x`/`$2F` to `$60`/`$70` — but nothing
+in the app has ever used that channel, so whether it actually works, and
+what it looks like, is unmeasured. `tools/hw_check.py maildrop_host`
+(P24.2) is a read-only probe (no `S`/`K`/`E`, no transmission): it creates
+one test message via the same known-safe verbose path as `maildrop`, then
+in Host Mode sends a bare `L` as a `$60`-CTL frame (Probe A), only sends
+`MDCHECK` first if Probe A got nothing (Probe B), reads the noted message
+number with `R <n>` if a list came back, sends `B`, and leaves Host Mode.
+
+1. `python tools/hw_check.py --port COM6 maildrop_host`
+2. Confirm the single `y/N` prompt (unknown, read-only Host Mode frames
+   about to be sent)
+3. Let Probe A (and B/C if needed) run to completion
+
+**Expected result:** the printed summary answers, for `Testplan.md`:
+1. Which frame type carried the response — `$70`, another `$7x`, or none?
+2. Is the mailbox prompt/banner identical to the verbose-mode version?
+3. Was a login needed — did the bare `L` (Probe A) work, or only after
+   `MDCHECK` (Probe B)?
+4. Does the list/read output match the verbose-mode path byte-for-byte?
+
+**Status:** ⬜ OPEN — not yet run on real hardware.
+
 ---
 
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
@@ -1624,7 +1652,7 @@ Diagnose bei Fehler:
 | High | PASSALL button click-through in the running app (Host-Mode-command level PASS via `hw_check.py t111`) — needs real hardware | T111 |
 | Medium | VHF→HF Packet MAXFRAME/SLOTTIME carry-over — FAIL confirmed for SLOTTIME, retest MAXFRAME after P18.1/P18.3 fix, tool: `hw_check.py t112` | T112 |
 | Medium | SIAM screen shows one assembled result (fix in P18.2, measurement done at T113) — needs real hardware | T114 |
-| Medium | MailDrop round 3: foreign FROM (`<`, not `>`) and `^Z` message-end (incl. whether it also gets a `/E` trailer) — needs real hardware, tool: `hw_check.py maildrop` | T116 |
+| Medium | MailDrop over Host Mode ($60/$70 data channel) — needs real hardware, tool: `hw_check.py maildrop_host` | T117 |
 
 ---
 

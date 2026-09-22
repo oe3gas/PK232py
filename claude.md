@@ -251,6 +251,16 @@ object**. Reusing the old object causes 20–35 second buffering delays.
 - Verbose mode commands require `\r\n` (CR+LF) termination
 - Wakeup: single `$2A` (`*`) byte, no CR needed
 - Host Mode exit binary sequence: `$01 $4F $48 $4F $4E $17` (NOT text `HOST OFF\r`)
+- **`HOST` is a bit field, not a plain on/off toggle (TRM, cited P24):**
+  bit 0 = Host Mode on/off; bit 1 = local MailDrop login — when set, the
+  MailDrop-login data channel moves from the normal `$2x` (outgoing)/`$2F`
+  (echo/monitored MXMIT) CTL bytes to `$60` (outgoing)/`$70` (incoming),
+  with monitored MXMIT staying at `$2F` regardless; bit 2 = extended Host
+  Mode. pk232py enters Host Mode with `HOST 3` (bits 0+1 set), so the
+  MailDrop-login bit is already on — but nothing in the app has ever sent
+  or read a `$60`/`$70` frame; `tools/hw_check.py maildrop_host` (P24.2,
+  read-only) is the first thing that probes this channel, hardware result
+  still OPEN (T117).
 - Both `HP Y` and `HP $00` are valid success responses
 - `MOPT` = Morse Option (CW); `ARQTOL` = AMTOR ARQ tolerance
 - `PT` mnemonic = PACTIME, not PACTOR. PACTOR activation = verbose `PACTOR\r\n`
