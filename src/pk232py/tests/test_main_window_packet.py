@@ -226,3 +226,65 @@ class TestPassallMnemonic:
         assert not any(
             c[0] == "cmd" and c[1] == b'PS' for c in w._serial.calls
         )
+
+
+class TestModeInstanceFactory:
+    """P19.2: _build_mode_instance() is the ONE place a mode instance is
+    built with configured values - every real activation path in
+    main_window.py must route through it, or a call site that forgets to
+    pass mode_instance silently falls back to ModeManager's cls()
+    (constructor defaults, not the operator's configuration).
+
+    Values are deliberately NOT the defaults (1/30) - a test using the
+    defaults would pass even without the P18.1/P19.2 fix, since
+    HFPacketMode()'s own constructor defaults happen to match them.
+    """
+
+    @pytest.fixture
+    def window(self):
+        w = MainWindow()
+        stub = _StubSerial()
+        w._serial = stub
+        # ModeManager captured its own reference to the real SerialManager
+        # at construction time - swap it too, or set_mode() sees the real
+        # (unconnected) serial, fails with "TNC not connected", and
+        # _on_mode_switch_failed() pops a blocking QMessageBox.warning()
+        # that hangs headless tests forever.
+        w._modes._serial = stub
+        w._app_config.hf_packet.maxframe = 2
+        w._app_config.hf_packet.slottime = 20
+        return w
+
+    def _mx_sl_commands(self, w):
+        return [c for c in w._serial.calls if c[0] == "cmd" and c[1] in (b'MX', b'SL')]
+
+    def test_on_mode_selected_hf_packet_carries_configured_values(self, window):
+        w = window
+        assert w._modes.current_mode_name != "HF Packet"
+
+        w._on_mode_selected("HF Packet")
+        w._modes._send_init_frames()   # fire the 300ms init-frame timer now
+
+        cmds = self._mx_sl_commands(w)
+        assert ("cmd", b'MX', b'2') in cmds
+        assert ("cmd", b'SL', b'20') in cmds
+        # Neither HFPacketMode's own defaults nor VHF's hardcoded values
+        # must sneak in.
+        assert ("cmd", b'MX', b'1') not in cmds
+        assert ("cmd", b'SL', b'30') not in cmds
+        assert ("cmd", b'MX', b'4') not in cmds
+        assert ("cmd", b'SL', b'10') not in cmds
+
+    def test_host_mode_entry_default_activation_still_works(self, window):
+        # _update_host_mode_ui(True) is the OTHER real set_mode() call site
+        # in main_window.py (P19.1) - it always activates Baudot RTTY, so
+        # it carries no HF-specific values, but it must keep working with
+        # mode_instance routed through the same factory (returns None here).
+        w = window
+        assert not w._modes.current_mode_name
+
+        w._update_host_mode_ui(True)
+        w._modes._send_init_frames()
+
+        assert w._modes.current_mode_name == "Baudot RTTY"
+        assert self._mx_sl_commands(w) == []

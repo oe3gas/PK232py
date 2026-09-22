@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QFont, QKeySequence, QShortcut
@@ -32,6 +33,8 @@ from pk232py import __version__
 from ..comm.serial_manager import SerialManager
 from ..comm.frame import HostFrame, FrameKind
 from ..mode_manager import ModeManager
+from ..modes.base_mode import BaseMode
+from ..modes.packet_hf import HFPacketMode
 from ..comm.params_uploader import ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
 from .dialogs.params_hf      import HFPacketParamsDialog
@@ -1280,20 +1283,29 @@ class MainWindow(QMainWindow):
             self._serial.send_command(vh_off[2:4], vh_off[4:-1])
             self._log_monitor("[PACKET] Leaving VHF Packet — VHF OFF (VH N)")
 
-        # HF Packet's own MAXFRAME/SLOTTIME must reach the mode's init
-        # frames (T112, P18.1) - a fresh HFPacketMode() has no config
-        # access, so build one with the real configured values and pass it
-        # via set_mode()'s existing pre-configured-instance mechanism.
-        mode_instance = None
-        if mm_name == "HF Packet":
-            from pk232py.modes.packet_hf import HFPacketMode
-            hf_cfg = self._app_config.hf_packet
-            mode_instance = HFPacketMode(
-                maxframe=hf_cfg.maxframe, slottime=hf_cfg.slottime
-            )
-
         self._log_monitor(f"[SYS] Switching to mode: {mm_name}")
-        self._modes.set_mode(mm_name, mode_instance=mode_instance)
+        self._modes.set_mode(mm_name, mode_instance=self._build_mode_instance(mm_name))
+
+    def _build_mode_instance(self, mm_name: str) -> Optional[BaseMode]:
+        """Build a mode instance carrying the app's configured values, or
+        None for modes that need no configuration (ModeManager then builds
+        its own default instance via ``cls()``).
+
+        This is the ONE place a mode instance is constructed with config
+        values (P19) - every call to ``self._modes.set_mode(...)`` in this
+        file must route its ``mode_instance`` through here, even when the
+        result is None. A fresh ``cls()`` (ModeManager's fallback) only
+        ever gets a mode's constructor DEFAULTS, not the operator's actual
+        configuration - P18.1 fixed this for HF Packet's MAXFRAME/SLOTTIME
+        at one call site, but any other call to ``set_mode("HF Packet")``
+        (or a future mode needing its own config) would have silently
+        gone back to the defaults. Routing every call through this one
+        method means a new mode only needs to be added here once.
+        """
+        if mm_name == "HF Packet":
+            hf_cfg = self._app_config.hf_packet
+            return HFPacketMode(maxframe=hf_cfg.maxframe, slottime=hf_cfg.slottime)
+        return None
 
     def _on_mode_changed(self, name: str) -> None:
         """Called by ModeManager when mode switch completes.
@@ -4345,7 +4357,10 @@ class MainWindow(QMainWindow):
             # Without this call ModeManager._active_mode stays None
             # and RX display, SEND/PTT and ComboBox are all broken.
             if not self._modes.current_mode_name:
-                self._modes.set_mode("Baudot RTTY")
+                self._modes.set_mode(
+                    "Baudot RTTY",
+                    mode_instance=self._build_mode_instance("Baudot RTTY"),
+                )
         else:
             self._sb_mode.setText("Mode: VERBOSE")
             self._set_mode_indicator("verbose")
