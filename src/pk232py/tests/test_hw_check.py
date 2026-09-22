@@ -269,38 +269,36 @@ class TestSummarizeSiamFrames:
         assert summary["candidates"] == []
 
 
-class TestEvaluateT112:
-    def test_pass_when_hf_values_read_back(self):
-        verdict = hw_check.evaluate_t112(
-            "1", "30", hf_maxframe="1", hf_slottime="30"
-        )
+class TestEvaluateT112Param:
+    """P18.3: MAXFRAME and SLOTTIME are judged separately - the first
+    hardware run's combined verdict had hidden MAXFRAME's own result
+    behind SLOTTIME's (MAXFRAME already equalled VHF's value before the
+    test even started)."""
+
+    def test_pass_when_hf_value_read_back(self):
+        verdict = hw_check.evaluate_t112_param("1", hf_value="1", vhf_value="4")
         assert verdict == "PASS"
 
-    def test_fail_when_vhf_values_leaked(self):
-        verdict = hw_check.evaluate_t112(
-            "4", "10", hf_maxframe="1", hf_slottime="30"
-        )
+    def test_fail_when_vhf_value_leaked(self):
+        verdict = hw_check.evaluate_t112_param("4", hf_value="1", vhf_value="4")
         assert verdict == "FAIL"
 
-    def test_inconclusive_on_unexpected_values(self):
-        verdict = hw_check.evaluate_t112(
-            "7", "7", hf_maxframe="1", hf_slottime="30"
-        )
+    def test_inconclusive_on_unexpected_value(self):
+        verdict = hw_check.evaluate_t112_param("7", hf_value="1", vhf_value="4")
         assert verdict == "INCONCLUSIVE"
 
     def test_inconclusive_when_unparseable(self):
-        verdict = hw_check.evaluate_t112(
-            None, "30", hf_maxframe="1", hf_slottime="30"
-        )
+        verdict = hw_check.evaluate_t112_param(None, hf_value="1", vhf_value="4")
         assert verdict == "INCONCLUSIVE"
 
 
 class TestT112FrameSequence:
-    """P17.4: the frame sequence must be BUILT from the real mode classes,
-    never hand-reconstructed, so a future change to either mode's frames
-    is picked up automatically instead of silently going stale here."""
+    """P17.4/P18.3: the frame sequence must be BUILT from the real mode
+    classes, never hand-reconstructed, so a future change to either
+    mode's frames is picked up automatically instead of silently going
+    stale here."""
 
-    def test_matches_the_real_mode_classes(self):
+    def test_matches_the_real_mode_classes_with_default_hf_values(self):
         from pk232py.modes.packet_hf import HFPacketMode
         from pk232py.modes.packet_vhf import VHFPacketMode
 
@@ -315,6 +313,17 @@ class TestT112FrameSequence:
         )
 
         assert hw_check.build_t112_frame_sequence() == expected
+
+    def test_threads_through_the_configured_hf_values(self):
+        from pk232py.comm.frame import build_command
+
+        frames = hw_check.build_t112_frame_sequence(
+            hf_maxframe=2, hf_slottime=20
+        )
+        assert build_command(b'MX', b'2') in frames
+        assert build_command(b'SL', b'20') in frames
+        assert build_command(b'MX', b'1') not in frames
+        assert build_command(b'SL', b'30') not in frames
 
     def test_sequence_ends_with_hf_monitor_on(self):
         from pk232py.comm.frame import build_command

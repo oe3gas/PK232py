@@ -28,8 +28,10 @@ required except for T101:
     t111    Does PX toggle PASSALL while PS (PASS) stays untouched? Sends
             the same mnemonic as the app's PASSALL button (P17.2).
     t112    Does a VHF Packet -> HF Packet switch leave MAXFRAME/SLOTTIME
-            at HF Packet's own values, or at VHF's? Replays the real frames
-            _on_mode_selected() sends, in the same order.
+            at HF Packet's own values, or at VHF's? Pre-sets both to a
+            neutral value (neither HF's nor VHF's own) so each is judged
+            separately, then replays the real frames _on_mode_selected()
+            sends, in the same order.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver) and NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
@@ -341,35 +343,48 @@ def summarize_siam_frames(frames: list) -> dict:
 _VHF_MAXFRAME = "4"
 _VHF_SLOTTIME = "10"
 
+# Neither of these matches HF Packet's own defaults (1/30) nor VHF's
+# hardcoded values (4/10) - t112 pre-sets MAXFRAME/SLOTTIME to these
+# before the switch (P18.3), so each parameter's result is meaningful on
+# its own. The first hardware run's MAXFRAME result proved nothing: it
+# already happened to equal VHF's value (4) before the test even started.
+_T112_NEUTRAL_MAXFRAME = "2"
+_T112_NEUTRAL_SLOTTIME = "20"
 
-def evaluate_t112(
-    maxframe_after: Optional[str],
-    slottime_after: Optional[str],
-    hf_maxframe: str,
-    hf_slottime: str,
+
+def evaluate_t112_param(
+    value_after: Optional[str], hf_value: str, vhf_value: str
 ) -> str:
-    """T112's decision table (docs/P17_HW_Measure_Spec.md): after a VHF ->
-    HF Packet switch, do MAXFRAME/SLOTTIME read back HF Packet's own
-    configured values (no gap), VHF's hardcoded 4/10 (confirmed gap), or
-    something else (inconclusive)?"""
-    if maxframe_after is None or slottime_after is None:
+    """Judge ONE parameter (MAXFRAME or SLOTTIME) after t112's VHF -> HF
+    Packet switch (P18.3, docs/P18_HF_Init_SIAM_Spec.md): starting from a
+    neutral pre-set value that matches NEITHER HF's nor VHF's own value
+    (see _T112_NEUTRAL_MAXFRAME/_T112_NEUTRAL_SLOTTIME) makes each of the
+    two possible causes visible on its own, instead of a combined verdict
+    hiding one parameter's result behind the other's."""
+    if value_after is None:
         return "INCONCLUSIVE"
-    if maxframe_after == hf_maxframe and slottime_after == hf_slottime:
+    if value_after == hf_value:
         return "PASS"
-    if maxframe_after == _VHF_MAXFRAME and slottime_after == _VHF_SLOTTIME:
+    if value_after == vhf_value:
         return "FAIL"
     return "INCONCLUSIVE"
 
 
-def build_t112_frame_sequence() -> list[bytes]:
+def build_t112_frame_sequence(
+    hf_maxframe: int = 1, hf_slottime: int = 30
+) -> list[bytes]:
     """The exact frame sequence _on_mode_selected() (main_window.py) sends
     for a VHF Packet -> HF Packet switch, built from the REAL mode classes,
     never hand-reconstructed (P17.3): VHF's activate + init frames, then
     VHFPacketMode.vhf_off_frame() (T51, leaving VHF), then HF Packet's
-    activate + init frames. TestT112FrameSequence in test_hw_check.py pins
-    this order against the mode classes directly."""
+    activate + init frames -- HF Packet's MX/SL now carry *hf_maxframe*/
+    *hf_slottime* (P18.1/P18.3), the same values main_window.py passes to
+    HFPacketMode when the app itself switches to HF Packet, so replaying
+    this sequence measures what the app actually sends, not just the
+    class defaults. TestT112FrameSequence in test_hw_check.py pins this
+    order against the mode classes directly."""
     vhf = VHFPacketMode()
-    hf = HFPacketMode()
+    hf = HFPacketMode(maxframe=hf_maxframe, slottime=hf_slottime)
     return (
         vhf.get_activate_frames()
         + vhf.get_init_frames()
@@ -1114,13 +1129,18 @@ def test_t112(session: Session, log: RunLog, app_config: AppConfig) -> None:
     log.line("--- T112: VHF -> HF Packet parameter carry-over ---")
     hf_maxframe = str(app_config.hf_packet.maxframe)
     hf_slottime = str(app_config.hf_packet.slottime)
-    frames = build_t112_frame_sequence()
+    frames = build_t112_frame_sequence(
+        app_config.hf_packet.maxframe, app_config.hf_packet.slottime
+    )
 
     if session.dry_run:
         log.line(
-            "[dry-run] would query MAXFRAME/SLOTTIME/VHF/HBAUD, enter Host "
-            "Mode, send this exact frame sequence (order taken from "
-            "_on_mode_selected() in main_window.py: VHF activate+init, "
+            "[dry-run] would query MAXFRAME/SLOTTIME/VHF/HBAUD, pre-set "
+            f"MAXFRAME {_T112_NEUTRAL_MAXFRAME} / SLOTTIME "
+            f"{_T112_NEUTRAL_SLOTTIME} (matches neither HF nor VHF, so "
+            "each parameter's result is meaningful on its own -- P18.3), "
+            "enter Host Mode, send this exact frame sequence (order taken "
+            "from _on_mode_selected() in main_window.py: VHF activate+init, "
             "VHF OFF, HF activate+init), exit Host Mode, query MAXFRAME/"
             "SLOTTIME again, then restore all four:"
         )
@@ -1149,6 +1169,16 @@ def test_t112(session: Session, log: RunLog, app_config: AppConfig) -> None:
     )
 
     try:
+        # Start from values that match NEITHER HF nor VHF (P18.3) - the
+        # first hardware run's MAXFRAME result proved nothing, because it
+        # already happened to equal VHF's own value (4) before the switch.
+        log.line(
+            f"Pre-setting MAXFRAME {_T112_NEUTRAL_MAXFRAME} / SLOTTIME "
+            f"{_T112_NEUTRAL_SLOTTIME} (neutral -- matches neither HF nor VHF)"
+        )
+        session.set_verbose("MAXFRAME", _T112_NEUTRAL_MAXFRAME)
+        session.set_verbose("SLOTTIME", _T112_NEUTRAL_SLOTTIME)
+
         session.enter_host_mode()
         try:
             session.drain_pending_frames()
@@ -1165,27 +1195,31 @@ def test_t112(session: Session, log: RunLog, app_config: AppConfig) -> None:
             f"SLOTTIME={slottime_after!r}"
         )
 
-        verdict = evaluate_t112(maxframe_after, slottime_after, hf_maxframe, hf_slottime)
-        if verdict == "PASS":
-            log.result(
-                "T112", "PASS",
-                f"MAXFRAME={maxframe_after!r} SLOTTIME={slottime_after!r} "
-                f"match HF Packet's own config -- no gap, close the "
-                f"Backlog item"
-            )
-        elif verdict == "FAIL":
-            log.result(
-                "T112", "FAIL",
-                f"MAXFRAME={maxframe_after!r} SLOTTIME={slottime_after!r} "
-                f"-- VHF's values ({_VHF_MAXFRAME}/{_VHF_SLOTTIME}) leaked "
-                f"into HF Packet, gap confirmed"
-            )
-        else:
-            log.result(
-                "T112", "INCONCLUSIVE",
-                f"MAXFRAME={maxframe_after!r} SLOTTIME={slottime_after!r} "
-                f"(neither HF Packet's nor VHF's known values)"
-            )
+        # Judged separately (P18.3) - a combined verdict had hidden
+        # MAXFRAME's own result behind SLOTTIME's in the first run.
+        for label, value_after, hf_value, vhf_value in (
+            ("MAXFRAME", maxframe_after, hf_maxframe, _VHF_MAXFRAME),
+            ("SLOTTIME", slottime_after, hf_slottime, _VHF_SLOTTIME),
+        ):
+            verdict = evaluate_t112_param(value_after, hf_value, vhf_value)
+            if verdict == "PASS":
+                log.result(
+                    f"T112 {label}", "PASS",
+                    f"{label}={value_after!r} matches HF Packet's own "
+                    f"config -- no gap"
+                )
+            elif verdict == "FAIL":
+                log.result(
+                    f"T112 {label}", "FAIL",
+                    f"{label}={value_after!r} -- VHF's value ({vhf_value}) "
+                    f"leaked into HF Packet, gap confirmed"
+                )
+            else:
+                log.result(
+                    f"T112 {label}", "INCONCLUSIVE",
+                    f"{label}={value_after!r} (neither HF's {hf_value!r} "
+                    f"nor VHF's {vhf_value!r})"
+                )
     finally:
         for cmd in commands:
             verify_restore(
