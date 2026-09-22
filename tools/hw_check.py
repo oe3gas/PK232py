@@ -41,12 +41,22 @@ required except for T101:
             known in advance; this records every byte in both directions
             while the operator drives an interactive md> prompt. See
             docs/P20_MailDrop_Measure_Spec.md and docs/HW_Solo_Tests.md.
+    maildrop_host
+            Read-only probe of MailDrop over Host Mode (the CTL $60/$70
+            data channel the TRM's HOST command bit 1 documents - pk232py
+            already runs with this bit set via 'HOST 3', but nothing in
+            the app uses it). Creates one test message over the known-
+            safe verbose path first, then sends only L/MDCHECK/R as raw
+            $60 frames and logs every frame that comes back, unfiltered.
+            No write/kill mailbox commands, no transmission. See
+            docs/P24_MailDrop_HostMode_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
-            and recorded individually), and NOT mi/maildrop (mi is fine
-            alone but grouped with its guided counterpart; maildrop is
-            fully interactive), so each must be run on its own.
+            and recorded individually), and NOT mi/maildrop/maildrop_host
+            (mi is fine alone but grouped with its guided counterpart;
+            maildrop and maildrop_host are interactive/exploratory), so
+            each must be run on its own.
 
 Usage::
 
@@ -59,6 +69,7 @@ Usage::
     python tools/hw_check.py --port COM6 t112
     python tools/hw_check.py --port COM6 mi
     python tools/hw_check.py --port COM6 maildrop
+    python tools/hw_check.py --port COM6 maildrop_host
     python tools/hw_check.py --dry-run all      # no port opened at all
 
 ------------------------------------------------------------------------------
@@ -115,7 +126,8 @@ from PyQt6.QtCore import QCoreApplication  # noqa: E402
 
 from pk232py.comm.serial_manager import SerialManager  # noqa: E402
 from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
-from pk232py.comm.frame import build_command  # noqa: E402
+from pk232py.comm.frame import build_command, _dle_escape  # noqa: E402
+from pk232py.comm.constants import SOH, ETB  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
 from pk232py.modes.signal_analysis import SignalMode  # noqa: E402
 from pk232py.modes.packet_hf import HFPacketMode  # noqa: E402
@@ -746,6 +758,47 @@ def parse_stored_message_number(response_text: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+# ---------------------------------------------------------------------------
+# P24.2/P24.3 -- MailDrop over Host Mode (HOST bit 1: local login)
+# ---------------------------------------------------------------------------
+
+# TRM's HOST command bit table: bit 0 = Host Mode on/off, bit 1 = local
+# MailDrop login (0 -> TX data $2x / RX echo $2F; 1 -> TX data $60 / RX
+# data $70, monitored MXMIT traffic stays $2F), bit 2 = extended Host
+# Mode. pk232py enters Host Mode with 'HOST 3' (bit 0 + bit 1 set), so
+# the app already runs in the $60/$70 variant - whether anything actually
+# uses that channel is what P24.2 measures.
+MAILDROP_HOST_CTL = 0x60
+
+
+def build_maildrop_host_frame(data: bytes) -> bytes:
+    """Build a Host Mode data frame with CTL $60 - the MailDrop-login
+    data channel (P24.2). No existing build_*() in comm/frame.py targets
+    this CTL byte (it is not one of the $2x/$4x/$4F/$5x ranges they
+    cover), so this assembles the frame directly - but reuses
+    frame.py's own _dle_escape() for the payload, the same escaping
+    every other outgoing frame uses, rather than reinventing it."""
+    return bytes([SOH, MAILDROP_HOST_CTL]) + _dle_escape(data) + bytes([ETB])
+
+
+def classify_maildrop_host_ctl(ctl: int) -> str:
+    """Label a captured frame's CTL byte for the maildrop_host probe
+    (P24.2/P24.3), per the TRM's HOST-bit-1 frame table: $70 = MailDrop
+    read data, $2F = monitored MXMIT traffic (unaffected by the
+    MailDrop-login bit), $4F/$5F = the same CMD_RESP/STATUS_ERR frames
+    every other Host Mode command already uses. Anything else is
+    genuinely unknown - this measurement makes no assumption about it."""
+    if ctl == 0x70:
+        return "MailDrop read data ($70)"
+    if ctl == 0x2F:
+        return "monitored MXMIT data ($2F)"
+    if ctl == 0x4F:
+        return "CMD_RESP ($4F)"
+    if ctl == 0x5F:
+        return "STATUS_ERR ($5F)"
+    return f"unknown (${ctl:02X})"
+
+
 def run_maildrop_interactive(
     initial_state: str,
     initial_free: Optional[int],
@@ -1266,6 +1319,40 @@ class Session:
             return
         self.log.line(f">> HOST frame {frame.hex(' ').upper()}{label}")
         self.sm.send_command(frame[2:4], frame[4:-1])
+
+    def send_maildrop_host_frame(self, data: bytes, seconds: float = 3.0) -> list:
+        """Send one MailDrop-over-Host-Mode data frame (CTL $60, P24.2)
+        and capture every frame the reader thread decodes for *seconds*.
+
+        Uses write_verbose() to write the already-built frame's exact
+        bytes - despite its name, that method has no verbose-mode-
+        specific logic at all (just a connectivity check before a raw
+        write), and SerialManager has no send_*() that builds a $60
+        frame; send_frame()'s frame[2:4]/frame[4:-1] split assumes a
+        $4F-style mnemonic+args frame, which this is not. The frame
+        TYPE the response comes back as is exactly what this measures -
+        capture and log everything, never filter.
+        """
+        frame = build_maildrop_host_frame(data)
+        if self.dry_run:
+            self.log.line(
+                f"[dry-run] >> {frame.hex(' ').upper()}  (maildrop_host: {data!r})"
+            )
+            return []
+        self.log.line(f">> {frame.hex(' ').upper()}  (maildrop_host: {data!r})")
+        captured: list = []
+        self.sm.frame_received.connect(captured.append)
+        try:
+            self.sm.write_verbose(frame)
+            self._pump(seconds)
+        finally:
+            self.sm.frame_received.disconnect(captured.append)
+        for f in captured:
+            self.log.line(
+                f"<< ctl=0x{f.ctl:02X} ({classify_maildrop_host_ctl(f.ctl)}) "
+                f"ch={f.channel} data={f.data!r} text={f.text!r}"
+            )
+        return captured
 
     def send_data_channel0(self, text: str) -> None:
         if self.dry_run:
@@ -2120,6 +2207,129 @@ def test_maildrop(
         log.result("MAILDROP", "INFO", "power-cycle test skipped by operator")
 
 
+def test_maildrop_host(session: Session, log: RunLog) -> None:
+    log.line(
+        "--- MailDrop over Host Mode (P24.2) -- read-only probe, HOST bit 1 ---"
+    )
+    session.normalize()
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would query XMITOK, create a test message over the "
+            "known verbose path (MDCHECK/S/subject/text/EX/L/B), verbose-"
+            "query HOST, enter Host Mode, confirm y/N, then probe with "
+            "these frames (probe B only runs if probe A got nothing; "
+            "R<n> only if a list came back):"
+        )
+        for probe_data in (b"L\r", b"MDCHECK\r", b"L\r", b"R 1\r", b"B\r"):
+            session.send_maildrop_host_frame(probe_data)
+        log.result("MAILDROP_HOST", "INFO", "dry-run, nothing sent")
+        return
+
+    xmitok = parse_query_value("XMITOK", session.query("XMITOK"))
+    log.line(f"XMITOK: {xmitok!r}")
+    if xmitok is not None and xmitok.strip().upper() == "ON":
+        print()
+        print("*** XMITOK is ON ***")
+        print(
+            "This probe stays on the serial link, not radio - but if the "
+            "mailbox unexpectedly transmits, XMITOK ON means the TNC "
+            "would key the transmitter."
+        )
+        log.line("WARNING: XMITOK is ON")
+
+    log.line(
+        "Step 3: creating a test message over the known-safe verbose path"
+    )
+    session.send_and_read_until_idle(b"MDCHECK\r\n")
+    session.send_and_read_until_idle(b"S OE3GAS\r")
+    session.send_and_read_until_idle(b"Host Mode Test\r")
+    session.send_and_read_until_idle(b"created for the maildrop_host probe\r")
+    store_resp = session.send_and_read_until_idle(MAILBOX_ABANDON_ENTRY_COMMAND)
+    store_text = store_resp.decode("ascii", errors="replace")
+    msg_number = parse_stored_message_number(store_text)
+    log.line(f"Test message stored as # {msg_number}")
+    list_resp = session.send_and_read_until_idle(b"L\r")
+    log.line(f"L (verbose, for later comparison): {list_resp!r}")
+    session.send_and_read_until_idle(MAILBOX_EXIT_COMMAND)
+
+    host_before = parse_query_value("HOST", session.query("HOST"))
+    log.line(f"HOST (verbose, before): {host_before!r}")
+
+    session.enter_host_mode()
+    captured_a: list = []
+    captured_b: list = []
+    try:
+        session.drain_pending_frames()
+
+        print()
+        print(
+            "About to send unknown frame types into the MailDrop-login "
+            "Host Mode data channel (CTL $60). Only read-only mailbox "
+            "commands (L, MDCHECK, R) are sent - nothing that writes, "
+            "kills, or transmits."
+        )
+        if input("Proceed? [y/N] ").strip().lower() != "y":
+            log.result("MAILDROP_HOST", "INFO", "probe skipped by operator")
+            return
+
+        log.line("Probe A: L (assumes no login needed)")
+        captured_a = session.send_maildrop_host_frame(b"L\r")
+
+        if not captured_a:
+            log.line("Probe A got nothing -- trying probe B (MDCHECK, then L)")
+            session.send_maildrop_host_frame(b"MDCHECK\r")
+            captured_b = session.send_maildrop_host_frame(b"L\r")
+
+        all_captured = captured_a + captured_b
+        got_list = any("Msg#" in f.text for f in all_captured)
+
+        if got_list and msg_number is not None:
+            log.line(f"List seen -- reading message # {msg_number}")
+            session.send_maildrop_host_frame(f"R {msg_number}\r".encode("ascii"))
+        elif msg_number is not None:
+            log.line("No list seen in probe A/B -- skipping R (nothing to read)")
+
+        log.line("Leaving the mailbox (B)")
+        session.send_maildrop_host_frame(MAILBOX_EXIT_COMMAND)
+    finally:
+        session.exit_host_mode()
+
+    if not captured_a and not captured_b:
+        log.line(
+            "Probe C: neither A nor B got anything -- confirming the "
+            "MailDrop-login bit is still set"
+        )
+
+    host_after_resp = session.query("HOST")
+    host_after = parse_query_value("HOST", host_after_resp)
+    log.line(f"HOST (verbose, after): {host_after!r}")
+    if "cmd:" not in host_after_resp:
+        log.line(
+            f"WARNING: no 'cmd:' prompt seen after leaving Host Mode -- "
+            f"raw response: {host_after_resp!r}"
+        )
+
+    all_captured = captured_a + captured_b
+    frame_types = sorted({classify_maildrop_host_ctl(f.ctl) for f in all_captured})
+    log.result(
+        "MAILDROP_HOST", "INFO",
+        f"response frame type(s): {frame_types or 'none captured'}"
+    )
+    if captured_a:
+        log.result("MAILDROP_HOST", "INFO", "login not needed -- probe A alone got a response")
+    elif captured_b:
+        log.result("MAILDROP_HOST", "INFO", "login needed -- only probe B (after MDCHECK) got a response")
+    else:
+        log.result("MAILDROP_HOST", "INFO", "neither probe A nor B got any response")
+    log.result(
+        "MAILDROP_HOST", "INFO",
+        f"compare the captured text above against the verbose 'L' logged "
+        f"earlier ({list_resp!r}) -- is the mailbox prompt/list format "
+        f"byte-identical over Host Mode?"
+    )
+
+
 # ===========================================================================
 # CLI
 # ===========================================================================
@@ -2128,18 +2338,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="hw_check.py",
         description=(
-            "Solo hardware verification for a real PK-232MBX (P14/P17/P20). "
-            "t17/t103/pthuff/t111/t112/mi only query/set parameters; siam "
-            "is receive-only but needs a tuned receiver; maildrop is an "
-            "interactive local (serial, not radio) recording terminal; "
-            "t101 TRANSMITS and needs a second receiver."
+            "Solo hardware verification for a real PK-232MBX "
+            "(P14/P17/P20/P24). t17/t103/pthuff/t111/t112/mi only query/"
+            "set parameters; siam is receive-only but needs a tuned "
+            "receiver; maildrop is an interactive local (serial, not "
+            "radio) recording terminal; maildrop_host is a read-only "
+            "Host Mode probe; t101 TRANSMITS and needs a second receiver."
         ),
     )
     p.add_argument(
         "test",
         choices=[
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
-            "mi", "maildrop", "all",
+            "mi", "maildrop", "maildrop_host", "all",
         ],
     )
     p.add_argument("--port", help="Serial port, e.g. COM3 (default: pk232py.ini)")
@@ -2201,6 +2412,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "t112":   [lambda s, l: test_t112(s, l, app_config)],
         "mi":       [lambda s, l: test_mi(s, l)],
         "maildrop": [lambda s, l: test_maildrop(s, l, args.skip_power_cycle)],
+        "maildrop_host": [lambda s, l: test_maildrop_host(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
