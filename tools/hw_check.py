@@ -223,7 +223,7 @@ _EXPLANATION_RE = re.compile(r"\s*\([^()]*\)\s*$")
 
 
 def parse_query_value(command: str, response: str) -> Optional[str]:
-    """Extract the value from a real PK-232 verbose-mode response (P15.1).
+    """Extract the value from a real PK-232 verbose-mode response.
 
     Real shape, confirmed against the TNC on 21.09.2026 (hw_logs/):
         query   '<ECHO>\\r\\n<Name>   <Value>[ (<note>)]\\r\\ncmd:'
@@ -238,36 +238,46 @@ def parse_query_value(command: str, response: str) -> Optional[str]:
         'TXDELAY' 'TXDELAY\\r\\nTXdelay   30 (300 msec.)\\r\\ncmd:'     -> '30'
         'CANLINE' 'CANLINE\\r\\nCANline   $18 (CTRL-X)\\r\\ncmd:'       -> '$18'
 
-    Returns None for an error response, an empty/unrecognised response, or a
-    genuinely multi-line value (e.g. MTEXT's two-line welcome message) -
-    returning a truncated value there would be worse than skipping the test
-    (P15.1: "None zuruckgeben ... statt einen abgeschnittenen Wert
-    zuruckzuschreiben").
+    Finds the value line BY CONTENT, never by position (P21.1, the
+    verbose-mode counterpart of the Host Mode T86 rule: never correlate
+    a response by arrival order/position, always by what it actually
+    says). A genuine TNC response line names the parameter in the TNC's
+    own mixed-case abbreviated form ('USers', 'MAildrop', 'XMITOk') - a
+    PREFIX of the command word, but never in the exact (uppercase) case
+    this tool sent it in. Every other line is ignored: the echo of the
+    command we sent, a stray leftover fragment from a prior truncated
+    response ('d:\\' - the tail end of an earlier 'cmd:'), an error line,
+    or an unrelated line entirely (e.g. an asynchronous SIAM result
+    interleaved mid-response while SIAM keeps analysing in the
+    background, P21 22.09.2026 finding - SIAM does not stop until a
+    different mode is selected).
+
+    Returns None for an error response (see query_error() for its text),
+    an empty/unrecognised response, or a genuinely multi-line value (e.g.
+    MTEXT's two-line welcome message) - returning a truncated value there
+    would be worse than skipping the test (P15.1).
     """
     if not response:
         return None
-    stripped = [ln.strip() for ln in response.splitlines() if ln.strip()]
-    if not stripped or any(ln.startswith("?") for ln in stripped):
-        return None
-
-    # Drop the echoed command (always the first line) and the trailing
-    # 'cmd:' prompt.
-    body = stripped[1:]
-    if body and body[-1].lower() == "cmd:":
-        body = body[:-1]
-    if not body:
+    lines = [ln.strip() for ln in response.splitlines() if ln.strip()]
+    if not lines:
         return None
 
     cmd_word = command.strip().split()[0].upper()
     now_value: Optional[str] = None
     plain_values: list[str] = []
-    for line in body:
+    for line in lines:
+        if line.lower() == "cmd:" or line.startswith("?"):
+            continue
         parts = line.split()
-        if len(parts) < 2 or parts[0].upper() != cmd_word:
-            # Not a 'Name ... value' line in the expected shape - bail out
-            # rather than guess (this is exactly how the old code mistook a
-            # stray 'cmd:' prompt for a value).
-            return None
+        if len(parts) < 2:
+            continue
+        name = parts[0]
+        if not cmd_word.startswith(name.upper()) or name == cmd_word:
+            # Either unrelated to this command entirely, or the exact
+            # (uppercase) echo of what we sent - not the TNC's own
+            # mixed-case rendering of it.
+            continue
         keyword_and_rest = parts[1:]
         keyword = keyword_and_rest[0].lower()
         if keyword == "now":
@@ -283,6 +293,23 @@ def parse_query_value(command: str, response: str) -> Optional[str]:
         return _EXPLANATION_RE.sub("", plain_values[0]).strip()
     # Zero or more-than-one plain value line: nothing to parse, or a
     # multi-line value (MTEXT) we do not attempt to reconstruct.
+    return None
+
+
+def query_error(response: str) -> Optional[str]:
+    """Return the TNC's error text ('?What?', '?bad', '?EXPERT command',
+    ...) if *response* contains one, else None (P21.1). Verbose-side
+    counterpart of scan_for_tnc_errors() for callers that want just the
+    first error's text rather than the whole list - e.g. to tell a
+    genuinely unsupported command (KILONFWD -> '?EXPERT command',
+    22.09.2026) apart from a response parse_query_value() simply could
+    not make sense of."""
+    if not response:
+        return None
+    for line in response.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("?"):
+            return stripped
     return None
 
 

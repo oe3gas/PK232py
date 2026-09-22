@@ -157,6 +157,48 @@ class TestParseQueryValue:
         assert hw_check.parse_query_value("USERS", "") is None
 
 
+class TestParseQueryValueFindsLineByContent:
+    """P21.1: fixtures from the real 22.09.2026 maildrop/mi console
+    transcripts, where position-based parsing (first line = echo, last =
+    'cmd:') broke - a stray leftover fragment before the echo, and a
+    SIAM result asynchronously interleaved into the middle of an
+    unrelated response (SIAM keeps analysing until a different mode is
+    selected, it does not stop on its own)."""
+
+    def test_stray_leading_fragment_is_ignored(self):
+        resp = "d:\\\r\nMAILDROP\r\nMAildrop  OFF\r\ncmd:"
+        assert hw_check.parse_query_value("MAILDROP", resp) == "OFF"
+
+    def test_interleaved_siam_line_is_ignored(self):
+        resp = "XMITOK\r\nBaudot, RXRev OFF\r\nXMITOk    ON\r\ncmd:"
+        assert hw_check.parse_query_value("XMITOK", resp) == "ON"
+
+    def test_mfilter_value(self):
+        resp = "MFILTER\r\nMFIlter   $80\r\ncmd:"
+        assert hw_check.parse_query_value("MFILTER", resp) == "$80"
+
+    def test_expert_command_error_returns_none(self):
+        resp = "KILONFWD\r\n?EXPERT command\r\ncmd:"
+        assert hw_check.parse_query_value("KILONFWD", resp) is None
+
+
+class TestQueryError:
+    def test_expert_command(self):
+        resp = "KILONFWD\r\n?EXPERT command\r\ncmd:"
+        assert hw_check.query_error(resp) == "?EXPERT command"
+
+    def test_what_error(self):
+        resp = "PX\r\n?What?\r\ncmd:"
+        assert hw_check.query_error(resp) == "?What?"
+
+    def test_no_error_returns_none(self):
+        resp = "USERS\r\nUSers     1\r\ncmd:"
+        assert hw_check.query_error(resp) is None
+
+    def test_empty_response_returns_none(self):
+        assert hw_check.query_error("") is None
+
+
 class TestScanForTncErrors:
     def test_finds_what_error(self):
         lines = ["cmd:", "?What?", "OK"]
