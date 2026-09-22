@@ -618,6 +618,34 @@ Grows over time.
     prompt; `K <n>` → `*** Done.` + prompt. Lowercase input is accepted;
     `S oe3gas#` stores `OE3GAS` as the recipient (non-alphanumeric
     characters in the callsign are dropped).
+  - **`S` accepts a foreign FROM and a BBS route, confirmed 22.09.2026
+    19:16 (P23, `hw_logs/20260922_191657_maildrop.log`):** `S <to> @
+    <bbs>` (e.g. `S OE1XYZ @ DB0MUC`) puts `<bbs>` in the list's `@ BBS`
+    column. `S <to> < <from>` (a **foreign FROM**, less-than sign) is
+    documented in the STABO handbook but **still unmeasured** — both
+    hardware attempts so far mistyped `>` instead of `<`, and the TNC
+    silently accepted the line up to the mistyped character with no
+    error, storing only `<to>` as both To and From. **The TNC does not
+    validate or report unknown/malformed extras in the `S` command at
+    all** — any dialog built on this must validate the recipient, `@BBS`
+    and foreign-FROM syntax itself before sending; do not rely on the
+    TNC to reject a mistake.
+  - **SysOp can post directly as `SB <to>` (bulletin) and `ST <to>`
+    (traffic), confirmed 22.09.2026 19:16** — same `Subject:`/text flow
+    as plain `S`, just a different two-letter command; the resulting
+    list rows show status `BN`/`TN` (type `B`/`T`, unread) instead of
+    `PN`. `SB ALL` posted an actual `ALL`-addressed bulletin.
+  - **Date format, confirmed 22.09.2026 19:16:** `DD-Mon-YY  HH:MM`
+    (e.g. `22-Sep-26  17:20`), UTC, matching whatever `DAYTIME` was last
+    set to. **The date is stamped at STORE time, not display time** — a
+    message saved before `DAYTIME` was ever set keeps showing dots
+    forever, even after the clock is set afterwards and later messages
+    get real timestamps (confirmed: round 1's message 2 still showed
+    dots in round 2's listing, after `tools/hw_check.py maildrop` had
+    since started setting `DAYTIME` on every run, P22.3).
+  - **`MDCHECK` with unread mail present adds a `You have mail.` line**
+    before the mailbox prompt (confirmed 22.09.2026 19:16) — additional
+    text before the prompt, not a different prompt shape.
   - **List format is FIXED-WIDTH columns, newest message first:**
     ```
     Msg#    Size To     From   @ BBS  Date       Time   Title
@@ -641,15 +669,33 @@ Grows over time.
     archive's own record key must be its own durable ID, never the TNC's
     message number — that number is only a transient attribute of the
     live mailbox.
-  - **Free memory: 18536 → 18452 → 18368 bytes for two messages (sizes 36
-    and 35), back to 18452 after killing the first (35-byte) one.** Each
-    message costs `size + ~48` bytes of overhead (`18536-18452=84` for a
-    36-byte message, `18452-18368=84` for a 35-byte one — the fixed
-    overhead is the same both times). `Size` itself equals
-    `len(subject) + len(text) + 9` (confirmed for both test messages).
-    **Design consequence:** before writing a message back, estimate
-    `size + 48` against the free-byte count already shown in the mailbox
-    prompt, rather than assuming it will fit.
+  - **Memory cost per message is NOT a fixed `size + 48` — that P22
+    formula was withdrawn 22.09.2026 (P23), derived from only two data
+    points that happened to agree by coincidence.** Seven messages now
+    measured:
+
+    | # | Size | Bytes used | `@BBS`? |
+    |---|---|---|---|
+    | 1 | 36 | 84 | – |
+    | 2 | 35 | 84 | – |
+    | 3 | 37 | 84 | – |
+    | 4 | 41 | 112 | `DB0MUC` |
+    | 5 | 52 | 84 | – |
+    | 6 | 33 | 84 | – |
+    | 7 | 30 | 112 | `DB0MUC` |
+
+    `Size` itself still reliably equals `len(subject) + len(text) + 9`
+    (confirmed for all seven). But bytes-used does **not** scale with
+    `Size` at all — messages of very different sizes (30 through 52) all
+    cost 84 bytes unless `@BBS` was given, in which case it jumps to 112
+    regardless of size. Unconfirmed guess: allocation happens in fixed
+    28-byte blocks, and specifying a BBS costs one block more — **not
+    verified**, do not build on it without measuring further.
+    **Design consequence, independent of the exact mechanism:** never
+    precompute whether a message will fit. After writing each message
+    back, re-read the free-byte count from the mailbox prompt and stop
+    before `*** No free memory` — the prompt is the only reliable source
+    of remaining space.
   - **Firmware quirk: a read message's stored text ends with a stray `/E`
     line** — the tail end of the `/EX` end-of-message marker, apparently
     stored (partially) with the message. **Design consequence:** strip a
@@ -667,6 +713,20 @@ Grows over time.
   the hard way 22.09.2026: after `B` silently closed the mailbox, the
   recorder's prompt stayed up and kept forwarding input to the command
   interpreter. See `tools/hw_check.py::run_maildrop_interactive()`.
+- **A Windows console turns a typed Ctrl-Z into an `EOFError`, not the
+  two literal characters `^`/`Z` (found 22.09.2026, P23).** An operator
+  trying to end a MailDrop message with the real Ctrl-Z key closed the
+  whole console input instead of sending `$1A` — the tool ended up
+  finishing the message with `/EX` in its cleanup path, so `$1A` was
+  never actually exercised that round. Any interactive tool prompt that
+  wants to offer `^Z` as an in-band control character must (1) tell the
+  operator to type the two literal characters instead of pressing the
+  key, and (2) still treat a genuine console `EOFError` gracefully if it
+  happens anyway — `tools/hw_check.py`'s mailbox terminal now reads an
+  `EOFError` while inside message entry as "end the message" (sends
+  `$1A`) rather than as "close the terminal", falling back to the normal
+  close behaviour only if the console's `input()` stays broken
+  afterwards.
 - **Verbose-mode response format, confirmed against real hardware
   21.09.2026** (P15, `hw_logs/`): a query answers
   `'<echo>\r\n<Name mixed-case>   <value>[ (<explanation>)]\r\ncmd:'`

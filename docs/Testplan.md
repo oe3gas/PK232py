@@ -46,6 +46,7 @@
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P20: corrected `pk232_mnemonic_table.txt`'s status (a failed 676-combination scan misdescribed as hardware evidence in P13/P14, see `docs/MNEMONIC_TABLE_NOTE.md`); new subcommands `mi` (query-only, does the MailDrop button's `MI` actually read back the same as `MFILTER`?) and `maildrop` (guided, mitschreib-style local MailDrop recording terminal — protocol unknown, so no script); no `src/pk232py/` changes; +T115/T116 |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py`, `main_window.py`, `packet_screen.py` | P21: real hardware run (T115/T116) found MI = MFILTER confirmed (FAIL) and a tool safety bug — after MailDrop's `B` silently closed the mailbox, typed input reached the TNC command interpreter, where `K` = CONVERSE. `parse_query_value()` now finds the value line by content, not position (async SIAM output interleaves into other responses); `Session.normalize()` runs before every hardware subcommand; the mailbox terminal is a MAILBOX/ENTRY/CMD state machine that stops the instant `cmd:` is seen; `btn_maildrop` disabled, `_on_packet_maildrop()` is a no-op |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P22: first full MailDrop hardware run (18:43, fixed tool) — T116 PASS for `L`/`S`/`R`/`K`/`B`, list format, numbering, memory accounting; all recorded in CLAUDE.md. Power-cycle confirmation reworked to a `done`/`skip` loop (a blank Enter used to be silently read as skip); recorder now sets `DAYTIME` (reusing `ParamsUploader._cmd()`) before `MDCHECK` so the list shows real dates; suggested sequence replaced with round-2's foreign-FROM/@BBS/bulletin/traffic-type/EDIT questions; added tool-only `parse_maildrop_list()`/`maildrop_response_has_e_trailer()` |
+| **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P23: round-2 hardware run (19:16) confirmed `@BBS`, `SB`/`ST`, the date/time format and the power-cycle test - T116 PASS extended; the P22 "size + ~48 bytes" memory formula withdrawn (7 messages show 84 or 112 bytes, unrelated to size). Found and fixed two tool bugs the run itself exposed: `SB`/`ST` left the state machine at MAILBOX because ENTRY was detected from the typed command, not the response (now response-based, P23.2); a real Ctrl-Z keypress produces an `EOFError` on a Windows console, so `^Z` was never actually sent - `EOFError` in ENTRY now sends `$1A` instead of closing the terminal (P23.3). Round 3 sequence targets the two still-open questions (foreign FROM, `^Z` message end); `--skip-power-cycle` added since round 2 already passed it |
 
 ---
 
@@ -1305,20 +1306,39 @@ since a script would have to guess all of that.
 optional step is run — confirmation that the mailbox is empty again
 after a power-cycle.
 
-**Status:** ✅ PASS for `L`/`S`/`R`/`K`/`B`, the list format, numbering and
-free-memory accounting (22.09.2026 18:43, first full run after the P21.3
-fix — `hw_logs/20260922_184337_maildrop.log`). Full command/response
-shapes, the fixed-width list format, the TNC-number-not-reassigned-after-
-kill finding, the per-message memory cost, and the stray `/E` read
-trailer are all recorded in CLAUDE.md's MailDrop facts. `tools/
-hw_check.py`'s `parse_maildrop_list()`/`maildrop_response_has_e_trailer()`
-(tool-only, P22.5) encode the list/read format for future measurement
-runs. **⬜ Still OPEN:** the power-cycle test itself was skipped this run
-(the old y/N prompt read a blank Enter as "no" before the operator
-realised it was time to power-cycle — fixed in P22.2) and round 2's
-questions (foreign FROM, `@BBS`, bulletins, traffic type, `EDIT`) are
-unmeasured — see `docs/P22_MailDrop_Round2_Spec.md`'s round-2 sequence,
-now the tool's default `_MAILDROP_SUGGESTED_SEQUENCE`.
+**Status:** ✅ PASS for `L`/`S`/`R`/`K`/`B`, the list format, numbering,
+`@BBS`, bulletins (`SB`), traffic (`ST`), the date/time format, and the
+power-cycle test (22.09.2026 18:43 + 19:16 —
+`hw_logs/20260922_184337_maildrop.log`,
+`hw_logs/20260922_191657_maildrop.log`). Round 2 confirmed: `S <to> @
+<bbs>` populates the list's `@ BBS` column; `SB`/`ST` post bulletins/
+traffic directly as SysOp (status `BN`/`TN`); dates show as
+`DD-Mon-YY  HH:MM` (UTC, stamped at store time — a message saved before
+`DAYTIME` was ever set keeps showing dots forever, even in later
+listings); `MDCHECK` adds `You have mail.` before the prompt when unread
+mail exists; **the P22 "size + ~48 bytes" memory formula is WITHDRAWN**
+— seven messages show 84 or 112 bytes with no relation to size, only
+(unconfirmed) to whether `@BBS` was given, see CLAUDE.md's corrected
+table. The power-cycle test itself PASSED this round (six messages
+stored, `*** Message not found.` + `18536` free + `MYCALL PK232` after
+off/on). All findings recorded in CLAUDE.md's MailDrop facts;
+`tools/hw_check.py`'s `parse_maildrop_list()`/
+`maildrop_response_has_e_trailer()` handle the confirmed format.
+
+**⬜ Still OPEN (round 3, `docs/P23_MailDrop_Round3_Spec.md`):**
+- **Foreign FROM** (`S <to> < <from>`) — unmeasured twice now: both
+  attempts mistyped `>` instead of `<`, and the TNC silently accepted
+  the line up to the mistyped character with no error (itself a
+  confirmed finding: the TNC does not validate/report unknown `S`
+  extras at all).
+- **`^Z` as message end** — never actually exercised: a real Ctrl-Z
+  keypress in the console produced an `EOFError` (Windows console
+  behaviour) instead of sending `$1A`, and the tool's cleanup path
+  finished the message with `/EX` instead. Fixed in P23.3 (typing the
+  two literal characters `^`/`Z`, plus automatic recovery if a console
+  `EOFError` happens anyway) but not yet re-run.
+- Whether a `^Z`-ended message's stored text also gets the stray `/E`
+  trailer (confirmed so far only for `/EX`-ended messages).
 
 ---
 
@@ -1586,7 +1606,7 @@ Diagnose bei Fehler:
 | High | PASSALL button click-through in the running app (Host-Mode-command level PASS via `hw_check.py t111`) — needs real hardware | T111 |
 | Medium | VHF→HF Packet MAXFRAME/SLOTTIME carry-over — FAIL confirmed for SLOTTIME, retest MAXFRAME after P18.1/P18.3 fix, tool: `hw_check.py t112` | T112 |
 | Medium | SIAM screen shows one assembled result (fix in P18.2, measurement done at T113) — needs real hardware | T114 |
-| Medium | MailDrop round 2 (foreign FROM, @BBS, bulletins, traffic type, EDIT) + the power-cycle test — needs real hardware and operator time, tool: `hw_check.py maildrop` | T116 |
+| Medium | MailDrop round 3: foreign FROM (`<`, not `>`) and `^Z` message-end (incl. whether it also gets a `/E` trailer) — needs real hardware, tool: `hw_check.py maildrop` | T116 |
 
 ---
 
