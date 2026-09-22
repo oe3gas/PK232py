@@ -81,6 +81,14 @@ Hard rules this tool follows (P14_HW_Solo_Check_Spec.md)
 6. This tool MEASURES; it does not correct the application. Findings go
    into Testplan.md / Backlog.md. Fixing main-line code based on a finding
    is a separate, later change.
+7. SAFETY (P21.3): an interactive phase running inside a TNC sub-state
+   (currently: MailDrop) stops the INSTANT the TNC reports its top-level
+   'cmd:' prompt again, before reading or sending anything else. Found
+   necessary 22.09.2026: after 'B' silently closed the mailbox, further
+   typed input kept going to the TNC's own command interpreter, where
+   single letters mean something else entirely ('K' = CONVERSE) - with
+   MYCALL set and XMITOK ON, that would have transmitted on the air.
+   See run_maildrop_interactive().
 
 Log files land in hw_logs/YYYYMMDD_HHMMSS_<test>.log (gitignored - the
 summary printed at the end of each run is what gets copied into
@@ -484,22 +492,27 @@ def evaluate_mi_probe(
 # ---------------------------------------------------------------------------
 
 _MAILDROP_QUERY_COMMANDS = [
-    "MAILDROP", "MYMAIL", "MYCALL", "MTEXT", "MMSG",
+    # MYCALL is deliberately NOT here - session.normalize() (P21.2)
+    # already queries/resets it; querying it again here would send it
+    # twice for no reason.
+    "MAILDROP", "MYMAIL", "MTEXT", "MMSG",
     "3RDPARTY", "KILONFWD", "TMAIL", "MDMON", "XMITOK",
 ]
 
 _MAILDROP_SUGGESTED_SEQUENCE = """\
-Suggested sequence (follow the mailbox's own prompts):
-  H           help - learn the real command set first
-  L           list (probably empty after power-up)
-  S OE3GAS    write a test message to yourself - follow the prompts
-              for subject and text; the help tells how to end the text
-  L           list again - note number, status letters, format
-  R <n>       read it
-  S OE3GAS    a second message
-  K <n>       kill the first one
-  L           list again
-  B           leave the mailbox (or whatever the help says)
+Suggested sequence (SysOp command set is B,E,K,L,R,S - TRM/STABO
+handbook ch.5; 'H'/'?' help is only for OTHER users logging in, NOT the
+SysOp - hardware-confirmed 22.09.2026, 'H' answers '*** What?'):
+  L                list - probably empty after power-up
+  S OE3GAS         new message - answer the subject prompt, then the
+                   text, end with /EX on its own line
+  L                list - note number, status letter (P/T/B), size, format
+  R <n>            read it
+  S OE3GAS         second message
+  L                list - does numbering continue?
+  K <n>            kill the FIRST message
+  L                list - does the gap stay, or are numbers reassigned?
+  B                leave the mailbox - the terminal ends at cmd:
 """
 
 # ^Z/^D/^C typed at the md> prompt are sent as the matching single
@@ -548,6 +561,136 @@ def maildrop_session_left(tail_text: str) -> bool:
     session was left (P20 Teil B step 5). No Host Mode/verbose command is
     known to exit MailDrop, so this is a detection, not a control."""
     return "cmd:" in tail_text
+
+
+# ---------------------------------------------------------------------------
+# P21.3 -- mailbox terminal state machine (MAILBOX / ENTRY / CMD)
+# ---------------------------------------------------------------------------
+
+# Real prompt, hardware-confirmed 22.09.2026: '(AEA PK-232M)  18536 free
+# (B,E,K,L,R,S) >' - round brackets, double spaces, differs from the TRM's
+# '[AEA PK-232M] ... >' example. Searched ANYWHERE in the response, not
+# anchored to the last line: SIAM can still interleave a result line right
+# after the prompt even with normalize() run first (defence in depth,
+# 22.09.2026 finding).
+_MAILBOX_PROMPT_RE = re.compile(
+    r"\(AEA PK-232M?\)\s+(\d+)\s+free\s+\(([A-Z,]+)\)\s*>"
+)
+
+# SysOp mailbox commands confirmed against the TRM/STABO handbook ch.5
+# and real hardware 22.09.2026: B (bye), E (edit, not used this round),
+# K (kill), L (list), R (read), S (send). 'H'/'?' are for OTHER users
+# logging in, not the SysOp - confirmed: 'H' answers '*** What?'.
+MAILBOX_EXIT_COMMAND = b"B\r"
+MAILBOX_ABANDON_ENTRY_COMMAND = b"/EX\r"
+
+
+def extract_mailbox_free(response_text: str) -> Optional[int]:
+    """Return the free-byte count from a mailbox prompt in
+    *response_text*, or None if no prompt is present (P21.3) - logged on
+    every response so the operator can see how much space one message
+    used."""
+    m = _MAILBOX_PROMPT_RE.search(response_text)
+    return int(m.group(1)) if m else None
+
+
+def classify_maildrop_response(
+    response_text: str, previous_state: str, sent_command: str = "",
+) -> tuple[str, bool]:
+    """Redetermine the mailbox terminal's state from ONE response
+    (P21.3). Returns (new_state, recognised).
+
+    States:
+      MAILBOX - the '(...)  <n> free  (...) >' prompt was seen
+      ENTRY   - inside message entry (started by sending 'S ...' while
+                in MAILBOX; lasts until a MAILBOX prompt returns) - free-
+                form subject/text prompts here are the NORM, not a
+                warning-worthy anomaly
+      CMD     - a 'cmd:' prompt was seen. SAFETY: the caller must stop
+                the interactive phase immediately when this is returned
+                - once the TNC is back at its own command interpreter, a
+                bare single-letter mailbox command means something
+                completely different there (e.g. 'K' = CONVERSE,
+                22.09.2026 finding).
+
+    'recognised' is False only when the response matches neither known
+    prompt AND no ENTRY transition applies - i.e. in MAILBOX state, where
+    exactly one of the two known prompts is always expected. Never False
+    while already in ENTRY (see above).
+    """
+    if maildrop_session_left(response_text):
+        return "CMD", True
+    if _MAILBOX_PROMPT_RE.search(response_text):
+        return "MAILBOX", True
+    if previous_state == "MAILBOX" and sent_command.strip().upper().split()[:1] == ["S"]:
+        return "ENTRY", True
+    if previous_state == "ENTRY":
+        return "ENTRY", True
+    return previous_state, False
+
+
+def run_maildrop_interactive(
+    initial_state: str,
+    initial_free: Optional[int],
+    read_line: Callable[[str, Optional[int]], Optional[str]],
+    send: Callable[[bytes, str], bytes],
+    log: "RunLog",
+) -> tuple[str, Optional[bytes]]:
+    """Drive the mailbox terminal's interactive loop (P21.3). Pure of any
+    real I/O - *read_line(state, free)* returns the next typed line (or
+    None on EOF), *send(payload, note)* writes it and returns the raw
+    response bytes. Returns (final_state, last_sent_payload).
+
+    SAFETY (the reason this function exists as a single, testable unit):
+    the moment a response's state becomes CMD, this returns IMMEDIATELY,
+    without calling read_line() or send() again. Found necessary
+    22.09.2026: after 'B' silently closed the mailbox, the md> prompt
+    stayed up and further typed input reached the TNC's own command
+    interpreter, where single letters mean something else entirely ('K'
+    = CONVERSE) - with MYCALL set and XMITOK ON, that would have
+    transmitted.
+    """
+    state = initial_state
+    free = initial_free
+    last_sent: Optional[bytes] = None
+
+    while True:
+        line = read_line(state, free)
+        if line is None:
+            log.line("INFO: input closed (EOF) - leaving the terminal")
+            return state, last_sent
+
+        kind, payload = classify_maildrop_input(line)
+        if kind == "quit":
+            log.line("INFO: operator typed /quit - leaving the terminal")
+            return state, last_sent
+
+        last_sent = payload
+        resp_bytes = send(payload, f"[{state}] {line.strip()!r}")
+        resp_text = resp_bytes.decode("ascii", errors="replace")
+
+        if "*** No free memory" in resp_text:
+            log.line("WARNING: mailbox reports *** No free memory")
+
+        new_state, recognised = classify_maildrop_response(resp_text, state, line)
+        if not recognised:
+            log.line(
+                f"WARNING: unrecognised response (state stays {state!r}): "
+                f"hex={resp_bytes.hex(' ').upper()}"
+            )
+        state = new_state
+
+        maybe_free = extract_mailbox_free(resp_text)
+        if maybe_free is not None:
+            free = maybe_free
+            log.line(f"Mailbox free memory: {free}")
+
+        if state == "CMD":
+            log.line(
+                "INFO: 'cmd:' prompt seen - interactive phase stopped "
+                "immediately (safety rule, P21.3)"
+            )
+            return state, last_sent
 
 
 def scan_for_tnc_errors(lines: list[str]) -> list[str]:
@@ -1551,6 +1694,60 @@ def test_mi(session: Session, log: RunLog) -> None:
         )
 
 
+def _maildrop_console_prompt(state: str, free: Optional[int]) -> str:
+    if state == "ENTRY":
+        return "md-text> "
+    if state == "MAILBOX":
+        return f"md[{free} free]> " if free is not None else "md[mailbox]> "
+    return "md> "
+
+
+def _maildrop_read_line(state: str, free: Optional[int]) -> Optional[str]:
+    try:
+        return input(_maildrop_console_prompt(state, free))
+    except EOFError:
+        return None
+
+
+def _maildrop_leave_mailbox(
+    session: Session, log: RunLog, final_state: str, last_sent: Optional[bytes]
+) -> None:
+    """Close out the mailbox terminal (P21.3 'finally'): if the
+    interactive phase ended already at CMD (the safety stop), there is
+    nothing to do - the mailbox is already closed. Otherwise send /EX
+    first if still in ENTRY (abandon the in-progress message), then B
+    (leave the mailbox) - both hardware-confirmed 22.09.2026 ('B' ->
+    'cmd:' immediately). Verifies 'cmd:' afterwards; a clear warning if
+    that fails, same as before."""
+    if final_state == "CMD":
+        log.result(
+            "MAILDROP", "INFO",
+            "interactive phase already ended at cmd: -- mailbox left cleanly"
+        )
+        return
+
+    if final_state == "ENTRY":
+        resp = session.send_and_read_until_idle(
+            MAILBOX_ABANDON_ENTRY_COMMAND, note="abandon entry (cleanup)"
+        )
+        print(resp.decode("ascii", errors="replace"))
+
+    b_resp = session.send_and_read_until_idle(
+        MAILBOX_EXIT_COMMAND, note="leave mailbox (cleanup)"
+    )
+    print(b_resp.decode("ascii", errors="replace"))
+    b_text = b_resp.decode("ascii", errors="replace")
+    if maildrop_session_left(b_text):
+        log.result("MAILDROP", "INFO", "mailbox left cleanly (cmd: confirmed)")
+    else:
+        log.result(
+            "MAILDROP", "INFO",
+            f"could not confirm the mailbox was left -- last input sent: "
+            f"{last_sent!r} -- leave it manually in a normal terminal "
+            f"before running anything else on this port"
+        )
+
+
 def _maildrop_confirm_loss_on_power_cycle(session: Session, log: RunLog) -> None:
     log.line("--- MailDrop: confirming loss on power-cycle ---")
     session.disconnect()
@@ -1563,25 +1760,26 @@ def _maildrop_confirm_loss_on_power_cycle(session: Session, log: RunLog) -> None
         return
 
     session.connect()
-    mycall = parse_query_value("MYCALL", session.query("MYCALL"))
-    log.line(f"MYCALL after power-cycle: {mycall!r}")
+    session.normalize()  # re-sets MYCALL from config (P21.2)
 
     resp = session.send_and_read_until_idle(b"MDCHECK\r\n")
     print(resp.decode("ascii", errors="replace"))
     list_resp = session.send_and_read_until_idle(b"L\r")
     print(list_resp.decode("ascii", errors="replace"))
+    b_resp = session.send_and_read_until_idle(MAILBOX_EXIT_COMMAND)
+    print(b_resp.decode("ascii", errors="replace"))
 
     log.result(
         "MAILDROP", "INFO",
-        f"post-power-cycle -- MYCALL={mycall!r}, mailbox 'L' response="
-        f"{list_resp!r} -- compare against the pre-power-cycle state "
-        f"recorded above to confirm the mailbox was lost. This second "
-        f"session is also left open in the mailbox -- exit it manually."
+        f"post-power-cycle -- mailbox 'L' response={list_resp!r} -- "
+        f"compare against the pre-power-cycle state recorded above to "
+        f"confirm the mailbox was lost"
     )
 
 
 def test_maildrop(session: Session, log: RunLog) -> None:
-    log.line("--- MailDrop: guided recording terminal (P20 Teil B) ---")
+    log.line("--- MailDrop: guided recording terminal (P20 Teil B / P21.3) ---")
+    session.normalize()
     log.line(
         "Local MailDrop session over the serial link, verbose mode only "
         "- never transmits on the air."
@@ -1591,8 +1789,10 @@ def test_maildrop(session: Session, log: RunLog) -> None:
         log.line(
             "[dry-run] would query " + ", ".join(_MAILDROP_QUERY_COMMANDS)
             + ", warn if XMITOK is ON, send MDCHECK, then open an "
-              "interactive md> terminal (exit with /quit) - nothing is "
-              "sent in dry-run, the interactive phase never starts."
+              "interactive md>/md-text> terminal that tracks MAILBOX/"
+              "ENTRY/CMD state and stops the instant a 'cmd:' prompt is "
+              "seen (P21.3) - nothing is sent in dry-run, the interactive "
+              "phase never starts."
         )
         log.result("MAILDROP", "INFO", "dry-run, nothing sent")
         return
@@ -1601,9 +1801,14 @@ def test_maildrop(session: Session, log: RunLog) -> None:
     values: dict[str, Optional[str]] = {}
     for cmd in _MAILDROP_QUERY_COMMANDS:
         resp = session.query(cmd)
-        value = parse_query_value(cmd, resp)
-        values[cmd] = value
-        log.line(f"{cmd}: {value!r} (raw: {resp!r})")
+        err = query_error(resp)
+        if err is not None:
+            log.line(f"{cmd}: error {err!r} (raw: {resp!r})")
+            values[cmd] = None
+        else:
+            value = parse_query_value(cmd, resp)
+            values[cmd] = value
+            log.line(f"{cmd}: {value!r} (raw: {resp!r})")
 
     xmitok = values.get("XMITOK")
     if xmitok is not None and xmitok.strip().upper() == "ON":
@@ -1619,50 +1824,52 @@ def test_maildrop(session: Session, log: RunLog) -> None:
     print()
     print("Opening the local MailDrop with MDCHECK.")
     resp = session.send_and_read_until_idle(b"MDCHECK\r\n")
-    print(resp.decode("ascii", errors="replace"))
+    resp_text = resp.decode("ascii", errors="replace")
+    print(resp_text)
+
+    if maildrop_session_left(resp_text):
+        log.result(
+            "MAILDROP", "INFO",
+            "MDCHECK returned straight to cmd: -- mailbox did not open"
+        )
+        return
+    if not _MAILBOX_PROMPT_RE.search(resp_text):
+        log.line(
+            f"WARNING: unrecognised MDCHECK response: "
+            f"hex={resp.hex(' ').upper()}"
+        )
+    state = "MAILBOX"
+    free = extract_mailbox_free(resp_text)
+    if free is not None:
+        log.line(f"Mailbox free memory: {free}")
 
     print()
     print(_MAILDROP_SUGGESTED_SEQUENCE)
     print(
-        "Type mailbox commands at the md> prompt below (not a "
-        "requirement, just a starting point - follow the mailbox's own "
-        "help). ^Z/^D/^C are sent as the matching control byte. Type "
-        "/quit to leave this terminal (this does NOT itself log out of "
-        "the mailbox - the exit command, if any, is unknown)."
+        "Type mailbox commands at the prompt below (not a requirement, "
+        "just a starting point). ^Z/^D/^C are sent as the matching "
+        "control byte. Type /quit to leave this terminal (this does NOT "
+        "itself log out of the mailbox). The terminal stops on its own "
+        "the instant the mailbox reports 'cmd:' -- see the safety note "
+        "in the module docstring."
     )
 
-    last_sent: Optional[bytes] = None
-    while True:
-        try:
-            line = input("md> ")
-        except EOFError:
-            log.line("INFO: input closed (EOF) - leaving the terminal")
-            break
-        kind, payload = classify_maildrop_input(line)
-        if kind == "quit":
-            log.line("INFO: operator typed /quit - leaving the terminal")
-            break
-        last_sent = payload
-        note = f"typed {line.strip()!r}" if kind == "control" else ""
+    def _send(payload: bytes, note: str) -> bytes:
         resp = session.send_and_read_until_idle(payload, note=note)
         print(resp.decode("ascii", errors="replace"))
+        return resp
 
-    log.line("Reading for 1s to check whether the mailbox was left")
-    tail = session.read_until_idle(idle=1.0, max_total=1.0)
-    tail_text = tail.decode("ascii", errors="replace")
-    if maildrop_session_left(tail_text):
-        log.result(
-            "MAILDROP", "INFO",
-            "verbose 'cmd:' prompt seen -- mailbox left cleanly"
+    final_state, last_sent = run_maildrop_interactive(
+        state, free, _maildrop_read_line, _send, log
+    )
+    if final_state == "CMD":
+        print(
+            "Mailbox closed (cmd: prompt). Interactive phase ended: "
+            "further input would reach the TNC command interpreter, "
+            "where 'K' means CONVERSE."
         )
-    else:
-        log.result(
-            "MAILDROP", "INFO",
-            f"no 'cmd:' prompt seen -- the session may still be inside "
-            f"the mailbox; last input sent: {last_sent!r} -- leave the "
-            f"mailbox manually in a normal terminal before running "
-            f"anything else on this port"
-        )
+
+    _maildrop_leave_mailbox(session, log, final_state, last_sent)
 
     if input(
         "Power-cycle the TNC now to confirm the mailbox is lost? [y/N] "
