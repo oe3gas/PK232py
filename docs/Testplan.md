@@ -44,6 +44,7 @@
 | **2026-09-22** | `packet_hf.py`, `main_window.py`, `signal_analysis.py`, `tools/hw_check.py` | P18: hardware results T111 PASS, T112 FAIL (SLOTTIME confirmed), T113 measurement complete (SIAM = `$50` LINK_MSG on ch0, split across two frames). `HFPacketMode.get_init_frames()` now resets `MX`/`SL` from HF's own config (constructor args, wired via `ModeManager.set_mode(mode_instance=...)`); `SignalMode` assembles the two-frame results and never treats CMD_RESP as one; `hw_check.py t112` pre-sets neutral MAXFRAME/SLOTTIME and judges them separately; +T114 |
 | **2026-09-22** | `main_window.py`, `packet_hf.py`, `packet_vhf.py`, `signal_screen.py` | P19: found a SECOND `set_mode()` call site (`_update_host_mode_ui()`'s Host-Mode-entry default) that P18.1 had missed — a future config-carrying mode there would have silently gotten constructor defaults. `MainWindow._build_mode_instance()` is now the one place any mode instance is built with configuration; `HFPacketMode`'s own defaults now derive from `HFPacketConfig` instead of repeating the numbers; `SignalScreen` wired to `SignalMode.on_result_parsed` (was never wired to anything), shows latest + best-so-far result; T114 concretized with the wiring now in place |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P20: corrected `pk232_mnemonic_table.txt`'s status (a failed 676-combination scan misdescribed as hardware evidence in P13/P14, see `docs/MNEMONIC_TABLE_NOTE.md`); new subcommands `mi` (query-only, does the MailDrop button's `MI` actually read back the same as `MFILTER`?) and `maildrop` (guided, mitschreib-style local MailDrop recording terminal — protocol unknown, so no script); no `src/pk232py/` changes; +T115/T116 |
+| **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py`, `main_window.py`, `packet_screen.py` | P21: real hardware run (T115/T116) found MI = MFILTER confirmed (FAIL) and a tool safety bug — after MailDrop's `B` silently closed the mailbox, typed input reached the TNC command interpreter, where `K` = CONVERSE. `parse_query_value()` now finds the value line by content, not position (async SIAM output interleaves into other responses); `Session.normalize()` runs before every hardware subcommand; the mailbox terminal is a MAILBOX/ENTRY/CMD state machine that stops the instant `cmd:` is seen; `btn_maildrop` disabled, `_on_packet_maildrop()` is a no-op |
 
 ---
 
@@ -684,6 +685,14 @@ Backlog.md.
 **Status:** ✅ PASS (2026-06-22, frame-verified) — `btn_maildrop` →
 `_on_packet_maildrop()` → `MI` (mnemonic `MI`).
 
+**Correction (P21, hardware-confirmed 22.09.2026, T115):** this PASS only
+ever meant "the TNC accepted the frame" — it never verified what `MI`
+does. Host Mode `MI` reads back the same value as verbose `MFILTER`
+(`MI$80` / `MFIlter $80`): `MI` is MFILTER, not MailDrop login, so the
+button never logged in to the mailbox at all. Fixed in P21.5:
+`btn_maildrop` is disabled ("MailDrop dialog not implemented yet") and
+`_on_packet_maildrop()` is a no-op until a real MailDrop dialog exists.
+
 ### T48 — VHF vs HF Packet init frames
 **Status:** ✅ PASS (2026-06-22, frame-verified) — HF emits `VH N`, VHF emits
 `VH Y`; VHF init no longer inherits the HF `VH N`. See T31/T32.
@@ -1266,33 +1275,50 @@ is confirmed as MFILTER and the MailDrop button
 (`main_window._on_packet_maildrop()`) sends the wrong command; if they
 differ, there is no evidence for the mnemonic-table claim.
 
-**Status:** ⬜ OPEN — needs real hardware. See `docs/HW_Solo_Tests.md` and
+**Status:** ❌ FAIL, confirmed (22.09.2026, second `hw_check.py mi` run) —
+Host Mode `MI` read back `$80`, verbose `MFILTER` read back `$80` (`MI$80`
+/ `MFIlter $80`). **`MI` is MFILTER, not MailDrop login** — the mnemonic-
+table name-list entry is confirmed, and `main_window._on_packet_maildrop()`
+sent the wrong command. Fixed in P21.5 (`btn_maildrop` disabled, handler
+is a no-op); see T47's correction note. See `docs/HW_Solo_Tests.md` and
 `docs/P20_MailDrop_Measure_Spec.md`.
 
 ### T116 — MailDrop protocol measurement (hardware, OPEN)
 The real MailDrop command set, prompts, and message-termination sequence
-are not known — `tools/hw_check.py maildrop` (P20 Teil B) is a guided,
-mitschreib-style recording terminal, not a script, since a script would
-have to guess all of that.
+are not known — `tools/hw_check.py maildrop` (P20 Teil B, reworked in
+P21.3) is a guided, mitschreib-style recording terminal, not a script,
+since a script would have to guess all of that.
 
 1. `python tools/hw_check.py --port COM6 maildrop`
-2. Follow (or diverge from, as needed) the tool's suggested sequence: `H`
-   (help), `L` (list), `S` (send a test message to yourself), `L`, `R`
-   (read it), `S` (a second message), `K` (kill the first), `L`, then
-   leave the mailbox per its own help
-3. Type `/quit` to leave the tool's interactive prompt; check whether the
-   tool reports the mailbox as left (a `cmd:` prompt seen) or still open
+2. Follow (or diverge from, as needed) the tool's suggested sequence:
+   `L` (list), `S` (send a test message to yourself, end with `/EX` on
+   its own line), `L`, `R` (read it), `S` (a second message), `L`, `K`
+   (kill the first), `L`, then `B` to leave the mailbox
+3. Type `/quit` to leave the tool's interactive prompt (only needed if
+   the terminal has not already stopped itself at a `cmd:` prompt)
 4. Optional: confirm on power-cycle that the mailbox content is lost
    (expected, see CLAUDE.md's "no RAM buffer battery" finding)
 
-**Expected result:** a full record of the real command set (from `H`),
-the real message-list format (from `L`), confirmation that `S`/`R`/`K`
-work as expected, and — if the optional step is run — confirmation that
-the mailbox is empty again after a power-cycle.
+**Expected result:** a full record of the real message-list format (from
+`L`), confirmation that `S`/`R`/`K` work as expected, and — if the
+optional step is run — confirmation that the mailbox is empty again
+after a power-cycle.
 
-**Status:** ⬜ OPEN — needs real hardware and real operator time (this is
-an open-ended protocol measurement, not a quick pass/fail check). See
-`docs/HW_Solo_Tests.md` and `docs/P20_MailDrop_Measure_Spec.md`.
+**Status:** 🟡 Partial result (22.09.2026, first run, before the P21
+fixes): mailbox prompt confirmed
+(`` (AEA PK-232M)  18536 free  (B,E,K,L,R,S) > ``, round brackets, double
+spaces — differs from the TRM's `[AEA PK-232M] ... >` example); SysOp
+command set confirmed as `B,E,K,L,R,S` only (`H` → `*** What?`, help is
+for other users, not the SysOp); `B` confirmed to close the mailbox and
+return straight to `cmd:`. **A safety issue in the tool itself** (typed
+input after `B` reached the TNC command interpreter, where `K` = CONVERSE)
+stopped the run before `S`/`R`/`K`/`L` and the message format could be
+exercised — fixed in P21.3. ⬜ Still OPEN: repeat with the fixed tool and
+the corrected sequence above to get the real command set, message-list
+format, and `S`/`R`/`K` results. Needs real hardware and real operator
+time (this is an open-ended protocol measurement, not a quick pass/fail
+check). See `docs/HW_Solo_Tests.md`, `docs/P20_MailDrop_Measure_Spec.md`
+and `docs/P21_MailDrop_Recorder_Fix_Spec.md`.
 
 ---
 
@@ -1560,8 +1586,7 @@ Diagnose bei Fehler:
 | High | PASSALL button click-through in the running app (Host-Mode-command level PASS via `hw_check.py t111`) — needs real hardware | T111 |
 | Medium | VHF→HF Packet MAXFRAME/SLOTTIME carry-over — FAIL confirmed for SLOTTIME, retest MAXFRAME after P18.1/P18.3 fix, tool: `hw_check.py t112` | T112 |
 | Medium | SIAM screen shows one assembled result (fix in P18.2, measurement done at T113) — needs real hardware | T114 |
-| Medium | MI vs MFILTER probe — needs real hardware, tool: `hw_check.py mi` | T115 |
-| Medium | MailDrop protocol measurement — needs real hardware and operator time, tool: `hw_check.py maildrop` | T116 |
+| Medium | MailDrop protocol measurement — FAIL-stopped by a tool safety bug on the first run (fixed P21.3), repeat with the fixed tool and corrected sequence, needs real hardware and operator time, tool: `hw_check.py maildrop` | T116 |
 
 ---
 

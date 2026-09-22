@@ -139,22 +139,22 @@ NOTHING to the TNC yet)
 | Function | Candidate | Status |
 |---|---|---|
 | CONPERM | `CY` | Button built, `# TODO mnemonic unverified`, no frame sent. |
-| MAILDROP on/off (options row) | unresolved | Button built, no frame sent. Distinct from the working `btn_maildrop` MDCHECK-login button (mnemonic `MI`, T47 **frame**-verified only — see the note below on what `MI` actually is) — do not conflate the two. |
+| MAILDROP on/off (options row) | unresolved | Button built, no frame sent. Was distinct from the (now-disabled) `btn_maildrop` MDCHECK button — no longer a conflation risk since `btn_maildrop` no longer sends `MI` at all (P21.5). |
 | MDMON | unresolved | Button built, no frame sent. |
 | LITE | unresolved | Button built, no frame sent. |
-| MailDrop-Login / MID | `MI` (both) | Pre-existing, documented conflict — `MI` used for both MDCHECK login and the MID (Morse ID) toggle. Behaviour intentionally left unchanged; see CLAUDE.md "Known bug" history and the code comment in `packet_screen.py`. |
+| MailDrop-Login / MID | `MI` (both) | **Resolved by measurement, not by choice (P21, 22.09.2026):** `MI` is MFILTER, not MailDrop login (`tools/hw_check.py mi`: Host Mode `MI$80` = verbose `MFIlter $80`) — there never was a real MailDrop-login-vs-MID conflict on `MI`, because the MailDrop side of it was never MailDrop login to begin with. `btn_maildrop` is now disabled (P21.5); `MID` (Morse ID toggle) is unaffected. See CLAUDE.md's mnemonic table and the `MailDrop dialog` entry below. |
 
-**`MI` may actually be MFILTER, not MailDrop login (P20, 2026-09-22):**
-`pk232_mnemonic_table.txt`'s name-to-mnemonic mapping lists `MI` as
-MFILTER — that file is not hardware evidence (see
-`docs/MNEMONIC_TABLE_NOTE.md` and CLAUDE.md's mnemonic-table correction),
-but it means T47's "MailDrop login" claim was never actually confirmed to
-mean MailDrop login on real hardware, only that `_on_packet_maildrop()`
-sends `build_command(b'MI')` and the TNC accepts it (frame-verified, not
-meaning-verified). `tools/hw_check.py mi` (query-only) checks whether `MI`
-and `MFILTER` read back the same value, which would confirm the
-mnemonic-table entry and mean the MailDrop button sends the wrong
-command. See Testplan (MI probe case) once run.
+**`MI` = MFILTER, not MailDrop login — CONFIRMED (P21, 22.09.2026):**
+`pk232_mnemonic_table.txt`'s name-to-mnemonic mapping listed `MI` as
+MFILTER (not hardware evidence on its own — see
+`docs/MNEMONIC_TABLE_NOTE.md`); `tools/hw_check.py mi` then confirmed it
+on real hardware (Host Mode `MI` → `$80`, verbose `MFILTER` → `$80`,
+identical). `main_window._on_packet_maildrop()`'s `build_command(b'MI')`
+was frame-verified (T47, 2026-06-22) but never meaning-verified, and
+never actually logged in to the mailbox. Fixed in P21.5: `btn_maildrop`
+disabled with tooltip "MailDrop dialog not implemented yet",
+`_on_packet_maildrop()` is a no-op. A real MailDrop dialog/login path is
+still needed — filed under "MailDrop management dialog" below.
 
 ### Packet — Connect/Disconnect & MHEARD
 
@@ -380,10 +380,26 @@ open design question, not started.
 | Connect-dialog persistence | The "…" advanced-connect dialog (channel + digipeater path) does not remember its last values across sessions. |
 | File transfer (`btn_files`) | Disabled placeholder in v0.1 — no protocol implementation yet. |
 | QSO-Log integration (`btn_qsolog`) | Disabled placeholder in v0.1 — depends on the planned SQLite QSO log (see Priority 3). |
-| MailDrop management dialog | The tool-row `btn_maildrop` only sends MDCHECK login (`MI`, T47-verified); browsing/composing MailDrop messages is not implemented. |
+| MailDrop management dialog | **Needed from scratch, not just extended (P21, 22.09.2026):** the tool-row `btn_maildrop` never sent a real MDCHECK login at all — `MI` is MFILTER (confirmed, see above), so `_on_packet_maildrop()` was querying a filter setting, not logging in. Disabled in P21.5 until a real dialog exists. A real MailDrop login must send `MDCHECK` in VERBOSE mode (the local terminal it opens has its own prompt, not `cmd:` — see `tools/hw_check.py`'s `Session.send_and_read_until_idle()`/`read_until_idle()` for the pattern), and needs the message-list/read/send/kill protocol that `tools/hw_check.py maildrop` (T116) is still measuring. Depends on that measurement completing first — see the MailDrop protocol layer note above. |
 | CONPERM / MAILDROP / MDMON / LITE mnemonics | Confirm against the TRM / `pk232_mnemonic_table.txt` (neither was available in this session) before wiring real frames. |
 | Interactive mock-GUI + hardware re-test | T87–T92 (Testplan.md) are software/headless-verified only. |
 | No `VHFPacketConfig` (P19.3, 2026-09-22) | VHF Packet has no config-driven parameter set of its own — `VHFPacketMode.get_init_frames()` always sends the fixed `MX 4` / `SL 10` (and `HB 1200`), never anything from a dialog/INI. HF Packet's `HFPacketMode` gained config-driven `maxframe`/`slottime` constructor args in P18.1/P19.2; VHF's own docstring now states explicitly that it does NOT use those inherited parameters. Adding a real `VHFPacketConfig` (own dialog fields, own INI section, same wiring pattern as `HFPacketConfig`) is open — not attempted here, since it is a config/dialog feature, not a bugfix. |
+
+**MailDrop protocol layer (P21, 2026-09-22):** depends on repeating the
+T116 measurement with the fixed `tools/hw_check.py maildrop` (P21.3) — the
+first run only got as far as confirming the mailbox prompt shape and the
+SysOp command set before a tool-side safety bug cut it short (fixed).
+Building a real MailDrop dialog/login path (see "MailDrop management
+dialog" above) needs the real `S`/`R`/`K`/`L` command syntax and message
+format from that repeat run, not guessed.
+
+**Host Mode access to the mailbox (P21, 2026-09-22):** the STABO handbook
+references Host Mode commands for `B` and `E`, but they were illegible in
+the failed `pk232_mnemonic_table.txt` scan (see
+`docs/MNEMONIC_TABLE_NOTE.md`) and have not been re-measured. All P21
+MailDrop work used the VERBOSE-mode local terminal (`MDCHECK` at the
+command prompt) — whether/how the mailbox is reachable from Host Mode is
+a separate, later measurement.
 
 ### APRS — Phase 2
 

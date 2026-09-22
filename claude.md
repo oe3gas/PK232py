@@ -529,6 +529,7 @@ Grows over time.
   | `HB` | HBAUD | T112 (restore reports `HBaud was 300`) |
   | `HP` | HPOLL | late response frame after Host Mode entry (T86) |
   | `MX` | MAXFRAME | **open** — needs the T112 retest (P18.1/P18.3 fix) |
+  | `MI` | MFILTER, **not** MailDrop login | T115 (`MI$80` / verbose `MFIlter $80`, 22.09.2026) |
 - **A stale response frame from a PRIOR command can still be queued when the
   next query goes out — never correlate a Host Mode response by arrival
   order, always by its mnemonic prefix (`frame.data[:2]` /
@@ -570,6 +571,53 @@ Grows over time.
   confidence seen so far ("Best so far", reset only by New Analysis/
   Cancel, not by every incoming result, since the TNC keeps analysing
   continuously within one Signal/SIAM session).
+- **SIAM keeps running until a DIFFERENT mode is explicitly selected —
+  it does not stop on its own, and writes its results asynchronously
+  into whatever else is happening** (hardware-confirmed 22.09.2026,
+  P21). Observed interleaved into an unrelated `XMITOK` verbose response,
+  into the plain command-mode prompt, and right after a MailDrop prompt —
+  there is no operating-mode boundary that blocks it once SIAM is active
+  in verbose mode. Any verbose-mode parser (`parse_query_value()`,
+  anything reading raw serial responses) must tolerate an unrelated line
+  landing in the middle of its own response; never assume a response is
+  exactly what was asked for just because it arrived right after the
+  matching command was sent. `tools/hw_check.py`'s `Session.normalize()`
+  (P21.2) sends `PACKET` at the start of every hardware subcommand
+  specifically to stop this before it can happen.
+- **MailDrop facts, hardware-confirmed 22.09.2026 (P21; STABO handbook
+  ch.5, p.56–63):**
+  - Real prompt: `` (AEA PK-232M)  18536 free  (B,E,K,L,R,S) > `` — round
+    brackets, double spaces before the free-byte count and before the
+    command-set parenthesis. Differs from the TRM's `[AEA PK-232M] ... >`
+    example — do not assume the TRM's bracket style is literal.
+  - SysOp command set is **`B`, `E`, `K`, `L`, `R`, `S` only.** `H`/`?`
+    help is for OTHER users logging in, **not** the SysOp — sending `H`
+    as SysOp answers `*** What?` (still followed by the mailbox prompt,
+    not an error state).
+  - `B` (bye) closes the mailbox and returns **straight to `cmd:`**, with
+    no other message.
+  - `MDCHECK` opens the mailbox even with the TNC at factory defaults
+    (`MYCALL PK232`, `MAILDROP OFF`) — it does not require MailDrop to be
+    turned on first.
+  - `KILONFWD` is an **EXPERT-mode command** (`?EXPERT command` if
+    `EXPERT` is off) — explains the `EXPERT ON` bracket already present
+    in `ParamsUploader`.
+  - At the plain TNC command level (not inside the mailbox): `E` →
+    `?EXPERT command`; `K` → `?need MYcall` — `K` there is **CONVERSE**,
+    a completely different command than mailbox `K` (kill message). This
+    is exactly why an interactive tool phase must never let typed input
+    reach the command interpreter unnoticed (see the safety rule below).
+- **Safety rule for interactive tool phases (P21.3):** any interactive
+  phase that runs inside a TNC sub-state (currently: the local MailDrop
+  terminal in `tools/hw_check.py maildrop`; potentially others later)
+  must stop the INSTANT the TNC reports its top-level `cmd:` prompt
+  again, before reading or sending anything further. At the plain
+  command level, single letters are commands with their own, different
+  meanings (`K` = CONVERSE) — with `MYCALL` set and `XMITOK ON`, blindly
+  continuing to send typed lines there could transmit on the air. Found
+  the hard way 22.09.2026: after `B` silently closed the mailbox, the
+  recorder's prompt stayed up and kept forwarding input to the command
+  interpreter. See `tools/hw_check.py::run_maildrop_interactive()`.
 - **Verbose-mode response format, confirmed against real hardware
   21.09.2026** (P15, `hw_logs/`): a query answers
   `'<echo>\r\n<Name mixed-case>   <value>[ (<explanation>)]\r\ncmd:'`
