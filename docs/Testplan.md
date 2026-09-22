@@ -1325,20 +1325,38 @@ off/on). All findings recorded in CLAUDE.md's MailDrop facts;
 `tools/hw_check.py`'s `parse_maildrop_list()`/
 `maildrop_response_has_e_trailer()` handle the confirmed format.
 
-**⬜ Still OPEN (round 3, `docs/P23_MailDrop_Round3_Spec.md`):**
-- **Foreign FROM** (`S <to> < <from>`) — unmeasured twice now: both
-  attempts mistyped `>` instead of `<`, and the TNC silently accepted
-  the line up to the mistyped character with no error (itself a
-  confirmed finding: the TNC does not validate/report unknown `S`
-  extras at all).
-- **`^Z` as message end** — never actually exercised: a real Ctrl-Z
-  keypress in the console produced an `EOFError` (Windows console
-  behaviour) instead of sending `$1A`, and the tool's cleanup path
-  finished the message with `/EX` instead. Fixed in P23.3 (typing the
-  two literal characters `^`/`Z`, plus automatic recovery if a console
-  `EOFError` happens anyway) but not yet re-run.
-- Whether a `^Z`-ended message's stored text also gets the stray `/E`
-  trailer (confirmed so far only for `/EX`-ended messages).
+**Round 3 (22.09.2026 20:00, `hw_logs/20260922_200013_maildrop.log`,
+`docs/P24_MailDrop_HostMode_Spec.md`) closed both remaining questions:**
+- **Foreign FROM confirmed working:** `S OE3GAS < DL1ABC` listed as
+  `To=OE3GAS From=DL1ABC` — the earlier two mistyped (`>`) attempts had
+  never actually tested this.
+- **`^Z` ($1A) does NOT end a message on this firmware.** Sent three
+  times (the P23.3 console-EOFError recovery worked exactly as designed
+  twice, plus once by typing the two literal characters) — every time
+  the mailbox just echoed `$1A` back and stayed in message entry; only
+  `/EX` ever ended any of the three messages. Not investigated further
+  (unconfirmed hypothesis: a missing trailing `CR`) since `/EX` is
+  reliable and is what any real dialog will use.
+- **Correction: the stray `/E` trailer is NOT a general format
+  element.** Round 1 saw it exactly once; round 3's two `R` responses
+  both ended cleanly with no `/E` at all. `maildrop_response_has_e_trailer()`
+  already only detects it without assuming it, so no tool change was
+  needed — only the P22/P23 documentation claiming it was general is
+  corrected (see CLAUDE.md).
+- **New finding:** a mailbox command needs a space before its argument
+  (`R2` → `*** Not enough`; `R 2` works).
+- **New finding:** non-ASCII input ("für") arrives at the TNC as `f?r`
+  — but this is `tools/hw_check.py`'s OWN ASCII-only encoding replacing
+  the character before it is ever sent, not a TNC limitation that was
+  actually measured. Whether the TNC accepts real 8-bit/Latin-1 text
+  depends on `8BITCONV` and remains unmeasured.
+
+All findings and their design consequences (validate before sending,
+transliterate umlauts until `8BITCONV` is measured, what a restore
+feature can and cannot preserve) are recorded in CLAUDE.md's MailDrop
+facts. **T116 is now closed** — round 4 would only be needed if a
+future `8BITCONV` or Host Mode measurement opens new questions (see
+T117 for the Host Mode side, `docs/P24_MailDrop_HostMode_Spec.md`).
 
 ---
 

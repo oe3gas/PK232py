@@ -612,24 +612,29 @@ Grows over time.
     mailbox → `*** Message not found.` + prompt; `S <call>` → `Subject:`;
     the subject line → `Enter message, ^Z (CTRL-Z) or /EX to end` + a
     blank line, then every further typed line is echoed with no prompt
-    until `/EX` (or `^Z`) → `Message stored as # <n>` + prompt; `R <n>`
-    → the list header + that message's list row, a blank line, the
-    message text, then a stray **`/E`** line (see below), then the
-    prompt; `K <n>` → `*** Done.` + prompt. Lowercase input is accepted;
+    until `/EX` (confirmed reliable — see the `^Z` finding below) →
+    `Message stored as # <n>` + prompt; `R <n>` (note the required space
+    before `<n>`, see below) → the list header + that message's list
+    row, a blank line, the message text, then the prompt directly — a
+    stray **`/E`** line before the prompt was seen exactly once, in
+    round 1, and is not general (see below). `K <n>` → `*** Done.` +
+    prompt. Lowercase input is accepted;
     `S oe3gas#` stores `OE3GAS` as the recipient (non-alphanumeric
     characters in the callsign are dropped).
-  - **`S` accepts a foreign FROM and a BBS route, confirmed 22.09.2026
-    19:16 (P23, `hw_logs/20260922_191657_maildrop.log`):** `S <to> @
-    <bbs>` (e.g. `S OE1XYZ @ DB0MUC`) puts `<bbs>` in the list's `@ BBS`
-    column. `S <to> < <from>` (a **foreign FROM**, less-than sign) is
-    documented in the STABO handbook but **still unmeasured** — both
-    hardware attempts so far mistyped `>` instead of `<`, and the TNC
-    silently accepted the line up to the mistyped character with no
-    error, storing only `<to>` as both To and From. **The TNC does not
-    validate or report unknown/malformed extras in the `S` command at
-    all** — any dialog built on this must validate the recipient, `@BBS`
-    and foreign-FROM syntax itself before sending; do not rely on the
-    TNC to reject a mistake.
+  - **`S` accepts a foreign FROM and a BBS route.** `S <to> @ <bbs>`
+    (confirmed 22.09.2026 19:16, P23, e.g. `S OE1XYZ @ DB0MUC`) puts
+    `<bbs>` in the list's `@ BBS` column. `S <to> < <from>` (a **foreign
+    FROM**, less-than sign, matching the STABO handbook) is confirmed
+    working 22.09.2026 20:00 (P24, round 3,
+    `hw_logs/20260922_200013_maildrop.log`): `S OE3GAS < DL1ABC` listed
+    as `To=OE3GAS From=DL1ABC` — two earlier hardware attempts (P23) had
+    mistyped `>` instead of `<` and never actually tested this. **The
+    TNC does not validate or report unknown/malformed extras in the `S`
+    command at all** (confirmed by those same mistyped attempts: the
+    line was silently accepted up to the mistyped character, with no
+    error) — any dialog built on this must validate the recipient,
+    `@BBS` and foreign-FROM syntax itself before sending; do not rely on
+    the TNC to reject a mistake.
   - **SysOp can post directly as `SB <to>` (bulletin) and `ST <to>`
     (traffic), confirmed 22.09.2026 19:16** — same `Subject:`/text flow
     as plain `S`, just a different two-letter command; the resulting
@@ -696,12 +701,52 @@ Grows over time.
     back, re-read the free-byte count from the mailbox prompt and stop
     before `*** No free memory` — the prompt is the only reliable source
     of remaining space.
-  - **Firmware quirk: a read message's stored text ends with a stray `/E`
-    line** — the tail end of the `/EX` end-of-message marker, apparently
-    stored (partially) with the message. **Design consequence:** strip a
-    trailing `/E` line when reading a message back, or it becomes part of
-    the archived text. `tools/hw_check.py::maildrop_response_has_e_trailer()`
-    detects it (tool-only).
+  - **A stray `/E` line after a read message's text is NOT a general
+    format element — corrected 22.09.2026, P24 (round 3,
+    `hw_logs/20260922_200013_maildrop.log`).** Round 1 found exactly one
+    `R` response ending in `/E`, and P22/P23 wrongly generalised that as
+    "the firmware always appends this". Round 3's two `R` responses
+    (`hw_logs/20260922_200013_maildrop.log`) both ended cleanly with
+    `\r\n<text>\r\n\r\n`, no `/E` at all. **Design consequence:** a
+    reader must TOLERATE a trailing `/E` line if present, but must NOT
+    expect or require one — `tools/hw_check.py::maildrop_response_has_e_trailer()`
+    already only detects it (tool-only), it never assumed one was
+    always there, so no tool change was needed for this correction.
+  - **Foreign FROM confirmed working, 22.09.2026 round 3:** `S <to> <
+    <from>` (less-than sign, matching the STABO handbook — round 1/2 both
+    mistyped `>`) sets the message's From field to `<from>` while To
+    stays `<to>` — e.g. `S OE3GAS < DL1ABC` listed as
+    `To=OE3GAS From=DL1ABC`. The SysOp can set an arbitrary FROM this
+    way, with no validation (see the "TNC never validates `S` extras"
+    finding, P23) — a real dialog must check the value itself.
+  - **`^Z` ($1A) does NOT end a message on this firmware — confirmed
+    22.09.2026 round 3, after P23.3 finally made the tool send the real
+    byte.** Sent three times (twice via the console-EOFError recovery,
+    once by typing the two literal characters), every time the mailbox
+    just echoed `$1A` back and stayed in message entry; only `/EX` ever
+    ended any of the three test messages. Unconfirmed hypothesis: a
+    trailing `CR` might be missing after `$1A` — **not investigated
+    further**, since `/EX` is reliable and is what any real dialog will
+    use; `^Z` support is not worth pursuing unless a future measurement
+    specifically needs it.
+  - **A mailbox command needs a space before its argument:** `R2` (no
+    space) answered `*** Not enough`; `R 2` (with a space) worked.
+  - **Non-ASCII input is lost — but by the TOOL, not necessarily the
+    TNC.** Typing "für" arrived at the TNC as `f?r`, because
+    `classify_maildrop_input()` encodes with `errors='replace'`
+    (ASCII-only) before ever sending a byte — so whether the TNC itself
+    would accept real 8-bit/Latin-1 text is **still unmeasured**; it
+    depends on `8BITCONV`, which round 3 did not test.
+  - **Design consequences for a future MailDrop dialog** (not yet
+    implemented, still tool-only measurements): (1) validate that no
+    line of message text begins with `/EX` before sending it, or a
+    real message body containing that string aborts transmission
+    mid-text; (2) transliterate umlauts (`ue`/`oe`/`ae`/`ss`) rather than
+    sending them raw, until `8BITCONV` is actually measured; (3) a
+    restore/recovery feature can preserve sender (`<`), BBS (`@`) and
+    type (`SB`/`ST`) when re-creating a message, but **not** its
+    original date/time — the TNC always stamps that at store time, not
+    from anything the dialog could supply.
 - **Safety rule for interactive tool phases (P21.3):** any interactive
   phase that runs inside a TNC sub-state (currently: the local MailDrop
   terminal in `tools/hw_check.py maildrop`; potentially others later)
