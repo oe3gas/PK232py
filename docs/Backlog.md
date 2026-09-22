@@ -35,6 +35,20 @@ CLAUDE.md Host Mode gotcha).
   SIAM results carry their own recognisable prefix) before calling
   `on_result()`. Not fixed here — P16.3 was investigation only.
 
+**Fix blocked on measurement (P17, 2026-09-22):** two more contradictions
+surfaced while scoping the fix, on top of the CMD_RESP-vs-mnemonic issue
+above — `handle_frame()` itself accepts BOTH `$4F` CMD_RESP and `$50`
+LINK_MSG as a SIAM result (its own comment says "SIAM liefert Ergebnisse
+als LINK_MSG ($50)", contradicting the module docstring's "$4F CMD_RESP —
+SIAM analysis result text"), and the two documented output formats do not
+match either (`BAUDOT 45 170` per the module docstring/STABO manual vs.
+`0.47: 50 Baud, Baudot, RXREV OFF` per the `signal_screen.py` mockup). A
+"only pass through real SIAM results" filter cannot be written without
+first knowing which frame type and format the TNC actually sends —
+`tools/hw_check.py siam` (Testplan T113, `docs/P17_HW_Measure_Spec.md`)
+does the 60s unfiltered capture needed to answer that; the fix itself is
+still open until that hardware run happens.
+
 **Landmine, not yet a live bug:** `mode_manager.py::_handle_cmd_resp()`
 (~lines 263–285) only logs "CMD ACK"/"CMD NAK" per CMD_RESP today — the
 opmode-switch sequence itself is timer-based (`_ACTIVATE_DELAY_MS`, 300 ms),

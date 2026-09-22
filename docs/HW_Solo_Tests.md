@@ -1,8 +1,9 @@
 # PK232PY — Solo Hardware Test Guide (hw_check.py)
 
-Printable operator guide for running the four `tools/hw_check.py` checks
-against a real PK-232MBX. See `docs/P14_HW_Solo_Check_Spec.md` for the full
-technical spec and `CLAUDE.md` / `Backlog.md` for background on each finding.
+Printable operator guide for running the `tools/hw_check.py` checks against
+a real PK-232MBX. See `docs/P14_HW_Solo_Check_Spec.md` for the original four
+checks and `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`; `CLAUDE.md`
+/ `Backlog.md` have background on each finding.
 
 ---
 
@@ -24,19 +25,31 @@ technical spec and `CLAUDE.md` / `Backlog.md` for background on each finding.
     Direwolf, multimon-ng, or similar) tuned to the TNC's frequency, and
     have its decoder running *before* you start the test — you will be
     asked what it shows in real time.
+- **Only for `siam`:** tune a second receiver to a **known** FSK signal
+  before you start (Amateur RTTY 45 Bd / 170 Hz shift is the simplest
+  case) and know its operating mode, baud rate and shift — the tool asks
+  for these up front so the captured frames can be compared against a
+  known-good answer.
 
 ## 2. Order
 
 1. Run `all` first — it covers T17, T103 and PTHUFF in one go and needs no
    second receiver.
 2. Run `t101` separately, afterwards, once the second receiver is ready.
+3. Run `t111` and `t112` on their own whenever convenient — both only
+   query/set parameters, no second receiver needed.
+4. Run `siam` on its own once a known FSK signal is tuned in — it is
+   deliberately not part of `all` (see `docs/P17_HW_Measure_Spec.md`).
 
 ```
 python tools/hw_check.py --port COM3 all
 python tools/hw_check.py --port COM3 t101
+python tools/hw_check.py --port COM6 t111
+python tools/hw_check.py --port COM6 t112
+python tools/hw_check.py --port COM6 siam
 ```
 
-Add `--dry-run` to either command first if you just want to see what each
+Add `--dry-run` to any command first if you just want to see what each
 test *would* do without touching the TNC at all — it never opens the port.
 
 ## 3. Per-test walkthrough
@@ -87,6 +100,45 @@ test *would* do without touching the TNC at all — it never opens the port.
   the decoder saw nothing either time (check its setup and frequency, then
   repeat).
 
+### `siam` — unfiltered Signal Analysis (SIAM) capture
+- **What happens:** asks for the known mode/baud/shift of the signal your
+  second receiver is already tuned to, then a `Ready to continue? [y/N]`
+  confirmation, then enters Host Mode, sends `SignalMode`'s real activation
+  frames, and logs **every** incoming frame for 60 seconds (change with
+  `--seconds`) with no filtering at all — printing a running "n frames so
+  far" line every 10 seconds. Nothing is transmitted; this is receive-only.
+- Ctrl-C at any point still leaves Host Mode cleanly before exiting.
+- **No PASS/FAIL** — this is a measurement, not a verdict (the code that
+  would need fixing has two different, contradictory ideas of what a SIAM
+  result even looks like; see `docs/P17_HW_Measure_Spec.md` and the
+  Backlog.md SIAM entry). Read the printed summary: the frame-count-by-kind
+  table, then every frame flagged as "looks like an analysis result".
+  Compare those against the mode/baud/shift you entered at the start and
+  write the comparison into `Testplan.md` yourself — including which
+  `FrameKind` ($4F CMD_RESP or $50 LINK_MSG) it actually arrived as.
+
+### `t111` — does the PASSALL button's mnemonic (`PX`) actually toggle PASSALL?
+- **What happens:** queries `PX`/`PS` in Host Mode, sends `PX Y` (the exact
+  mnemonic `main_window.py`'s PASSALL toggle uses — a unit test keeps the
+  two in sync), queries both again, then restores `PX` to its original
+  value.
+- **PASS** if `PX` changed and `PS` did not. **FAIL** if `PS` changed too
+  (the mnemonic is masking PASS, not toggling PASSALL) or if `PX` did not
+  change at all. **INCONCLUSIVE** if either query came back with no
+  matching response.
+
+### `t112` — does HF Packet keep VHF's MAXFRAME/SLOTTIME after a VHF→HF switch?
+- **What happens:** queries `MAXFRAME`/`SLOTTIME`/`VHF`/`HBAUD`, enters Host
+  Mode, sends the exact frame sequence the app sends for a VHF→HF Packet
+  switch (built from the real `VHFPacketMode`/`HFPacketMode` classes, same
+  order as `_on_mode_selected()`), exits Host Mode, queries `MAXFRAME`/
+  `SLOTTIME` again, then restores all four original values.
+- **PASS** if `MAXFRAME`/`SLOTTIME` read back HF Packet's own configured
+  values afterwards (close the matching Backlog.md item). **FAIL** if they
+  read back VHF's hardcoded `4`/`10` (the suspected gap is confirmed).
+  **INCONCLUSIVE** for anything else, or if an original value could not be
+  parsed (test is then `SKIPPED` and nothing is touched).
+
 ## 4. Checklist
 
 | Test | Date | Result | Notes |
@@ -95,6 +147,9 @@ test *would* do without touching the TNC at all — it never opens the port.
 | T103 |  |  |  |
 | PTHUFF |  |  |  |
 | T101 |  |  |  |
+| SIAM |  |  |  |
+| T111 |  |  |  |
+| T112 |  |  |  |
 
 ## 5. Where results go
 

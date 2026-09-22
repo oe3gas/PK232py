@@ -38,8 +38,9 @@
 | **2026-09-20** | `test_param_dialogs_roundtrip.py` *(new)*, `params_hf.py`, `config.py` | P12: mechanical wiring audit for all six `&Parameters` dialogs; found and fixed `HFPacketConfig.txsmt` (dialog-unwired) and `.aerpack`/`.alfpack` (INI-unwired); +T106 |
 | **2026-09-20** | `test_param_dialogs_roundtrip.py`, `params_uploader.py`, `config.py`, `params_hf.py`, `main_window.py` | P13: fourth wiring-chain link (upload) audited via Test D; sent `RESPTIME`, renamed `aerpack`→`acrpack`, disabled `TXSMT` (not a PK-232 command); closed the chain for `CFROM`/`DFROM`/`MFROM`/`MTO` access filters and `8BITCONV`/`HID`; corrected the post-dialog log message; +T107–T109 |
 | **2026-09-21** | `tools/hw_check.py` *(new)* | P14: solo hardware CLI tool (T17/T86, T103, PTHUFF, T101), reuses `pk232py.comm` entirely; +T110 |
-| **21.09.2026** | `tools/hw_check.py`, `test_hw_check.py` | P15: first real hardware run found the tool's own bugs — T86 queried verbose mode instead of Host Mode, and the restore logic mistook a stray `cmd:` prompt for a value. Added `parse_query_value()` against real captured responses and a restore that verifies itself; results recorded at T86/T101/T103/T110 |
-| **21.09.2026** | `main_window.py`, `packet_screen.py`, `tools/hw_check.py` | P16: T86 second run found `hw_check.py` matching Host Mode responses by arrival order, so a stale `HP\x00` poll-ack was mistaken for the PX answer. Fixed with `select_response_frame()` (mnemonic-prefix match); real result: PASSALL is `PX`, not `PS` — the 2026-06-22 fix was itself wrong. `main_window._wire_packet_buttons()` toggle_map corrected; +T111/T112 |
+| **2026-09-21** | `tools/hw_check.py`, `test_hw_check.py` | P15: first real hardware run found the tool's own bugs — T86 queried verbose mode instead of Host Mode, and the restore logic mistook a stray `cmd:` prompt for a value. Added `parse_query_value()` against real captured responses and a restore that verifies itself; results recorded at T86/T101/T103/T110 |
+| **2026-09-21** | `main_window.py`, `packet_screen.py`, `tools/hw_check.py` | P16: T86 second run found `hw_check.py` matching Host Mode responses by arrival order, so a stale `HP\x00` poll-ack was mistaken for the PX answer. Fixed with `select_response_frame()` (mnemonic-prefix match); real result: PASSALL is `PX`, not `PS` — the 2026-06-22 fix was itself wrong. `main_window._wire_packet_buttons()` toggle_map corrected; +T111/T112 |
+| **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P17: measurement-only subcommands `siam` (60s unfiltered Host Mode frame capture, no assumption about SIAM's frame type or output format), `t111` (PASSALL toggles, PASS unaffected — same mnemonic as the app's toggle_map), `t112` (VHF→HF Packet MAXFRAME/SLOTTIME carry-over, replays the real mode-class frame sequence); no `src/pk232py/` changes; +T113 |
 
 ---
 
@@ -178,7 +179,7 @@ PASSALL** — i.e. the toggle needed `PX`, not `PS`.
 `main_window._wire_packet_buttons()` toggle_map is set to it.
 
 **Preferred method (P14/P15/P16, 21.09.2026):** `python tools/hw_check.py
---port COM3 t17` — queries `PX` and `PS` in Host Mode (`SOH $4F PX ETB` /
+--port COM6 t17` — queries `PX` and `PS` in Host Mode (`SOH $4F PX ETB` /
 `SOH $4F PS ETB`; no write, no on-air observation needed) and classifies
 which one looks like a Y/N toggle. See `docs/HW_Solo_Tests.md`.
 
@@ -1121,10 +1122,19 @@ the actual button in the running app, not just the query tool.
 its value (`$16` unless changed elsewhere) — the button must never move
 `PASS`.
 
+**Preferred method (P17, 2026-09-22):** `python tools/hw_check.py
+--port COM6 t111` — sends the exact mnemonic `main_window.py`'s PASSALL
+toggle uses (a unit test keeps the two in sync, see `test_hw_check.py`
+`TestT111Mnemonic`), confirms `PX` changes and `PS` does not, then
+restores `PX`. This exercises the real Host Mode command in isolation,
+not the button — the GUI click-through below is still needed and stays
+OPEN. See `docs/HW_Solo_Tests.md`.
+
 **Status:** ⬜ OPEN — needs real hardware and the app running (not just
-`hw_check.py`, which only queries — see Backlog.md renumbering note: this
-was T110 in `docs/P16_PASSALL_Fix_Spec.md`, renumbered to avoid colliding
-with the existing PTHUFF T110 above).
+`hw_check.py`, which exercises the command but not the button itself —
+see Backlog.md renumbering note: this was T110 in
+`docs/P16_PASSALL_Fix_Spec.md`, renumbered to avoid colliding with the
+existing PTHUFF T110 above).
 
 ### T112 — VHF → HF Packet parameter carry-over (hardware, OPEN)
 Suspected gap, derived from the code and not yet measured (see
@@ -1139,8 +1149,39 @@ on activation; leaving VHF for HF Packet only sends `VH N` + `HB 300` +
 **Expected result:** both read back HF Packet's own configured values, not
 VHF's `MAXFRAME 4` / `SLOTTIME 10`.
 
+**Preferred method (P17, 2026-09-22):** `python tools/hw_check.py
+--port COM6 t112` — queries `MAXFRAME`/`SLOTTIME`/`VHF`/`HBAUD`, replays
+the real VHF→HF Packet frame sequence (built from `VHFPacketMode`/
+`HFPacketMode` directly, same order as `_on_mode_selected()`), queries
+`MAXFRAME`/`SLOTTIME` again, and restores all four. See
+`docs/HW_Solo_Tests.md`.
+
 **Status:** ⬜ OPEN — needs real hardware. (`docs/P16_PASSALL_Fix_Spec.md`
 called this T111; renumbered for the same reason as T111 above.)
+
+### T113 — SIAM: unfiltered Host Mode frame capture (hardware, OPEN)
+`SignalMode.handle_frame()` (Backlog.md Priority 1 item) accepts both `$4F`
+CMD_RESP and `$50` LINK_MSG as a SIAM result, contradicting its own module
+docstring; the mockup screen's output format also does not match the
+docstring's STABO-manual example. Neither can be fixed without first
+seeing what the TNC actually sends.
+
+1. Tune a second receiver to a **known** FSK signal (Amateur RTTY 45 Bd /
+   170 Hz shift is the simplest case); note its mode, baud rate and shift
+2. `python tools/hw_check.py --port COM6 siam` (or `--seconds N` for a
+   longer/shorter capture) — enters Host Mode, sends `SignalMode`'s real
+   activation frames, logs every incoming frame unfiltered for 60 s with a
+   running frame count every 10 s, then exits Host Mode
+3. Compare the printed frame-kind counts and any frame flagged as "looks
+   like an analysis result" against the known signal from step 1
+
+**Expected result:** the measurement settles which `FrameKind` a SIAM
+result actually arrives as and what its text looks like, so
+`SignalMode.handle_frame()` can be fixed to recognise it specifically
+instead of accepting any CMD_RESP/LINK_MSG.
+
+**Status:** ⬜ OPEN — needs real hardware and a tuned reference signal. See
+`docs/HW_Solo_Tests.md` and `docs/P17_HW_Measure_Spec.md`.
 
 ---
 
@@ -1405,6 +1446,9 @@ Diagnose bei Fehler:
 | High | UI-channel unproto behaviour — needs real hardware, tool: `hw_check.py t101` | T101 |
 | High | USERS while connected / second simultaneous connection — needs real hardware (+ 2nd station for T105) | T104, T105 |
 | Medium | PACTOR PTHUFF type mismatch (int vs ON/OFF) — needs real PACTOR hardware, tool: `hw_check.py pthuff` | T110 |
+| High | PASSALL button in the running app — needs real hardware, tool: `hw_check.py t111` | T111 |
+| Medium | VHF→HF Packet MAXFRAME/SLOTTIME carry-over — needs real hardware, tool: `hw_check.py t112` | T112 |
+| Medium | SIAM frame type / output format — needs real hardware + a tuned reference signal, tool: `hw_check.py siam` | T113 |
 
 ---
 
