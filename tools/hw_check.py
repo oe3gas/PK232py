@@ -655,11 +655,15 @@ class Session:
     see CLAUDE.md's Host Mode entry/exit notes for why this all runs on
     background threads in the first place)."""
 
-    def __init__(self, port: str, baud: int, dry_run: bool, log: RunLog):
+    def __init__(
+        self, port: str, baud: int, dry_run: bool, log: RunLog,
+        app_config: AppConfig,
+    ):
         self.port_name = port
         self.baud = baud
         self.dry_run = dry_run
         self.log = log
+        self.app_config = app_config
         self._app = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
         self.sm = SerialManager()
         self._raw_buf = bytearray()
@@ -809,6 +813,60 @@ class Session:
         )
         return resp
 
+    def normalize(self) -> None:
+        """Bring the TNC to a known, quiet verbose-mode state (P21.2).
+
+        Called at the START of every hardware subcommand that assumes a
+        clean verbose-mode state (t17/t111/t112/mi/siam/maildrop), and
+        again after any operator-driven power-cycle within a session -
+        found necessary 22.09.2026, when a still-running SIAM session
+        wrote asynchronous results into the middle of unrelated
+        responses (XMITOK, mailbox output) with no warning at all.
+
+        1. Ctrl-C ($03, the verbose-mode COMMAND character) then CR -
+           drops back to the top-level command interpreter regardless of
+           what was running, via the idle-gap read (its prompt is not
+           assumed).
+        2. PACKET - leaves whichever operating mode was active WITHOUT
+           entering Host Mode. SIAM in particular does NOT stop analysing
+           on its own; only selecting a different mode does.
+        3. Reads for 2s watching for further asynchronous output - a mode
+           that ignored steps 1/2 would still show up here. Logged as a
+           warning, never fatal (this is diagnostic, not a hard gate).
+        4. Queries MYCALL. The PK-232 has no RAM buffer battery
+           (CLAUDE.md) and resets to the factory value 'PK232' on every
+           power-off; if seen, MYCALL is set back from the loaded
+           AppConfig and the factory-state finding is logged.
+        """
+        if self.dry_run:
+            self.log.line(
+                "[dry-run] would normalize: Ctrl-C + CR, PACKET, watch 2s "
+                "for async output, check MYCALL (factory 'PK232' -> reset "
+                "from config)"
+            )
+            return
+
+        self.log.line("Normalizing TNC state (P21.2)")
+        self.send_and_read_until_idle(b"\x03\r", note="Ctrl-C + CR (normalize)")
+        self.verbose("PACKET")
+
+        del self._raw_buf[:]
+        extra = self.read_until_idle(idle=2.0, max_total=2.0)
+        if extra:
+            self.log.line(
+                f"WARNING: asynchronous output continued after PACKET -- "
+                f"a mode may still be running: {extra!r}"
+            )
+
+        mycall = parse_query_value("MYCALL", self.query("MYCALL"))
+        self.log.line(f"MYCALL: {mycall!r}")
+        if mycall is not None and mycall.strip().upper() == "PK232":
+            self.log.line("factory state detected -- no RAM battery")
+            configured = self.app_config.hf_packet.mycall
+            if configured and configured.upper() != "NOCALL":
+                self.set_verbose("MYCALL", configured.upper())
+                self.log.line(f"MYCALL set to {configured.upper()!r} from config")
+
     # -- Host-mode frames ----------------------------------------------------
 
     def drain_pending_frames(self, settle: float = 0.3) -> None:
@@ -896,6 +954,7 @@ def confirm_tx(prompt: str) -> bool:
 
 def test_t17(session: Session, log: RunLog) -> None:
     log.line("--- T17: PASSALL mnemonic (PS vs PX) -- Host Mode query only ---")
+    session.normalize()
     log.line(
         "Two-letter mnemonics only exist in Host Mode (P15 finding: 'PX' and "
         "'PS' both answer '?What?' in verbose mode)"
@@ -1156,6 +1215,7 @@ def test_t101(session: Session, log: RunLog) -> None:
 
 def test_siam(session: Session, log: RunLog, seconds: float = 60.0) -> None:
     log.line("--- SIAM: unfiltered Host Mode frame capture (P17.1) ---")
+    session.normalize()
     log.line(
         "Module docstring vs. handle_frame() disagree on frame type ($4F "
         "CMD_RESP vs. $50 LINK_MSG) and output format (STABO manual vs. "
@@ -1246,6 +1306,7 @@ def test_siam(session: Session, log: RunLog, seconds: float = 60.0) -> None:
 
 def test_t111(session: Session, log: RunLog) -> None:
     log.line("--- T111: does PX toggle PASSALL while PS (PASS) stays put? ---")
+    session.normalize()
     mnemonic = PASSALL_TOGGLE_MNEMONIC
 
     if session.dry_run:
@@ -1335,6 +1396,7 @@ def test_t111(session: Session, log: RunLog) -> None:
 
 def test_t112(session: Session, log: RunLog, app_config: AppConfig) -> None:
     log.line("--- T112: VHF -> HF Packet parameter carry-over ---")
+    session.normalize()
     hf_maxframe = str(app_config.hf_packet.maxframe)
     hf_slottime = str(app_config.hf_packet.slottime)
     frames = build_t112_frame_sequence(
@@ -1441,6 +1503,7 @@ def test_t112(session: Session, log: RunLog, app_config: AppConfig) -> None:
 
 def test_mi(session: Session, log: RunLog) -> None:
     log.line("--- MI: does the MailDrop button actually query MFILTER? ---")
+    session.normalize()
     mnemonic = MI_PROBE_MNEMONIC
 
     if session.dry_run:
@@ -1671,7 +1734,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         f"dry_run={args.dry_run}"
     )
 
-    session = Session(port or "DRYRUN", baud or 9600, args.dry_run, log)
+    session = Session(port or "DRYRUN", baud or 9600, args.dry_run, log, app_config)
 
     test_fns: dict[str, list] = {
         "t17":    [lambda s, l: test_t17(s, l)],
