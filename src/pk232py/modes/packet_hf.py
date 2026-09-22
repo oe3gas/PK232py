@@ -34,6 +34,7 @@ import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
 from pk232py.comm.frame import build_command, build_ch_cmd, build_data, FrameKind
+from pk232py.config import HFPacketConfig
 from pk232py.modes.base_mode import BaseMode
 
 if TYPE_CHECKING:
@@ -119,18 +120,24 @@ class HFPacketMode(BaseMode):
     host_command = b'PA'
     verbose_command = b"PACKET\r\n"
 
-    def __init__(self, maxframe: int = 1, slottime: int = 30) -> None:
+    def __init__(
+        self,
+        maxframe: int = HFPacketConfig.maxframe,
+        slottime: int = HFPacketConfig.slottime,
+    ) -> None:
         """
         Args:
             maxframe: MAXFRAME to send in get_init_frames() (mnemonic MX).
-                      Defaults match HFPacketConfig.maxframe (config.py).
+                      Defaults to HFPacketConfig's own default (P19.3) —
+                      one source of truth, not a repeated number.
             slottime: SLOTTIME to send in get_init_frames() (mnemonic SL).
-                      Defaults match HFPacketConfig.slottime (config.py).
+                      Defaults to HFPacketConfig's own default (P19.3).
                       Callers that know the real configured values (e.g.
-                      main_window.py) should pass them in here via
-                      ModeManager.set_mode(name, mode_instance=...) — see
-                      T112 (P18.1): without this, HF Packet kept whatever
-                      MAXFRAME/SLOTTIME VHF Packet last set.
+                      main_window.py's _build_mode_instance()) should pass
+                      them in here via ModeManager.set_mode(name,
+                      mode_instance=...) — see T112 (P18.1): without this,
+                      HF Packet kept whatever MAXFRAME/SLOTTIME VHF Packet
+                      last set.
         """
         super().__init__()
         self.maxframe = maxframe

@@ -107,6 +107,16 @@ class TestGetInitFrames:
         assert build_command(b'MX', b'1') in frames
         assert build_command(b'SL', b'30') in frames
 
+    def test_constructor_defaults_derive_from_hf_packet_config(self):
+        # P19.3: one source of truth - if HFPacketConfig's own defaults
+        # ever change, this catches HFPacketMode silently going stale
+        # instead of tracking them.
+        from pk232py.config import HFPacketConfig
+
+        mode = HFPacketMode()
+        assert mode.maxframe == HFPacketConfig.maxframe
+        assert mode.slottime == HFPacketConfig.slottime
+
     def test_configured_maxframe_and_slottime(self):
         frames = HFPacketMode(maxframe=2, slottime=20).get_init_frames()
         assert build_command(b'MX', b'2') in frames
