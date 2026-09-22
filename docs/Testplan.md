@@ -43,6 +43,7 @@
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P17: measurement-only subcommands `siam` (60s unfiltered Host Mode frame capture, no assumption about SIAM's frame type or output format), `t111` (PASSALL toggles, PASS unaffected — same mnemonic as the app's toggle_map), `t112` (VHF→HF Packet MAXFRAME/SLOTTIME carry-over, replays the real mode-class frame sequence); no `src/pk232py/` changes; +T113 |
 | **2026-09-22** | `packet_hf.py`, `main_window.py`, `signal_analysis.py`, `tools/hw_check.py` | P18: hardware results T111 PASS, T112 FAIL (SLOTTIME confirmed), T113 measurement complete (SIAM = `$50` LINK_MSG on ch0, split across two frames). `HFPacketMode.get_init_frames()` now resets `MX`/`SL` from HF's own config (constructor args, wired via `ModeManager.set_mode(mode_instance=...)`); `SignalMode` assembles the two-frame results and never treats CMD_RESP as one; `hw_check.py t112` pre-sets neutral MAXFRAME/SLOTTIME and judges them separately; +T114 |
 | **2026-09-22** | `main_window.py`, `packet_hf.py`, `packet_vhf.py`, `signal_screen.py` | P19: found a SECOND `set_mode()` call site (`_update_host_mode_ui()`'s Host-Mode-entry default) that P18.1 had missed — a future config-carrying mode there would have silently gotten constructor defaults. `MainWindow._build_mode_instance()` is now the one place any mode instance is built with configuration; `HFPacketMode`'s own defaults now derive from `HFPacketConfig` instead of repeating the numbers; `SignalScreen` wired to `SignalMode.on_result_parsed` (was never wired to anything), shows latest + best-so-far result; T114 concretized with the wiring now in place |
+| **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P20: corrected `pk232_mnemonic_table.txt`'s status (a failed 676-combination scan misdescribed as hardware evidence in P13/P14, see `docs/MNEMONIC_TABLE_NOTE.md`); new subcommands `mi` (query-only, does the MailDrop button's `MI` actually read back the same as `MFILTER`?) and `maildrop` (guided, mitschreib-style local MailDrop recording terminal — protocol unknown, so no script); no `src/pk232py/` changes; +T115/T116 |
 
 ---
 
@@ -1249,6 +1250,50 @@ real T113 frame sequence through both classes together (not just
 latest/best/log-once-per-result) and
 `TestMainWindowWiresSignalMode` (the `on_result_parsed` wiring itself).
 
+### T115 — MI probe: is the MailDrop button actually querying MFILTER? (hardware, OPEN)
+`pk232_mnemonic_table.txt`'s name-to-mnemonic mapping lists `MI` as
+MFILTER, not MailDrop login — but that file is not hardware evidence (see
+`docs/MNEMONIC_TABLE_NOTE.md` and CLAUDE.md's mnemonic-table correction).
+T47 only confirmed that `_on_packet_maildrop()`'s `build_command(b'MI')`
+frame is accepted by the TNC, never what `MI` actually means.
+
+1. `python tools/hw_check.py --port COM6 mi` — Host Mode query `MI` (no
+   argument), exit Host Mode, verbose query `MFILTER`
+2. Compare the two values
+
+**Expected result:** if `MI` and `MFILTER` read back the same value, `MI`
+is confirmed as MFILTER and the MailDrop button
+(`main_window._on_packet_maildrop()`) sends the wrong command; if they
+differ, there is no evidence for the mnemonic-table claim.
+
+**Status:** ⬜ OPEN — needs real hardware. See `docs/HW_Solo_Tests.md` and
+`docs/P20_MailDrop_Measure_Spec.md`.
+
+### T116 — MailDrop protocol measurement (hardware, OPEN)
+The real MailDrop command set, prompts, and message-termination sequence
+are not known — `tools/hw_check.py maildrop` (P20 Teil B) is a guided,
+mitschreib-style recording terminal, not a script, since a script would
+have to guess all of that.
+
+1. `python tools/hw_check.py --port COM6 maildrop`
+2. Follow (or diverge from, as needed) the tool's suggested sequence: `H`
+   (help), `L` (list), `S` (send a test message to yourself), `L`, `R`
+   (read it), `S` (a second message), `K` (kill the first), `L`, then
+   leave the mailbox per its own help
+3. Type `/quit` to leave the tool's interactive prompt; check whether the
+   tool reports the mailbox as left (a `cmd:` prompt seen) or still open
+4. Optional: confirm on power-cycle that the mailbox content is lost
+   (expected, see CLAUDE.md's "no RAM buffer battery" finding)
+
+**Expected result:** a full record of the real command set (from `H`),
+the real message-list format (from `L`), confirmation that `S`/`R`/`K`
+work as expected, and — if the optional step is run — confirmation that
+the mailbox is empty again after a power-cycle.
+
+**Status:** ⬜ OPEN — needs real hardware and real operator time (this is
+an open-ended protocol measurement, not a quick pass/fail check). See
+`docs/HW_Solo_Tests.md` and `docs/P20_MailDrop_Measure_Spec.md`.
+
 ---
 
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
@@ -1515,6 +1560,8 @@ Diagnose bei Fehler:
 | High | PASSALL button click-through in the running app (Host-Mode-command level PASS via `hw_check.py t111`) — needs real hardware | T111 |
 | Medium | VHF→HF Packet MAXFRAME/SLOTTIME carry-over — FAIL confirmed for SLOTTIME, retest MAXFRAME after P18.1/P18.3 fix, tool: `hw_check.py t112` | T112 |
 | Medium | SIAM screen shows one assembled result (fix in P18.2, measurement done at T113) — needs real hardware | T114 |
+| Medium | MI vs MFILTER probe — needs real hardware, tool: `hw_check.py mi` | T115 |
+| Medium | MailDrop protocol measurement — needs real hardware and operator time, tool: `hw_check.py maildrop` | T116 |
 
 ---
 

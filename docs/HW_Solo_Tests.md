@@ -2,8 +2,9 @@
 
 Printable operator guide for running the `tools/hw_check.py` checks against
 a real PK-232MBX. See `docs/P14_HW_Solo_Check_Spec.md` for the original four
-checks and `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`; `CLAUDE.md`
-/ `Backlog.md` have background on each finding.
+checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`, and
+`docs/P20_MailDrop_Measure_Spec.md` for `mi`/`maildrop`; `CLAUDE.md` /
+`Backlog.md` have background on each finding.
 
 ---
 
@@ -30,16 +31,23 @@ checks and `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`; `CLAUDE.md`
   case) and know its operating mode, baud rate and shift — the tool asks
   for these up front so the captured frames can be compared against a
   known-good answer.
+- **Only for `maildrop`:** this is fully interactive and open-ended — set
+  aside real time (not a quick check), have a notepad ready for what the
+  mailbox's own `H` (help) shows, and expect to type at its `md>` prompt
+  yourself. No second receiver needed (it never transmits — the session
+  runs over the serial link, not radio).
 
 ## 2. Order
 
 1. Run `all` first — it covers T17, T103 and PTHUFF in one go and needs no
    second receiver.
 2. Run `t101` separately, afterwards, once the second receiver is ready.
-3. Run `t111` and `t112` on their own whenever convenient — both only
-   query/set parameters, no second receiver needed.
+3. Run `t111`, `t112` and `mi` on their own whenever convenient — all
+   three only query/set parameters, no second receiver needed.
 4. Run `siam` on its own once a known FSK signal is tuned in — it is
    deliberately not part of `all` (see `docs/P17_HW_Measure_Spec.md`).
+5. Run `maildrop` last, on its own, once you have time for the
+   interactive session (see `docs/P20_MailDrop_Measure_Spec.md`).
 
 ```
 python tools/hw_check.py --port COM3 all
@@ -47,6 +55,8 @@ python tools/hw_check.py --port COM3 t101
 python tools/hw_check.py --port COM6 t111
 python tools/hw_check.py --port COM6 t112
 python tools/hw_check.py --port COM6 siam
+python tools/hw_check.py --port COM6 mi
+python tools/hw_check.py --port COM6 maildrop
 ```
 
 Add `--dry-run` to any command first if you just want to see what each
@@ -139,6 +149,46 @@ test *would* do without touching the TNC at all — it never opens the port.
   **INCONCLUSIVE** for anything else, or if an original value could not be
   parsed (test is then `SKIPPED` and nothing is touched).
 
+### `mi` — is the MailDrop button's `MI` actually `MFILTER`?
+- **What happens:** enters Host Mode, queries `MI` with no argument (the
+  exact frame `main_window.py`'s MailDrop button sends — a unit test keeps
+  the two in sync), exits Host Mode, then verbose-queries `MFILTER`. No
+  writes at all.
+- **FAIL** if `MI` reads back the same value as `MFILTER` — confirms the
+  mnemonic-table's name-list entry and means the app's MailDrop button
+  sends the wrong command (it should log in to the mailbox, not query a
+  filter). **PASS** if the two values differ (no evidence for the
+  MI=MFILTER claim). **INCONCLUSIVE** if either query fails.
+
+### `maildrop` — guided local MailDrop recording terminal
+- **What happens:** first queries and logs `MAILDROP`, `MYMAIL`, `MYCALL`,
+  `MTEXT`, `MMSG`, `3RDPARTY`, `KILONFWD`, `TMAIL`, `MDMON`, `XMITOK`
+  (a `?What?` for any of these is itself a finding, not a failure) and
+  warns if `XMITOK` is `ON`. Sends `MDCHECK` to open the mailbox and shows
+  the raw response. Then prints a **suggested** (not mandatory) command
+  sequence and hands you an `md>` prompt: whatever you type is sent with a
+  trailing CR and the response is read until the mailbox goes quiet for
+  1.5 seconds (the mailbox's prompt is not `cmd:`, so the tool cannot wait
+  for that). Type `^Z`, `^D` or `^C` to send that exact control byte
+  instead of the three literal characters.
+- **Ending the session:** type `/quit` (a tool-local command, never sent
+  to the TNC) to leave the interactive prompt. The tool then reads for one
+  more second and reports whether a `cmd:` prompt appeared — if not, **the
+  mailbox is probably still open** (no command to leave it is known) and
+  you must exit it yourself in a normal terminal before doing anything
+  else on this port. The summary names the last input that was sent, to
+  help you pick up where you left off.
+- **Optional last step:** you'll be asked whether to power-cycle the TNC
+  to confirm the mailbox is lost (expected — see CLAUDE.md's "no RAM
+  buffer battery" finding). Say `y`, power-cycle when prompted, and the
+  tool reconnects, queries `MYCALL` (should read back the factory
+  `PK232`) and reopens the mailbox for a single `L` (list) to show it is
+  empty again.
+- **No PASS/FAIL** — this is a measurement of an unknown protocol, not a
+  verdict. Write up what the mailbox's own `H` (help) showed, the message
+  format from `L`, and whatever else you found into `Testplan.md`
+  yourself.
+
 ## 4. Checklist
 
 | Test | Date | Result | Notes |
@@ -150,6 +200,8 @@ test *would* do without touching the TNC at all — it never opens the port.
 | SIAM |  |  |  |
 | T111 |  |  |  |
 | T112 |  |  |  |
+| MI |  |  |  |
+| MAILDROP |  |  |  |
 
 ## 5. Where results go
 
