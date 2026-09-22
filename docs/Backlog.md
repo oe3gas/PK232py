@@ -139,10 +139,22 @@ NOTHING to the TNC yet)
 | Function | Candidate | Status |
 |---|---|---|
 | CONPERM | `CY` | Button built, `# TODO mnemonic unverified`, no frame sent. |
-| MAILDROP on/off (options row) | unresolved | Button built, no frame sent. Distinct from the working `btn_maildrop` MDCHECK-login button (mnemonic `MI`, already T47-verified) — do not conflate the two. |
+| MAILDROP on/off (options row) | unresolved | Button built, no frame sent. Distinct from the working `btn_maildrop` MDCHECK-login button (mnemonic `MI`, T47 **frame**-verified only — see the note below on what `MI` actually is) — do not conflate the two. |
 | MDMON | unresolved | Button built, no frame sent. |
 | LITE | unresolved | Button built, no frame sent. |
 | MailDrop-Login / MID | `MI` (both) | Pre-existing, documented conflict — `MI` used for both MDCHECK login and the MID (Morse ID) toggle. Behaviour intentionally left unchanged; see CLAUDE.md "Known bug" history and the code comment in `packet_screen.py`. |
+
+**`MI` may actually be MFILTER, not MailDrop login (P20, 2026-09-22):**
+`pk232_mnemonic_table.txt`'s name-to-mnemonic mapping lists `MI` as
+MFILTER — that file is not hardware evidence (see
+`docs/MNEMONIC_TABLE_NOTE.md` and CLAUDE.md's mnemonic-table correction),
+but it means T47's "MailDrop login" claim was never actually confirmed to
+mean MailDrop login on real hardware, only that `_on_packet_maildrop()`
+sends `build_command(b'MI')` and the TNC accepts it (frame-verified, not
+meaning-verified). `tools/hw_check.py mi` (query-only) checks whether `MI`
+and `MFILTER` read back the same value, which would confirm the
+mnemonic-table entry and mean the MailDrop button sends the wrong
+command. See Testplan (MI probe case) once run.
 
 ### Packet — Connect/Disconnect & MHEARD
 
@@ -200,6 +212,20 @@ T105 and T108 additionally need a second AX.25 station.*
 ---
 
 ## Priority 2 — Improvements
+
+### New Host Mode mnemonic scan (P20.A2, 2026-09-22)
+
+`pk232_mnemonic_table.txt`'s scan failed (674/676 combinations got no
+response at all — see `docs/MNEMONIC_TABLE_NOTE.md`); a proper re-scan is
+now feasible with `tools/hw_check.py`'s working `query_host()` (mnemonic-
+prefix correlation, pending-frame drain, P16.2). **Not a blind sweep of
+all 676 combinations** — a bare mnemonic with no argument can still
+trigger an immediate action on some TNCs (connect, disconnect, mode
+switch, send, reset), not just answer with an error. Prerequisite before
+writing the scan: a denylist of every action-triggering command in the
+TRM, built from the manual, that the scanner skips outright — not
+discovered by trial and error against the real hardware. Own package,
+Priority 2, not started here.
 
 ### Parameter dialogs — widgets with no config field yet (P12 audit, 2026-09-20)
 

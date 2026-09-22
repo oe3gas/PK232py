@@ -500,6 +500,35 @@ Grows over time.
   `Y`/`N` instead of toggling PASSALL. **"Never guess" applies to fixes too,
   not just new code** — a correction needs the same TRM citation as new code,
   or it can just as easily introduce a new wrong mnemonic.
+- **`pk232_mnemonic_table.txt` is a NAME LIST, not a hardware scan —
+  correction, P20, 2026-09-22.** The file's own heading ("Host Mode
+  Mnemonic Scan") and P13/P14's description of it ("Scan des realen
+  Geräts, v7.1") both overstate what it is: of 676 mnemonic combinations
+  queried, only `AC` and `AD` ever answered — both with an error code. The
+  "KNOWN NAME" column is a name-to-mnemonic mapping (most likely
+  transcribed from TRM 4.2.2), not something the TNC confirmed. This was
+  a **specification error**, not an implementation one — the P13 command
+  names it was checked against are independently confirmed on real
+  hardware anyway (T103's verbose upload, "was"/"now" responses). Evidence
+  order for any mnemonic claim, strongest first: **(1)** a real
+  `tools/hw_check.py` run against the TNC, **(2)** TRM 4.2.2, **(3)**
+  `pk232_mnemonic_table.txt` only as a transcript of the TRM, never as its
+  own evidence. See `docs/MNEMONIC_TABLE_NOTE.md` for what the file
+  actually is; the file's own header is left untouched (historical
+  artefact).
+
+  **Hardware-confirmed Host Mode mnemonics** (add every new hardware
+  finding to this table, source in the third column):
+
+  | Mnemonic | Meaning | Evidence |
+  |---|---|---|
+  | `PX` | PASSALL | T86, T111 (`PXN`/`PXY`) |
+  | `PS` | PASS | T86, T111 (`PS$16`) |
+  | `SL` | SLOTTIME | T112 (`30` → `10`) |
+  | `VH` | VHF | T112 (restore reports `Vhf was OFF`) |
+  | `HB` | HBAUD | T112 (restore reports `HBaud was 300`) |
+  | `HP` | HPOLL | late response frame after Host Mode entry (T86) |
+  | `MX` | MAXFRAME | **open** — needs the T112 retest (P18.1/P18.3 fix) |
 - **A stale response frame from a PRIOR command can still be queued when the
   next query goes out — never correlate a Host Mode response by arrival
   order, always by its mnemonic prefix (`frame.data[:2]` /
