@@ -1152,3 +1152,61 @@ class TestParseMaildropListRound2:
         msg2 = next(r for r in rows if r["number"] == 2)
         assert msg2["date"] is None
         assert msg2["time"] is None
+
+
+class TestBuildMaildropHostFrame:
+    """P24.3: the Sonde A/B frame is SOH $60 ... ETB, with the SAME
+    DLE-stuffing frame.py's own build_*() functions use - not a
+    reimplementation."""
+
+    def test_frame_structure_no_stuffing_needed(self):
+        frame = hw_check.build_maildrop_host_frame(b"L\r")
+        assert frame == bytes([0x01, 0x60]) + b"L\r" + bytes([0x17])
+
+    def test_ctl_byte_is_0x60(self):
+        frame = hw_check.build_maildrop_host_frame(b"MDCHECK\r")
+        assert frame[0] == 0x01
+        assert frame[1] == 0x60
+        assert frame[-1] == 0x17
+
+    def test_stuffing_matches_the_existing_dle_escape_function(self):
+        # Data containing a literal SOH/DLE/ETB byte must be escaped the
+        # SAME way frame.py's own _dle_escape() escapes it for every
+        # other outgoing frame - checked directly against that function,
+        # not against a hand-picked expected byte sequence.
+        from pk232py.comm.frame import _dle_escape
+
+        data = b"R \x17 1\r"   # contains a literal ETB byte
+        frame = hw_check.build_maildrop_host_frame(data)
+        assert frame == bytes([0x01, 0x60]) + _dle_escape(data) + bytes([0x17])
+        # And confirm stuffing actually happened (DLE inserted before ETB).
+        assert b"\x10\x17" in frame
+
+
+class TestClassifyMaildropHostCtl:
+    def test_0x70_is_maildrop_read_data(self):
+        assert "70" in hw_check.classify_maildrop_host_ctl(0x70)
+        assert "MailDrop read data" in hw_check.classify_maildrop_host_ctl(0x70)
+
+    def test_0x2f_is_monitored_mxmit_data(self):
+        assert "MXMIT" in hw_check.classify_maildrop_host_ctl(0x2F)
+
+    def test_0x4f_is_cmd_resp_as_usual(self):
+        assert "CMD_RESP" in hw_check.classify_maildrop_host_ctl(0x4F)
+
+    def test_0x5f_is_status_err_as_usual(self):
+        assert "STATUS_ERR" in hw_check.classify_maildrop_host_ctl(0x5F)
+
+    def test_unknown_ctl_is_labelled_unknown(self):
+        label = hw_check.classify_maildrop_host_ctl(0x99)
+        assert "unknown" in label
+        assert "99" in label
+
+
+class TestShouldRunMaildropHostProbeB:
+    def test_runs_when_probe_a_got_nothing(self):
+        assert hw_check.should_run_maildrop_host_probe_b([]) is True
+
+    def test_does_not_run_when_probe_a_got_a_response(self):
+        fake_frame = object()
+        assert hw_check.should_run_maildrop_host_probe_b([fake_frame]) is False

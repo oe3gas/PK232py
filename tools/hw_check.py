@@ -799,6 +799,14 @@ def classify_maildrop_host_ctl(ctl: int) -> str:
     return f"unknown (${ctl:02X})"
 
 
+def should_run_maildrop_host_probe_b(captured_a: list) -> bool:
+    """Probe B (MDCHECK login, then 'L' again) only runs if probe A got
+    nothing at all (P24.2/P24.3) - a bare 'L' may already work without
+    logging in first, and there is no reason to send more frames than
+    necessary to answer that question."""
+    return not captured_a
+
+
 def run_maildrop_interactive(
     initial_state: str,
     initial_free: Optional[int],
@@ -2276,7 +2284,7 @@ def test_maildrop_host(session: Session, log: RunLog) -> None:
         log.line("Probe A: L (assumes no login needed)")
         captured_a = session.send_maildrop_host_frame(b"L\r")
 
-        if not captured_a:
+        if should_run_maildrop_host_probe_b(captured_a):
             log.line("Probe A got nothing -- trying probe B (MDCHECK, then L)")
             session.send_maildrop_host_frame(b"MDCHECK\r")
             captured_b = session.send_maildrop_host_frame(b"L\r")
