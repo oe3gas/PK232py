@@ -28,6 +28,7 @@ Standalone-Test: python signal_screen.py
 
 import sys
 from datetime import datetime, timezone
+from typing import Optional, TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
@@ -44,6 +45,11 @@ from .opmode_rtty_base import (
     style_rx_widget,
     BTN_W, SPACING,
 )
+
+if TYPE_CHECKING:
+    # Screens don't import modes/ at runtime (see the other screens) -
+    # this is a type hint only, for on_mode_result() below.
+    from pk232py.modes.signal_analysis import SiamResult
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +124,12 @@ class SignalScreen(QWidget):
         self._analyse_timer.setSingleShot(True)
         self._analyse_timer.setInterval(3000)   # 3 Sek. Demo-Verzögerung
         self._analyse_timer.timeout.connect(self._on_analyse_complete_demo)
+
+        # Highest confidence seen so far this session (P19.4) — the TNC
+        # analyses continuously (~10s cadence), so "sicherstes Ergebnis"
+        # tracks across results, not just the latest one. Reset by
+        # New Analysis / Cancel, NOT by every incoming result.
+        self._best_confidence: Optional[float] = None
 
         self._build_ui()
 
@@ -278,6 +290,18 @@ class SignalScreen(QWidget):
         raw_row.addStretch()
         result_layout.addLayout(raw_row)
 
+        # Bisher sicherstes Ergebnis (P19.4 — TNC analysiert fortlaufend,
+        # etwa alle 10 s ein neues Ergebnis; dies ist die höchste Konfidenz
+        # seit der letzten New Analysis / dem letzten Cancel)
+        best_row = QHBoxLayout()
+        best_row.addWidget(_field_label("Best so far:"))
+        self.lbl_best = QLabel("–")
+        self.lbl_best.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
+        self.lbl_best.setStyleSheet("color: #ffcc66;")
+        best_row.addWidget(self.lbl_best)
+        best_row.addStretch()
+        result_layout.addLayout(best_row)
+
         # Trennlinie + OK-Button
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -420,6 +444,21 @@ class SignalScreen(QWidget):
         self._show_result("0.47", "50 Baud", "Baudot", "OFF",
                           "0.47: 50 Baud, Baudot, RXREV OFF")
 
+    def on_mode_result(self, result: "SiamResult") -> None:
+        """Live SIAM result from SignalMode.on_result_parsed (P19.4),
+        wired by MainWindow._wire_mode_callbacks(). Feeds the same
+        display path as the demo timer (_show_result()) — the TNC
+        analyses continuously (~10s cadence, T113), so this fires
+        repeatedly for one Signal/SIAM session, not just once.
+        """
+        self._show_result(
+            f"{result.confidence:.2f}",
+            f"{result.baud} Baud",
+            result.mode,
+            "ON" if result.rxrev else "OFF",
+            result.raw,
+        )
+
     def _show_result(
         self,
         confidence: str,
@@ -431,6 +470,13 @@ class SignalScreen(QWidget):
         """Zeigt ein Analyse-Ergebnis an."""
         conf_float = float(confidence)
         color = _confidence_color(conf_float)
+
+        # Bisher sicherstes Ergebnis (P19.4) — nur bei einer NEUEN
+        # Bestmarke aktualisieren, nicht bei jedem Ergebnis.
+        if self._best_confidence is None or conf_float > self._best_confidence:
+            self._best_confidence = conf_float
+            self.lbl_best.setText(f"{confidence}: {baud}, {mode}, RXREV {rxrev}")
+            self.lbl_best.setStyleSheet(f"color: {color}; font-weight: bold;")
 
         # Konfidenz-Balken
         self.progress_conf.setValue(int(conf_float * 100))
@@ -480,6 +526,9 @@ class SignalScreen(QWidget):
         self.lbl_mode.setStyleSheet("")
         self.lbl_rxrev.setText("–")
         self.lbl_raw.setText("–")
+        self._best_confidence = None
+        self.lbl_best.setText("–")
+        self.lbl_best.setStyleSheet("color: #ffcc66;")
         self.btn_ok.setEnabled(False)
         self.btn_ok.setText("OK  –  Switch to the detected mode")
 

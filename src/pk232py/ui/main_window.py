@@ -1368,6 +1368,15 @@ class MainWindow(QMainWindow):
         if hasattr(mode, "on_fec_received"):
             mode.on_fec_received = self._on_mode_data_received
 
+        # SIAM structured results (P19.4) — wire the assembled/parsed
+        # SiamResult straight to SignalScreen, never the raw on_result:
+        # SignalScreen has no parser of its own to feed, and wiring both
+        # would double-handle every successfully parsed line.
+        if hasattr(mode, "on_result_parsed"):
+            screen = self._opmode_screens.get(mode.name)
+            if screen is not None and hasattr(screen, "on_mode_result"):
+                mode.on_result_parsed = screen.on_mode_result
+
         # EAS (Echo As Sent) — Morse colours the TX window at the *actual*
         # send moment ($2F echo, WPM-paced), not at buffer-accept time
         # ($5F DATA_ACK). The TxController must be in EAS mode for Morse and
