@@ -596,3 +596,162 @@ class TestMaildropSessionLeft:
 
     def test_empty_text(self):
         assert hw_check.maildrop_session_left("") is False
+
+
+# Real mailbox prompt, hardware-confirmed 22.09.2026 - round brackets,
+# double spaces, differs from the TRM's '[AEA PK-232M] ... >' example.
+_MAILBOX_PROMPT = "(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >"
+
+
+class TestExtractMailboxFree:
+    def test_extracts_free_bytes(self):
+        assert hw_check.extract_mailbox_free(_MAILBOX_PROMPT) == 18536
+
+    def test_none_when_no_prompt(self):
+        assert hw_check.extract_mailbox_free("cmd:") is None
+
+
+class TestClassifyMaildropResponse:
+    """P21.4 fixtures from the real 22.09.2026 maildrop transcript."""
+
+    def test_mailbox_prompt_with_round_brackets_and_double_spaces(self):
+        state, recognised = hw_check.classify_maildrop_response(
+            _MAILBOX_PROMPT, previous_state="MAILBOX"
+        )
+        assert (state, recognised) == ("MAILBOX", True)
+
+    def test_cmd_prompt_ends_interactive_phase(self):
+        state, recognised = hw_check.classify_maildrop_response(
+            "b\r\ncmd:", previous_state="MAILBOX"
+        )
+        assert (state, recognised) == ("CMD", True)
+
+    def test_h_in_sysop_mode_is_not_an_error_state(self):
+        # SysOp command set is B,E,K,L,R,S only - 'H'/'?' are for other
+        # users logging in. The mailbox answers '*** What?' but still
+        # reprints its own prompt, so this must NOT be flagged.
+        resp = f"h\r\n*** What?\r\n{_MAILBOX_PROMPT}"
+        state, recognised = hw_check.classify_maildrop_response(
+            resp, previous_state="MAILBOX", sent_command="h"
+        )
+        assert (state, recognised) == ("MAILBOX", True)
+
+    def test_siam_line_interleaved_after_prompt_stays_mailbox(self):
+        # SIAM keeps analysing until a different mode is picked and can
+        # still interleave a result even after normalize() (P21.2) - the
+        # prompt is searched anywhere, not just as the last line.
+        resp = f"{_MAILBOX_PROMPT}\r\n0.78: 50 baud, Baudot, RXRev ON\r\n"
+        state, recognised = hw_check.classify_maildrop_response(
+            resp, previous_state="MAILBOX"
+        )
+        assert (state, recognised) == ("MAILBOX", True)
+
+    def test_s_command_from_mailbox_enters_text_entry(self):
+        state, recognised = hw_check.classify_maildrop_response(
+            "Subject: ", previous_state="MAILBOX", sent_command="S OE3GAS"
+        )
+        assert (state, recognised) == ("ENTRY", True)
+
+    def test_free_form_prompt_inside_entry_is_not_flagged(self):
+        state, recognised = hw_check.classify_maildrop_response(
+            "Text: ", previous_state="ENTRY", sent_command="Test subject"
+        )
+        assert (state, recognised) == ("ENTRY", True)
+
+    def test_mailbox_prompt_returns_from_entry(self):
+        state, recognised = hw_check.classify_maildrop_response(
+            _MAILBOX_PROMPT, previous_state="ENTRY", sent_command="/EX"
+        )
+        assert (state, recognised) == ("MAILBOX", True)
+
+    def test_unrecognised_response_in_mailbox_state_is_flagged(self):
+        state, recognised = hw_check.classify_maildrop_response(
+            "???garbled???", previous_state="MAILBOX", sent_command="L"
+        )
+        assert (state, recognised) == ("MAILBOX", False)
+
+
+class TestRunMaildropInteractiveSafety:
+    """P21.4's safety test: once a response puts the terminal into CMD
+    state, NOTHING typed afterwards may ever be sent - on real hardware,
+    'K' at the TNC command interpreter means CONVERSE, not kill-message."""
+
+    def test_stops_immediately_after_cmd_response_never_sends_next_line(self):
+        lines = iter(["B", "k"])
+        sent_payloads: list[bytes] = []
+
+        def read_line(state, free):
+            return next(lines, None)
+
+        def send(payload, note):
+            sent_payloads.append(payload)
+            return b"cmd:"
+
+        log = hw_check.RunLog(None)
+        final_state, last_sent = hw_check.run_maildrop_interactive(
+            "MAILBOX", 18536, read_line, send, log
+        )
+
+        assert final_state == "CMD"
+        assert last_sent == b"B\r"
+        assert sent_payloads == [b"B\r"]
+
+    def test_quit_never_sends_anything(self):
+        def read_line(state, free):
+            return "/quit"
+
+        def send(payload, note):
+            raise AssertionError("must never send after /quit")
+
+        log = hw_check.RunLog(None)
+        final_state, last_sent = hw_check.run_maildrop_interactive(
+            "MAILBOX", 18536, read_line, send, log
+        )
+
+        assert final_state == "MAILBOX"
+        assert last_sent is None
+
+    def test_eof_stops_without_sending(self):
+        def read_line(state, free):
+            return None
+
+        def send(payload, note):
+            raise AssertionError("must never send on EOF")
+
+        log = hw_check.RunLog(None)
+        final_state, last_sent = hw_check.run_maildrop_interactive(
+            "MAILBOX", 18536, read_line, send, log
+        )
+
+        assert final_state == "MAILBOX"
+        assert last_sent is None
+
+    def test_full_sequence_tracks_state_through_entry_and_back(self):
+        exchanges = iter([
+            ("L", _MAILBOX_PROMPT),
+            ("S OE3GAS", "Subject: "),
+            ("Test", "Text: "),
+            ("hello", ""),
+            ("^Z", _MAILBOX_PROMPT),
+        ])
+        typed = iter(["L", "S OE3GAS", "Test", "hello", "^Z"])
+        sent_payloads: list[bytes] = []
+
+        def read_line(state, free):
+            return next(typed, None)
+
+        def send(payload, note):
+            sent_payloads.append(payload)
+            _, resp = next(exchanges)
+            return resp.encode("ascii")
+
+        log = hw_check.RunLog(None)
+        final_state, last_sent = hw_check.run_maildrop_interactive(
+            "MAILBOX", 18536, read_line, send, log
+        )
+
+        assert final_state == "MAILBOX"
+        assert last_sent == b"\x1a"
+        assert sent_payloads == [
+            b"L\r", b"S OE3GAS\r", b"Test\r", b"hello\r", b"\x1a",
+        ]
