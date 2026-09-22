@@ -598,6 +598,151 @@ class TestMaildropSessionLeft:
         assert hw_check.maildrop_session_left("") is False
 
 
+# Three real 'L' responses from hw_logs/20260922_184337_maildrop.log
+# (P22, first full hardware run), verbatim.
+_MAILDROP_LIST_1_MSG = (
+    "l\r\nMsg#    Size To     From   @ BBS  Date       Time   Title\r\n"
+    "  1 PN    36 OE3GAS OE3GAS        .........  .....  test 1\r\n"
+    "(AEA PK-232M)  18452 free  (B,E,K,L,R,S) >\r\n"
+)
+_MAILDROP_LIST_2_MSGS = (
+    "l\r\nMsg#    Size To     From   @ BBS  Date       Time   Title\r\n"
+    "  2 PN    35 OE3GAS OE3GAS        .........  .....  Test 2\r\n"
+    "  1 PY    36 OE3GAS OE3GAS        .........  .....  test 1\r\n"
+    "(AEA PK-232M)  18368 free  (B,E,K,L,R,S) >\r\n"
+)
+_MAILDROP_LIST_AFTER_KILL = (
+    "l\r\nMsg#    Size To     From   @ BBS  Date       Time   Title\r\n"
+    "  2 PN    35 OE3GAS OE3GAS        .........  .....  Test 2\r\n"
+    "(AEA PK-232M)  18452 free  (B,E,K,L,R,S) >\r\n"
+)
+# Real 'R 1' response, same log - message text ends with the firmware's
+# own stray '/E' line before the mailbox prompt.
+_MAILDROP_READ_RESPONSE = (
+    "r 1\r\nMsg#    Size To     From   @ BBS  Date       Time   Title\r\n"
+    "  1 PN    36 OE3GAS OE3GAS        .........  .....  test 1\r\n"
+    "\r\nerste test-nachricht.\r\n/E\r\n"
+    "(AEA PK-232M)  18452 free  (B,E,K,L,R,S) >\r\n"
+)
+
+
+class TestParseMaildropListRow:
+    def test_single_message_row(self):
+        row = hw_check.parse_maildrop_list_row(
+            "  1 PN    36 OE3GAS OE3GAS        .........  .....  test 1"
+        )
+        assert row == {
+            "number": 1, "type": "P", "read": "N", "size": 36,
+            "to": "OE3GAS", "from": "OE3GAS", "bbs": None,
+            "date": None, "time": None, "title": "test 1",
+        }
+
+    def test_read_status_y(self):
+        row = hw_check.parse_maildrop_list_row(
+            "  1 PY    36 OE3GAS OE3GAS        .........  .....  test 1"
+        )
+        assert row["type"] == "P"
+        assert row["read"] == "Y"
+
+    def test_header_line_returns_none(self):
+        header = "Msg#    Size To     From   @ BBS  Date       Time   Title"
+        assert hw_check.parse_maildrop_list_row(header) is None
+
+    def test_mailbox_prompt_line_returns_none(self):
+        assert hw_check.parse_maildrop_list_row(_MAILBOX_PROMPT) is None
+
+    def test_short_line_returns_none(self):
+        assert hw_check.parse_maildrop_list_row("*** Message not found.") is None
+
+
+class TestParseMaildropList:
+    """P22.5: the three real listings from the 22.09.2026 transcript."""
+
+    def test_list_with_one_message(self):
+        rows = hw_check.parse_maildrop_list(_MAILDROP_LIST_1_MSG)
+        assert len(rows) == 1
+        assert rows[0]["number"] == 1
+        assert rows[0]["read"] == "N"
+        assert rows[0]["date"] is None
+        assert rows[0]["time"] is None
+
+    def test_list_with_two_messages_newest_first(self):
+        rows = hw_check.parse_maildrop_list(_MAILDROP_LIST_2_MSGS)
+        assert [r["number"] for r in rows] == [2, 1]
+        assert rows[0]["title"] == "Test 2"
+        assert rows[0]["read"] == "N"
+        # Reading message 1 earlier flipped its status N -> Y - the TNC
+        # number is NOT reassigned, and stays 1.
+        assert rows[1]["number"] == 1
+        assert rows[1]["read"] == "Y"
+
+    def test_list_after_kill_keeps_surviving_number(self):
+        rows = hw_check.parse_maildrop_list(_MAILDROP_LIST_AFTER_KILL)
+        # Message 1 was killed; message 2 keeps its own number, it is
+        # NOT renumbered to 1.
+        assert [r["number"] for r in rows] == [2]
+
+    def test_empty_mailbox_yields_no_rows(self):
+        resp = "l\r\n*** Message not found.\r\n(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >\r\n"
+        assert hw_check.parse_maildrop_list(resp) == []
+
+
+class TestMaildropResponseHasETrailer:
+    def test_real_read_response_has_trailer(self):
+        assert hw_check.maildrop_response_has_e_trailer(_MAILDROP_READ_RESPONSE) is True
+
+    def test_response_without_trailer(self):
+        resp = "hello\r\n(AEA PK-232M)  18452 free  (B,E,K,L,R,S) >\r\n"
+        assert hw_check.maildrop_response_has_e_trailer(resp) is False
+
+    def test_empty_response(self):
+        assert hw_check.maildrop_response_has_e_trailer("") is False
+
+
+class TestReadPowerCycleConfirmation:
+    """P22.2: only 'done'/'skip' are accepted; anything else re-asks -
+    an earlier run's blank Enter was silently read as skip before this
+    confirm loop existed."""
+
+    def test_done_proceeds(self):
+        answers = iter(["done"])
+        assert hw_check.read_power_cycle_confirmation(lambda: next(answers)) is True
+
+    def test_skip_declines(self):
+        answers = iter(["skip"])
+        assert hw_check.read_power_cycle_confirmation(lambda: next(answers)) is False
+
+    def test_case_and_whitespace_tolerant(self):
+        answers = iter(["  DONE  "])
+        assert hw_check.read_power_cycle_confirmation(lambda: next(answers)) is True
+
+    def test_blank_enter_re_asks_instead_of_defaulting_to_skip(self):
+        answers = iter(["", "y", "done"])
+        assert hw_check.read_power_cycle_confirmation(lambda: next(answers)) is True
+
+    def test_garbage_re_asks_until_skip(self):
+        answers = iter(["maybe", "later", "skip"])
+        assert hw_check.read_power_cycle_confirmation(lambda: next(answers)) is False
+
+
+class TestEvaluatePowerCycleLoss:
+    def test_pass_when_message_existed_and_now_empty(self):
+        verdict = hw_check.evaluate_power_cycle_loss(
+            True, "l\r\n*** Message not found.\r\ncmd:"
+        )
+        assert verdict == "PASS"
+
+    def test_inconclusive_when_no_message_existed_before(self):
+        verdict = hw_check.evaluate_power_cycle_loss(
+            False, "l\r\n*** Message not found.\r\ncmd:"
+        )
+        assert verdict == "INCONCLUSIVE"
+
+    def test_inconclusive_when_mailbox_still_has_a_message(self):
+        verdict = hw_check.evaluate_power_cycle_loss(True, _MAILDROP_LIST_1_MSG)
+        assert verdict == "INCONCLUSIVE"
+
+
 # Real mailbox prompt, hardware-confirmed 22.09.2026 - round brackets,
 # double spaces, differs from the TRM's '[AEA PK-232M] ... >' example.
 _MAILBOX_PROMPT = "(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >"
@@ -688,13 +833,14 @@ class TestRunMaildropInteractiveSafety:
             return b"cmd:"
 
         log = hw_check.RunLog(None)
-        final_state, last_sent = hw_check.run_maildrop_interactive(
+        final_state, last_sent, message_stored = hw_check.run_maildrop_interactive(
             "MAILBOX", 18536, read_line, send, log
         )
 
         assert final_state == "CMD"
         assert last_sent == b"B\r"
         assert sent_payloads == [b"B\r"]
+        assert message_stored is False
 
     def test_quit_never_sends_anything(self):
         def read_line(state, free):
@@ -704,12 +850,13 @@ class TestRunMaildropInteractiveSafety:
             raise AssertionError("must never send after /quit")
 
         log = hw_check.RunLog(None)
-        final_state, last_sent = hw_check.run_maildrop_interactive(
+        final_state, last_sent, message_stored = hw_check.run_maildrop_interactive(
             "MAILBOX", 18536, read_line, send, log
         )
 
         assert final_state == "MAILBOX"
         assert last_sent is None
+        assert message_stored is False
 
     def test_eof_stops_without_sending(self):
         def read_line(state, free):
@@ -719,12 +866,13 @@ class TestRunMaildropInteractiveSafety:
             raise AssertionError("must never send on EOF")
 
         log = hw_check.RunLog(None)
-        final_state, last_sent = hw_check.run_maildrop_interactive(
+        final_state, last_sent, message_stored = hw_check.run_maildrop_interactive(
             "MAILBOX", 18536, read_line, send, log
         )
 
         assert final_state == "MAILBOX"
         assert last_sent is None
+        assert message_stored is False
 
     def test_full_sequence_tracks_state_through_entry_and_back(self):
         exchanges = iter([
@@ -732,7 +880,7 @@ class TestRunMaildropInteractiveSafety:
             ("S OE3GAS", "Subject: "),
             ("Test", "Text: "),
             ("hello", ""),
-            ("^Z", _MAILBOX_PROMPT),
+            ("^Z", f"Message stored as # 3\r\n{_MAILBOX_PROMPT}"),
         ])
         typed = iter(["L", "S OE3GAS", "Test", "hello", "^Z"])
         sent_payloads: list[bytes] = []
@@ -746,12 +894,34 @@ class TestRunMaildropInteractiveSafety:
             return resp.encode("ascii")
 
         log = hw_check.RunLog(None)
-        final_state, last_sent = hw_check.run_maildrop_interactive(
+        final_state, last_sent, message_stored = hw_check.run_maildrop_interactive(
             "MAILBOX", 18536, read_line, send, log
         )
 
         assert final_state == "MAILBOX"
         assert last_sent == b"\x1a"
+        assert message_stored is True
         assert sent_payloads == [
             b"L\r", b"S OE3GAS\r", b"Test\r", b"hello\r", b"\x1a",
         ]
+
+    def test_ctrl_z_in_entry_returns_to_mailbox_once_prompt_seen(self):
+        # P22.4: ^Z is sent as $1A - the state machine already handles
+        # the ENTRY -> MAILBOX transition once the mailbox prompt comes
+        # back, regardless of what was typed to trigger it.
+        typed = iter(["^Z"])
+
+        def read_line(state, free):
+            return next(typed, None)
+
+        def send(payload, note):
+            assert payload == b"\x1a"
+            return _MAILBOX_PROMPT.encode("ascii")
+
+        log = hw_check.RunLog(None)
+        final_state, last_sent, message_stored = hw_check.run_maildrop_interactive(
+            "ENTRY", 18452, read_line, send, log
+        )
+
+        assert final_state == "MAILBOX"
+        assert last_sent == b"\x1a"
