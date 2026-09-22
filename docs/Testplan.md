@@ -45,6 +45,7 @@
 | **2026-09-22** | `main_window.py`, `packet_hf.py`, `packet_vhf.py`, `signal_screen.py` | P19: found a SECOND `set_mode()` call site (`_update_host_mode_ui()`'s Host-Mode-entry default) that P18.1 had missed — a future config-carrying mode there would have silently gotten constructor defaults. `MainWindow._build_mode_instance()` is now the one place any mode instance is built with configuration; `HFPacketMode`'s own defaults now derive from `HFPacketConfig` instead of repeating the numbers; `SignalScreen` wired to `SignalMode.on_result_parsed` (was never wired to anything), shows latest + best-so-far result; T114 concretized with the wiring now in place |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P20: corrected `pk232_mnemonic_table.txt`'s status (a failed 676-combination scan misdescribed as hardware evidence in P13/P14, see `docs/MNEMONIC_TABLE_NOTE.md`); new subcommands `mi` (query-only, does the MailDrop button's `MI` actually read back the same as `MFILTER`?) and `maildrop` (guided, mitschreib-style local MailDrop recording terminal — protocol unknown, so no script); no `src/pk232py/` changes; +T115/T116 |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py`, `main_window.py`, `packet_screen.py` | P21: real hardware run (T115/T116) found MI = MFILTER confirmed (FAIL) and a tool safety bug — after MailDrop's `B` silently closed the mailbox, typed input reached the TNC command interpreter, where `K` = CONVERSE. `parse_query_value()` now finds the value line by content, not position (async SIAM output interleaves into other responses); `Session.normalize()` runs before every hardware subcommand; the mailbox terminal is a MAILBOX/ENTRY/CMD state machine that stops the instant `cmd:` is seen; `btn_maildrop` disabled, `_on_packet_maildrop()` is a no-op |
+| **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P22: first full MailDrop hardware run (18:43, fixed tool) — T116 PASS for `L`/`S`/`R`/`K`/`B`, list format, numbering, memory accounting; all recorded in CLAUDE.md. Power-cycle confirmation reworked to a `done`/`skip` loop (a blank Enter used to be silently read as skip); recorder now sets `DAYTIME` (reusing `ParamsUploader._cmd()`) before `MDCHECK` so the list shows real dates; suggested sequence replaced with round-2's foreign-FROM/@BBS/bulletin/traffic-type/EDIT questions; added tool-only `parse_maildrop_list()`/`maildrop_response_has_e_trailer()` |
 
 ---
 
@@ -1304,21 +1305,20 @@ since a script would have to guess all of that.
 optional step is run — confirmation that the mailbox is empty again
 after a power-cycle.
 
-**Status:** 🟡 Partial result (22.09.2026, first run, before the P21
-fixes): mailbox prompt confirmed
-(`` (AEA PK-232M)  18536 free  (B,E,K,L,R,S) > ``, round brackets, double
-spaces — differs from the TRM's `[AEA PK-232M] ... >` example); SysOp
-command set confirmed as `B,E,K,L,R,S` only (`H` → `*** What?`, help is
-for other users, not the SysOp); `B` confirmed to close the mailbox and
-return straight to `cmd:`. **A safety issue in the tool itself** (typed
-input after `B` reached the TNC command interpreter, where `K` = CONVERSE)
-stopped the run before `S`/`R`/`K`/`L` and the message format could be
-exercised — fixed in P21.3. ⬜ Still OPEN: repeat with the fixed tool and
-the corrected sequence above to get the real command set, message-list
-format, and `S`/`R`/`K` results. Needs real hardware and real operator
-time (this is an open-ended protocol measurement, not a quick pass/fail
-check). See `docs/HW_Solo_Tests.md`, `docs/P20_MailDrop_Measure_Spec.md`
-and `docs/P21_MailDrop_Recorder_Fix_Spec.md`.
+**Status:** ✅ PASS for `L`/`S`/`R`/`K`/`B`, the list format, numbering and
+free-memory accounting (22.09.2026 18:43, first full run after the P21.3
+fix — `hw_logs/20260922_184337_maildrop.log`). Full command/response
+shapes, the fixed-width list format, the TNC-number-not-reassigned-after-
+kill finding, the per-message memory cost, and the stray `/E` read
+trailer are all recorded in CLAUDE.md's MailDrop facts. `tools/
+hw_check.py`'s `parse_maildrop_list()`/`maildrop_response_has_e_trailer()`
+(tool-only, P22.5) encode the list/read format for future measurement
+runs. **⬜ Still OPEN:** the power-cycle test itself was skipped this run
+(the old y/N prompt read a blank Enter as "no" before the operator
+realised it was time to power-cycle — fixed in P22.2) and round 2's
+questions (foreign FROM, `@BBS`, bulletins, traffic type, `EDIT`) are
+unmeasured — see `docs/P22_MailDrop_Round2_Spec.md`'s round-2 sequence,
+now the tool's default `_MAILDROP_SUGGESTED_SEQUENCE`.
 
 ---
 
@@ -1586,7 +1586,7 @@ Diagnose bei Fehler:
 | High | PASSALL button click-through in the running app (Host-Mode-command level PASS via `hw_check.py t111`) — needs real hardware | T111 |
 | Medium | VHF→HF Packet MAXFRAME/SLOTTIME carry-over — FAIL confirmed for SLOTTIME, retest MAXFRAME after P18.1/P18.3 fix, tool: `hw_check.py t112` | T112 |
 | Medium | SIAM screen shows one assembled result (fix in P18.2, measurement done at T113) — needs real hardware | T114 |
-| Medium | MailDrop protocol measurement — FAIL-stopped by a tool safety bug on the first run (fixed P21.3), repeat with the fixed tool and corrected sequence, needs real hardware and operator time, tool: `hw_check.py maildrop` | T116 |
+| Medium | MailDrop round 2 (foreign FROM, @BBS, bulletins, traffic type, EDIT) + the power-cycle test — needs real hardware and operator time, tool: `hw_check.py maildrop` | T116 |
 
 ---
 

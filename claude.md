@@ -607,6 +607,55 @@ Grows over time.
     a completely different command than mailbox `K` (kill message). This
     is exactly why an interactive tool phase must never let typed input
     reach the command interpreter unnoticed (see the safety rule below).
+  - **Command/response shapes, hardware-confirmed 22.09.2026, 18:43
+    (P22, `hw_logs/20260922_184337_maildrop.log`):** `L` on an empty
+    mailbox → `*** Message not found.` + prompt; `S <call>` → `Subject:`;
+    the subject line → `Enter message, ^Z (CTRL-Z) or /EX to end` + a
+    blank line, then every further typed line is echoed with no prompt
+    until `/EX` (or `^Z`) → `Message stored as # <n>` + prompt; `R <n>`
+    → the list header + that message's list row, a blank line, the
+    message text, then a stray **`/E`** line (see below), then the
+    prompt; `K <n>` → `*** Done.` + prompt. Lowercase input is accepted;
+    `S oe3gas#` stores `OE3GAS` as the recipient (non-alphanumeric
+    characters in the callsign are dropped).
+  - **List format is FIXED-WIDTH columns, newest message first:**
+    ```
+    Msg#    Size To     From   @ BBS  Date       Time   Title
+      2 PN    35 OE3GAS OE3GAS        .........  .....  Test 2
+      1 PY    36 OE3GAS OE3GAS        .........  .....  test 1
+    ```
+    Status is two fixed characters: **type** (`P` seen; TRM also lists
+    `T`, `B`) + **read status** (`N` unread, `Y` read — reading message 1
+    flipped its own row from `PN` to `PY`, in place). `@ BBS` is blank
+    (still occupying its column) when no BBS was given. Date/Time show as
+    dot-runs (`.........` / `.....`) whenever the TNC clock has never been
+    set — **not** a format quirk, just the RAM-buffer-battery finding
+    (below) showing up here too; `tools/hw_check.py maildrop` sets
+    `DAYTIME` before opening the mailbox specifically so these columns
+    show real values (P22.3). `tools/hw_check.py::parse_maildrop_list()`
+    parses this format (tool-only, not used by the app yet).
+  - **TNC message numbers are NOT reassigned after a kill, and are only
+    unique within one power-on period.** Killing message 1 left message 2
+    at number 2 (not renumbered to 1); numbering restarts after a
+    power-cycle. **Design consequence for any future archive:** the
+    archive's own record key must be its own durable ID, never the TNC's
+    message number — that number is only a transient attribute of the
+    live mailbox.
+  - **Free memory: 18536 → 18452 → 18368 bytes for two messages (sizes 36
+    and 35), back to 18452 after killing the first (35-byte) one.** Each
+    message costs `size + ~48` bytes of overhead (`18536-18452=84` for a
+    36-byte message, `18452-18368=84` for a 35-byte one — the fixed
+    overhead is the same both times). `Size` itself equals
+    `len(subject) + len(text) + 9` (confirmed for both test messages).
+    **Design consequence:** before writing a message back, estimate
+    `size + 48` against the free-byte count already shown in the mailbox
+    prompt, rather than assuming it will fit.
+  - **Firmware quirk: a read message's stored text ends with a stray `/E`
+    line** — the tail end of the `/EX` end-of-message marker, apparently
+    stored (partially) with the message. **Design consequence:** strip a
+    trailing `/E` line when reading a message back, or it becomes part of
+    the archived text. `tools/hw_check.py::maildrop_response_has_e_trailer()`
+    detects it (tool-only).
 - **Safety rule for interactive tool phases (P21.3):** any interactive
   phase that runs inside a TNC sub-state (currently: the local MailDrop
   terminal in `tools/hw_check.py maildrop`; potentially others later)
