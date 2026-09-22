@@ -42,6 +42,7 @@
 | **2026-09-21** | `main_window.py`, `packet_screen.py`, `tools/hw_check.py` | P16: T86 second run found `hw_check.py` matching Host Mode responses by arrival order, so a stale `HP\x00` poll-ack was mistaken for the PX answer. Fixed with `select_response_frame()` (mnemonic-prefix match); real result: PASSALL is `PX`, not `PS` — the 2026-06-22 fix was itself wrong. `main_window._wire_packet_buttons()` toggle_map corrected; +T111/T112 |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P17: measurement-only subcommands `siam` (60s unfiltered Host Mode frame capture, no assumption about SIAM's frame type or output format), `t111` (PASSALL toggles, PASS unaffected — same mnemonic as the app's toggle_map), `t112` (VHF→HF Packet MAXFRAME/SLOTTIME carry-over, replays the real mode-class frame sequence); no `src/pk232py/` changes; +T113 |
 | **2026-09-22** | `packet_hf.py`, `main_window.py`, `signal_analysis.py`, `tools/hw_check.py` | P18: hardware results T111 PASS, T112 FAIL (SLOTTIME confirmed), T113 measurement complete (SIAM = `$50` LINK_MSG on ch0, split across two frames). `HFPacketMode.get_init_frames()` now resets `MX`/`SL` from HF's own config (constructor args, wired via `ModeManager.set_mode(mode_instance=...)`); `SignalMode` assembles the two-frame results and never treats CMD_RESP as one; `hw_check.py t112` pre-sets neutral MAXFRAME/SLOTTIME and judges them separately; +T114 |
+| **2026-09-22** | `main_window.py`, `packet_hf.py`, `packet_vhf.py`, `signal_screen.py` | P19: found a SECOND `set_mode()` call site (`_update_host_mode_ui()`'s Host-Mode-entry default) that P18.1 had missed — a future config-carrying mode there would have silently gotten constructor defaults. `MainWindow._build_mode_instance()` is now the one place any mode instance is built with configuration; `HFPacketMode`'s own defaults now derive from `HFPacketConfig` instead of repeating the numbers; `SignalScreen` wired to `SignalMode.on_result_parsed` (was never wired to anything), shows latest + best-so-far result; T114 concretized with the wiring now in place |
 
 ---
 
@@ -1215,22 +1216,38 @@ reference signal RTTY 50 Bd / 450 Hz shift). Findings:
 
 ### T114 — SIAM screen shows one assembled result, not two halves (hardware, OPEN)
 Follow-up to T113/P18.2: confirm the fix in the actual running app, not
-just `SignalMode`'s unit tests (`test_signal_analysis.py`).
+just `SignalMode`'s/`SignalScreen`'s unit tests (`test_signal_analysis.py`,
+`test_signal_screen.py`). The wiring itself is done (P19.4):
+`MainWindow._wire_mode_callbacks()` connects `SignalMode.on_result_parsed`
+to `SignalScreen.on_mode_result()`; software-verified by replaying the
+real T113 frame sequence through both classes together (not just
+`SignalMode` in isolation) — this hardware run is what is still missing.
 
-1. Wire `SignalMode.on_result`/`on_result_parsed` into `SignalScreen`
-   (currently a UI-only mockup, `_on_analyse_complete_demo`) if not
-   already done by the time this is run
-2. Signal (SIAM), Host Mode → tune a known FSK signal
-3. Observe the Analysis Log over at least one full result cycle (~10s+)
+1. Signal (SIAM), Host Mode → tune a known FSK signal (any FSK signal a
+   second receiver can identify works; does not need to repeat exactly
+   the RTTY 50 Bd / 450 Hz shift signal from T113)
+2. Observe the Analysis Result box and the Analysis Log over at least
+   three result cycles (~30s+, TNC analyses roughly every 10s)
 
-**Expected result:** each result appears in the log **once**, fully
-assembled (e.g. `"0.73: 50 baud, Baudot, RXRev ON"`), never as two
-separate half-lines, and a new result appears roughly every 10s.
+**Expected result:**
+- Each result appears in the Analysis Log **once per line**, fully
+  assembled (e.g. `"14:23:11  0.73: 50 baud, Baudot, RXRev ON"`) — never
+  as two separate half-lines, and never missing/duplicated.
+- The Analysis Result box (Konfidenz/Baudrate/Mode/RXREV/TNC-Text) always
+  reflects the **latest** result, updating roughly every 10s without
+  manual interaction.
+- The **"Best so far"** field shows the highest-confidence result seen
+  since the last New Analysis/Cancel click — it must not regress to a
+  later, lower-confidence result, and must reset to `–` after New
+  Analysis or Cancel.
+- No garbled/concatenated line ever appears (would indicate the fragment
+  buffer was not reset between sessions, or a stray CMD_RESP/other frame
+  interleaved with LINK_MSG fragments — see CLAUDE.md's SIAM gotcha).
 
-**Status:** ⬜ OPEN — needs real hardware; also needs the SIAM screen
-wired to `SignalMode` first if that has not happened yet (see Backlog.md
-SIAM-screen item on picking the current/best result among the continuous
-stream).
+**Status:** ⬜ OPEN — needs real hardware. Software/mock-verified: see
+`test_signal_screen.py::TestSignalScreenLiveWiring` (T113 fixture replay,
+latest/best/log-once-per-result) and
+`TestMainWindowWiresSignalMode` (the `on_result_parsed` wiring itself).
 
 ---
 

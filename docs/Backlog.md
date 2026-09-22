@@ -40,14 +40,14 @@ all (not "most of them" — none), and LINK_MSG fragments are assembled in
 and `test_signal_analysis.py` for the fixture-based tests (real T113
 frames, in the order they were received).
 
-**Follow-up, still open (Priority 2): SIAM screen needs a "which result is
-current" rule.** The TNC analyses continuously (~10s cadence) and now
-that results are correctly assembled/parsed, `SignalScreen` needs to be
-wired to `SignalMode.on_result_parsed` and decide what "OK — switch to
-the detected mode" acts on when several results have arrived: always the
-latest, or the highest-confidence one seen so far? Not decided yet —
-`SignalScreen` is still the UI-only mockup (`_on_analyse_complete_demo`).
-See Testplan T114.
+**Follow-up — ✅ DONE for display (P19.4, 2026-09-22):** `SignalScreen` is
+now wired to `SignalMode.on_result_parsed`, shows the latest result and
+a "Best so far" (highest confidence this session). **Still open:** what
+"OK — switch to the detected mode" itself acts on when several results
+have arrived — the latest, or the best-so-far? The button's `can_switch`/
+label logic (`_show_result()`) still only looks at whatever result was
+shown last, not the tracked best. See Testplan T114 (hardware, still
+OPEN) and `test_signal_screen.py`.
 
 **Landmine, not yet a live bug:** `mode_manager.py::_handle_cmd_resp()`
 (~lines 263–285) only logs "CMD ACK"/"CMD NAK" per CMD_RESP today — the
@@ -357,6 +357,7 @@ open design question, not started.
 | MailDrop management dialog | The tool-row `btn_maildrop` only sends MDCHECK login (`MI`, T47-verified); browsing/composing MailDrop messages is not implemented. |
 | CONPERM / MAILDROP / MDMON / LITE mnemonics | Confirm against the TRM / `pk232_mnemonic_table.txt` (neither was available in this session) before wiring real frames. |
 | Interactive mock-GUI + hardware re-test | T87–T92 (Testplan.md) are software/headless-verified only. |
+| No `VHFPacketConfig` (P19.3, 2026-09-22) | VHF Packet has no config-driven parameter set of its own — `VHFPacketMode.get_init_frames()` always sends the fixed `MX 4` / `SL 10` (and `HB 1200`), never anything from a dialog/INI. HF Packet's `HFPacketMode` gained config-driven `maxframe`/`slottime` constructor args in P18.1/P19.2; VHF's own docstring now states explicitly that it does NOT use those inherited parameters. Adding a real `VHFPacketConfig` (own dialog fields, own INI section, same wiring pattern as `HFPacketConfig`) is open — not attempted here, since it is a config/dialog feature, not a bugfix. |
 
 ### APRS — Phase 2
 
@@ -557,6 +558,35 @@ CLAUDE.md's "TNC / firmware v7.1" and "Packet (HF / VHF)" gotchas.
 | T113 — SIAM frame type / format | ✅ Measurement complete. Results are `$50` LINK_MSG on channel 0, split across exactly two frames, format `"<confidence>: <baud> baud, <mode>, RXRev <ON|OFF>"` (matches the mockup, not the old STABO-manual docstring example); continuous analysis, ~10s cadence. |
 | `SignalMode` — SIAM result handling | Fixed per T113 (P18.2): CMD_RESP never treated as a result any more (closes the P16.3 finding for good); LINK_MSG fragments assembled in `_siam_buffer` until a line ending; buffer cleared on `get_activate_frames()`, discarded with a warning past 200 chars unterminated. Added `SiamResult` dataclass + `on_result_parsed` callback via `parse_siam_result()`; `on_result` keeps firing with raw text either way. Module docstring corrected to the hardware facts. |
 | No RAM buffer battery (operator-confirmed) | The PK-232 resets to factory defaults on **every** power-off, not intermittently — supersedes the 21.09.2026 "check/replace the battery" note. Closes the P15 MTEXT-overwrite question (nothing device-side to preserve). Elevates the 21 P13-deferred upload fields and MailDrop persistence in priority — see their respective Backlog entries. |
+
+---
+
+## Completed (2026-09-22 — P19 mode instance factory + SIAM screen wiring)
+
+From `docs/P19_Mode_Factory_Spec.md`. Full detail in CLAUDE.md's §7 and
+"UI / PyQt6" gotchas, Testplan.md T114.
+
+### P19.1 investigation — every real mode-instance-construction call site
+
+Searched the whole repo for `set_mode(`, `set_mode_instance(`,
+`HFPacketMode(`, `VHFPacketMode(`, and `MODE_BY_NAME[...]()`/`cls()` in
+`mode_manager.py`. Result:
+
+| Site | When it runs | Carried config before P19? |
+|------|---------------|------------------------------|
+| `main_window.py::_on_mode_selected()` | User picks a mode from the toolbar ComboBox | Yes, for "HF Packet" only (P18.1) |
+| `main_window.py::_update_host_mode_ui(active=True)` | Host Mode entered with no active mode yet — always defaults to "Baudot RTTY" | **No** — found by this investigation, fixed in P19.2 (was harmless in practice, since "Baudot RTTY" needs no config, but would have silently done the same to any future mode needing it) |
+| `mode_manager.py`'s own `mm.set_mode("HF Packet")` | Never — it's a docstring usage example, not real code | N/A |
+| `ModeManager.set_mode()`'s `cls()` fallback | Whenever `mode_instance` is `None` | By construction, never — this is exactly the gap the factory closes |
+
+No other call sites exist anywhere in `src/pk232py/`.
+
+| Item | Notes |
+|------|-------|
+| `MainWindow._build_mode_instance(mm_name)` | New single factory method; both real call sites now route `mode_instance` through it (P19.2). Unit test uses `maxframe=2/slottime=20` (not the 1/30 defaults, which would pass even without the fix) and exercises both call paths with a stub serial; manually verified red without the fix before restoring it. |
+| `HFPacketMode` constructor defaults | Now derived from `HFPacketConfig.maxframe`/`.slottime` directly (no import cycle) instead of repeating the numbers 1/30 — one source of truth (P19.3). |
+| `VHFPacketMode` docstring | States explicitly that the inherited `maxframe`/`slottime` parameters are unused — VHF always sends its own fixed `MX 4`/`SL 10`. No `VHFPacketConfig` exists yet (Backlog: Packet v0.2 follow-ups). |
+| `SignalScreen` — SIAM wiring | Was never wired to `SignalMode` at all (pure UI mockup). `MainWindow._wire_mode_callbacks()` now connects `SignalMode.on_result_parsed` → `SignalScreen.on_mode_result()` (never `on_result` — no screen-side parser to feed, and wiring both would double-handle every parsed line). Screen shows the latest result plus a "Best so far" (highest confidence this session, reset only by New Analysis/Cancel) — the P19.4 v0.1 minimum. Verified against the real T113 frame sequence (`test_signal_screen.py`). |
 
 ---
 

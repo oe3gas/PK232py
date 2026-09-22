@@ -309,6 +309,13 @@ are **NOT** registered — they are labels, not input fields.
 Four states: `M0` NO MODE → `M1` ACTIVATING → `M2` ACTIVE → `M3` SWITCHING.
 The 300 ms `_ACTIVATE_DELAY_MS` timer fires `_send_init_frames()`.
 Path B (PACTOR) temporarily exits Host Mode — see `OPMODE_SWITCH_STATE_MACHINE.md`.
+**Mode instances carrying configuration are built in exactly one place:**
+`MainWindow._build_mode_instance(mm_name)` (P19.2). Every
+`self._modes.set_mode(...)` call in `main_window.py` passes its result as
+`mode_instance` — even when it's `None`. A direct `set_mode(name)` call with
+no `mode_instance` makes `ModeManager` build a fresh `cls()`, which only
+ever has the mode's constructor **defaults**, never the operator's actual
+configuration — see the "UI / PyQt6" gotcha below for the bug this caused.
 
 ### 8. Connection state machine
 
@@ -527,7 +534,13 @@ Grows over time.
   clears the buffer on `get_activate_frames()`, and never calls
   `on_result()`/`on_result_parsed()` for a CMD_RESP frame at all — this
   closes the P16.3 finding (a stray CMD_RESP mistaken for a SIAM result)
-  completely, not just for frames ending in `$00`.
+  completely, not just for frames ending in `$00`. `SignalScreen` (P19.4)
+  is wired to `on_result_parsed` only (never `on_result` — it has no
+  parser of its own to feed, and wiring both would double-handle every
+  successfully parsed line); it shows the latest result plus the highest
+  confidence seen so far ("Best so far", reset only by New Analysis/
+  Cancel, not by every incoming result, since the TNC keeps analysing
+  continuously within one Signal/SIAM session).
 - **Verbose-mode response format, confirmed against real hardware
   21.09.2026** (P15, `hw_logs/`): a query answers
   `'<echo>\r\n<Name mixed-case>   <value>[ (<explanation>)]\r\ncmd:'`
@@ -569,10 +582,11 @@ Grows over time.
 - **HF/VHF init-frame inheritance trap.** `HFPacketMode.get_init_frames()` now
   emits `VH N` + `HB 300` + `MX <maxframe>` + `SL <slottime>` + `MN Y` (selects
   the 300 Bd HF FSK modem and resets MAXFRAME/SLOTTIME to HF Packet's own
-  configured values — `maxframe`/`slottime` constructor args, P18.1; a fresh
-  `HFPacketMode()` defaults to `HFPacketConfig`'s own defaults, 1/30, but
-  `main_window.py`'s `_on_mode_selected()` builds it with the real configured
-  values via `ModeManager.set_mode(name, mode_instance=...)`).
+  configured values — `maxframe`/`slottime` constructor args, defaulting to
+  `HFPacketConfig`'s own defaults, 1/30, P18.1/P19.3). `main_window.py`
+  builds it with the real configured values in `_build_mode_instance()`,
+  the ONE place that happens (P19.2 — see §7 and the "UI / PyQt6" gotcha
+  on why every `set_mode()` call must route through it).
   `VHFPacketMode` therefore must **NOT** call `super().get_init_frames()` — that
   `VH N` would immediately undo the `VH Y` it sends in `get_activate_frames()`
   and drop VHF back to the HF modem. VHF builds its own list (`HB 1200`, `MX 4`,
@@ -681,6 +695,22 @@ Grows over time.
 
 ### UI / PyQt6
 
+- **A `set_mode(name)` call with no `mode_instance` silently loses
+  configuration (P19, 2026-09-22).** `ModeManager.set_mode()` builds a
+  fresh `cls()` whenever `mode_instance` is `None` — that instance only
+  ever has the mode's constructor DEFAULTS, never `AppConfig`. P18.1 fixed
+  this for exactly one call site (`_on_mode_selected()` picking "HF
+  Packet"); the P19.1 investigation found a second real call site in
+  `main_window.py` (`_update_host_mode_ui()`'s Host-Mode-entry default
+  activation of "Baudot RTTY") that had never been fixed and would have
+  silently done the same thing to any future mode needing configuration.
+  Fix (P19.2): `MainWindow._build_mode_instance(mm_name)` is now the ONE
+  place a configured mode instance is built; **every**
+  `self._modes.set_mode(...)` call in `main_window.py` must route its
+  `mode_instance` through it, even when the result is `None` — see §7.
+  `tools/hw_check.py t112` cannot catch this class of bug: it builds its
+  replay frames straight from config, bypassing the application's own
+  mode-instantiation path entirely.
 - **Identity fields are `QLabel`, not `QLineEdit`** — only editable fields get a
   `ScreenFocusController`. See §5 / §6.
 - **`char_ready` double-send trap:** wire `char_ready` only when
