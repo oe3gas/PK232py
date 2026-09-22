@@ -189,6 +189,141 @@ class TestDetectPthuffFormat:
         assert hw_check.detect_pthuff_format("?What?") == "unknown"
 
 
+class TestHostQueryValue:
+    """P17.2: strip the mnemonic echo from a Host Mode response so t111 can
+    compare the actual Y/N (or masking-character) value, not the whole
+    'PXN'/'PS$16' string."""
+
+    def test_strips_yn_toggle_prefix(self):
+        assert hw_check.host_query_value(_cmd_resp(b"PXN"), b"PX") == "N"
+
+    def test_strips_hex_value_prefix(self):
+        assert hw_check.host_query_value(_cmd_resp(b"PS$16"), b"PS") == "$16"
+
+    def test_none_frame_returns_none(self):
+        assert hw_check.host_query_value(None, b"PX") is None
+
+    def test_falls_back_to_full_text_without_matching_prefix(self):
+        assert hw_check.host_query_value(_cmd_resp(b"XX?"), b"PX") == "XX?"
+
+
+class TestT111Mnemonic:
+    """P17.2: t111 must send the SAME mnemonic as the app's own PASSALL
+    button, or the tool measures a different command than the one the
+    application actually sends."""
+
+    def test_matches_main_window_toggle_map(self):
+        main_window_py = (
+            Path(__file__).resolve().parents[1] / "ui" / "main_window.py"
+        )
+        source = main_window_py.read_text(encoding="utf-8")
+        extracted = hw_check.extract_passall_toggle_mnemonic(source)
+
+        assert extracted is not None
+        assert extracted.encode("ascii") == hw_check.PASSALL_TOGGLE_MNEMONIC
+
+
+class TestLooksLikeSiamResult:
+    """P17.1/P17.4: classify captured text against both documented output
+    shapes (module docstring vs. mockup screen) - the whole point of the
+    measurement is that nobody yet knows which one (or neither) is real."""
+
+    def test_docstring_baudot_example(self):
+        assert hw_check.looks_like_siam_result("BAUDOT 45 170") is True
+
+    def test_docstring_tdm_example(self):
+        assert hw_check.looks_like_siam_result("TDM ARQ-B:4") is True
+
+    def test_docstring_unknown_example(self):
+        assert hw_check.looks_like_siam_result("UNKNOWN") is True
+
+    def test_mockup_example(self):
+        text = "0.47: 50 Baud, Baudot, RXREV OFF"
+        assert hw_check.looks_like_siam_result(text) is True
+
+    def test_plain_ack_does_not_match(self):
+        assert hw_check.looks_like_siam_result("PXN") is False
+
+    def test_empty_text_does_not_match(self):
+        assert hw_check.looks_like_siam_result("") is False
+
+
+class TestSummarizeSiamFrames:
+    def test_counts_by_kind_and_flags_candidates(self):
+        stale_ack = _cmd_resp(b"HP\x00")
+        result_like = _cmd_resp(b"BAUDOT 45 170")
+        link_result_like = HostFrame(
+            ctl=0x5F, channel=15, data=b"UNKNOWN", kind=FrameKind.LINK_MSG
+        )
+
+        summary = hw_check.summarize_siam_frames(
+            [stale_ack, result_like, link_result_like]
+        )
+
+        assert summary["counts"] == {"CMD_RESP": 2, "LINK_MSG": 1}
+        assert summary["candidates"] == [result_like, link_result_like]
+
+    def test_no_candidates_when_nothing_looks_like_a_result(self):
+        frames = [_cmd_resp(b"HP\x00"), _cmd_resp(b"PXN")]
+        summary = hw_check.summarize_siam_frames(frames)
+        assert summary["candidates"] == []
+
+
+class TestEvaluateT112:
+    def test_pass_when_hf_values_read_back(self):
+        verdict = hw_check.evaluate_t112(
+            "1", "30", hf_maxframe="1", hf_slottime="30"
+        )
+        assert verdict == "PASS"
+
+    def test_fail_when_vhf_values_leaked(self):
+        verdict = hw_check.evaluate_t112(
+            "4", "10", hf_maxframe="1", hf_slottime="30"
+        )
+        assert verdict == "FAIL"
+
+    def test_inconclusive_on_unexpected_values(self):
+        verdict = hw_check.evaluate_t112(
+            "7", "7", hf_maxframe="1", hf_slottime="30"
+        )
+        assert verdict == "INCONCLUSIVE"
+
+    def test_inconclusive_when_unparseable(self):
+        verdict = hw_check.evaluate_t112(
+            None, "30", hf_maxframe="1", hf_slottime="30"
+        )
+        assert verdict == "INCONCLUSIVE"
+
+
+class TestT112FrameSequence:
+    """P17.4: the frame sequence must be BUILT from the real mode classes,
+    never hand-reconstructed, so a future change to either mode's frames
+    is picked up automatically instead of silently going stale here."""
+
+    def test_matches_the_real_mode_classes(self):
+        from pk232py.modes.packet_hf import HFPacketMode
+        from pk232py.modes.packet_vhf import VHFPacketMode
+
+        vhf = VHFPacketMode()
+        hf = HFPacketMode()
+        expected = (
+            vhf.get_activate_frames()
+            + vhf.get_init_frames()
+            + [VHFPacketMode.vhf_off_frame()]
+            + hf.get_activate_frames()
+            + hf.get_init_frames()
+        )
+
+        assert hw_check.build_t112_frame_sequence() == expected
+
+    def test_sequence_ends_with_hf_monitor_on(self):
+        from pk232py.comm.frame import build_command
+
+        frames = hw_check.build_t112_frame_sequence()
+        assert frames
+        assert frames[-1] == build_command(b'MN', b'Y')
+
+
 class TestEvaluateT101:
     def test_pass_when_target_follows_unproto_path(self):
         assert hw_check.evaluate_t101("TEST1", "TEST2") == "PASS"
