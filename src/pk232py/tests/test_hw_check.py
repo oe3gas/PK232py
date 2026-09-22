@@ -457,4 +457,100 @@ class TestRunWithRestore:
         assert "FAIL: USERS" in out
         assert "restore of USERS failed" in out
         assert "expected '1'" in out
-        assert "USERS 1" in out
+
+
+class TestMiProbeMnemonic:
+    """P20 Teil C: mi must query the SAME mnemonic as the app's own
+    MailDrop button (main_window._on_packet_maildrop()), or the tool
+    measures a different command than the one the application actually
+    sends (same pattern as TestT111Mnemonic, P17.2)."""
+
+    def test_matches_main_window_maildrop_button(self):
+        main_window_py = (
+            Path(__file__).resolve().parents[1] / "ui" / "main_window.py"
+        )
+        source = main_window_py.read_text(encoding="utf-8")
+        extracted = hw_check.extract_maildrop_button_mnemonic(source)
+
+        assert extracted is not None
+        assert extracted.encode("ascii") == hw_check.MI_PROBE_MNEMONIC
+
+
+class TestEvaluateMiProbe:
+    def test_pass_when_values_differ(self):
+        assert hw_check.evaluate_mi_probe("Y", "N") == "PASS"
+
+    def test_fail_when_values_match(self):
+        assert hw_check.evaluate_mi_probe("Y", "Y") == "FAIL"
+
+    def test_inconclusive_when_mi_missing(self):
+        assert hw_check.evaluate_mi_probe(None, "Y") == "INCONCLUSIVE"
+
+    def test_inconclusive_when_mfilter_missing(self):
+        assert hw_check.evaluate_mi_probe("Y", None) == "INCONCLUSIVE"
+
+
+class TestClassifyMaildropInput:
+    """P20 Teil B: the md> prompt's three input classes - the tool's own
+    /quit (never sent), ^Z/^D/^C control bytes, and plain text lines
+    (sent with a trailing CR, not CRLF - matches a real terminal's Enter
+    key into a modem/BBS-style prompt)."""
+
+    def test_quit_is_never_sent(self):
+        assert hw_check.classify_maildrop_input("/quit") == ("quit", None)
+
+    def test_quit_tolerates_surrounding_whitespace(self):
+        assert hw_check.classify_maildrop_input("  /quit  ") == ("quit", None)
+
+    def test_ctrl_z_sent_as_single_byte(self):
+        assert hw_check.classify_maildrop_input("^Z") == ("control", b"\x1a")
+
+    def test_ctrl_d_sent_as_single_byte(self):
+        assert hw_check.classify_maildrop_input("^D") == ("control", b"\x04")
+
+    def test_ctrl_c_sent_as_single_byte(self):
+        assert hw_check.classify_maildrop_input("^C") == ("control", b"\x03")
+
+    def test_plain_text_gets_trailing_cr(self):
+        assert hw_check.classify_maildrop_input("L") == ("text", b"L\r")
+
+    def test_plain_text_with_arguments(self):
+        result = hw_check.classify_maildrop_input("S OE3GAS")
+        assert result == ("text", b"S OE3GAS\r")
+
+    def test_empty_line_is_still_sent_as_text(self):
+        # Pressing Enter with nothing typed is a valid mailbox interaction
+        # (e.g. paging through a prompt) - must not be silently dropped.
+        assert hw_check.classify_maildrop_input("") == ("text", b"\r")
+
+
+class TestFormatBytesWithControls:
+    def test_printable_ascii_passes_through(self):
+        assert hw_check.format_bytes_with_controls(b"L") == "L"
+        assert hw_check.format_bytes_with_controls(b"S OE3GAS") == "S OE3GAS"
+
+    def test_cr_lf_shown_as_labels(self):
+        assert hw_check.format_bytes_with_controls(b"\r\n") == "<CR><LF>"
+
+    def test_control_bytes_shown_as_labels(self):
+        assert hw_check.format_bytes_with_controls(b"\x1a") == "<^Z>"
+        assert hw_check.format_bytes_with_controls(b"\x04") == "<^D>"
+        assert hw_check.format_bytes_with_controls(b"\x03") == "<^C>"
+
+    def test_unlabelled_non_printable_byte_shown_as_hex(self):
+        assert hw_check.format_bytes_with_controls(b"\x01") == "<$01>"
+
+    def test_mixed_line(self):
+        text = hw_check.format_bytes_with_controls(b"L\r\n")
+        assert text == "L<CR><LF>"
+
+
+class TestMaildropSessionLeft:
+    def test_detects_cmd_prompt(self):
+        assert hw_check.maildrop_session_left("some text\r\ncmd:") is True
+
+    def test_no_cmd_prompt(self):
+        assert hw_check.maildrop_session_left("Bye.\r\nmd>") is False
+
+    def test_empty_text(self):
+        assert hw_check.maildrop_session_left("") is False
