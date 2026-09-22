@@ -288,3 +288,20 @@ class TestModeInstanceFactory:
 
         assert w._modes.current_mode_name == "Baudot RTTY"
         assert self._mx_sl_commands(w) == []
+
+
+class TestMaildropButtonDisabled:
+    """P21.5, hardware-confirmed 22.09.2026 (tools/hw_check.py mi): Host
+    Mode MI reads back the same value as verbose MFILTER - MI is
+    MFILTER, not MailDrop login. The button never logged in to the
+    mailbox at all, so it is disabled and its handler sends nothing
+    until a real MailDrop dialog exists."""
+
+    def test_button_is_disabled(self, wired_vhf):
+        w, screen = wired_vhf
+        assert not screen.btn_maildrop.isEnabled()
+
+    def test_handler_sends_no_frame(self, wired_vhf):
+        w, screen = wired_vhf
+        w._on_packet_maildrop()
+        assert w._serial.calls == []

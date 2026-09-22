@@ -1147,17 +1147,17 @@ class PacketBaseScreen(QWidget):
         tool_row = QHBoxLayout()
         tool_row.setSpacing(SPACING)
 
-        # MailDrop login (MDCHECK, mnemonic MI) — already hardware/mock
-        # verified (T47 PASS), kept enabled. NOTE mnemonic conflict: MI is
-        # ALSO used by btn_mid (Morse ID beacon) below — the mnemonic table
-        # scan maps MI to MFILTER; this is a pre-existing, documented
-        # ambiguity (see CLAUDE.md "Offene Mnemonics" / Backlog), behaviour
-        # intentionally left unchanged.
+        # MailDrop login — DISABLED (P21.5, hardware-confirmed 22.09.2026):
+        # the T47 "PASS" only ever verified that _on_packet_maildrop()'s
+        # build_command(b'MI') frame is accepted by the TNC, never what MI
+        # actually means. Host Mode MI reads back the SAME value as verbose
+        # MFILTER (MI$80 / MFIlter $80) — MI is MFILTER, not MailDrop login;
+        # the button never logged in to the mailbox at all. Disabled until a
+        # real MailDrop dialog exists (see Backlog.md); do not re-enable by
+        # just changing the mnemonic without re-verifying against the TRM.
         self.btn_maildrop = _no_focus_btn("MailDrop", BTN_W)
-        self.btn_maildrop.setToolTip(
-            "Log in to TNC MailDrop (MDCHECK).\n"
-            "Only available when not connected."
-        )
+        self.btn_maildrop.setEnabled(False)
+        self.btn_maildrop.setToolTip("MailDrop dialog not implemented yet")
         tool_row.addWidget(self.btn_maildrop)
 
         # Files / QSO Log: not implemented in v0.1 (Backlog Priority 2) —

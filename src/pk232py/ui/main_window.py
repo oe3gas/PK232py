@@ -2824,13 +2824,19 @@ class MainWindow(QMainWindow):
         self._log_monitor(f"[PACKET] UNPROTO path \u2192 {path}")
 
     def _on_packet_maildrop(self) -> None:
-        """MailDrop button clicked — send MDCHECK command to TNC."""
-        if not self._serial.is_connected or not self._serial.is_host_mode:
-            return
-        from pk232py.comm.frame import build_command
-        frame = build_command(b'MI')
-        self._serial.send_command(frame[2:4], frame[4:-1])
-        self._log_monitor("[PACKET] MDCHECK \u2014 logging in to MailDrop")
+        """MailDrop button - DISABLED (P21.5).
+
+        This used to send build_command(b'MI'), believing MI was the
+        MDCHECK MailDrop login. Hardware-confirmed 22.09.2026
+        (tools/hw_check.py mi): Host Mode MI reads back the SAME value as
+        verbose MFILTER (MI$80 / MFIlter $80) - MI is MFILTER, not
+        MailDrop login. This never logged in to the mailbox at all.
+        btn_maildrop is disabled in packet_screen.py until a real
+        MailDrop dialog exists (see Backlog.md); kept here as a no-op
+        rather than removed, in case something other than the disabled
+        button still triggers it.
+        """
+        return
 
     def _on_packet_mheard(self) -> None:
         """MHEARD Refresh — poll the heard-stations list line by line (T41).
