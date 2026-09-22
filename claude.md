@@ -513,6 +513,21 @@ Grows over time.
   breaks for `i>=10` (the hex `$3A` trap). The poll is fire-and-forget (don't
   block the GUI thread; SerialManager is async). CAUTION: a Packet frame
   arriving mid-poll can garble the list — HBAUD-110 workaround deferred to v0.2.
+- **SIAM results arrive as `$50` LINK_MSG on channel 0, split across
+  exactly two frames — never as `$4F` CMD_RESP** (hardware-verified
+  22.09.2026, Testplan T113, `tools/hw_check.py siam`; corrects
+  `signal_analysis.py`'s own module docstring, which wrongly claimed
+  CMD_RESP before this measurement). Format:
+  `'<confidence>: <baud> baud, <mode>, RXRev <ON|OFF>'`, e.g.
+  `'0.73: 50 baud, Baudot, RXRev ON'` — matches the `signal_screen.py`
+  mockup, **not** the STABO manual's `'BAUDOT 45 170'` example. The TNC
+  analyses **continuously**, sending a new result roughly every 10s; it
+  does not stop after the first one. `SignalMode` (P18.2) assembles the
+  two-frame fragments in `_siam_buffer` until a line ending is seen,
+  clears the buffer on `get_activate_frames()`, and never calls
+  `on_result()`/`on_result_parsed()` for a CMD_RESP frame at all — this
+  closes the P16.3 finding (a stray CMD_RESP mistaken for a SIAM result)
+  completely, not just for frames ending in `$00`.
 - **Verbose-mode response format, confirmed against real hardware
   21.09.2026** (P15, `hw_logs/`): a query answers
   `'<echo>\r\n<Name mixed-case>   <value>[ (<explanation>)]\r\ncmd:'`
@@ -535,23 +550,48 @@ Grows over time.
   `MTO`, `8BITCONV`, `HID`, plus every other command
   `ParamsUploader._build_commands()` sends. `ACRPack was ON` / `ACRPack
   now ON` confirms the P13 `AERPACK`→`ACRPACK` rename was correct.
-- **The TNC came up at factory defaults before the 21.09.2026 run**
-  (`MYCALL PK232`, `EXPERT OFF`, `PACLEN 128`, `MAXFRAME 4`, `FRACK 4`, the
-  stock AEA `MTEXT`) rather than whatever had been configured before. Likely
-  cause: the RAM buffer battery. `MYCALL` reading back `PK232` (the factory
-  value, not a real callsign) after a power cycle is the tell — see
-  Backlog.md's operator note to check/replace it.
+- **The TNC has no RAM buffer battery at all (confirmed by the operator,
+  22.09.2026)** — it resets to factory defaults (`MYCALL PK232`,
+  `EXPERT OFF`, `PACLEN 128`, `MAXFRAME 4`, `FRACK 4`, the stock AEA
+  `MTEXT`, an empty MailDrop mailbox) on **every** power-off, not just
+  occasionally. This confirms and closes the "likely cause" guess from
+  the 21.09.2026 hardware run (`MYCALL` reading back `PK232` after a
+  power cycle was the tell). Consequences: the app's own init sequence
+  (`ParamsUploader` + each mode's `get_activate_frames()`/
+  `get_init_frames()`) is the **only** source of TNC configuration —
+  nothing the operator sets by hand on the TNC survives a power-off, and
+  MailDrop content is lost every time too (Backlog.md: saving/reloading
+  the mailbox is a required feature, not a nice-to-have, because of this).
 
 ### Packet (HF / VHF)
 
 - **PASSALL = `PX`, not `PA` and not `PS`** — see the mnemonic-table note above.
 - **HF/VHF init-frame inheritance trap.** `HFPacketMode.get_init_frames()` now
-  emits `VH N` + `HB 300` + `MN Y` (selects the 300 Bd HF FSK modem).
+  emits `VH N` + `HB 300` + `MX <maxframe>` + `SL <slottime>` + `MN Y` (selects
+  the 300 Bd HF FSK modem and resets MAXFRAME/SLOTTIME to HF Packet's own
+  configured values — `maxframe`/`slottime` constructor args, P18.1; a fresh
+  `HFPacketMode()` defaults to `HFPacketConfig`'s own defaults, 1/30, but
+  `main_window.py`'s `_on_mode_selected()` builds it with the real configured
+  values via `ModeManager.set_mode(name, mode_instance=...)`).
   `VHFPacketMode` therefore must **NOT** call `super().get_init_frames()` — that
   `VH N` would immediately undo the `VH Y` it sends in `get_activate_frames()`
   and drop VHF back to the HF modem. VHF builds its own list (`HB 1200`, `MX 4`,
   `SL 10`, `MN Y`). Leaving VHF Packet also sends `VH N`
   (`_on_mode_selected` → `VHFPacketMode.vhf_off_frame()`, T51).
+- **Rule: any parameter one band sets on activation, the other band must
+  set too — otherwise it keeps whichever value the last-active band left
+  behind.** Found via `SLOTTIME` (T112, hardware-confirmed 2026-09-22):
+  VHF Packet sets `MX 4` / `SL 10` on activation; HF Packet did not reset
+  them on its own activation, so a VHF → HF switch left HF Packet running
+  with VHF's `SLOTTIME 10` instead of its own configured value. Fixed in
+  P18.1 (`HFPacketMode.get_init_frames()` now sends `MX`/`SL` too) — but
+  the rule is general, not specific to these two mnemonics: any future
+  parameter one band's `get_init_frames()`/`get_activate_frames()` sets
+  needs the same reset on the other band, or it inherits a silent
+  cross-band leak like this one. `MAXFRAME`'s own T112 result was
+  INCONCLUSIVE on the first run (it already equalled VHF's value before
+  the test started) — `tools/hw_check.py t112` now pre-sets both to a
+  neutral value first so this can't happen again (P18.3).
 - **Connect ↔ Unproto are mutually exclusive (T39).** `set_link_state()` greys
   `btn_unproto` while connected/calling; `_on_packet_unproto()` greys
   `btn_connect` while Unproto is on (link-busy proxy = `btn_disconnect.isEnabled()`).

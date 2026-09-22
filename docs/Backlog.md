@@ -7,47 +7,47 @@
 
 ## Priority 1 — Next implementation sprint
 
-### `SignalMode.handle_frame()` reports any CMD_RESP as a SIAM result — open
+### `SignalMode.handle_frame()` reports any CMD_RESP as a SIAM result — ✅ FIXED (P18.2, 2026-09-22)
 
-Found 21.09.2026 (P16.3, investigation only — no code changed) while
-checking the codebase for the same class of bug as T86's stale-`HP\x00`
-frame (a Host Mode response mistaken for the answer to a different query
-because it was matched by arrival order/type, not by mnemonic — see the
-CLAUDE.md Host Mode gotcha).
+Found 21.09.2026 (P16.3, investigation only — no code changed at the
+time) while checking the codebase for the same class of bug as T86's
+stale-`HP\x00` frame (a Host Mode response mistaken for the answer to a
+different query because it was matched by arrival order/type, not by
+mnemonic — see the CLAUDE.md Host Mode gotcha).
 
 - `src/pk232py/modes/signal_analysis.py::SignalMode.handle_frame()`
-  (~lines 97–104): on any `FrameKind.CMD_RESP` frame, if
-  `frame.text.strip()` is non-empty and does not end in `\x00`, it is
-  logged and passed to `on_result()` as a SIAM signal-identification
-  string — **without checking `frame.mnemonic`/`frame.data` against
-  anything Signal mode itself queried.**
-- `ModeManager` forwards every `CMD_RESP` to whichever mode is currently
-  active (`mode_manager.py::_handle_cmd_resp()` → `_active_mode.handle_frame()`),
-  so any stray CMD_RESP arriving while Signal/SIAM is the active mode — a
-  delayed `HP\x00` HPOLL flush from Host Mode entry, an ACK/NAK for some
-  other in-flight command, or an attribute-query echo like `PXN` — gets
-  surfaced as a bogus SIAM result. The `not text.endswith('\x00')` check
-  happens to filter out plain ACK frames ending in the `$00` OK byte (like
-  `HP\x00`) but nothing else — a response such as `PXN` would pass through
-  untouched.
-- Fix once confirmed: verify the frame is actually a SIAM analysis result
-  (distinguish it from other CMD_RESP frames — check with the TRM whether
-  SIAM results carry their own recognisable prefix) before calling
-  `on_result()`. Not fixed here — P16.3 was investigation only.
+  used to call `on_result()` for any `FrameKind.CMD_RESP` frame whose
+  text was non-empty and did not end in `\x00` — **without checking
+  `frame.mnemonic`/`frame.data` against anything Signal mode itself
+  queried.** `ModeManager` forwards every `CMD_RESP` to whichever mode is
+  active, so a delayed `HP\x00` HPOLL flush, an ACK/NAK for an unrelated
+  command, or an attribute-query echo like `PXN` could all be surfaced as
+  a bogus SIAM result.
+- Two more contradictions surfaced while scoping the fix (P17, still
+  unresolved at the time): `handle_frame()` itself accepted BOTH `$4F`
+  CMD_RESP and `$50` LINK_MSG as a result, and the two documented output
+  formats did not match either (`BAUDOT 45 170` per the module docstring/
+  STABO manual vs. `0.47: 50 Baud, Baudot, RXREV OFF` per the mockup). A
+  filter could not be written without first measuring what the TNC
+  actually sends.
 
-**Fix blocked on measurement (P17, 2026-09-22):** two more contradictions
-surfaced while scoping the fix, on top of the CMD_RESP-vs-mnemonic issue
-above — `handle_frame()` itself accepts BOTH `$4F` CMD_RESP and `$50`
-LINK_MSG as a SIAM result (its own comment says "SIAM liefert Ergebnisse
-als LINK_MSG ($50)", contradicting the module docstring's "$4F CMD_RESP —
-SIAM analysis result text"), and the two documented output formats do not
-match either (`BAUDOT 45 170` per the module docstring/STABO manual vs.
-`0.47: 50 Baud, Baudot, RXREV OFF` per the `signal_screen.py` mockup). A
-"only pass through real SIAM results" filter cannot be written without
-first knowing which frame type and format the TNC actually sends —
-`tools/hw_check.py siam` (Testplan T113, `docs/P17_HW_Measure_Spec.md`)
-does the 60s unfiltered capture needed to answer that; the fix itself is
-still open until that hardware run happens.
+**Measured and fixed (T113/P18.2, 2026-09-22):** `tools/hw_check.py siam`
+settled it on real hardware — results are `$50` LINK_MSG on channel 0
+ONLY, split across exactly two frames, in the mockup's format. `handle_frame()`
+now never calls `on_result()`/`on_result_parsed()` for a CMD_RESP frame at
+all (not "most of them" — none), and LINK_MSG fragments are assembled in
+`_siam_buffer` until a line ending is seen. See CLAUDE.md's SIAM gotcha
+and `test_signal_analysis.py` for the fixture-based tests (real T113
+frames, in the order they were received).
+
+**Follow-up, still open (Priority 2): SIAM screen needs a "which result is
+current" rule.** The TNC analyses continuously (~10s cadence) and now
+that results are correctly assembled/parsed, `SignalScreen` needs to be
+wired to `SignalMode.on_result_parsed` and decide what "OK — switch to
+the detected mode" acts on when several results have arrived: always the
+latest, or the highest-confidence one seen so far? Not decided yet —
+`SignalScreen` is still the UI-only mockup (`_on_analyse_complete_demo`).
+See Testplan T114.
 
 **Landmine, not yet a live bug:** `mode_manager.py::_handle_cmd_resp()`
 (~lines 263–285) only logs "CMD ACK"/"CMD NAK" per CMD_RESP today — the
@@ -256,6 +256,16 @@ follow-up, not something to guess at:
 `main_window._on_morse_mid_changed()` while operating, not part of the
 startup upload, so there is nothing to fix.
 
+**Higher stakes than "not yet audited" (P18, 2026-09-22):** the PK-232 has
+no RAM buffer battery and resets to factory defaults on every power-off
+(see CLAUDE.md's hardware gotcha) — so for every one of these 21 fields,
+whatever value the TNC had before is gone the moment it is switched off,
+regardless of whether the operator set it by hand at the terminal. There
+is no "it'll keep the old value" fallback to fall back on. Auditing and
+wiring each of these into `ParamsUploader._build_commands()` is therefore
+not just cosmetic completeness — it is the only way any of these 21
+settings ever reaches the TNC at all across a power cycle.
+
 **Also found, separately from HF's `aerpack`/`txsmt`:** `PACTORConfig.pthuff`
 is an `int` (compression level, dialog range 0–10) but
 `ParamsUploader._build_commands()` sends it with `self._bool(...)`, i.e. as
@@ -271,42 +281,62 @@ the value back. `PTHUFF ON` is still untested. Fix: change
 `PACTORConfig.pthuff` to a number and make `ParamsUploader` send it as one,
 using the real value range from the manual — do not guess the range.
 
+### MailDrop — persist mailbox to disk (REQUIRED for Beta, not optional, P18)
+
+Confirmed 2026-09-22: the PK-232 has no RAM buffer battery and loses its
+entire MailDrop mailbox on every power-off (see the "Operator finding"
+note below). The `maildrop/` module currently has no save/reload path —
+`btn_maildrop` only sends the MDCHECK login command (`MI`, T47-verified).
+Without the app itself saving mailbox content to disk and reloading it
+into the TNC at startup, MailDrop cannot survive a single power cycle,
+which makes this a **Beta-blocking requirement**, not the "future/v0.2+"
+nice-to-have it was filed as before this finding — see the old stub under
+Priority 3 (Future / v0.2+), which now points back here.
+
 **MYALTCAL truncation (found 21.09.2026, same hardware run):** sending
 `MYALTCAL OE3GAS` came back as `MYALTcal now OGAS` — the TNC silently
 truncated it to 4 characters. `MYALTCAL` is a 4-character AMTOR SELCAL, not
 a callsign; the config field and its dialog should validate/format it as
 one instead of accepting a full callsign that then gets mangled on upload.
 
-**VHF/HF parameter values — corrected 21.09.2026 (P16):** the P15 note here
-claimed the upload sent HF values (`PACLEN 128`, `MAXFRAME 4`, `FRACK 4`)
-while VHF was selected. That reading was wrong — the TNC was at **factory
-defaults** for that whole run (see the CLAUDE.md hardware note, RAM buffer
-battery), so those numbers were the stock AEA defaults, not proof of an
-HF-values-on-VHF bug. The suspected gap, derived from the code and NOT yet
-measured: `VHFPacketMode` sends `MX 4` + `SL 10` on activation, but leaving
-VHF for HF Packet only sends `VH N` + `HB 300` + `MN Y`
-(`HFPacketMode.get_init_frames()`) — no `MAXFRAME`/`SLOTTIME` reset. So HF
-Packet could keep running with VHF's `MAXFRAME 4` / `SLOTTIME 10` after a
-VHF→HF switch instead of its own values. Verify: activate VHF, switch back
-to HF, query `MAXFRAME` and `SLOTTIME` in the terminal (Testplan T111).
-Needs its own package to fix the PR/Packet parameter module once confirmed
-— not done as part of P15/P16 (query-only hardware checks, no
-`src/pk232py/` parameter-module change).
+**VHF/HF parameter values — confirmed and FIXED (P18, 2026-09-22):** the
+suspected gap noted here after P16 (`VHFPacketMode` sends `MX 4` + `SL 10`
+on activation; HF Packet's own `get_init_frames()` didn't reset them) is
+now hardware-measured, not just derived from the code. `hw_check.py t112`
+replayed the real VHF→HF Packet frame sequence: `SLOTTIME` read back `10`
+(VHF's value) instead of HF's configured `30` — **confirmed**.
+`MAXFRAME`'s own result was **inconclusive** on this run, because it
+already equalled VHF's value (`4`) *before* the test started, so its
+post-switch `4` proved nothing about `MX` specifically (Testplan T112).
+Fixed in P18.1: `HFPacketMode.get_init_frames()` now also sends `MX`/`SL`
+from HF Packet's own config (`docs/P18_HF_Init_SIAM_Spec.md`); `hw_check.py
+t112` reworked in P18.3 to pre-set both parameters to a neutral value first
+so a repeat run judges `MX` and `SL` separately, not conflated. Retest with
+the fixed tool and code is still open (Testplan T112 status).
+**General rule this confirms** (now in CLAUDE.md's Packet gotchas): any
+parameter one band sets on activation, the other band must set too, or it
+silently inherits whatever the last-active band left behind.
 
-**MTEXT overwritten by config defaults on init (found 21.09.2026, same
-hardware run):** the parameter upload sent the two-line `MTEXT` welcome
-message from the saved config even where the TNC already had its own text
-set on the device. Open question, not yet a confirmed bug: should the
-uploader skip sending default/empty text fields at all, so a station's own
-`MTEXT` (and similar free-text parameters) survives an app-driven init
-unless the operator has explicitly set one in the dialog?
+**MTEXT overwritten by config defaults on init — CLOSED, not a bug (P18,
+2026-09-22):** the P15 finding (the parameter upload sent the saved
+config's `MTEXT` even where the TNC already had its own text) raised the
+question of whether the uploader should skip default/empty text fields so
+a station's own on-device value survives an app-driven init. Now moot: the
+TNC has no RAM buffer battery (confirmed by the operator, see below) and
+loses ALL configuration on every power-off, so there is never a TNC-side
+value worth preserving — always sending the saved config's `MTEXT` (and
+every other field) is exactly correct.
 
-**Operator note (P16, 21.09.2026):** check/replace the PK-232's RAM buffer
-battery — the TNC came up at factory defaults for the whole 21.09.2026
-hardware run (`MYCALL PK232`, `EXPERT OFF`, `PACLEN 128`, `MAXFRAME 4`,
-`FRACK 4`, stock `MTEXT`). Power the TNC off and back on, then query
-`MYCALL` in the terminal: reading back `PK232` (the factory value, not a
-real callsign) means the configuration was lost, not just unusual.
+**Operator finding, confirmed (P18, 2026-09-22): the PK-232 has NO RAM
+buffer battery at all**, not an intermittently failing one. It resets to
+factory defaults (`MYCALL PK232`, `EXPERT OFF`, `PACLEN 128`, `MAXFRAME 4`,
+`FRACK 4`, stock `MTEXT`, an empty MailDrop mailbox) on **every**
+power-off — this is normal operation for this unit, not something to
+"check/replace" (superseding the 21.09.2026 operator note, which treated
+it as a maybe-failing battery). Consequence: the app's own init sequence
+is the TNC's only configuration source, and MailDrop content must be
+saved/reloaded by the app itself or it is lost every time (see the
+MailDrop entry under Priority 2).
 
 ### Runtime parameter upload in Host Mode
 
@@ -507,7 +537,26 @@ AMTOR nutzt TxController. TX startet bei ARQ CONNECTED
 - SQLite-based log (`log/` directory already planned)
 
 ### MailDrop
-- TNC mailbox functionality (`maildrop/` directory planned)
+- ~~TNC mailbox functionality (`maildrop/` directory planned)~~ — the
+  save/reload-mailbox part of this is now a **Beta-blocking requirement**,
+  not a v0.2+ nice-to-have; see "MailDrop — persist mailbox to disk" under
+  Priority 2 (P18, 2026-09-22, no RAM buffer battery confirmed).
+
+---
+
+## Completed (2026-09-22 — P17/P18 hardware measurement + fixes)
+
+Hardware results and code fixes from `docs/P17_HW_Measure_Spec.md` and
+`docs/P18_HF_Init_SIAM_Spec.md`. Full detail in Testplan.md T111–T114 and
+CLAUDE.md's "TNC / firmware v7.1" and "Packet (HF / VHF)" gotchas.
+
+| Item | Notes |
+|------|-------|
+| T111 — PASSALL, Host-Mode-command level | ✅ PASS. `PX Y` toggles PASSALL, `PS` (PASS) unaffected, restore verified. GUI click-through in the running app stays open (Testplan T111). |
+| T112 — VHF→HF Packet MAXFRAME/SLOTTIME | ❌ FAIL, confirmed for SLOTTIME (read back VHF's `10`, not HF's `30`); MAXFRAME's own first-run result was inconclusive (already `4` before the test started). Fixed: `HFPacketMode.get_init_frames()` now sends `MX`/`SL` from HF's own config (constructor args, wired via `ModeManager.set_mode(mode_instance=...)`, P18.1); `hw_check.py t112` now pre-sets a neutral value and judges `MX`/`SL` separately (P18.3). Retest still open. |
+| T113 — SIAM frame type / format | ✅ Measurement complete. Results are `$50` LINK_MSG on channel 0, split across exactly two frames, format `"<confidence>: <baud> baud, <mode>, RXRev <ON|OFF>"` (matches the mockup, not the old STABO-manual docstring example); continuous analysis, ~10s cadence. |
+| `SignalMode` — SIAM result handling | Fixed per T113 (P18.2): CMD_RESP never treated as a result any more (closes the P16.3 finding for good); LINK_MSG fragments assembled in `_siam_buffer` until a line ending; buffer cleared on `get_activate_frames()`, discarded with a warning past 200 chars unterminated. Added `SiamResult` dataclass + `on_result_parsed` callback via `parse_siam_result()`; `on_result` keeps firing with raw text either way. Module docstring corrected to the hardware facts. |
+| No RAM buffer battery (operator-confirmed) | The PK-232 resets to factory defaults on **every** power-off, not intermittently — supersedes the 21.09.2026 "check/replace the battery" note. Closes the P15 MTEXT-overwrite question (nothing device-side to preserve). Elevates the 21 P13-deferred upload fields and MailDrop persistence in priority — see their respective Backlog entries. |
 
 ---
 
