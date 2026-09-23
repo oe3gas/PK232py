@@ -1,6 +1,6 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-23 — T119 now points at the maildrop_session harness (P28); step sequence adopted as the expectation list**
-**Previous stand: 2026-09-23 — +T119 (P27 MailDropSession, no UI); MailDrop protocol/session layer replaces the unverified legacy module**
+**Updated: 2026-09-23 — T119 partial result on real hardware (P31): steps through MDCHECK confirmed, aborted at prompt recognition (fixed, re-run needed)**
+**Previous stand: 2026-09-23 — T119 now points at the maildrop_session harness (P28); step sequence adopted as the expectation list**
 
 ---
 
@@ -1487,7 +1487,24 @@ that on real hardware. Two test messages (foreign-FROM, bulletin) are
 left in the mailbox afterwards by design (only the personal one is
 killed) — note that in the log.
 
-**Status:** ⬜ OPEN — not yet run on real hardware.
+**Partial result, 23.09.2026** (P31,
+`hw_logs/20260923_184302_maildrop_session.log`): wakeup, Host Mode entry,
+the harness's own port handover, `Ctrl-C`, and `MDCHECK` all confirmed
+working end to end — P30's byte-level init-phase logging made this
+traceable. Aborted before step 1 could complete: the real mailbox prompt
+that day used the **square**-bracket device-name form
+(`[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >`, not the round form seen on
+22.09.2026 — the TNC had hung and been power-cycled since, with a
+different EPROM installed, see CLAUDE.md's "MailDrop facts"), which
+`find_prompt()` did not recognise yet (only the round form was known at
+the time) — so `open()` never produced a `prompt_info`, and the harness's
+own Host-Mode-active check then ran too early, misreading the session's
+still-in-progress internal recovery as a second, unrelated failure.
+Both gaps are fixed under P31 (`protocol.py` now accepts both bracket
+forms; the harness waits for `MailDropSession.state` to reach `CLOSED`/
+`FAILED` before checking) — steps 2–13 are still unexercised.
+
+**Status:** ⬜ OPEN — re-run on real hardware needed after the P31 fixes.
 
 ---
 
