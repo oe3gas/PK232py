@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtWidgets import QApplication
 
 from pk232py.comm.frame import FrameKind, HostFrame
 
@@ -26,6 +28,14 @@ if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
 
 import hw_check  # noqa: E402
+
+# A full QApplication (not a bare QCoreApplication), same reasoning as
+# test_maildrop_session.py: whichever test module imports first installs
+# the singleton other modules' QApplication.instance() will then find -
+# a QCoreApplication instance cannot be upgraded to one later, which
+# breaks any test needing real widgets (test_main_window_packet.py runs
+# after this module alphabetically).
+_APP = QApplication.instance() or QApplication(sys.argv[:1])
 
 
 def _cmd_resp(data: bytes) -> HostFrame:
@@ -1338,3 +1348,328 @@ class TestScanForMdcheckMnemonic:
             return [_cmd_resp(mnemonic + b"\x00")]
 
         assert hw_check.scan_for_mdcheck_mnemonic([b"MA", b"MB"], probe) is None
+
+
+# ---------------------------------------------------------------------------
+# P28 -- maildrop_session harness (T119)
+# ---------------------------------------------------------------------------
+
+from pk232py.maildrop.protocol import MailDropEntry  # noqa: E402
+
+
+def _md_entry(number, mtype, to, frm, bbs="", title=""):
+    return MailDropEntry(
+        number=number, mtype=mtype, read=False, size=10, to=to, frm=frm,
+        bbs=bbs, stamp=None, title=title,
+    )
+
+
+def _md_step(name, action, signal_name, expect=None, validate=None):
+    return hw_check.MaildropStep(name, action, signal_name, expect=expect, validate=validate)
+
+
+class _FakeMailDropSession(QObject):
+    """A dummy 'MailDropSession' (P28.2's Attrappe) - same six signals and
+    six methods, no serial interface, no worker thread. Tests drive it by
+    calling .emit() directly and by mutating .state, standing in for
+    whatever the real background worker thread would eventually report."""
+
+    state_changed = pyqtSignal(str)
+    prompt_info   = pyqtSignal(object)
+    listing       = pyqtSignal(list)
+    message_read  = pyqtSignal(object, str)
+    stored        = pyqtSignal(int)
+    killed        = pyqtSignal(int)
+    failed        = pyqtSignal(str)
+
+    def __init__(self, state: str = "CLOSED") -> None:
+        super().__init__()
+        self.state = state
+        self.calls: list = []
+
+    def open(self) -> None:
+        self.calls.append("open")
+
+    def list(self) -> None:
+        self.calls.append("list")
+
+    def read(self, number: int) -> None:
+        self.calls.append(("read", number))
+
+    def kill(self, number: int) -> None:
+        self.calls.append(("kill", number))
+
+    def send(self, *args) -> None:
+        self.calls.append(("send",) + args)
+
+    def leave(self) -> None:
+        self.calls.append("leave")
+
+
+class TestBuildMaildropSessionSteps:
+    def test_default_sequence_names_and_order(self):
+        names = [s.name for s in hw_check.build_maildrop_session_steps("OE3GAS", False)]
+        assert names == [
+            "open", "list_empty", "send_personal", "send_foreign_from",
+            "send_bulletin", "list_three", "read_first", "kill_first",
+            "list_after_kill", "leave",
+        ]
+
+    def test_abort_test_appends_three_more_steps(self):
+        steps = hw_check.build_maildrop_session_steps("OE3GAS", True)
+        assert len(steps) == 13
+        assert [s.name for s in steps[-3:]] == [
+            "reopen_for_abort", "send_then_abort", "leave_after_abort",
+        ]
+
+    def test_send_personal_uses_mycall_and_the_shared_body_text(self):
+        fake = _FakeMailDropSession()
+        steps = hw_check.build_maildrop_session_steps("OE3GAS", False)
+        step = next(s for s in steps if s.name == "send_personal")
+        step.action(fake, {})
+        assert fake.calls == [
+            ("send", "OE3GAS", "", "", "P", "T119 personal",
+             hw_check._MAILDROP_SESSION_BODY_TEXT)
+        ]
+
+    def test_read_first_reads_the_remembered_personal_number(self):
+        fake = _FakeMailDropSession()
+        steps = hw_check.build_maildrop_session_steps("OE3GAS", False)
+        step = next(s for s in steps if s.name == "read_first")
+        step.action(fake, {"send_personal": 7})
+        assert fake.calls == [("read", 7)]
+
+    def test_kill_first_kills_the_remembered_personal_number(self):
+        fake = _FakeMailDropSession()
+        steps = hw_check.build_maildrop_session_steps("OE3GAS", False)
+        step = next(s for s in steps if s.name == "kill_first")
+        step.action(fake, {"send_personal": 9})
+        assert fake.calls == [("kill", 9)]
+
+
+class TestValidateListThree:
+    def test_all_present_and_correct_passes(self):
+        ctx = {"send_personal": 3, "send_foreign_from": 2, "send_bulletin": 1}
+        entries = [
+            _md_entry(1, "B", "ALL", "OE3GAS"),
+            _md_entry(2, "P", "OE3GAS", "DL1ABC"),
+            _md_entry(3, "P", "OE3GAS", "OE3GAS"),
+        ]
+        ok, detail = hw_check._validate_list_three(entries, ctx)
+        assert ok is True
+
+    def test_missing_message_fails(self):
+        ctx = {"send_personal": 3, "send_foreign_from": 2, "send_bulletin": 1}
+        entries = [_md_entry(1, "B", "ALL", "OE3GAS")]
+        ok, detail = hw_check._validate_list_three(entries, ctx)
+        assert ok is False
+        assert "missing" in detail
+
+    def test_wrong_bulletin_type_fails(self):
+        ctx = {"send_personal": 3, "send_foreign_from": 2, "send_bulletin": 1}
+        entries = [
+            _md_entry(1, "P", "ALL", "OE3GAS"),   # should be B
+            _md_entry(2, "P", "OE3GAS", "DL1ABC"),
+            _md_entry(3, "P", "OE3GAS", "OE3GAS"),
+        ]
+        ok, detail = hw_check._validate_list_three(entries, ctx)
+        assert ok is False
+        assert "mtype" in detail
+
+    def test_wrong_foreign_from_fails(self):
+        ctx = {"send_personal": 3, "send_foreign_from": 2, "send_bulletin": 1}
+        entries = [
+            _md_entry(1, "B", "ALL", "OE3GAS"),
+            _md_entry(2, "P", "OE3GAS", "OE3GAS"),   # should be DL1ABC
+            _md_entry(3, "P", "OE3GAS", "OE3GAS"),
+        ]
+        ok, detail = hw_check._validate_list_three(entries, ctx)
+        assert ok is False
+        assert "frm" in detail
+
+
+class TestValidateReadFirst:
+    def test_matching_body_passes(self):
+        entry = _md_entry(5, "P", "OE3GAS", "OE3GAS")
+        ok, _ = hw_check._validate_read_first(
+            (entry, hw_check._MAILDROP_SESSION_BODY_TEXT), {"send_personal": 5}
+        )
+        assert ok is True
+
+    def test_wrong_message_number_fails(self):
+        entry = _md_entry(5, "P", "OE3GAS", "OE3GAS")
+        ok, _ = hw_check._validate_read_first(
+            (entry, hw_check._MAILDROP_SESSION_BODY_TEXT), {"send_personal": 6}
+        )
+        assert ok is False
+
+    def test_wrong_body_fails(self):
+        entry = _md_entry(5, "P", "OE3GAS", "OE3GAS")
+        ok, _ = hw_check._validate_read_first((entry, "something else"), {"send_personal": 5})
+        assert ok is False
+
+
+class TestValidateListAfterKill:
+    def test_killed_number_gone_others_present_passes(self):
+        ctx = {"send_personal": 3, "send_foreign_from": 2, "send_bulletin": 1}
+        entries = [_md_entry(1, "B", "ALL", "OE3GAS"), _md_entry(2, "P", "OE3GAS", "DL1ABC")]
+        ok, _ = hw_check._validate_list_after_kill(entries, ctx)
+        assert ok is True
+
+    def test_killed_number_still_present_fails(self):
+        ctx = {"send_personal": 3, "send_foreign_from": 2, "send_bulletin": 1}
+        entries = [
+            _md_entry(1, "B", "ALL", "OE3GAS"),
+            _md_entry(2, "P", "OE3GAS", "DL1ABC"),
+            _md_entry(3, "P", "OE3GAS", "OE3GAS"),
+        ]
+        ok, _ = hw_check._validate_list_after_kill(entries, ctx)
+        assert ok is False
+
+    def test_other_message_missing_fails(self):
+        ctx = {"send_personal": 3, "send_foreign_from": 2, "send_bulletin": 1}
+        entries = [_md_entry(1, "B", "ALL", "OE3GAS")]  # #2 missing
+        ok, _ = hw_check._validate_list_after_kill(entries, ctx)
+        assert ok is False
+
+
+class TestMaildropSessionRunnerSequencing:
+    """P28.2: no hardware, just the flow logic, against a dummy session."""
+
+    def test_calls_methods_in_order_and_cleans_up_if_still_active(self):
+        fake = _FakeMailDropSession()
+        steps = [
+            _md_step("s1", lambda s, ctx: s.open(), "state_changed", expect="ACTIVE"),
+            _md_step("s2", lambda s, ctx: s.list(), "listing"),
+        ]
+        log = hw_check.RunLog(None)
+        finished = {}
+        runner = hw_check.MaildropSessionRunner(
+            fake, log, steps, lambda ok: finished.setdefault("ok", ok)
+        )
+
+        runner.start()
+        assert fake.calls == ["open"]
+
+        fake.state_changed.emit("OPENING")   # not the expected state
+        assert fake.calls == ["open"]
+
+        fake.state = "ACTIVE"
+        fake.state_changed.emit("ACTIVE")
+        assert fake.calls == ["open", "list"]
+
+        fake.listing.emit([])
+        # No explicit 'leave' step here, and the session is still ACTIVE -
+        # the runner's own finally-cleanup calls leave() (P28.1 step 6).
+        assert fake.calls == ["open", "list", "leave"]
+        assert "ok" not in finished
+
+        fake.state = "CLOSED"
+        fake.state_changed.emit("CLOSED")
+        assert finished["ok"] is True
+        assert [r[0] for r in runner.results] == ["s1", "s2"]
+        assert all(v == "PASS" for _, v, _ in runner.results)
+
+    def test_no_cleanup_call_when_already_closed(self):
+        fake = _FakeMailDropSession(state="CLOSED")
+        steps = [_md_step("leave", lambda s, ctx: s.leave(), "state_changed", expect="CLOSED")]
+        log = hw_check.RunLog(None)
+        finished = {}
+        runner = hw_check.MaildropSessionRunner(
+            fake, log, steps, lambda ok: finished.setdefault("ok", ok)
+        )
+        runner.start()
+        assert fake.calls == ["leave"]
+
+        fake.state_changed.emit("CLOSED")
+        # Session was already CLOSED by the time _finish() ran - no extra
+        # leave() call beyond the one the step itself made.
+        assert fake.calls == ["leave"]
+        assert finished["ok"] is True
+
+    def test_failed_signal_ends_the_run_and_marks_the_step(self):
+        fake = _FakeMailDropSession(state="ACTIVE")
+        steps = [
+            _md_step("list1", lambda s, ctx: s.list(), "listing"),
+            _md_step("list2", lambda s, ctx: s.list(), "listing"),
+        ]
+        log = hw_check.RunLog(None)
+        finished = {}
+        runner = hw_check.MaildropSessionRunner(
+            fake, log, steps, lambda ok: finished.setdefault("ok", ok)
+        )
+        runner.start()
+        assert fake.calls == ["list"]
+
+        fake.failed.emit("*** What?")
+        assert runner.results == [("list1", "FAIL", "*** What?")]
+        assert fake.calls == ["list", "leave"]   # cleanup, list2 NEVER called
+
+        fake.state = "CLOSED"
+        fake.state_changed.emit("CLOSED")
+        assert finished["ok"] is False
+
+    def test_step_expecting_failure_passes_on_failed_signal(self):
+        fake = _FakeMailDropSession(state="ACTIVE")
+        steps = [
+            _md_step("send_then_abort", lambda s, ctx: s.send("X", "", "", "P", "s", "b"), "failed"),
+            _md_step("after", lambda s, ctx: s.leave(), "state_changed", expect="CLOSED"),
+        ]
+        log = hw_check.RunLog(None)
+        finished = {}
+        runner = hw_check.MaildropSessionRunner(
+            fake, log, steps, lambda ok: finished.setdefault("ok", ok)
+        )
+        runner.start()
+        assert fake.calls == [("send", "X", "", "", "P", "s", "b")]
+
+        fake.failed.emit("send aborted after subject (abort() called)")
+        assert runner.results == [
+            ("send_then_abort", "PASS", "send aborted after subject (abort() called)")
+        ]
+        assert fake.calls[-1] == "leave"
+
+        fake.state = "CLOSED"
+        fake.state_changed.emit("CLOSED")
+        assert finished["ok"] is True
+
+    def test_validate_failure_stops_the_run(self):
+        fake = _FakeMailDropSession(state="ACTIVE")
+        steps = [
+            _md_step(
+                "list_checked", lambda s, ctx: s.list(), "listing",
+                validate=lambda entries, ctx: (False, "entries did not match"),
+            ),
+        ]
+        log = hw_check.RunLog(None)
+        finished = {}
+        runner = hw_check.MaildropSessionRunner(
+            fake, log, steps, lambda ok: finished.setdefault("ok", ok)
+        )
+        runner.start()
+        fake.listing.emit([])
+        assert runner.results == [("list_checked", "FAIL", "entries did not match")]
+
+        fake.state = "CLOSED"
+        fake.state_changed.emit("CLOSED")
+        assert finished["ok"] is False
+
+    def test_step_timeout_fails_and_stops(self, monkeypatch):
+        monkeypatch.setattr(hw_check, "_MAILDROP_STEP_TIMEOUT_MS", 50)
+        fake = _FakeMailDropSession(state="ACTIVE")
+        steps = [_md_step("slow", lambda s, ctx: s.list(), "listing")]
+        log = hw_check.RunLog(None)
+        finished = {}
+        runner = hw_check.MaildropSessionRunner(
+            fake, log, steps, lambda ok: finished.setdefault("ok", ok)
+        )
+        runner.start()
+        # Never emit 'listing' - let the per-step QTimer fire instead.
+        import time
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not runner.results:
+            _APP.processEvents()
+            time.sleep(0.01)
+
+        assert runner.results and runner.results[0][1] == "FAIL"
+        assert "timed out" in runner.results[0][2]
