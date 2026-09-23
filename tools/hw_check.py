@@ -1111,6 +1111,7 @@ class MaildropSessionRunner(QObject):
         self.index = 0
         self.ctx: dict = {}
         self.results: list = []   # list[(name, "PASS"/"FAIL", detail)]
+        self.last_bracket: Optional[str] = None  # P31.3: which prompt form was last seen
         self._stopped = False
         self._cleanup_ok = False
         self._timer: Optional[QTimer] = None
@@ -1227,9 +1228,10 @@ class MaildropSessionRunner(QObject):
             self._pass_step(step, f"state={state}")
 
     def _on_prompt_info(self, info) -> None:
+        self.last_bracket = getattr(info, "bracket", None)
         self.log.line(
             f"prompt_info: free={info.free} commands={info.commands} "
-            f"have_mail={info.have_mail}"
+            f"have_mail={info.have_mail} bracket={self.last_bracket!r}"
         )
         step = self._current()
         if step and step.signal_name == "prompt_info":
@@ -3168,19 +3170,52 @@ def test_maildrop_session(
     runner.start()
     app.exec()
 
-    log.line("Confirming Host Mode is active again (HPOLL query)")
-    hp_frame = session.query_host(b"HP")
-    if hp_frame is not None:
-        log.result(
-            "MAILDROP_SESSION", "INFO",
-            f"HPOLL answered -- Host Mode confirmed active: {hp_frame.text!r}"
+    # P31.3: on_finished() can fire before the session's OWN internal
+    # recovery (session.py's _recover(), triggered inside open()/leave()
+    # on failure) has actually reached a terminal state - the runner has
+    # no visibility into that in-flight recovery at all. Wait for the
+    # session itself to report CLOSED or FAILED before doing anything
+    # else, so the Host Mode check below is never run mid-recovery (P31
+    # finding: it was, and its own "not in Host Mode" response got
+    # misread as a fresh failure instead of "recovery is still running").
+    _TERMINAL_STATES = ("CLOSED", "FAILED")
+    deadline = time.monotonic() + 60.0
+    while md_session.state not in _TERMINAL_STATES and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.05)
+
+    if md_session.state == "FAILED":
+        # The session's own failed() message (already logged above, from
+        # _on_failed()) names the actual problem - inventing a second,
+        # independent diagnosis here would just be noise on top of it.
+        log.line(
+            "Skipping the Host Mode check -- the session itself reported "
+            "FAILED (see its own failed() message above for the reason)"
         )
+    elif md_session.state == "CLOSED":
+        log.line("Confirming Host Mode is active again (HPOLL query)")
+        hp_frame = session.query_host(b"HP")
+        if hp_frame is not None:
+            log.result(
+                "MAILDROP_SESSION", "INFO",
+                f"HPOLL answered -- Host Mode confirmed active: {hp_frame.text!r}"
+            )
+        else:
+            log.result(
+                "MAILDROP_SESSION", "INFO",
+                "no HPOLL response -- Host Mode state unclear, check the log"
+            )
     else:
-        log.result(
-            "MAILDROP_SESSION", "INFO",
-            "no HPOLL response -- Host Mode state unclear, check the log"
+        log.line(
+            f"WARNING: session state is still {md_session.state!r} after "
+            f"60s -- recovery may still be running; skipping the Host "
+            f"Mode check"
         )
 
+    log.result(
+        "MAILDROP_SESSION", "INFO",
+        f"prompt bracket form seen: {runner.last_bracket!r}"
+    )
     passed = sum(1 for _, verdict, _ in runner.results if verdict == "PASS")
     log.result(
         "MAILDROP_SESSION", "PASS" if outcome.get("ok") else "FAIL",
