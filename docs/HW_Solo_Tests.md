@@ -4,9 +4,10 @@ Printable operator guide for running the `tools/hw_check.py` checks against
 a real PK-232MBX. See `docs/P14_HW_Solo_Check_Spec.md` for the original four
 checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`,
 `docs/P20_MailDrop_Measure_Spec.md` for `mi`/`maildrop`,
-`docs/P24_MailDrop_HostMode_Spec.md` for `maildrop_host`, and
-`docs/P26_MDCHECK_Mnemonic_Spec.md` for `mdcheck_scan`; `CLAUDE.md` /
-`Backlog.md` have background on each finding.
+`docs/P24_MailDrop_HostMode_Spec.md` for `maildrop_host`,
+`docs/P26_MDCHECK_Mnemonic_Spec.md` for `mdcheck_scan`, and
+`docs/P28_MailDrop_Session_Harness_Spec.md` for `maildrop_session`;
+`CLAUDE.md` / `Backlog.md` have background on each finding.
 
 ---
 
@@ -49,6 +50,18 @@ checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`,
   *queries* (no argument) — nothing writes, kills, or transmits — but up
   to 23 of them, so you get one `y/N` confirmation naming the count and
   the three mnemonics it will never send. No second receiver needed.
+- **Only for `maildrop_session`:** this drives the real
+  `pk232py.maildrop.MailDropSession` end to end — it opens the mailbox,
+  sends three real test messages, reads one, kills one, then leaves.
+  **No confirmation prompt** (unlike `maildrop_host`/`mdcheck_scan`,
+  every command it sends is the SAME public API the running application
+  would eventually use, not an unmeasured probe) — but it does leave two
+  real messages in your mailbox afterwards (the foreign-FROM and
+  bulletin test messages; the personal one is killed as part of the
+  sequence itself), so expect that on your next `L`. No second receiver
+  needed. `--abort-test` additionally opens the mailbox a second time,
+  starts a message, and aborts it mid-flight — confirming the recovery
+  path actually works on real hardware, not just against a fake channel.
 
 ## 2. Order
 
@@ -63,8 +76,12 @@ checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`,
    interactive session (see `docs/P20_MailDrop_Measure_Spec.md`).
 6. Run `maildrop_host` afterwards, on its own (see
    `docs/P24_MailDrop_HostMode_Spec.md`).
-7. Run `mdcheck_scan` last, on its own, once `maildrop_host` has already
-   run at least once (see `docs/P26_MDCHECK_Mnemonic_Spec.md`).
+7. Run `mdcheck_scan` afterwards, on its own, once `maildrop_host` has
+   already run at least once (see `docs/P26_MDCHECK_Mnemonic_Spec.md`).
+8. Run `maildrop_session` last, on its own (see
+   `docs/P28_MailDrop_Session_Harness_Spec.md`) — it needs no prior
+   `maildrop`/`maildrop_host` run, but leaves real messages behind, so
+   run it after you are done exploring with those.
 
 ```
 python tools/hw_check.py --port COM3 all
@@ -76,6 +93,8 @@ python tools/hw_check.py --port COM6 mi
 python tools/hw_check.py --port COM6 maildrop
 python tools/hw_check.py --port COM6 maildrop_host
 python tools/hw_check.py --port COM6 mdcheck_scan
+python tools/hw_check.py --port COM6 maildrop_session
+python tools/hw_check.py --port COM6 maildrop_session --abort-test
 ```
 
 Add `--dry-run` to any command first if you just want to see what each
@@ -272,6 +291,52 @@ test *would* do without touching the TNC at all — it never opens the port.
 - Add `--dry-run` first to see all 23 candidate frames in hex and the
   three denylisted mnemonics, without touching the TNC.
 
+### `maildrop_session` — MailDropSession end to end (T119)
+- **Why:** `MailDropSession`/`protocol.py` (P27) are fully unit-tested
+  against played-back hardware transcripts, but never against the real
+  TNC. This harness is the hardware confirmation for T119 — it contains
+  no protocol logic of its own (no parsing, no mailbox command it built
+  itself); it only calls `open()`/`list()`/`send()`/`read()`/`kill()`/
+  `leave()` and reacts to the signals they fire.
+- **What happens:** enters Host Mode over the existing, already-proven
+  `SerialManager` path (parameter upload skipped by default — see
+  `--skip-upload`), then runs ten steps against the real session, each
+  logged with a PASS/FAIL line:
+  1. `open()` → `ACTIVE`, mailbox prompt with the free-byte count
+  2. `list()` → whatever is already in the mailbox (empty is fine)
+  3. `send()` a personal message to your own callsign, subject
+     `T119 personal` → `stored` with a message number
+  4. `send()` with a foreign FROM (`< DL1ABC`) → `stored`
+  5. `send()` a bulletin to `ALL` → `stored`, type `B`
+  6. `list()` → all three messages present, with the right type/sender
+     each (checked against the message NUMBERS remembered from steps
+     3–5, not by re-parsing anything — see the Definition of Done)
+  7. `read()` the personal message → text matches what was sent
+  8. `kill()` the personal message → `killed`, free-byte count rises
+  9. `list()` → the killed message gone, the other two still there
+  10. `leave()` → `CLOSED`, then an `HPOLL` query confirms Host Mode is
+      really active again
+- **No confirmation prompt** — every command sent is the same public API
+  the running application will eventually use, not an unmeasured probe.
+  **Leaves the foreign-FROM and bulletin test messages in your mailbox**
+  (only the personal one is killed as part of the sequence) — expect
+  those on your next `L`.
+- **PASS/FAIL per step**, plus an overall `N/10 steps passed` line. A
+  step that fails (or times out after 20s waiting for its signal) stops
+  the whole run there — later steps are not attempted with a session
+  that already misbehaved. If the mailbox was still open when the run
+  stopped, the harness calls `leave()` itself as cleanup before
+  finishing, so the TNC should always end back in Host Mode either way;
+  the final `HPOLL` query is what actually confirms that.
+- **`--abort-test`** adds three more steps: reopen the mailbox, start a
+  `send()`, call `abort()` right after the subject is accepted (before
+  any body line goes out), and leave again. Expect the abort step to
+  PASS by way of a `failed` signal (that IS success for this probe — it
+  proves the recovery path runs and reports failure, never a false
+  success) and the TNC to end back in Host Mode, same as the main run.
+- Add `--dry-run` first to see the full step list (13 with
+  `--abort-test`) without touching the TNC at all.
+
 ## 4. Checklist
 
 | Test | Date | Result | Notes |
@@ -287,6 +352,8 @@ test *would* do without touching the TNC at all — it never opens the port.
 | MAILDROP |  |  |  |
 | MAILDROP_HOST |  |  |  |
 | MDCHECK_SCAN |  |  |  |
+| MAILDROP_SESSION (T119) |  |  |  |
+| MAILDROP_SESSION --abort-test |  |  |  |
 
 ## 5. Where results go
 

@@ -1,6 +1,6 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-23 — +T119 (P27 MailDropSession, no UI); MailDrop protocol/session layer replaces the unverified legacy module**
-**Previous stand: 2026-09-23 — +T118 (P26 mdcheck_scan); T117 extended with the first maildrop_host hardware run's result and the P26.1 tool fix**
+**Updated: 2026-09-23 — T119 now points at the maildrop_session harness (P28); step sequence adopted as the expectation list**
+**Previous stand: 2026-09-23 — +T119 (P27 MailDropSession, no UI); MailDrop protocol/session layer replaces the unverified legacy module**
 
 ---
 
@@ -50,6 +50,7 @@
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py`, `src/pk232py/maildrop/maildrop.py` (docstring only), `CLAUDE.md`, `Backlog.md` | P24: round-3 hardware run (20:00) closed T116 (foreign FROM confirmed, `^Z` confirmed NOT ending a message, `/E` trailer corrected to non-general, R-needs-a-space and non-ASCII-is-the-tool's-own-encoding findings); `maildrop.py`'s MailDrop Host Mode mnemonic table marked UNVERIFIED (same class of error as `MI`/T47 — nothing renamed, a future package's job) and filed as a Backlog Priority 1 (it is dead code today, but the 8 mnemonics it would send were never measured); new read-only `maildrop_host` subcommand (P24.2) probes the `$60`/`$70` MailDrop-login Host Mode data channel implied by `HOST 3`'s bit 1, never sends `S`/`K`/`E`, one `y/N` confirmation before any unknown frame goes out; +T117 (OPEN — not yet run) |
 | **2026-09-23** | `serial_manager.py` (comment only), `tools/hw_check.py`, `test_hw_check.py`, `CLAUDE.md` | P26: T117's first hardware run (21:13) exposed a tool bug — `maildrop_host` mistook a bare `$5F` data acknowledgement for a real mailbox response and skipped Probe B; fixed with `has_mailbox_data_frame()` (P26.1). Corrected `serial_manager.py`'s wrong `HOST 3` comment ("undocumented poll level" → the real bit-field meaning; the byte sequence itself is unchanged). New read-only `mdcheck_scan` subcommand (P26.2) searches all 23 non-denylisted `M?` mnemonics for the one that answers with the mailbox prompt, since the TRM's own `MI` entry for MDCHECK contradicts T115's hardware-confirmed `MI` = MFILTER; stops at the first hit. No other `src/pk232py/` changes; +T118, T117 updated |
 | **2026-09-23** | `maildrop/protocol.py` *(new)*, `maildrop/session.py` *(new)*, `maildrop/__init__.py`, `maildrop/maildrop.py` *(deleted)*, `test_maildrop_protocol.py` *(new)*, `test_maildrop_session.py` *(new)* | P27: MailDrop moves entirely to the verbose-mode link — MDCHECK has no Host Mode mnemonic (T118). `protocol.py` (pure parsing/command-building, fixtures from the real hw_logs/ transcripts) + `session.py` (`MailDropSession`, CLOSED/OPENING/ACTIVE/CLOSING/CLOSED + FAILED, background worker thread, Qt-signal-only results) replace the old `maildrop.py` (geraten/unverified Host Mode mnemonics, dead code). Both Host Mode transitions reuse `SerialManager.exit_host_mode()`/`enter_host_mode()` unchanged. `message_store.py`'s schema found NOT to cover a real archive's needs (no TNC message number/BBS/type, local not TNC timestamp) — left unchanged, recorded as a Backlog follow-up rather than migrated under this package; +T119 (OPEN — no UI yet, needs a script/prompt run) |
+| **2026-09-23** | `tools/hw_check.py`, `src/pk232py/maildrop/session.py`, `test_hw_check.py` | P28: `maildrop_session` harness for T119 — drives the real `MailDropSession` end to end (open/list/send x3/list/read/kill/list/leave, plus an `--abort-test` probe for the recovery path), calling only its public API and reacting only to its signals, no protocol logic of its own. `MaildropSessionRunner` is the small step-sequencer (`MaildropStep` + validators against already-parsed `MailDropEntry` objects, never raw text). Added a small, targeted `MailDropSession.abort()` (checked once, right after a send()'s subject is accepted) so the harness's error-path probe has something real to call instead of fighting the busy-guard. T119 updated to point at the harness. |
 
 ---
 
@@ -1439,53 +1440,52 @@ instead (record as a `Backlog.md` decision point, not a failure).
 
 ---
 
-### T119 — MailDropSession against real hardware (P27, no UI), OPEN
+### T119 — MailDropSession against real hardware, via the maildrop_session harness (P27/P28), OPEN
 `src/pk232py/maildrop/session.py`'s `MailDropSession` replaces the old,
 unverified `maildrop.py` — it drives the MDCHECK mailbox entirely over
 the verbose-mode link (T118/`mdcheck_scan` found MDCHECK has no Host
 Mode mnemonic at all). Software/mock-verified against the real hw_logs/
-transcripts (`test_maildrop_session.py`, `test_maildrop_protocol.py`,
-`.venv\Scripts\python.exe -m pytest`); this is the hardware confirmation,
-run without any UI — a small script or the interactive Python prompt,
-e.g.:
+transcripts (`test_maildrop_protocol.py`, `test_maildrop_session.py`,
+`.venv\Scripts\python.exe -m pytest`); `tools/hw_check.py
+maildrop_session` (P28, `docs/P28_MailDrop_Session_Harness_Spec.md`) is
+the hardware confirmation — a harness with no protocol logic of its
+own, calling only `open()`/`list()`/`send()`/`read()`/`kill()`/`leave()`
+and reacting to their signals (`MaildropSessionRunner`,
+`test_hw_check.py`'s own sequencing tests cover the flow logic without
+hardware).
 
-```python
-from pk232py.comm.serial_manager import SerialManager
-from pk232py.maildrop import MailDropSession, SerialManagerChannel
-
-sm = SerialManager()
-sm.connect_port("COM6"); sm.init_tnc()
-# ... wait for verbose_mode_ready, enter Host Mode as the app normally does ...
-channel = SerialManagerChannel(sm)
-session = MailDropSession(channel, can_open=lambda: (True, ""))
-session.state_changed.connect(print)
-session.prompt_info.connect(print)
-session.failed.connect(print)
-session.open()
+```
+python tools/hw_check.py --port COM6 maildrop_session
+python tools/hw_check.py --port COM6 maildrop_session --abort-test
 ```
 
-1. **Open:** `session.open()` from Host Mode → `ACTIVE`, `prompt_info`
-   shows the real free-byte count
-2. **List:** `session.list()` on the (likely non-empty, from prior
-   hardware runs) mailbox → `listing` matches what a verbose `L` would
-   show
-3. **Send:** `session.send("OE3GAS", "", "", "P", "T119 test", "hello
-   from MailDropSession")` → `stored` with a message number
-4. **Read:** `session.read(<that number>)` → `message_read` with the
-   same text back
-5. **Kill:** `session.kill(<that number>)` → `killed`
-6. **Leave:** `session.leave()` → `CLOSED`, TNC back in Host Mode
-   (confirm with the app's own Host Mode indicator, or `sm.is_host_mode`)
-7. **Entry refused:** call `session.open()` again with `can_open`
-   returning `(False, "channel 1 connected")` (or any refusal reason) →
-   `failed` fires immediately, `state` stays `CLOSED`, nothing is sent to
-   the TNC at all (no `exit_host_mode()` call) — the precondition gate a
-   future UI must wire to the real channel-connected check
+Expectation list (the harness's own step sequence, `docs/
+HW_Solo_Tests.md`'s `maildrop_session` walkthrough has the full detail):
 
-**Expected result:** all six steps match their software-verified
-counterparts; step 7 confirms the `can_open()` gate actually blocks
-before touching the serial link, not just in the unit tests' fake
-channel.
+1. `open()` → `ACTIVE`, `prompt_info` with the real free-byte count
+2. `list()` → whatever is already in the mailbox
+3. `send()` a personal message (subject `T119 personal`) → `stored`
+4. `send()` with a foreign FROM (`< DL1ABC`) → `stored`
+5. `send()` a bulletin to `ALL` → `stored`, type `B`
+6. `list()` → all three present, personal=P, foreign frm=DL1ABC,
+   bulletin mtype=B/to=ALL (checked against the remembered message
+   numbers, not by re-parsing)
+7. `read()` the personal message → body matches what was sent
+8. `kill()` the personal message → `killed`, free-byte count rises
+9. `list()` → the killed message gone, the other two intact
+10. `leave()` → `CLOSED`, then an `HPOLL` query confirms Host Mode is
+    active again
+11–13. (`--abort-test` only) reopen, `send()` + `abort()` right after
+    the subject is accepted → `failed` (success for THIS step — proves
+    the recovery path runs and never reports a false success), leave
+
+**Expected result:** all steps PASS in order; a step that fails or times
+out (20s) stops the run there, and the harness's own cleanup calls
+`leave()` if the mailbox was still open, so the TNC ends back in Host
+Mode either way — the closing `HPOLL` query is what actually confirms
+that on real hardware. Two test messages (foreign-FROM, bulletin) are
+left in the mailbox afterwards by design (only the personal one is
+killed) — note that in the log.
 
 **Status:** ⬜ OPEN — not yet run on real hardware.
 
