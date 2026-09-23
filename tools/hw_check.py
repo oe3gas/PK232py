@@ -799,12 +799,33 @@ def classify_maildrop_host_ctl(ctl: int) -> str:
     return f"unknown (${ctl:02X})"
 
 
+def has_mailbox_data_frame(frames: list) -> bool:
+    """True if *frames* contains a genuine mailbox response, not just the
+    generic Host Mode data acknowledgement (P26.1 fix).
+
+    Hardware-observed 21.09.2026 (T101): every Host Mode data frame gets a
+    ctl=0x5F ('XX\\x00') acknowledgement regardless of whether anything
+    downstream understood it. The maildrop_host probe's first hardware run
+    (hw_logs/20260922_211322_maildrop_host.log) captured exactly one such
+    ack for probe A and the old check (`bool(captured_a)`) mistook that ack
+    for a real mailbox response, reporting "login not needed" when the
+    mailbox had said nothing at all. A real response is $70 (the
+    documented MailDrop read-data CTL) or, failing that, anything that is
+    not $4F (CMD_RESP) or $5F (STATUS_ERR/ack) - the exact CTL a genuine
+    mailbox reply would use over this channel was unmeasured before this
+    probe, so this stays permissive about what counts, strict only about
+    what does not."""
+    return any(f.ctl not in (0x4F, 0x5F) for f in frames)
+
+
 def should_run_maildrop_host_probe_b(captured_a: list) -> bool:
-    """Probe B (MDCHECK login, then 'L' again) only runs if probe A got
-    nothing at all (P24.2/P24.3) - a bare 'L' may already work without
-    logging in first, and there is no reason to send more frames than
+    """Probe B (MDCHECK login, then 'L' again) runs unless probe A already
+    got a genuine mailbox response (P24.2/P24.3, fixed P26.1) - a bare
+    '$5F' data acknowledgement is not a mailbox response (see
+    has_mailbox_data_frame()); only real mailbox content means logging in
+    first was not needed, and there is no reason to send more frames than
     necessary to answer that question."""
-    return not captured_a
+    return not has_mailbox_data_frame(captured_a)
 
 
 def run_maildrop_interactive(
@@ -2324,10 +2345,12 @@ def test_maildrop_host(session: Session, log: RunLog) -> None:
         "MAILDROP_HOST", "INFO",
         f"response frame type(s): {frame_types or 'none captured'}"
     )
-    if captured_a:
-        log.result("MAILDROP_HOST", "INFO", "login not needed -- probe A alone got a response")
-    elif captured_b:
-        log.result("MAILDROP_HOST", "INFO", "login needed -- only probe B (after MDCHECK) got a response")
+    if has_mailbox_data_frame(captured_a):
+        log.result("MAILDROP_HOST", "INFO", "login not needed -- probe A alone got a mailbox data frame")
+    elif has_mailbox_data_frame(captured_b):
+        log.result("MAILDROP_HOST", "INFO", "login needed -- only probe B (after MDCHECK) got a mailbox data frame")
+    elif captured_a or captured_b:
+        log.result("MAILDROP_HOST", "INFO", "no mailbox response -- only ack/CMD_RESP frames captured (P26.1)")
     else:
         log.result("MAILDROP_HOST", "INFO", "neither probe A nor B got any response")
     log.result(

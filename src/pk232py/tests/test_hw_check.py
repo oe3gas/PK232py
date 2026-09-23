@@ -34,6 +34,19 @@ def _cmd_resp(data: bytes) -> HostFrame:
     return HostFrame(ctl=0x4F, channel=15, data=data, kind=FrameKind.CMD_RESP)
 
 
+def _status_err(data: bytes = b"XX\x00") -> HostFrame:
+    """A real STATUS_ERR HostFrame ($5F, channel 15) - the generic Host
+    Mode data acknowledgement every write gets (T101), default payload the
+    exact bytes captured in hw_logs/20260922_211322_maildrop_host.log."""
+    return HostFrame(ctl=0x5F, channel=15, data=data, kind=FrameKind.STATUS_ERR)
+
+
+def _maildrop_data(data: bytes, ctl: int = 0x70) -> HostFrame:
+    """A real MailDrop-login data frame ($70 by default) - the shape a
+    genuine mailbox response over Host Mode is documented to have."""
+    return HostFrame(ctl=ctl, channel=15, data=data, kind=FrameKind.RX_DATA)
+
+
 class TestEvaluateT17:
     def test_px_is_the_toggle(self):
         # PX (PASSALL) responds Y/N; PS (PASS) responds with a char/hex value.
@@ -1203,10 +1216,44 @@ class TestClassifyMaildropHostCtl:
         assert "99" in label
 
 
+class TestHasMailboxDataFrame:
+    """P26.1: a bare $5F ack is not a mailbox response - fixed after the
+    first maildrop_host hardware run
+    (hw_logs/20260922_211322_maildrop_host.log) mistook exactly this for
+    one and reported a false 'login not needed'."""
+
+    def test_empty_list_has_no_data_frame(self):
+        assert hw_check.has_mailbox_data_frame([]) is False
+
+    def test_real_5f_ack_alone_is_not_a_mailbox_response(self):
+        # The exact frame captured by probe A in the 22.09.2026 21:13 run.
+        assert hw_check.has_mailbox_data_frame([_status_err(b"XX\x00")]) is False
+
+    def test_cmd_resp_alone_is_not_a_mailbox_response(self):
+        assert hw_check.has_mailbox_data_frame([_cmd_resp(b"MV\x00")]) is False
+
+    def test_0x70_data_frame_is_a_mailbox_response(self):
+        assert hw_check.has_mailbox_data_frame([_maildrop_data(b"Msg#")]) is True
+
+    def test_unknown_ctl_still_counts_since_the_real_shape_is_unmeasured(self):
+        unknown = HostFrame(ctl=0x99, channel=15, data=b"?", kind=FrameKind.UNKNOWN)
+        assert hw_check.has_mailbox_data_frame([unknown]) is True
+
+    def test_ack_alongside_a_real_data_frame_still_counts(self):
+        frames = [_status_err(b"XX\x00"), _maildrop_data(b"Msg#")]
+        assert hw_check.has_mailbox_data_frame(frames) is True
+
+
 class TestShouldRunMaildropHostProbeB:
     def test_runs_when_probe_a_got_nothing(self):
         assert hw_check.should_run_maildrop_host_probe_b([]) is True
 
-    def test_does_not_run_when_probe_a_got_a_response(self):
-        fake_frame = object()
-        assert hw_check.should_run_maildrop_host_probe_b([fake_frame]) is False
+    def test_runs_when_probe_a_only_got_a_5f_ack(self):
+        # P26.1: this is the exact real-world case the old
+        # `bool(captured_a)` check got wrong (hw_logs/
+        # 20260922_211322_maildrop_host.log) - a $5F ack is not a mailbox
+        # response, so probe B (MDCHECK login) must still run.
+        assert hw_check.should_run_maildrop_host_probe_b([_status_err(b"XX\x00")]) is True
+
+    def test_does_not_run_when_probe_a_got_a_real_mailbox_response(self):
+        assert hw_check.should_run_maildrop_host_probe_b([_maildrop_data(b"Msg#")]) is False
