@@ -626,6 +626,24 @@ Grows over time.
     brackets, double spaces before the free-byte count and before the
     command-set parenthesis. Differs from the TRM's `[AEA PK-232M] ... >`
     example — do not assume the TRM's bracket style is literal.
+  - **Both bracket forms are hardware-confirmed — the device-name bracket
+    depends on the EPROM, not a fixed shape (P31, 2026-09-23).** 22.09.2026
+    (three rounds, P21–P24): round, `` (AEA PK-232M)  18536 free
+    (B,E,K,L,R,S) > `` — the operator confirms the **11.09.1995 EPROM**
+    (Gen. 3 / PACTOR, see `docs/PK232_firware_matrrix.md` §2) was installed
+    for those rounds. 23.09.2026, 18:43 (P31,
+    `hw_logs/20260923_184302_maildrop_session.log`), after the TNC had
+    hung and been power-cycled: square, `` [AEA PK-232M]  18340 free
+    (B,E,K,L,R,S) > `` — the operator confirms the **01.08.1991 EPROM**
+    (Gen. 2 / MBX) was installed at that point, i.e. the bracket actually
+    tracks a real EPROM swap between the two sessions, not a firmware
+    fluke on the same chip. The command-set parenthesis after `free`
+    stays round in **both** measurements — only the device-name bracket
+    varies. `MailDropEntry`'s `PromptInfo.bracket` (`protocol.py`) records
+    which form a given prompt used, `"round"` or `"square"`, for exactly
+    this reason: whether the 1988 BASE EPROM uses a third form is still
+    unmeasured, so treat `bracket` as an open data point, not a closed
+    question, and log it on every future MailDrop hardware run.
   - SysOp command set is **`B`, `E`, `K`, `L`, `R`, `S` only.** `H`/`?`
     help is for OTHER users logging in, **not** the SysOp — sending `H`
     as SysOp answers `*** What?` (still followed by the mailbox prompt,
@@ -831,6 +849,24 @@ Grows over time.
   timestamp, not the TNC's own store-time stamp) — left unchanged
   per P27.3 (a future archive package's job, not a schema migration
   bolted onto this one), see Backlog.md.
+- **P31 (2026-09-23) hardened the above against the first real hardware
+  run of the full session harness.** Two gaps the first `maildrop_session`
+  run against real hardware (`hw_logs/20260923_184302_maildrop_session.log`)
+  exposed, both fixed: (1) `find_prompt()` only matched the round-bracket
+  prompt form, so a genuinely different EPROM's square-bracket prompt was
+  silently not recognised as a prompt at all — see the bracket-form bullet
+  above under "MailDrop facts" for the two confirmed forms; (2) the
+  `maildrop_session` test harness (`tools/hw_check.py`) ran its own HPOLL
+  confirmation check *before* the session's own internal `_recover()` had
+  reached a terminal state, so a still-in-flight recovery's own
+  "not in Host Mode" response was misread as a fresh, separate failure —
+  the harness now waits for `MailDropSession.state` to reach `CLOSED` or
+  `FAILED` first, and skips its own check (deferring to the session's own
+  `failed()` message) when the session itself reports `FAILED`. Neither
+  gap was in `MailDropSession`'s own recovery logic, which already did
+  confirm Host Mode re-entry before reporting `CLOSED` as designed — both
+  were in the surrounding layers (parsing, test harness) that fed it real
+  data for the first time.
 - **Safety rule for interactive tool phases (P21.3):** any interactive
   phase that runs inside a TNC sub-state (currently: the local MailDrop
   terminal in `tools/hw_check.py maildrop`; potentially others later)
@@ -890,6 +926,17 @@ Grows over time.
   nothing the operator sets by hand on the TNC survives a power-off, and
   MailDrop content is lost every time too (Backlog.md: saving/reloading
   the mailbox is a required feature, not a nice-to-have, because of this).
+- **The PK-232 can hang and stop responding to anything at all, even the
+  wakeup `*` — this is a hardware fault, not a software bug (P31,
+  observed 23.09.2026).** The 18:01 wakeup failure that day was traced to
+  exactly this: the TNC itself was locked up, not `SerialManager`'s wakeup
+  logic. **Triage order:** before suspecting the app or its serial code,
+  open a plain terminal program (PuTTY or similar) on the same COM port
+  and check whether the device answers `*` at all, independent of
+  pk232py. If it doesn't, the app cannot fix it either — **the only known
+  remedy is a power-cycle** (off, then on). Do not spend time debugging
+  `SerialManager`/Host-Mode code against a hung TNC; confirm the hardware
+  is alive first.
 
 ### Packet (HF / VHF)
 
