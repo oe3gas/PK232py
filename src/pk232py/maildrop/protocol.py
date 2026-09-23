@@ -167,6 +167,37 @@ def parse_error(text: str) -> Optional[str]:
     return None
 
 
+def split_after_echo(command_text: str, response: str) -> tuple[str, bool]:
+    """Split *response* at the end of the echoed line for *command_text*
+    (P35.3). Searches for '<command_text>\\r\\n' — the TNC always echoes
+    the command it received before answering it, and that echoed line
+    always ends in '\\r\\n' regardless of what terminator was actually
+    sent (hardware-confirmed throughout hw_logs/: an 'L\\r' send still
+    echoes back 'L\\r\\n'). Returns (everything after that line, True).
+
+    A classifier like parse_error() that returns the FIRST matching
+    error line anywhere in *text* must only ever look at this remainder
+    — otherwise a stray leftover fragment sitting in FRONT of the real
+    echo (e.g. an orphaned trailing LF from a PRIOR command being
+    processed as its own empty line by the mailbox, P35 finding) gets
+    misattributed to THIS command instead of the one that actually
+    caused it. Matching on '<command_text>\\r\\n' as a whole unit, not
+    bare *command_text*, matters: a short command like 'L' is also a
+    substring of the mailbox prompt's own command list
+    ('B,E,K,L,R,S') — anchoring on the trailing '\\r\\n' rules that out.
+
+    Returns (response, False) if the echoed line cannot be found at all
+    (a genuinely missing echo, not the normal case) — the caller decides
+    how to log that and falls back to evaluating the whole response,
+    rather than silently losing data.
+    """
+    marker = command_text + "\r\n"
+    idx = response.find(marker)
+    if idx == -1:
+        return response, False
+    return response[idx + len(marker):], True
+
+
 # ===========================================================================
 # Listing / reading
 # ===========================================================================
