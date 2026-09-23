@@ -1673,3 +1673,141 @@ class TestMaildropSessionRunnerSequencing:
 
         assert runner.results and runner.results[0][1] == "FAIL"
         assert "timed out" in runner.results[0][2]
+
+
+# ---------------------------------------------------------------------------
+# P30 -- port ownership logging and byte-level init-phase capture
+# ---------------------------------------------------------------------------
+
+class _FakeRealPort:
+    """Stands in for a real serial.Serial object (P30.4)."""
+
+    def __init__(self) -> None:
+        self.written: list = []
+        self.to_read = b""
+        self.closed = False
+        self.reset_called = False
+        self.is_open = True
+        self.in_waiting = 0
+
+    def write(self, data: bytes) -> int:
+        self.written.append(data)
+        return len(data)
+
+    def read(self, size: int = 1) -> bytes:
+        chunk, self.to_read = self.to_read[:size], self.to_read[size:]
+        return chunk
+
+    def reset_input_buffer(self) -> None:
+        self.reset_called = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class TestLoggingSerialPort:
+    def test_write_logs_and_returns_the_real_result_unchanged(self):
+        real = _FakeRealPort()
+        log = hw_check.RunLog(None)
+        port = hw_check.LoggingSerialPort(real, log)
+
+        n = port.write(b"*")
+
+        assert n == 1                      # real write()'s return value, untouched
+        assert real.written == [b"*"]      # actually reached the real port
+        assert bytes(port.sent_total) == b"*"
+
+    def test_read_logs_and_returns_the_real_result_unchanged(self):
+        real = _FakeRealPort()
+        real.to_read = b"cmd:"
+        log = hw_check.RunLog(None)
+        port = hw_check.LoggingSerialPort(real, log)
+
+        data = port.read(4)
+        assert data == b"cmd:"
+        assert bytes(port.received_total) == b"cmd:"
+
+        # A read that returns nothing must not corrupt the running total.
+        more = port.read(4)
+        assert more == b""
+        assert bytes(port.received_total) == b"cmd:"
+
+    def test_reset_input_buffer_and_close_pass_through(self):
+        real = _FakeRealPort()
+        log = hw_check.RunLog(None)
+        port = hw_check.LoggingSerialPort(real, log)
+
+        port.reset_input_buffer()
+        port.close()
+
+        assert real.reset_called is True
+        assert real.closed is True
+
+    def test_unknown_attributes_pass_through_both_directions(self):
+        real = _FakeRealPort()
+        log = hw_check.RunLog(None)
+        port = hw_check.LoggingSerialPort(real, log)
+
+        assert port.is_open is True   # get - falls through to the real port
+        port.rts = False              # set - falls through to the real port
+        assert real.rts is False
+
+
+class TestClassifyInitPhase:
+    def test_no_data_at_all(self):
+        assert hw_check.classify_init_phase(b"*", b"") == (
+            "no data at all -- port held elsewhere or wrong port"
+        )
+
+    def test_only_the_echo_comes_back(self):
+        assert hw_check.classify_init_phase(b"*", b"*") == (
+            "TNC already awake -- needs CR (see P29)"
+        )
+
+    def test_banner_without_a_prompt(self):
+        received = b"AEA PK-232MBX Ver. 7.1\r\n"
+        assert hw_check.classify_init_phase(b"*", received) == (
+            "banner truncated -- timeout too short"
+        )
+
+    def test_soh_means_still_in_host_mode(self):
+        received = bytes([0x01, 0x4F, ord("H"), ord("P"), 0x00, 0x17])
+        assert hw_check.classify_init_phase(b"*", received) == (
+            "TNC still in Host Mode"
+        )
+
+    def test_normal_wakeup_is_not_flagged(self):
+        received = b"AEA PK-232MBX Ver. 7.1\r\ncmd:"
+        assert hw_check.classify_init_phase(b"*", received) == "wakeup answered normally"
+
+
+class _FakeSerialManagerForRelease:
+    def __init__(self, is_connected: bool) -> None:
+        self.is_connected = is_connected
+        self.disconnect_calls = 0
+
+    def disconnect_port(self) -> None:
+        self.disconnect_calls += 1
+        self.is_connected = False
+
+
+class TestReleaseLeftoverPort:
+    def test_no_leftover_does_nothing(self):
+        sm = _FakeSerialManagerForRelease(is_connected=False)
+        log = hw_check.RunLog(None)
+
+        assert hw_check.release_leftover_port(sm, log) is False
+        assert sm.disconnect_calls == 0
+
+    def test_leftover_port_is_released_before_the_real_connect(self):
+        # P30.4: "the harness closes its own port before SerialManager is
+        # created" - modelled here as: before Session.connect() ever
+        # calls connect_port(), a leftover open is detected and released.
+        sm = _FakeSerialManagerForRelease(is_connected=True)
+        log = hw_check.RunLog(None)
+
+        released = hw_check.release_leftover_port(sm, log)
+
+        assert released is True
+        assert sm.disconnect_calls == 1
+        assert sm.is_connected is False
