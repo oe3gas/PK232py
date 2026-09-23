@@ -1512,6 +1512,35 @@ def run_with_restore(
 
 
 # ===========================================================================
+# P30 -- port ownership logging and byte-level init-phase capture
+# ===========================================================================
+#
+# maildrop_session's own reported failure (P30): wakeup times out even
+# right after a power-cycle, with no byte-level evidence in the log at
+# all, since the init phase runs entirely inside SerialManager, which has
+# no equivalent of the other subcommands' own protocol logging. The
+# pieces below add that visibility without rebuilding or monkeypatching
+# SerialManager - set_port_factory() is an existing, generic seam.
+
+def release_leftover_port(sm, log: "RunLog") -> bool:
+    """P30.1: if *sm* already thinks a port is open before
+    Session.connect() ever calls connect_port(), that is a leftover from
+    something earlier in this same process - release it and say so,
+    rather than silently trying to open a second port on top of it.
+    Returns True if a leftover port was found and released, False if
+    there was nothing to release. Pure enough to unit-test against a
+    fake with just .is_connected/.disconnect_port()."""
+    if not sm.is_connected:
+        return False
+    log.line(
+        "WARNING: harness still held an open port before this run -- "
+        "releasing it first (see docs/P30_Session_Harness_Logging_Spec.md)"
+    )
+    sm.disconnect_port()
+    return True
+
+
+# ===========================================================================
 # Session - the one place that touches SerialManager
 # ===========================================================================
 
@@ -1556,18 +1585,34 @@ class Session:
 
     # -- Connection lifecycle ----------------------------------------------
 
+    def _log_port_owner(self, owner: str, note: str = "") -> None:
+        """P30.1: a visible line for every port-ownership transition -
+        'harness' (this Session/hw_check.py process itself), 'SerialManager'
+        (the normal owner while connected), or 'hostmode subprocess' (brief
+        ownership during the HOST 3 handshake, see serial_manager.py)."""
+        self.log.line(f"port owner: {owner}{note}")
+
     def connect(self) -> None:
+        if release_leftover_port(self.sm, self.log):
+            self._log_port_owner("none", " (leftover released)")
+        self._log_port_owner("none", " (about to open)")
         if not self.sm.connect_port(self.port_name, baudrate=self.baud):
             raise HWCheckError(
                 f"Port busy - is pk232py running? ({self.port_name})"
             )
+        self._log_port_owner("SerialManager")
         self.log.line(f"Opened {self.port_name} @ {self.baud} Bd")
         self.sm.init_tnc()
         if not self._wait_until(
             lambda: self.sm.is_verbose_mode or self.sm.is_host_mode, timeout=8.0
         ):
             raise HWCheckError(
-                "TNC did not respond to wakeup - check port, baud rate and cable"
+                "TNC did not respond to wakeup -- the port itself opened "
+                "OK, so this could be: the port still held/shared "
+                "elsewhere (a previous hw_check.py left running, or "
+                "pk232py itself connected?), the wrong baud rate, or a "
+                "bad cable/TNC power state -- check port, baud rate and "
+                "cable"
             )
         if self.sm.is_host_mode:
             raise HWCheckError(
@@ -1584,14 +1629,22 @@ class Session:
             self.sm.exit_host_mode()
             self._wait_until(lambda: not self.sm.is_host_mode, timeout=5.0)
         self.sm.disconnect_port()
+        self._log_port_owner("none", " (released)")
         self.log.line("Disconnected")
 
     def enter_host_mode(self) -> None:
         if self.sm.is_host_mode:
             return
+        self._log_port_owner(
+            "hostmode subprocess",
+            " (SerialManager handing off for the HOST 3 handshake)",
+        )
         self.sm.enter_host_mode()
         if not self._wait_until(lambda: self.sm.is_host_mode, timeout=10.0):
             raise HWCheckError("Could not enter Host Mode")
+        self._log_port_owner(
+            "SerialManager", " (fresh port object after Host Mode entry)"
+        )
         self.log.line("Host Mode entered")
 
     def exit_host_mode(self) -> None:
@@ -2976,6 +3029,14 @@ def test_maildrop_session(
     # parameters are already verified by other subcommands and the
     # upload costs about a minute); enter Host Mode over the existing,
     # already-proven path.
+    #
+    # P30.1 point 4, checked: unlike maildrop/maildrop_host/mdcheck_scan,
+    # this function does none of its own verbose-mode work (no
+    # normalize(), no test message built over the verbose path) before
+    # handing the port to Host Mode -- it goes straight from the already-
+    # verbose session.connect() (done in main()) to enter_host_mode()
+    # below. There is nothing here that needs its own port access to
+    # finish and close first.
     session.enter_host_mode()
 
     channel = SerialManagerChannel(session.sm)
