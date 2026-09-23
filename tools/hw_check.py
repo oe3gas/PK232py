@@ -162,6 +162,7 @@ from pk232py.comm.frame import build_command, _dle_escape  # noqa: E402
 from pk232py.comm.constants import SOH, ETB  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
 from pk232py.maildrop import MailDropSession, SerialManagerChannel  # noqa: E402
+from pk232py.maildrop.protocol import find_prompt  # noqa: E402
 from pk232py.modes.signal_analysis import SignalMode  # noqa: E402
 from pk232py.modes.packet_hf import HFPacketMode  # noqa: E402
 from pk232py.modes.packet_vhf import VHFPacketMode  # noqa: E402
@@ -537,11 +538,11 @@ def evaluate_mi_probe(
 # ---------------------------------------------------------------------------
 
 _MAILDROP_QUERY_COMMANDS = [
-    # MYCALL is deliberately NOT here - session.normalize() (P21.2)
-    # already queries/resets it; querying it again here would send it
-    # twice for no reason.
+    # MYCALL and XMITOK are deliberately NOT here - session.normalize()
+    # (P21.2/P34.2) already queries/aborts-if-unanswered on both;
+    # querying either again here would send it twice for no reason.
     "MAILDROP", "MYMAIL", "MTEXT", "MMSG",
-    "3RDPARTY", "KILONFWD", "TMAIL", "MDMON", "XMITOK",
+    "3RDPARTY", "KILONFWD", "TMAIL", "MDMON",
 ]
 
 _MAILDROP_SUGGESTED_SEQUENCE = """\
@@ -1653,6 +1654,131 @@ def _log_init_phase_summary(log: "RunLog", wrapper: "LoggingSerialPort") -> None
 # Session - the one place that touches SerialManager
 # ===========================================================================
 
+
+def confirm_command_prompt(
+    send: Callable[[bytes, str], bytes],
+    recover: Callable[[], None],
+    log: "RunLog",
+) -> None:
+    """P34.1: verify the TNC answers with a verbose 'cmd:' prompt before
+    normalize() -- or anything else -- sends a single further verbose
+    command. Pure of any real I/O: *send(payload, note)* writes and
+    returns the raw response bytes, *recover()* runs the documented Host
+    Mode recovery/resync (SerialManager.recovery(): the double-SOH
+    recovery frame, TRM 4.1.6, then the binary HOST OFF frame -- see
+    SERIAL_CONNECTION_STATE_MACHINE.md's "Recovery" section) -- existing
+    machinery, nothing rebuilt here.
+
+    Found necessary 23.09.2026 (P34, hw_logs/20260923_203256_mdcheck_scan
+    .log): a run's verbose phase sent PACKET/MYCALL/XMITOK/MDCHECK/S/
+    subject/text/EX/B into a TNC that only ever echoed each line back,
+    never once answering 'cmd:' -- most likely Converse, where typed
+    text is echoed and queued for transmission. XMITOK was unknown at
+    the time for the very same reason; had it been ON as in every prior
+    run, those lines would have gone out over the air. This is the hard
+    gate the rest of normalize() -- and everything that runs after it --
+    depends on: kein verbose-Befehl wird gesendet, solange der cmd:-
+    Prompt nicht in derselben Sitzung bestaetigt wurde.
+
+    Tries, in order: (1) Ctrl-C + CR, (2) CR alone (resync stage 1), (3)
+    the Host Mode recovery frame followed by Ctrl-C + CR again (resync
+    stage 2). Raises HWCheckError -- and sends NOTHING further itself --
+    the instant all three have failed to produce a 'cmd:' prompt.
+    """
+    resp = send(b"\x03\r", "Ctrl-C + CR (normalize)")
+    if b"cmd:" in resp:
+        return
+    log.line(
+        "WARNING: no cmd: prompt after Ctrl-C + CR -- resync stage 1 (CR)"
+    )
+    resp = send(b"\r", "resync stage 1: CR alone")
+    if b"cmd:" in resp:
+        return
+    log.line(
+        "WARNING: no cmd: prompt after CR alone -- resync stage 2 "
+        "(Host Mode recovery frame)"
+    )
+    recover()
+    resp = send(b"\x03\r", "resync stage 2: Ctrl-C + CR after recovery")
+    if b"cmd:" in resp:
+        return
+    raise HWCheckError(
+        "TNC is not at the command prompt (echo only). Nothing was sent. "
+        "Check with a terminal program; power-cycle the TNC if it stays "
+        "unresponsive."
+    )
+
+
+def require_query_value(
+    value: Optional[str], cmd: str, consequence: str = "",
+) -> str:
+    """P34.2: normalize()'s MYCALL/XMITOK queries confirm STATE the rest
+    of the run depends on, unlike an ordinary single parameter query --
+    an unanswered one (None) aborts here instead of being logged and
+    continued past (CLAUDE.md's "never guess state" rule, same class as
+    P15's "no reported success without proof"). *consequence*, when
+    given, is appended to the abort message so it says what specifically
+    can no longer be guaranteed -- XMITOK unknown means the "never
+    transmits on the air" promise cannot be honoured.
+    """
+    if value is not None:
+        return value
+    suffix = f" -- {consequence}" if consequence else ""
+    raise HWCheckError(f"{cmd} query went unanswered{suffix}")
+
+
+def create_mdcheck_test_message(
+    send: Callable[[bytes, str], bytes],
+    subject: bytes,
+    body: bytes,
+    log: "RunLog",
+) -> tuple[bool, Optional[int]]:
+    """P34.3: create one MailDrop test message (maildrop_host/
+    mdcheck_scan share this), but only after MDCHECK's own response is
+    recognised as the real mailbox prompt (find_prompt(), protocol.py --
+    both bracket forms, P31). 23.09.2026 found the TNC can answer
+    MDCHECK with nothing but its own echo (P34, most likely Converse) --
+    typing 'S OE3GAS' etc. straight afterwards would then send those
+    lines into an unconfirmed context instead of into the mailbox.
+
+    Pure of any real I/O: *send(payload, note)* writes and returns the
+    raw response bytes. Returns (entered, msg_number):
+      - entered=False, msg_number=None: MDCHECK's response was not
+        recognised -- nothing past MDCHECK itself was sent. Callers must
+        not run 'L'/'B' either (not confirmed to be inside the mailbox);
+        this only skips the test message, the scan/probe does not need
+        it to proceed.
+      - entered=True, msg_number=None: the mailbox was entered but the
+        final store response could not be parsed for a message number --
+        logged here as its own WARNING, never silently as 'stored as
+        # None' (the exact thing the 23.09.2026 run produced).
+      - entered=True, msg_number=<int>: normal success.
+    """
+    mdcheck_resp = send(b"MDCHECK\r\n", "MDCHECK (test message gate, P34.3)")
+    if find_prompt(mdcheck_resp.decode("ascii", errors="replace")) is None:
+        log.line(
+            "INFO: MDCHECK did not answer with a recognised mailbox "
+            "prompt -- skipping the test message; nothing past MDCHECK "
+            "itself was sent"
+        )
+        return False, None
+    send(b"S OE3GAS\r", "start message")
+    send(subject + b"\r", "subject")
+    send(body + b"\r", "body")
+    store_resp = send(MAILBOX_ABANDON_ENTRY_COMMAND, "store (/EX)")
+    msg_number = parse_stored_message_number(
+        store_resp.decode("ascii", errors="replace")
+    )
+    if msg_number is not None:
+        log.line(f"Test message stored as # {msg_number}")
+    else:
+        log.line(
+            f"WARNING: could not parse a message number from the store "
+            f"response (raw: {store_resp!r})"
+        )
+    return True, msg_number
+
+
 class Session:
     """Owns the serial connection and the small amount of Qt plumbing
     SerialManager needs (it is a QObject; its background threads emit
@@ -1673,6 +1799,7 @@ class Session:
         self.sm = SerialManager()
         self._raw_buf = bytearray()
         self.sm.raw_data_received.connect(self._on_raw)
+        self.xmitok: Optional[str] = None  # set by normalize() (P34.2)
 
     def _on_raw(self, data: bytes) -> None:
         self._raw_buf.extend(data)
@@ -1843,7 +1970,7 @@ class Session:
         return resp
 
     def normalize(self) -> None:
-        """Bring the TNC to a known, quiet verbose-mode state (P21.2).
+        """Bring the TNC to a known, quiet verbose-mode state (P21.2/P34).
 
         Called at the START of every hardware subcommand that assumes a
         clean verbose-mode state (t17/t111/t112/mi/siam/maildrop), and
@@ -1852,10 +1979,16 @@ class Session:
         wrote asynchronous results into the middle of unrelated
         responses (XMITOK, mailbox output) with no warning at all.
 
+        0. confirm_command_prompt() (P34.1): verifies a 'cmd:' prompt,
+           with two resync stages, before anything else in here (or in
+           any caller) sends a single further verbose command. Raises
+           HWCheckError - aborting the whole subcommand - if the TNC
+           still hasn't answered 'cmd:' after both resyncs.
         1. Ctrl-C ($03, the verbose-mode COMMAND character) then CR -
            drops back to the top-level command interpreter regardless of
            what was running, via the idle-gap read (its prompt is not
-           assumed).
+           assumed). (Folded into step 0 above - the same Ctrl-C+CR IS
+           confirm_command_prompt()'s first attempt.)
         2. PACKET - leaves whichever operating mode was active WITHOUT
            entering Host Mode. SIAM in particular does NOT stop analysing
            on its own; only selecting a different mode does.
@@ -1865,18 +1998,32 @@ class Session:
         4. Queries MYCALL. The PK-232 has no RAM buffer battery
            (CLAUDE.md) and resets to the factory value 'PK232' on every
            power-off; if seen, MYCALL is set back from the loaded
-           AppConfig and the factory-state finding is logged.
+           AppConfig and the factory-state finding is logged. None (the
+           query went unanswered) now aborts (P34.2, require_query_value())
+           rather than silently skipping the reset - a state query, not
+           an ordinary parameter.
+        5. Queries XMITOK, same None-aborts rule (P34.2) - this used to
+           be queried separately by each subcommand AFTER normalize();
+           it belongs here because the "never transmits on the air"
+           promise every subcommand makes depends on actually knowing
+           it, not on guessing. Stored as self.xmitok for callers that
+           want to warn if it is ON.
         """
         if self.dry_run:
             self.log.line(
-                "[dry-run] would normalize: Ctrl-C + CR, PACKET, watch 2s "
-                "for async output, check MYCALL (factory 'PK232' -> reset "
-                "from config)"
+                "[dry-run] would normalize: confirm cmd: (Ctrl-C+CR, with "
+                "up to two resync stages), PACKET, watch 2s for async "
+                "output, check MYCALL (factory 'PK232' -> reset from "
+                "config) and XMITOK - aborting if either goes unanswered"
             )
             return
 
-        self.log.line("Normalizing TNC state (P21.2)")
-        self.send_and_read_until_idle(b"\x03\r", note="Ctrl-C + CR (normalize)")
+        self.log.line("Normalizing TNC state (P21.2/P34.1)")
+        confirm_command_prompt(
+            lambda data, note: self.send_and_read_until_idle(data, note=note),
+            self.sm.recovery,
+            self.log,
+        )
         self.verbose("PACKET")
 
         del self._raw_buf[:]
@@ -1887,14 +2034,23 @@ class Session:
                 f"a mode may still be running: {extra!r}"
             )
 
-        mycall = parse_query_value("MYCALL", self.query("MYCALL"))
+        mycall = require_query_value(
+            parse_query_value("MYCALL", self.query("MYCALL")), "MYCALL",
+        )
         self.log.line(f"MYCALL: {mycall!r}")
-        if mycall is not None and mycall.strip().upper() == "PK232":
+        if mycall.strip().upper() == "PK232":
             self.log.line("factory state detected -- no RAM battery")
             configured = self.app_config.hf_packet.mycall
             if configured and configured.upper() != "NOCALL":
                 self.set_verbose("MYCALL", configured.upper())
                 self.log.line(f"MYCALL set to {configured.upper()!r} from config")
+
+        self.xmitok = require_query_value(
+            parse_query_value("XMITOK", self.query("XMITOK")), "XMITOK",
+            "the 'never transmits on the air' promise cannot be verified "
+            "without it",
+        )
+        self.log.line(f"XMITOK: {self.xmitok!r}")
 
     # -- Host-mode frames ----------------------------------------------------
 
@@ -2779,15 +2935,21 @@ def test_maildrop(
         resp = session.query(cmd)
         err = query_error(resp)
         if err is not None:
-            log.line(f"{cmd}: error {err!r} (raw: {resp!r})")
+            log.line(f"WARNING: {cmd} unanswered -- error {err!r} (raw: {resp!r})")
             values[cmd] = None
+            continue
+        value = parse_query_value(cmd, resp)
+        values[cmd] = value
+        if value is None:
+            # P34.2: still tolerated here (these are ordinary single
+            # parameters, not the normalize()-level state queries that
+            # abort the whole run) but logged loudly, not quietly.
+            log.line(f"WARNING: {cmd} unanswered (raw: {resp!r})")
         else:
-            value = parse_query_value(cmd, resp)
-            values[cmd] = value
             log.line(f"{cmd}: {value!r} (raw: {resp!r})")
 
-    xmitok = values.get("XMITOK")
-    if xmitok is not None and xmitok.strip().upper() == "ON":
+    xmitok = session.xmitok  # confirmed non-None by normalize() (P34.2)
+    if xmitok.strip().upper() == "ON":
         print()
         print("*** XMITOK is ON ***")
         print(
@@ -2886,10 +3048,11 @@ def test_maildrop_host(session: Session, log: RunLog) -> None:
 
     if session.dry_run:
         log.line(
-            "[dry-run] would query XMITOK, create a test message over the "
-            "known verbose path (MDCHECK/S/subject/text/EX/L/B), verbose-"
-            "query HOST, enter Host Mode, confirm y/N, then probe with "
-            "these frames (probe B only runs if probe A got nothing; "
+            "[dry-run] would create a test message over the known verbose "
+            "path (MDCHECK/S/subject/text/EX/L/B, only after MDCHECK's "
+            "own response is a recognised mailbox prompt, P34.3), "
+            "verbose-query HOST, enter Host Mode, confirm y/N, then probe "
+            "with these frames (probe B only runs if probe A got nothing; "
             "R<n> only if a list came back):"
         )
         for probe_data in (b"L\r", b"MDCHECK\r", b"L\r", b"R 1\r", b"B\r"):
@@ -2897,9 +3060,7 @@ def test_maildrop_host(session: Session, log: RunLog) -> None:
         log.result("MAILDROP_HOST", "INFO", "dry-run, nothing sent")
         return
 
-    xmitok = parse_query_value("XMITOK", session.query("XMITOK"))
-    log.line(f"XMITOK: {xmitok!r}")
-    if xmitok is not None and xmitok.strip().upper() == "ON":
+    if session.xmitok.strip().upper() == "ON":
         print()
         print("*** XMITOK is ON ***")
         print(
@@ -2912,17 +3073,15 @@ def test_maildrop_host(session: Session, log: RunLog) -> None:
     log.line(
         "Step 3: creating a test message over the known-safe verbose path"
     )
-    session.send_and_read_until_idle(b"MDCHECK\r\n")
-    session.send_and_read_until_idle(b"S OE3GAS\r")
-    session.send_and_read_until_idle(b"Host Mode Test\r")
-    session.send_and_read_until_idle(b"created for the maildrop_host probe\r")
-    store_resp = session.send_and_read_until_idle(MAILBOX_ABANDON_ENTRY_COMMAND)
-    store_text = store_resp.decode("ascii", errors="replace")
-    msg_number = parse_stored_message_number(store_text)
-    log.line(f"Test message stored as # {msg_number}")
-    list_resp = session.send_and_read_until_idle(b"L\r")
-    log.line(f"L (verbose, for later comparison): {list_resp!r}")
-    session.send_and_read_until_idle(MAILBOX_EXIT_COMMAND)
+    entered, _msg_number = create_mdcheck_test_message(
+        session.send_and_read_until_idle,
+        b"Host Mode Test", b"created for the maildrop_host probe",
+        log,
+    )
+    if entered:
+        list_resp = session.send_and_read_until_idle(b"L\r")
+        log.line(f"L (verbose, for later comparison): {list_resp!r}")
+        session.send_and_read_until_idle(MAILBOX_EXIT_COMMAND)
 
     host_before = parse_query_value("HOST", session.query("HOST"))
     log.line(f"HOST (verbose, before): {host_before!r}")
@@ -3013,8 +3172,9 @@ def test_mdcheck_scan(session: Session, log: RunLog) -> None:
     if session.dry_run:
         log.line(
             f"[dry-run] would create a test message over the known verbose "
-            f"path (MDCHECK/S/subject/text/EX/L/B, like maildrop_host), "
-            f"verbose-query XMITOK, enter Host Mode, confirm y/N, then try "
+            f"path (MDCHECK/S/subject/text/EX/L/B, like maildrop_host, "
+            f"only after MDCHECK's own response is a recognised mailbox "
+            f"prompt, P34.3), enter Host Mode, confirm y/N, then try "
             f"these {len(candidates)} candidates in order (stopping at the "
             f"first hit), then leave Host Mode and normalize() again:"
         )
@@ -3030,9 +3190,7 @@ def test_mdcheck_scan(session: Session, log: RunLog) -> None:
         log.result("MDCHECK_SCAN", "INFO", "dry-run, nothing sent")
         return
 
-    xmitok = parse_query_value("XMITOK", session.query("XMITOK"))
-    log.line(f"XMITOK: {xmitok!r}")
-    if xmitok is not None and xmitok.strip().upper() == "ON":
+    if session.xmitok.strip().upper() == "ON":
         print()
         print("*** XMITOK is ON ***")
         print(
@@ -3044,16 +3202,13 @@ def test_mdcheck_scan(session: Session, log: RunLog) -> None:
         log.line("WARNING: XMITOK is ON")
 
     log.line("Step 1: creating a test message over the known-safe verbose path")
-    session.send_and_read_until_idle(b"MDCHECK\r\n")
-    session.send_and_read_until_idle(b"S OE3GAS\r")
-    session.send_and_read_until_idle(b"mdcheck_scan test\r")
-    session.send_and_read_until_idle(b"created for the mdcheck_scan probe\r")
-    store_resp = session.send_and_read_until_idle(MAILBOX_ABANDON_ENTRY_COMMAND)
-    msg_number = parse_stored_message_number(
-        store_resp.decode("ascii", errors="replace")
+    entered, _msg_number = create_mdcheck_test_message(
+        session.send_and_read_until_idle,
+        b"mdcheck_scan test", b"created for the mdcheck_scan probe",
+        log,
     )
-    log.line(f"Test message stored as # {msg_number}")
-    session.send_and_read_until_idle(MAILBOX_EXIT_COMMAND)
+    if entered:
+        session.send_and_read_until_idle(MAILBOX_EXIT_COMMAND)
 
     session.enter_host_mode()
     hit: Optional[bytes] = None
