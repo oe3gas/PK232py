@@ -1811,3 +1811,195 @@ class TestReleaseLeftoverPort:
         assert released is True
         assert sm.disconnect_calls == 1
         assert sm.is_connected is False
+
+
+class TestConfirmCommandPrompt:
+    """P34.1/P34.4 -- fixtures modelled on the real 23.09.2026 transcript
+    (hw_logs/20260923_203256_mdcheck_scan.log): Ctrl-C + CR got back only
+    '\\r\\n', never 'cmd:', through the whole (invalid) verbose phase of
+    that run."""
+
+    def test_confirmed_on_first_try_no_resync_needed(self):
+        log = hw_check.RunLog(None)
+        sent: list[tuple[bytes, str]] = []
+
+        def send(data, note):
+            sent.append((data, note))
+            return b"\r\ncmd:"
+
+        recovered: list[int] = []
+        hw_check.confirm_command_prompt(send, lambda: recovered.append(1), log)
+
+        assert sent == [(b"\x03\r", "Ctrl-C + CR (normalize)")]
+        assert recovered == []
+
+    def test_confirmed_after_resync_stage_1_cr_alone(self):
+        responses = iter([b"\r\n", b"\r\ncmd:"])
+        sent: list[bytes] = []
+
+        def send(data, note):
+            sent.append(data)
+            return next(responses)
+
+        recovered: list[int] = []
+        log = hw_check.RunLog(None)
+        hw_check.confirm_command_prompt(send, lambda: recovered.append(1), log)
+
+        assert sent == [b"\x03\r", b"\r"]
+        assert recovered == []  # stage 2 (recovery frame) never needed
+
+    def test_confirmed_after_resync_stage_2_recovery_frame(self):
+        responses = iter([b"\r\n", b"\r\n", b"\r\ncmd:"])
+        sent: list[bytes] = []
+
+        def send(data, note):
+            sent.append(data)
+            return next(responses)
+
+        recovered: list[int] = []
+        log = hw_check.RunLog(None)
+        hw_check.confirm_command_prompt(send, lambda: recovered.append(1), log)
+
+        assert sent == [b"\x03\r", b"\r", b"\x03\r"]
+        assert recovered == [1]
+
+    def test_echo_only_aborts_and_sends_nothing_further(self):
+        # Real fixture shape: every attempt got back only '\r\n', the TNC's
+        # own echo of the CR sent, never 'cmd:' (20:32:57-20:33:10 in the
+        # real log -- most likely Converse). SAFETY test, same shape as
+        # P21.4's TestRunMaildropInteractiveSafety: once this decides to
+        # abort, nothing more may ever be sent.
+        log = hw_check.RunLog(None)
+        sent: list[tuple[bytes, str]] = []
+
+        def send(data, note):
+            sent.append((data, note))
+            return b"\r\n"
+
+        recovered: list[int] = []
+
+        with pytest.raises(
+            hw_check.HWCheckError, match="not at the command prompt"
+        ):
+            hw_check.confirm_command_prompt(
+                send, lambda: recovered.append(1), log
+            )
+
+        assert sent == [
+            (b"\x03\r", "Ctrl-C + CR (normalize)"),
+            (b"\r", "resync stage 1: CR alone"),
+            (b"\x03\r", "resync stage 2: Ctrl-C + CR after recovery"),
+        ]
+        assert recovered == [1]
+
+
+class TestRequireQueryValue:
+    def test_returns_value_when_present(self):
+        assert hw_check.require_query_value("OE3GAS", "MYCALL") == "OE3GAS"
+
+    def test_none_raises_hwcheckerror(self):
+        with pytest.raises(
+            hw_check.HWCheckError, match="MYCALL query went unanswered"
+        ):
+            hw_check.require_query_value(None, "MYCALL")
+
+    def test_none_includes_consequence_in_message(self):
+        # P34.2: XMITOK unknown means the "never transmits on the air"
+        # promise cannot be honoured -- that has to be IN the message.
+        with pytest.raises(
+            hw_check.HWCheckError, match="never transmits on the air"
+        ):
+            hw_check.require_query_value(
+                None, "XMITOK",
+                "the 'never transmits on the air' promise cannot be "
+                "verified without it",
+            )
+
+
+class TestCreateMdcheckTestMessage:
+    """P34.3/P34.4 fixtures -- the 23.09.2026 run's actual failure mode:
+    MDCHECK got only its own echo back, no mailbox prompt at all, and the
+    old code sent S/subject/text/EX into that anyway."""
+
+    _MAILBOX_PROMPT = "(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >"
+
+    def test_skips_when_mdcheck_not_recognised(self):
+        # Real fixture: hw_logs/20260923_203256_mdcheck_scan.log,
+        # 20:33:10-12 -- 'MDCHECK\r\n' sent, 'MDCHECK\r\n' echoed back,
+        # nothing else.
+        log = hw_check.RunLog(None)
+        sent: list[bytes] = []
+
+        def send(data, note):
+            sent.append(data)
+            return b"MDCHECK\r\n"
+
+        entered, msg_number = hw_check.create_mdcheck_test_message(
+            send, b"subject", b"body", log,
+        )
+
+        assert entered is False
+        assert msg_number is None
+        assert sent == [b"MDCHECK\r\n"]  # nothing past MDCHECK itself
+
+    def test_enters_and_stores_when_mdcheck_confirmed(self):
+        responses = iter([
+            f"MDCHECK\r\n{self._MAILBOX_PROMPT}\r\n".encode(),
+            b"S OE3GAS\r\n",
+            b"subject\r\n",
+            b"body\r\n",
+            b"/EX\r\nMessage stored as # 3\r\n",
+        ])
+        sent: list[bytes] = []
+
+        def send(data, note):
+            sent.append(data)
+            return next(responses)
+
+        log = hw_check.RunLog(None)
+        entered, msg_number = hw_check.create_mdcheck_test_message(
+            send, b"subject", b"body", log,
+        )
+
+        assert entered is True
+        assert msg_number == 3
+        assert sent[0] == b"MDCHECK\r\n"
+        assert sent[-1] == hw_check.MAILBOX_ABANDON_ENTRY_COMMAND
+
+    def test_square_bracket_prompt_is_also_recognised(self):
+        # P31's other confirmed bracket form -- find_prompt() must accept
+        # it here too, not just in MailDropSession.
+        responses = iter([
+            b"MDCHECK\r\n[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >\r\n",
+            b"S OE3GAS\r\n", b"subject\r\n", b"body\r\n",
+            b"/EX\r\nMessage stored as # 1\r\n",
+        ])
+
+        def send(data, note):
+            return next(responses)
+
+        log = hw_check.RunLog(None)
+        entered, msg_number = hw_check.create_mdcheck_test_message(
+            send, b"subject", b"body", log,
+        )
+
+        assert entered is True
+        assert msg_number == 1
+
+    def test_enters_but_unparseable_store_response_is_not_reported_as_none(self):
+        responses = iter([
+            f"MDCHECK\r\n{self._MAILBOX_PROMPT}\r\n".encode(),
+            b"S OE3GAS\r\n", b"subject\r\n", b"body\r\n",
+            b"garbled, no message number here",
+        ])
+
+        def send(data, note):
+            return next(responses)
+
+        log = hw_check.RunLog(None)
+        entered, msg_number = hw_check.create_mdcheck_test_message(
+            send, b"subject", b"body", log,
+        )
+
+        assert entered is True
+        assert msg_number is None
