@@ -783,6 +783,54 @@ Grows over time.
     type (`SB`/`ST`) when re-creating a message, but **not** its
     original date/time — the TNC always stamps that at store time, not
     from anything the dialog could supply.
+- **MailDrop session (P27, implemented 2026-09-23).** `src/pk232py/
+  maildrop/protocol.py` (pure parsing/command-building, no I/O) +
+  `session.py` (`MailDropSession`, the state machine) replace the old
+  `maildrop.py` (geraten/unverified Host Mode mnemonics, dead code,
+  deleted). **MDCHECK has no Host Mode mnemonic at all** —
+  `mdcheck_scan` tried all 23 non-denylisted `M?` candidates against real
+  hardware and found no hit (docs/P26_MDCHECK_Mnemonic_Spec.md) — so the
+  whole module operates on the verbose-mode serial link, never Host Mode
+  frames. Lifecycle:
+  ```
+  Host Mode --> verbose --> MDCHECK --> [session] --> B --> Host Mode
+  ```
+  Both Host Mode transitions reuse `SerialManager.exit_host_mode()`/
+  `enter_host_mode()` exactly as Path B (PACTOR) already does in
+  OPMODE_SWITCH_STATE_MACHINE.md — this module rebuilds neither. States:
+  `CLOSED -> OPENING -> ACTIVE -> CLOSING -> CLOSED`, plus `FAILED`;
+  every transition fires `state_changed`, every result reaches the
+  caller only through a Qt signal (`prompt_info`/`listing`/`message_read`/
+  `stored`/`killed`/`failed`) — the blocking read/write exchanges run on
+  a background `threading.Thread` per command
+  (`MailDropSession._start()`), never on the GUI thread; this is a
+  **different** rule from CLAUDE.md SS3's "no worker thread for Host Mode
+  frames" — this thread never touches the serial port itself, only
+  `SerialManagerChannel` does, via `SerialManager`'s own already-proven
+  `write_verbose()`/`raw_data_received`.
+  **Exclusivity (TRM/STABO handbook, not yet hardware-measured):** MDCHECK
+  only works when no Packet or AMTOR station is currently connected to
+  the TNC, and while the local session is open, a foreign station trying
+  to connect gets a BUSY frame instead. `MailDropSession` does not know
+  the channel model at all — `open()` takes an injected `can_open() ->
+  (bool, reason)` callback for this precondition, to be supplied by
+  whatever future code DOES know it (the channel bar, `ModeManager`, …).
+  **Rückweg (recovery path), reachable from any failure:** `/EX` (in case
+  text entry is open) -> `B` -> Ctrl-C+CR -> confirm `cmd:` -> re-enter
+  Host Mode; ending in `FAILED` (never a silently-claimed success — the
+  lesson from P15) if `cmd:` or Host Mode re-entry cannot be confirmed.
+  `is_verbose_mode` is **not** trustworthy right after
+  `exit_host_mode()` — it stays `False` until the next full `init_tnc()`
+  wakeup, since `exit_host_mode()` itself sets `_verbose_ready = False`
+  and nothing else sets it back to `True`; use an ACTIVE Ctrl-C+CR probe
+  (matching `tools/hw_check.py`'s own `normalize()`) to confirm `cmd:`
+  instead of polling that property. `message_store.py`'s existing
+  `MailMessage`/schema does **not** cover what a real archive needs (own
+  durable ID ✓, read status ✓, sender ✓ — but no TNC message number, no
+  `@ BBS`, no P/T/B type, and `received_at` is the LOCAL receipt
+  timestamp, not the TNC's own store-time stamp) — left unchanged
+  per P27.3 (a future archive package's job, not a schema migration
+  bolted onto this one), see Backlog.md.
 - **Safety rule for interactive tool phases (P21.3):** any interactive
   phase that runs inside a TNC sub-state (currently: the local MailDrop
   terminal in `tools/hw_check.py maildrop`; potentially others later)

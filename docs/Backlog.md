@@ -111,6 +111,24 @@ item: MDCHECK is not reachable as a two-letter Host Mode mnemonic.
 `$60`/`$70` channel itself, which P27's `MailDropSession` does not use
 at all, since it never needed to.)
 
+### MailDrop session mask (UI) — not started (P27 follow-up, 2026-09-23)
+
+`MailDropSession`/`protocol.py` (P27) implement the full mailbox
+protocol and state machine, but **build no UI at all** — by design,
+P27's own scope note says so explicitly. A future sprint needs a
+session mask (dialog or dockable panel) that:
+- wires `can_open()` to the real channel-connected check (which channel
+  model/`ChannelBar` state counts as "busy" needs deciding — see the
+  channel-model gotchas in CLAUDE.md)
+- shows `listing`/`message_read` in a real widget, drives `send()` from
+  a compose form (subject/body/to/bbs/frm/mtype), and surfaces
+  `sanitize_body()`'s change list to the operator BEFORE sending, not
+  silently
+- displays `prompt_info.free` (remaining mailbox space) and `failed()`
+  text in the status bar
+- decides, at the UI layer, whether a given `frm` "differs from MYCALL"
+  (`build_send_command()` does not know MYCALL — see its docstring)
+
 ### MailDrop archive (message_store.py schema gap) — not started (P27.3 finding, 2026-09-23)
 
 P27.3 checked whether `message_store.py`'s existing `MailMessage`/SQLite
