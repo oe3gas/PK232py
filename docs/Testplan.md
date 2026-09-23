@@ -1,6 +1,6 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-23 — T119 partial result on real hardware (P31): steps through MDCHECK confirmed, aborted at prompt recognition (fixed, re-run needed)**
-**Previous stand: 2026-09-23 — T119 now points at the maildrop_session harness (P28); step sequence adopted as the expectation list**
+**Updated: 2026-09-23 — T118 answered on Device B (P34): no hit, same as Device A, across two firmware generations; run also exposed and fixed an echo-without-execution tool gap**
+**Previous stand: 2026-09-23 — T119 partial result on real hardware (P31): steps through MDCHECK confirmed, aborted at prompt recognition (fixed, re-run needed)**
 
 ---
 
@@ -1436,7 +1436,31 @@ MDCHECK is not reachable as a two-letter Host Mode mnemonic, and any
 future MailDrop dialog must drive the mailbox over the verbose path
 instead (record as a `Backlog.md` decision point, not a failure).
 
-**Status:** ⬜ OPEN — not yet run on real hardware.
+**Result, Device A (11.09.1995, PACTOR generation), P26:** no hit among
+the 23 candidates — MDCHECK is not reachable as a two-letter Host Mode
+mnemonic on this firmware generation.
+
+**Result, Device B (01.08.1991, MBX generation), 23.09.2026, P34
+(`hw_logs/20260923_203256_mdcheck_scan.log`):** also no hit among the
+same 23 candidates — the Host Mode queries themselves ran normally
+(`MAnone`, `MC0`, `MX4`, …), so the scan result is valid. Together with
+Device A, the finding now holds across two firmware generations (MBX and
+PACTOR); the BASE generation (Device C, 1988) remains untested for this.
+**Caveat on this same run:** the verbose phase *before* the scan
+(`PACKET`/`MYCALL`/`XMITOK`/the test-message creation) was invalid — the
+TNC only echoed each line back, never answering `cmd:` at all (most
+likely Converse) — see CLAUDE.md's "Echo without execution" gotcha (P34).
+The tool reported "Test message stored as # None" because no message was
+ever actually created; the scan's own result (no hit) is unaffected,
+since `mdcheck_scan` does not depend on that test message existing.
+Fixed under P34 (`tools/hw_check.py::confirm_command_prompt()`) so a
+future run either confirms `cmd:` first or aborts cleanly instead of
+sending into an unconfirmed state.
+
+**Status:** ✅ ANSWERED (no hit, two generations) — MDCHECK confirmed not
+reachable as a two-letter Host Mode mnemonic on Device A and Device B;
+Device C (BASE, 1988) not yet tested. See `docs/PK232_firmware_matrix.md`
+§2a for the same finding recorded against the device/generation table.
 
 ---
 
