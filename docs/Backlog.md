@@ -1,6 +1,6 @@
 # PK232PY — Development Backlog
 
-**Last updated:** 2026-09-23 (P26 — mdcheck_scan, T117 tool-bug correction)
+**Last updated:** 2026-09-23 (P27 — MailDrop protocol/session layer, legacy module deleted)
 **Current version:** v0.1 (development)
 
 ---
@@ -67,6 +67,15 @@ is measured on real hardware; then replace this module's guessed
 mnemonic table with a version built on the measured `$60`/`$70`
 protocol, rather than fixing individual mnemonics piecemeal.
 
+**✅ SUPERSEDED (P27, 2026-09-23):** the plan above assumed MDCHECK
+would eventually be reachable over the `$60`/`$70` Host Mode channel.
+`mdcheck_scan` (T118) found no Host Mode mnemonic for it at all, so
+there is no `$60`/`$70` protocol to build a replacement table on.
+`maildrop.py` (the geraten mnemonics, `upload_config()`) is **deleted**;
+`protocol.py`/`session.py` replace it entirely on the verbose-mode
+link. This item is closed — see the "MailDrop session" CLAUDE.md
+section and T119.
+
 ### MDCHECK's Host Mode mnemonic is unknown — search in progress (P26, 2026-09-23)
 
 The TRM's own Host Mode mnemonic table (ch.12) is internally
@@ -94,6 +103,41 @@ itself exposed a tool bug (`maildrop_host` mistook that ack for a real
 response and skipped Probe B, fixed P26.1) rather than answering the
 question. T117 needs a **re-run** with the fixed tool before the
 "leave it unwired until T117 is measured" plan above can be acted on.
+
+**✅ RESOLVED (P27, 2026-09-23):** `mdcheck_scan` ran conceptually to
+completion in the P26/P27 work — 23 candidates, no hit — settling this
+item: MDCHECK is not reachable as a two-letter Host Mode mnemonic.
+(T117's own re-run, above, is still open and separate — it measures the
+`$60`/`$70` channel itself, which P27's `MailDropSession` does not use
+at all, since it never needed to.)
+
+### MailDrop archive (message_store.py schema gap) — not started (P27.3 finding, 2026-09-23)
+
+P27.3 checked whether `message_store.py`'s existing `MailMessage`/SQLite
+schema could serve as the mailbox's local archive (spec: "own durable
+ID, TNC number as attribute, sender, BBS, type, read status, TNC's own
+timestamp, raw text"). **It does not fully match** — kept unchanged
+rather than migrated under P27 (that was the explicit instruction: "does
+not fit → do not restructure, note the finding — the archive is its own
+package"):
+
+| Required | `MailMessage` has it? |
+|---|---|
+| own durable ID | ✅ `id` (SQLite autoincrement) |
+| TNC message number as an attribute | ❌ missing |
+| sender | ✅ `from_call` |
+| `@ BBS` | ❌ missing |
+| type (P/T/B) | ❌ missing (only from/to, no type column) |
+| read status | ✅ `read` |
+| the TNC's OWN stamp (stamped at store time) | ❌ `received_at` is the LOCAL receipt timestamp, generated fresh by `datetime.now()` — not the TNC's — see CLAUDE.md's "no RAM buffer battery"/date-stamping facts |
+| raw text | 🟡 `body` exists but is not clearly "raw vs. processed" |
+
+Also recall (CLAUDE.md): the TNC's own message numbers are **not**
+durable across a power-cycle and are only unique within one power-on
+period — any future archive's own `id` must stay the real key, never
+the TNC's number, which is exactly what `MailMessage.id` already is.
+A future archive package should design its own schema against
+`MailDropEntry` (protocol.py) rather than retrofitting this one.
 
 ### `SignalMode.handle_frame()` reports any CMD_RESP as a SIAM result — ✅ FIXED (P18.2, 2026-09-22)
 

@@ -1,8 +1,19 @@
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
 # Copyright (C) 2026  OE3GAS  —  GPL v2
-"""MailDrop — personal mailbox controller and message store."""
+"""MailDrop — verbose-mode mailbox session, protocol, and message store.
 
-from .maildrop      import MailDropController
-from .message_store import MessageStore, MailMessage
+`MailDropController` (Host Mode mnemonic upload, geraten/unverified) is
+gone as of P27 — MDCHECK has no Host Mode mnemonic at all
+(`mdcheck_scan`, docs/P26_MDCHECK_Mnemonic_Spec.md), so mailbox handling
+lives entirely in `protocol`/`session` on the verbose-mode link instead.
+"""
 
-__all__ = ["MailDropController", "MessageStore", "MailMessage"]
+from .protocol       import MailDropEntry, PromptInfo
+from .session        import MailDropSession, SerialManagerChannel
+from .message_store  import MessageStore, MailMessage
+
+__all__ = [
+    "MailDropEntry", "PromptInfo",
+    "MailDropSession", "SerialManagerChannel",
+    "MessageStore", "MailMessage",
+]
