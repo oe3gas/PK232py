@@ -154,6 +154,43 @@ class TestParseError:
 
 
 # ===========================================================================
+# split_after_echo (P35.3)
+# ===========================================================================
+
+class TestSplitAfterEcho:
+    def test_splits_at_the_echoed_line(self):
+        text = "L\r\n*** Message not found.\r\n(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >\r\n"
+        remainder, echo_found = protocol.split_after_echo("L", text)
+        assert echo_found is True
+        assert remainder == "*** Message not found.\r\n(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >\r\n"
+
+    def test_short_command_is_not_confused_with_the_prompts_own_command_list(self):
+        # 'L' is also a substring of the mailbox prompt's own command set
+        # '(B,E,K,L,R,S)' - a bare substring search would wrongly split
+        # there instead of at the real echoed line (P35.3).
+        text = (
+            "(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >\r\n"
+            "L\r\n*** Message not found.\r\n"
+            "(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >\r\n"
+        )
+        remainder, echo_found = protocol.split_after_echo("L", text)
+        assert echo_found is True
+        assert remainder.startswith("*** Message not found.")
+
+    def test_no_echo_found_returns_whole_response_and_false(self):
+        text = "*** What?\r\n(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >\r\n"
+        remainder, echo_found = protocol.split_after_echo("L", text)
+        assert echo_found is False
+        assert remainder == text
+
+    def test_multi_word_command_with_argument(self):
+        text = "R 1\r\nMsg#    Size To     From   @ BBS  Date       Time   Title\r\n"
+        remainder, echo_found = protocol.split_after_echo("R 1", text)
+        assert echo_found is True
+        assert remainder == "Msg#    Size To     From   @ BBS  Date       Time   Title\r\n"
+
+
+# ===========================================================================
 # parse_list
 # ===========================================================================
 
