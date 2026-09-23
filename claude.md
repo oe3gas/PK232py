@@ -878,6 +878,34 @@ Grows over time.
   the hard way 22.09.2026: after `B` silently closed the mailbox, the
   recorder's prompt stayed up and kept forwarding input to the command
   interpreter. See `tools/hw_check.py::run_maildrop_interactive()`.
+- **Echo without execution — the TNC can be in a state (most likely
+  Converse) that echoes every line typed at it but executes nothing,
+  with no `cmd:` prompt to notice by (P34, observed 23.09.2026,
+  `hw_logs/20260923_203256_mdcheck_scan.log`).** A `mdcheck_scan` run's
+  entire verbose phase — `PACKET`, `MYCALL`, `XMITOK`, `MDCHECK`, `S
+  OE3GAS`, the subject, the body, `/EX`, `B` — got nothing back but each
+  line's own echo; `Session.normalize()` did not treat the missing
+  `cmd:` as an error and kept going regardless, ending with the tool
+  reporting "Test message stored as # None". Entering and leaving Host
+  Mode cleared the state again afterwards, so it is not a hardware fault,
+  just an unconfirmed starting state. **Safety-relevant:** `XMITOK` was
+  unknown for the very same reason (its own query got only an echo) — had
+  it been `ON`, as in every prior run, typed lines in Converse are echoed
+  *and* queued for transmission, so this could have gone out over the
+  air. `tools/hw_check.py`'s "never transmits on the air" promise must
+  not depend on the TNC happening to already be in the right state.
+  **Tool rule (P34.1, `hw_check.py::confirm_command_prompt()`):** no
+  verbose command is sent unless the `cmd:` prompt has been confirmed in
+  the same session first — `Ctrl-C`+`CR`, then (only if that fails) a
+  bare `CR` resync, then (only if that also fails) the documented Host
+  Mode recovery/resync frame (TRM 4.1.6, `SerialManager.recovery()`)
+  followed by `Ctrl-C`+`CR` again; still no `cmd:` after all three aborts
+  the whole subcommand with nothing further sent. The same "state query,
+  not an ordinary parameter" rule now applies to `normalize()`'s own
+  `MYCALL`/`XMITOK` queries too (`require_query_value()`) — an
+  unanswered one aborts instead of being logged and quietly continued
+  past, the same class of fix as P15's "no reported success without
+  proof".
 - **A Windows console turns a typed Ctrl-Z into an `EOFError`, not the
   two literal characters `^`/`Z` (found 22.09.2026, P23).** An operator
   trying to end a MailDrop message with the real Ctrl-Z key closed the
