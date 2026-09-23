@@ -2,7 +2,7 @@
 
 > This file is the single entry point for Claude Code to understand the
 > PK232PY project. Read it completely before touching any source file.
-> Last updated: 2026-09-20
+> Last updated: 2026-09-23
 
 ---
 
@@ -540,6 +540,32 @@ Grows over time.
   | `HP` | HPOLL | late response frame after Host Mode entry (T86) |
   | `MX` | MAXFRAME | **open** — needs the T112 retest (P18.1/P18.3 fix) |
   | `MI` | MFILTER, **not** MailDrop login | T115 (`MI$80` / verbose `MFIlter $80`, 22.09.2026) |
+- **The TRM itself is internally contradictory about `MI` — measurement
+  decides, not the manual (P26, 2026-09-23).** TRM ch.12 lists `MI` as the
+  Host Mode mnemonic for BOTH `MDCheck` and `MFIlter` (default `$80`) in
+  the same command table. T115's measurement (`MI` → `$80`, verbose
+  `MFILTER` → `$80`) settles it: `MI` = MFILTER; the MDCHECK entry in the
+  manual is simply wrong. **The Host Mode mnemonic for MDCHECK is still
+  unknown** — do not assume it exists as a two-letter mnemonic at all; see
+  `mdcheck_scan` in `tools/hw_check.py`, which searches for it without
+  guessing. **General rule: when the TRM contradicts itself (or contradicts
+  a real measurement) about a mnemonic, the measurement wins, never the
+  manual** — the same "never guess, verify against the TRM" principle above
+  still applies, but only after confirming the TRM's own entry isn't itself
+  the thing in error.
+- **`maildrop_host`'s first hardware run (2026-09-22 21:13,
+  `hw_logs/20260922_211322_maildrop_host.log`) misjudged its own result —
+  fixed P26.1.** Probe A (`L` with no login) got back exactly one frame:
+  `ctl=0x5F` `data=b'XX\x00'` — the generic Host Mode data acknowledgement
+  every write gets (T101), not mailbox content. The tool's old verdict
+  logic treated "probe A got any frame at all" as "login not needed", so
+  it reported a false "login not needed" and never ran probe B (MDCHECK
+  login, then a second `L`). Fixed: a real "response" for this probe means
+  a frame that is NOT `$4F` (CMD_RESP) or `$5F` (STATUS_ERR/ack) — ideally
+  `$70` (documented MailDrop read data). `should_run_maildrop_host_probe_b()`
+  / `has_mailbox_data_frame()` in `tools/hw_check.py` implement this; a
+  bare `$5F` ack no longer counts as a mailbox response, and probe B now
+  runs whenever probe A got nothing but acks.
 - **A stale response frame from a PRIOR command can still be queued when the
   next query goes out — never correlate a Host Mode response by arrival
   order, always by its mnemonic prefix (`frame.data[:2]` /

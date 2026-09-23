@@ -73,8 +73,12 @@ _CMD_AWLEN    = b"AWLEN 8\r\n"
 _CMD_PARITY   = b"PARITY 0\r\n"
 _CMD_8BITCONV = b"8BITCONV ON\r\n"
 _CMD_RESTART  = b"RESTART\r\n"
-# PCPackRatt-verified: "HOST 3" activates Host Mode with poll level 3
-# (not "HOST Y" — "HOST 3" is an undocumented/expert command)
+# PCPackRatt-verified. HOST is a bit field (TRM ch.12), not a plain on/off
+# toggle: bit 0 = Host Mode on/off, bit 1 = local MailDrop login (moves the
+# MailDrop data channel from $2x/$2F to $60/$70), bit 2 = extended Host
+# Mode. "HOST 3" sets bits 0+1 — this app has always run with the
+# MailDrop-login bit set, though nothing currently uses the $60/$70
+# channel it enables (see CLAUDE.md, P24/P26).
 _CMD_HOST_3   = b"HOST 3\r"
 _CMD_HPOLL_Y  = bytes([0x01, 0x4F, ord('H'), ord('P'), ord('Y'), 0x17])
 _HPOLL_ACK    = bytes([0x01, 0x4F, ord('H'), ord('P'), 0x00, 0x17])
