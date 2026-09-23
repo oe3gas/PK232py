@@ -58,25 +58,33 @@ class MailDropEntry:
 
 @dataclass(frozen=True)
 class PromptInfo:
-    """The mailbox prompt line, parsed (CLAUDE.md: hardware-confirmed
-    '(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >', round brackets, double
-    spaces before the free-byte count and before the command list)."""
+    """The mailbox prompt line, parsed (CLAUDE.md: hardware-confirmed as
+    '(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >' on 22.09.2026 (three
+    rounds) AND as '[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >' on
+    23.09.2026, after the TNC had hung and been power-cycled — BOTH
+    bracket forms are hardware-confirmed; the cause of the switch is
+    unknown, see CLAUDE.md/Backlog.md (P31))."""
     free:       int
     commands:   str         # "B,E,K,L,R,S"
     have_mail:  bool        # a 'You have mail.' line preceded the prompt
+    bracket:    str         # "round" or "square" - which form THIS prompt used
 
 
 # ===========================================================================
 # Prompt / response classification
 # ===========================================================================
 
-# Hardware-confirmed shape (CLAUDE.md): round brackets, double space before
-# the free-byte count and before the command-set parenthesis. Anchored to
-# 'AEA PK-232M' (optional trailing 'M' for the plain PK-232) rather than the
-# TRM's own '[AEA PK-232M] ... >' example, which is not what the real TNC
-# sends.
+# Hardware-confirmed shapes (CLAUDE.md, P31): the device-name bracket is
+# EITHER round '(...)' or square '[...]' (never mixed - '(...]' is not a
+# match) - the command-set parenthesis after 'free' stays round in BOTH
+# measurements, so it is not made bracket-tolerant. Device name tolerant
+# of 'PK-232', 'PK-232M', 'PK-232MBX' - only 'PK-232M' has been measured
+# so far, but the others are the same TRM-documented product family and
+# cost nothing to accept. Whitespace runs are never hardcoded to a fixed
+# count anywhere in this pattern.
 _PROMPT_RE = re.compile(
-    r"\(AEA PK-232M?\)\s+(\d+)\s+free\s+\(([A-Z,]+)\)\s*>"
+    r"(\(\s*AEA\s+PK-232M?(?:BX)?\s*\)|\[\s*AEA\s+PK-232M?(?:BX)?\s*\])"
+    r"\s+(\d+)\s+free\s+\(([A-Z,]+)\)\s*>"
 )
 
 _HAVE_MAIL_TEXT = "You have mail."
@@ -108,9 +116,10 @@ def find_prompt(text: str) -> Optional[PromptInfo]:
     if m is None:
         return None
     return PromptInfo(
-        free=int(m.group(1)),
-        commands=m.group(2),
+        free=int(m.group(2)),
+        commands=m.group(3),
         have_mail=_HAVE_MAIL_TEXT in text,
+        bracket="round" if m.group(1).startswith("(") else "square",
     )
 
 
