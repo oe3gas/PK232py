@@ -31,6 +31,7 @@ class TestFindPrompt:
         assert info.free == 18536
         assert info.commands == "B,E,K,L,R,S"
         assert info.have_mail is False
+        assert info.bracket == "round"
 
     def test_prompt_with_mail_waiting(self):
         # hw_logs/20260922_191657_maildrop.log, round 2 MDCHECK response.
@@ -42,6 +43,7 @@ class TestFindPrompt:
         assert info is not None
         assert info.free == 18452
         assert info.have_mail is True
+        assert info.bracket == "round"
 
     def test_prompt_with_interleaved_siam_line(self):
         # hw_logs/20260922_154026_maildrop.log: a SIAM result fragment
@@ -55,6 +57,35 @@ class TestFindPrompt:
         info = protocol.find_prompt(text)
         assert info is not None
         assert info.free == 18536
+
+    def test_prompt_with_square_brackets(self):
+        # hw_logs/20260923_184302_maildrop_session.log: the TNC had hung
+        # and been power-cycled the day before - the prompt came back
+        # with SQUARE brackets instead of the previously round-only
+        # measurements (CLAUDE.md/Backlog.md P31, cause unknown).
+        text = "MDCHECK\r\n[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >\r\n"
+        info = protocol.find_prompt(text)
+        assert info is not None
+        assert info.free == 18340
+        assert info.commands == "B,E,K,L,R,S"
+        assert info.bracket == "square"
+
+    def test_prompt_with_square_brackets_and_mail_waiting(self):
+        text = (
+            "MDCHECK\r\nYou have mail.\r\n"
+            "[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >\r\n"
+        )
+        info = protocol.find_prompt(text)
+        assert info is not None
+        assert info.have_mail is True
+        assert info.bracket == "square"
+
+    def test_mismatched_brackets_do_not_match(self):
+        # A round open with a square close (or vice versa) is not one of
+        # the two hardware-confirmed forms - reject it rather than being
+        # loose about which characters pair up.
+        text = "(AEA PK-232M]  18340 free  (B,E,K,L,R,S) >\r\n"
+        assert protocol.find_prompt(text) is None
 
     def test_no_prompt_returns_none(self):
         assert protocol.find_prompt("Subject:\r\n") is None
