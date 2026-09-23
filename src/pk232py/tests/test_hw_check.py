@@ -1257,3 +1257,84 @@ class TestShouldRunMaildropHostProbeB:
 
     def test_does_not_run_when_probe_a_got_a_real_mailbox_response(self):
         assert hw_check.should_run_maildrop_host_probe_b([_maildrop_data(b"Msg#")]) is False
+
+
+# ---------------------------------------------------------------------------
+# P26.2/P26.3 -- mdcheck_scan
+# ---------------------------------------------------------------------------
+
+_REAL_MAILBOX_PROMPT_TEXT = "(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >"
+
+
+class TestMdcheckScanCandidates:
+    """P26.2: exactly the 23 'M?' letters not on the denylist are ever
+    sent - MO (MORSE), MI (MFILTER, already identified), MM (MEMORY, has
+    a read side effect) are not candidates at all."""
+
+    def test_denylisted_mnemonics_are_never_candidates(self):
+        candidates = hw_check.mdcheck_scan_candidates()
+        for denied in hw_check.MDCHECK_SCAN_DENYLIST:
+            assert denied not in candidates
+
+    def test_exactly_23_candidates(self):
+        assert len(hw_check.mdcheck_scan_candidates()) == 23
+
+    def test_denylist_has_exactly_the_three_spec_entries(self):
+        assert set(hw_check.MDCHECK_SCAN_DENYLIST) == {b"MO", b"MI", b"MM"}
+
+    def test_every_candidate_is_a_two_byte_m_mnemonic(self):
+        for mnemonic in hw_check.mdcheck_scan_candidates():
+            assert len(mnemonic) == 2
+            assert mnemonic[0:1] == b"M"
+
+
+class TestIsMdcheckScanHit:
+    """P26.3: a hit is the real mailbox prompt's text, in ANY frame type -
+    never a plain mnemonic echo ($4F) or the generic data ack ($5F)."""
+
+    def test_real_mailbox_prompt_is_a_hit(self):
+        frame = _maildrop_data(_REAL_MAILBOX_PROMPT_TEXT.encode("ascii"))
+        assert hw_check.is_mdcheck_scan_hit([frame]) is True
+
+    def test_4f_mnemonic_echo_is_not_a_hit(self):
+        assert hw_check.is_mdcheck_scan_hit([_cmd_resp(b"MV\x00")]) is False
+
+    def test_5f_ack_is_not_a_hit(self):
+        assert hw_check.is_mdcheck_scan_hit([_status_err(b"XX\x00")]) is False
+
+    def test_empty_frame_list_is_not_a_hit(self):
+        assert hw_check.is_mdcheck_scan_hit([]) is False
+
+    def test_hit_is_recognised_regardless_of_frame_type(self):
+        # Spec is explicit: a hit counts "gleich in welchem Frame-Typ" -
+        # carry the prompt text in a $4F-classified frame to confirm the
+        # frame KIND is never checked, only its text.
+        frame = _cmd_resp(_REAL_MAILBOX_PROMPT_TEXT.encode("ascii"))
+        assert hw_check.is_mdcheck_scan_hit([frame]) is True
+
+
+class TestScanForMdcheckMnemonic:
+    """P26.2: the search stops at the first hit and never probes the
+    remaining candidates."""
+
+    def test_stops_at_the_first_hit(self):
+        calls = []
+
+        def probe(mnemonic):
+            calls.append(mnemonic)
+            if mnemonic == b"MC":
+                return [_maildrop_data(_REAL_MAILBOX_PROMPT_TEXT.encode("ascii"))]
+            return [_cmd_resp(mnemonic + b"\x00")]
+
+        hit = hw_check.scan_for_mdcheck_mnemonic(
+            [b"MA", b"MB", b"MC", b"MD", b"ME"], probe
+        )
+
+        assert hit == b"MC"
+        assert calls == [b"MA", b"MB", b"MC"]  # MD/ME never probed
+
+    def test_returns_none_when_nothing_hits(self):
+        def probe(mnemonic):
+            return [_cmd_resp(mnemonic + b"\x00")]
+
+        assert hw_check.scan_for_mdcheck_mnemonic([b"MA", b"MB"], probe) is None
