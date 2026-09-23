@@ -3303,6 +3303,31 @@ def test_maildrop_session(
     # finish and close first.
     session.enter_host_mode()
 
+    # P35.1: MailDropSession keeps no record of its own traffic unless
+    # given a trace callback -- without one, the 23.09.2026 'L' -> '***
+    # What?' finding (P35) was impossible to diagnose from the log
+    # alone. Mirrors Session.send_and_read_until_idle()'s own '>> hex=...
+    # text=...' / '<< hex=... text=...' format (P20 Teil B) so every
+    # maildrop_session run now shows exactly what MailDropSession itself
+    # sent and received, not just the harness's own step-level log lines.
+    def _trace_maildrop_session(kind: str, data: bytes) -> None:
+        if kind == "tx":
+            log.line(
+                f">> hex={data.hex(' ').upper()} "
+                f"text={format_bytes_with_controls(data)}"
+            )
+        elif kind == "rx":
+            log.line(
+                f"<< hex={data.hex(' ').upper()} "
+                f"text={format_bytes_with_controls(data)}"
+            )
+        else:  # "discard" (P35.3)
+            log.line(
+                f"INFO: discarded {len(data)} byte(s) before command: "
+                f"hex={data.hex(' ').upper()} "
+                f"text={format_bytes_with_controls(data)}"
+            )
+
     channel = SerialManagerChannel(session.sm)
     md_session = MailDropSession(
         channel,
@@ -3312,6 +3337,7 @@ def test_maildrop_session(
         # (CLAUDE.md's "MailDrop session" gotcha) -- MailDropSession
         # itself does not know the channel model at all.
         can_open=lambda: (True, ""),
+        trace=_trace_maildrop_session,
     )
 
     app = QCoreApplication.instance()
