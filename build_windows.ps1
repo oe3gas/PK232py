@@ -18,7 +18,20 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = $PSScriptRoot
 $DistDir  = Join-Path $RepoRoot "dist"
 
+# Splash image embedded during the onefile unpack phase (Windows only).
+# main.py deletes Nuitka's feedback file once MainWindow is painted, which
+# dismisses it. Resolved against the repo root so the preflight check below
+# works regardless of the caller's current directory.
+$SplashPng = Join-Path $RepoRoot "assets\splash.png"
+
 Write-Host "Building PK232PY v$Version for Windows (onefile)..."
+
+# Fail fast if the splash asset is missing: Nuitka would otherwise abort with a
+# less obvious error, or (worse) produce an EXE with no splash at all.
+if (-not (Test-Path $SplashPng)) {
+    Write-Error "Splash image not found: $SplashPng  (expected a 600x300 PNG)"
+    exit 1
+}
 
 # Ensure output directory exists
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
@@ -36,6 +49,7 @@ python -m nuitka `
     --include-package=serial `
     --include-package=markdown `
     --windows-console-mode=disable `
+    --onefile-windows-splash-screen-image="$SplashPng" `
     --windows-product-name="PK232PY" `
     --windows-product-version="$Version.0" `
     --windows-company-name="OE3GAS" `
