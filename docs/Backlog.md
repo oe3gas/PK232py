@@ -1,6 +1,6 @@
 # PK232PY — Development Backlog
 
-**Last updated:** 2026-09-23 (P31 — MailDrop prompt bracket variants, recovery-path hardening, P29 priority lowered)
+**Last updated:** 2026-09-23 (P34 — echo-without-execution tool safety gate, TNC starting-state question open)
 **Current version:** v0.1 (development)
 
 ---
@@ -742,6 +742,25 @@ Kein neuer "Stop TX"-Button nötig — die vorhandenen Pfade decken alle Modes a
   classification as documentation of a known TNC behaviour, but do not
   prioritise further work on it without a new, distinct failure to
   investigate.
+
+### What state was the TNC in at the start of the 23.09.2026 mdcheck_scan run? (P34, open)
+- The whole verbose phase of a `mdcheck_scan` run on Device B got nothing
+  back but each line's own echo, never a `cmd:` prompt (see CLAUDE.md's
+  "Echo without execution" gotcha) — `PACKET`, `MYCALL`, `XMITOK`,
+  `MDCHECK`, the subject/body lines and `/EX`, `B` all just echoed.
+  Entering and leaving Host Mode cleared it again, so this is a starting
+  *state*, not a hardware fault (unlike the separate PK-232-hang finding).
+- Open: what state was this — Converse (the best guess, since it fits
+  "echoes typed text") or something else (Transparent mode, a leftover
+  half-typed command)? Unknown, and not reproduced on purpose.
+- If this happens again, measure it deliberately rather than just
+  recovering past it again: before running `normalize()`'s resync, send a
+  single distinguishing probe (e.g. a command only Converse answers a
+  particular way to) and log the raw response, so the state can be
+  identified with evidence instead of "most likely". `tools/hw_check.py`
+  now recovers from this safely either way (P34,
+  `confirm_command_prompt()`), so there is no urgency — this is a curiosity
+  worth settling if it recurs, not a blocker.
 
 ---
 
