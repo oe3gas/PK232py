@@ -69,6 +69,7 @@ EPROMs ist der eigentliche Beweis (siehe §5).
 | A | 11.09.1995 | PACTOR | `MI` = MFILTER (nicht MDCHECK) — siehe Anmerkung unten. | T115, `CLAUDE.md` |
 | B | 01.08.1991 | MBX | Nur die eckige Prompt-Klammer (`[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >`) ist von diesem Gerät gemessen — ein einzelner Datenpunkt, kein Vergleichsscan gegen Gerät A. | `hw_logs/20260923_184302_maildrop_session.log` (P31) |
 | B | 01.08.1991 | MBX | MDCHECK hat kein Host-Mode-Kürzel — `mdcheck_scan` fand keinen Treffer unter denselben 23 Kandidaten wie auf Gerät A. Der Befund gilt damit über zwei Firmwaregenerationen (MBX + PACTOR). | T118, `hw_logs/20260923_203256_mdcheck_scan.log` (P34) |
+| B | 01.08.1991 | MBX | `MDCHECK` öffnet die Mailbox zuverlässig (Prompt erkannt), aber der direkt folgende `L`-Befehl antwortet mit `*** What?` — auf Gerät A funktioniert dieselbe Abfolge anstandslos. Ursache noch offen, siehe §6. | T119 (P35), `hw_logs/20260923_204041_maildrop_session.log` |
 | C | 30.12.1988 | BASE | MailDrop fehlt auf diesem Gerät — direkt mit einem Terminalprogramm (PuTTY) geprüft, nicht über die App. | Betreiberangabe, 23.09.2026 |
 
 **Kandidat für einen echten Generationsunterschied:** `MI` löst auf Gerät A
@@ -411,6 +412,20 @@ fahren:
   wird aus Banner-Datum + Query-Nachbarn derselben Generation abgeleitet. Wo ein
   direkter Befehl empirisch interessiert, lässt er sich am Gerät gezielt (mit
   gültigem Argument, Sender aus/Dummy-Load) manuell testen.
+- **Verhält sich `L` (MailDrop LIST) auf MBX (Gerät B) anders als auf
+  PACTOR (Gerät A)? (P35, 23.09.2026, offen.)** Auf Gerät A öffnet
+  `MDCHECK` die Mailbox und `L` listet zuverlässig (P20–P24). Auf Gerät
+  B öffnete `MDCHECK` die Mailbox ebenso (Prompt erkannt,
+  `bracket='square'`, `free=18340`), aber der direkt folgende `L`-Befehl
+  antwortete mit `*** What?`
+  (`hw_logs/20260923_204041_maildrop_session.log`). Drei aus dem
+  Mitschnitt nicht unterscheidbare Ursachen — ein Software-Artefakt
+  (überzähliges LF nach `MDCHECK`, seitdem entfernt, P35.2), ein echter
+  Generationsunterschied im MailDrop-Befehlssatz, oder verschmolzene
+  Antwortpuffer ohne Protokollursache — siehe CLAUDE.md, "Mailbox
+  commands terminate with CR only". `MailDropSession` protokolliert
+  jetzt jeden Rohblock (P35.1); ein erneuter Lauf auf Gerät B mit
+  aktivem Mitschnitt sollte klären, welche der drei zutrifft.
 
 Nach dem ersten realen Dreifach-Scan lassen sich fast alle L→H hochstufen — und
 genau die Befehle, die zwischen 1988/1991/1995 kippen, sind die gesuchten
