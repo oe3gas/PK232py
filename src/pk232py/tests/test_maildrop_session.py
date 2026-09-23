@@ -295,6 +295,63 @@ class TestAbortRecoversWithoutFalseSuccess:
         assert rec.failures
 
 
+class _NonConfirmingChannel(FakeChannel):
+    """enter_host_mode() is called but never actually confirms (P31.2:
+    "bleibt die Bestaetigung aus") - is_host_mode stays False forever, so
+    _enter_host_mode_or_fail()'s own wait must time out and report
+    FAILED, never CLOSED."""
+
+    def enter_host_mode(self) -> None:
+        self.enter_calls += 1
+        # Deliberately does NOT set self._host_mode = True.
+
+
+class TestRecoveryPath:
+    """P31.2: the recovery path (P27.2) has six steps - /EX, B, Ctrl-C+CR,
+    confirm cmd:, re-enter Host Mode, confirm THAT. All six must run, and
+    the session must never report CLOSED without a confirmed Host Mode
+    (P15's rule)."""
+
+    _NO_PROMPT_SCRIPT = {
+        b"\x03\r": b"\r\ncmd:cmd:",
+        b"MDCHECK\r\n": b"MDCHECK\r\n",  # no prompt at all - triggers _recover()
+        b"/EX\r": b"",
+        b"B\r": b"",
+    }
+
+    def test_all_six_steps_run_and_end_in_closed(self):
+        channel = FakeChannel(self._NO_PROMPT_SCRIPT)
+        session = _fast(MailDropSession(channel, _can_open_yes))
+        rec = _Recorder().connect(session)
+
+        session.open()
+        assert _pump_until(lambda: session.state in ("CLOSED", "FAILED"))
+
+        # 1: open()'s own attempt (\x03\r, MDCHECK\r\n), then recovery's
+        # own steps 1-4 (/EX, B, \x03\r again for its OWN cmd: check).
+        assert channel.writes == [
+            b"\x03\r", b"MDCHECK\r\n", b"/EX\r", b"B\r", b"\x03\r",
+        ]
+        assert channel.enter_calls == 1        # step 5
+        assert session.state == "CLOSED"       # step 6 confirmed it
+        assert "ACTIVE" not in rec.state_changes
+
+    def test_ends_in_failed_when_host_mode_never_confirms(self):
+        channel = _NonConfirmingChannel(self._NO_PROMPT_SCRIPT)
+        session = _fast(MailDropSession(channel, _can_open_yes))
+        rec = _Recorder().connect(session)
+
+        session.open()
+        assert _pump_until(
+            lambda: session.state in ("CLOSED", "FAILED"), timeout=3.0
+        )
+
+        assert session.state == "FAILED"       # never CLOSED without proof
+        assert channel.enter_calls == 1        # step 5 WAS attempted
+        assert rec.failures
+        assert "verbose mode" in rec.failures[-1]
+
+
 class TestClaimGuardsAgainstOverlap:
     def test_second_claim_rejected_until_the_first_releases(self):
         channel = FakeChannel({})
