@@ -89,6 +89,28 @@ _PROMPT_MARKER  = b"cmd:"
 _SOH_BYTE       = 0x01
 
 
+def _wakeup_log_message(resp: bytes) -> tuple[int, str]:
+    """P35.4: what to log after the wakeup read, and at what level.
+
+    Pulled out as its own pure function so the truthfulness of the log
+    line can be unit-tested without a real serial port. Used to log
+    "TNC at cmd: prompt" unconditionally — even when *resp* never
+    actually contained 'cmd:' at all (23.09.2026,
+    hw_logs/20260923_204041_maildrop_session.log: wakeup got back
+    '*\\<CR><LF>', no 'cmd:', and the log still claimed the prompt was
+    seen). This only changes what gets logged, not what happens next —
+    the existing fallthrough logic (setting _verbose_ready etc.) is
+    unchanged; the wakeup's own CR-fallback behaviour is P29's separate
+    item."""
+    if _PROMPT_MARKER in resp:
+        return logging.INFO, "TNC at cmd: prompt"
+    return (
+        logging.WARNING,
+        f"wakeup answered without prompt ({len(resp)} bytes) -- "
+        f"continuing: {resp.hex(' ')}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Background reader thread
 # ---------------------------------------------------------------------------
@@ -515,7 +537,8 @@ class SerialManager(QObject):
                 self.host_mode_changed.emit(True)
                 return
 
-            logger.info("TNC at cmd: prompt")
+            level, message = _wakeup_log_message(resp)
+            logger.log(level, message)
             self._verbose_ready = True
             self.status_message.emit("TNC ready (verbose)")
             logger.info("Init complete — TNC in verbose mode")
