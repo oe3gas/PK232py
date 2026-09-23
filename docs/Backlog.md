@@ -1,6 +1,6 @@
 # PK232PY — Development Backlog
 
-**Last updated:** 2026-09-23 (P27 — MailDrop protocol/session layer, legacy module deleted)
+**Last updated:** 2026-09-23 (P31 — MailDrop prompt bracket variants, recovery-path hardening, P29 priority lowered)
 **Current version:** v0.1 (development)
 
 ---
@@ -710,6 +710,38 @@ Kein neuer "Stop TX"-Button nötig — die vorhandenen Pfade decken alle Modes a
 ### AMTOR Dest (le_dest) Autofill
 - AMTOR le_dest (Ziel-SELCAL) is editable but not pre-filled
 - Consider populating from last used callsign or history list
+
+### MailDrop prompt — when does the device-name bracket switch? (P31, 2026-09-23)
+- `PromptInfo.bracket` (`maildrop/protocol.py`, P31.1) now records whether a
+  given mailbox prompt used the round `(...)` or square `[...]` device-name
+  bracket. Both forms are hardware-confirmed (see CLAUDE.md's "MailDrop
+  facts" section), and each one so far has lined up with a specific EPROM
+  the operator had installed at the time (round = 11.09.1995/PACTOR-gen,
+  square = 01.08.1991/MBX-gen) — but that is only two data points from two
+  sessions, not a settled rule.
+- Open: is the bracket form purely a function of the installed EPROM (in
+  which case it would never change mid-session), or can it also depend on
+  something else (a parameter, a code path, an as-yet-unidentified firmware
+  state)? Log `bracket` on every future `maildrop_session` hardware run
+  (already wired into `tools/hw_check.py`'s summary, P31.3) and collect
+  anomalies before treating "bracket ⇔ EPROM" as confirmed.
+
+### P29 — wakeup CR-fallback, priority lowered (2026-09-23)
+- The wakeup logic's CR-fallback classification (`tools/hw_check.py`,
+  `"TNC already awake -- needs CR (see P29)"`, exercised by
+  `test_hw_check.py`) remains a reasonable thing to have — a TNC that is
+  already past the `*` prompt and just needs a bare CR to re-sync is a real
+  case worth classifying distinctly.
+- **Priority lowered:** P31's investigation of the 23.09.2026 session
+  failures found the actual root cause was **not** this code path at all —
+  it was the TNC hardware hanging outright (see CLAUDE.md, "The PK-232 can
+  hang and stop responding to anything at all"). The 18:01 wakeup failure
+  that originally motivated treating P29 as urgent is now explained by that
+  hang, not by any gap in the CR-fallback classification itself. No
+  hardware evidence has shown a real P29 defect since — keep the
+  classification as documentation of a known TNC behaviour, but do not
+  prioritise further work on it without a new, distinct failure to
+  investigate.
 
 ---
 
