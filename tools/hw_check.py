@@ -50,13 +50,25 @@ required except for T101:
             $60 frames and logs every frame that comes back, unfiltered.
             No write/kill mailbox commands, no transmission. See
             docs/P24_MailDrop_HostMode_Spec.md.
+    mdcheck_scan
+            Read-only search for the Host Mode mnemonic MDCHECK actually
+            uses (P26.2) - the TRM's own 'MI' entry for it contradicts the
+            hardware-confirmed 'MI' = MFILTER (T115), so the real mnemonic
+            is unknown and this finds it by measurement instead of
+            guessing. Creates one test message over the verbose path
+            (like maildrop_host), then queries every 'M?' mnemonic (A-Z)
+            except the denylisted MO/MI/MM, stopping at the first response
+            that contains the mailbox prompt text. Query-only - no
+            candidate writes, kills, or transmits. See
+            docs/P26_MDCHECK_Mnemonic_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
-            and recorded individually), and NOT mi/maildrop/maildrop_host
-            (mi is fine alone but grouped with its guided counterpart;
-            maildrop and maildrop_host are interactive/exploratory), so
-            each must be run on its own.
+            and recorded individually), and NOT
+            mi/maildrop/maildrop_host/mdcheck_scan (mi is fine alone but
+            grouped with its guided counterpart; maildrop, maildrop_host
+            and mdcheck_scan are interactive/exploratory), so each must be
+            run on its own.
 
 Usage::
 
@@ -70,6 +82,8 @@ Usage::
     python tools/hw_check.py --port COM6 mi
     python tools/hw_check.py --port COM6 maildrop
     python tools/hw_check.py --port COM6 maildrop_host
+    python tools/hw_check.py --port COM6 mdcheck_scan
+    python tools/hw_check.py --dry-run mdcheck_scan
     python tools/hw_check.py --dry-run all      # no port opened at all
 
 ------------------------------------------------------------------------------
@@ -828,6 +842,71 @@ def should_run_maildrop_host_probe_b(captured_a: list) -> bool:
     return not has_mailbox_data_frame(captured_a)
 
 
+# ---------------------------------------------------------------------------
+# P26.2 -- mdcheck_scan: find the Host Mode mnemonic for MDCHECK
+# ---------------------------------------------------------------------------
+
+# 'M?' mnemonics mdcheck_scan never sends, with the TRM-cited reason each
+# is a real command with its own meaning/side effect, not a MDCHECK
+# candidate (P26.2). MI is additionally excluded because it is already
+# identified (T115: MI = MFILTER, hardware-confirmed) - sending it again
+# here would tell us nothing new.
+MDCHECK_SCAN_DENYLIST: dict = {
+    b"MO": "MORSE -- operating-mode switch",
+    b"MI": "MFILTER -- already identified (T115), not a candidate",
+    b"MM": "MEMORY -- reads memory and increments the ADDRESS counter",
+}
+
+
+def mdcheck_scan_candidates() -> list:
+    """The 23 'M?' mnemonics mdcheck_scan actually queries (P26.2): every
+    letter A-Z except the three in MDCHECK_SCAN_DENYLIST. The rest are, per
+    the TRM, parameter queries or harmless direct commands (MH MHEARD
+    prints a list, MV MAILDROP, MD MDIGI, MC MCON, ME MBELL, MF MFROM, MT
+    MTO, MN MONITOR, MX MAXFRAME, MW MARSDISP, ...) - none writes, kills,
+    or transmits."""
+    return [
+        bytes([ord('M'), letter])
+        for letter in range(ord('A'), ord('Z') + 1)
+        if bytes([ord('M'), letter]) not in MDCHECK_SCAN_DENYLIST
+    ]
+
+
+# The two fixed markers of the real mailbox prompt (hardware-confirmed
+# 22.09.2026: '(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >') - a hit is
+# text containing BOTH, regardless of which Host Mode frame type carried
+# it, since a real hit is prompt TEXT, never a recognised command echo
+# (P26.2/P26.3).
+_MDCHECK_HIT_MARKERS = ("(AEA PK-232M", "free")
+
+
+def is_mdcheck_scan_hit(frames: list) -> bool:
+    """True if any frame in *frames* looks like the mailbox login prompt
+    (P26.2/P26.3). A plain $4F mnemonic echo (e.g. 'MV' + a value) or the
+    generic $5F data acknowledgement ('XX\\x00') contains neither marker
+    and is correctly NOT a hit."""
+    return any(
+        all(marker in f.text for marker in _MDCHECK_HIT_MARKERS)
+        for f in frames
+    )
+
+
+def scan_for_mdcheck_mnemonic(
+    candidates: list, probe: Callable[[bytes], list],
+) -> Optional[bytes]:
+    """Try *candidates* in order, calling ``probe(mnemonic)`` for each and
+    returning the frames it captured, stopping at the FIRST hit (P26.2) -
+    the search must not send more query frames than needed to find the
+    answer. Returns the winning mnemonic, or None if nothing in the whole
+    list hit. Pure orchestration - *probe* does the actual I/O, so this is
+    unit-testable with a fake probe and no serial interface at all."""
+    for mnemonic in candidates:
+        frames = probe(mnemonic)
+        if is_mdcheck_scan_hit(frames):
+            return mnemonic
+    return None
+
+
 def run_maildrop_interactive(
     initial_state: str,
     initial_free: Optional[int],
@@ -1332,6 +1411,37 @@ class Session:
             if f is not match:
                 self.log.line(f"INFO: unrelated frame {f.data.hex()}")
         return match
+
+    def probe_mdcheck_mnemonic(self, mnemonic: bytes, seconds: float = 1.5) -> list:
+        """Send one bare 'M?' Host Mode query (mdcheck_scan, P26.2) and
+        return EVERY frame captured for *seconds*.
+
+        Unlike query_host(), this does NOT filter to frames whose payload
+        starts with *mnemonic* - a genuine MDCHECK hit is the mailbox
+        login prompt's own text, which looks nothing like a mnemonic
+        echo, so is_mdcheck_scan_hit() needs the full, unfiltered capture.
+        """
+        if self.dry_run:
+            frame_bytes = build_command(mnemonic, b"")
+            self.log.line(
+                f"[dry-run] >> {frame_bytes.hex(' ').upper()}  "
+                f"(mdcheck_scan: {mnemonic!r})"
+            )
+            return []
+        captured: list = []
+        self.sm.frame_received.connect(captured.append)
+        try:
+            self.log.line(f">> HOST query {mnemonic!r} (mdcheck_scan)")
+            self.sm.send_command(mnemonic, b"")
+            self._pump(seconds)
+        finally:
+            self.sm.frame_received.disconnect(captured.append)
+        for f in captured:
+            self.log.line(
+                f"<< ctl=0x{f.ctl:02X} ch={f.channel} data={f.data!r} "
+                f"text={f.text!r}"
+            )
+        return captured
 
     def send_frame(self, frame: bytes, note: str = "") -> None:
         """Send one already-built Host Mode frame exactly as the app would.
@@ -2361,6 +2471,114 @@ def test_maildrop_host(session: Session, log: RunLog) -> None:
     )
 
 
+def test_mdcheck_scan(session: Session, log: RunLog) -> None:
+    log.line(
+        "--- mdcheck_scan (P26.2) -- find the Host Mode mnemonic for MDCHECK ---"
+    )
+    session.normalize()
+    candidates = mdcheck_scan_candidates()
+
+    if session.dry_run:
+        log.line(
+            f"[dry-run] would create a test message over the known verbose "
+            f"path (MDCHECK/S/subject/text/EX/L/B, like maildrop_host), "
+            f"verbose-query XMITOK, enter Host Mode, confirm y/N, then try "
+            f"these {len(candidates)} candidates in order (stopping at the "
+            f"first hit), then leave Host Mode and normalize() again:"
+        )
+        for mnemonic in candidates:
+            frame_bytes = build_command(mnemonic, b"")
+            log.line(
+                f"[dry-run]   >> {frame_bytes.hex(' ').upper()}  "
+                f"({mnemonic.decode()})"
+            )
+        log.line(f"[dry-run] denylisted, never sent ({len(MDCHECK_SCAN_DENYLIST)}):")
+        for mnemonic, reason in MDCHECK_SCAN_DENYLIST.items():
+            log.line(f"[dry-run]   -- {mnemonic.decode()}: {reason}")
+        log.result("MDCHECK_SCAN", "INFO", "dry-run, nothing sent")
+        return
+
+    xmitok = parse_query_value("XMITOK", session.query("XMITOK"))
+    log.line(f"XMITOK: {xmitok!r}")
+    if xmitok is not None and xmitok.strip().upper() == "ON":
+        print()
+        print("*** XMITOK is ON ***")
+        print(
+            "mdcheck_scan only sends Host Mode QUERIES -- none of the "
+            f"{len(candidates)} candidates writes, kills, or transmits -- "
+            "but XMITOK ON means the TNC would key the transmitter if "
+            "anything unexpected did."
+        )
+        log.line("WARNING: XMITOK is ON")
+
+    log.line("Step 1: creating a test message over the known-safe verbose path")
+    session.send_and_read_until_idle(b"MDCHECK\r\n")
+    session.send_and_read_until_idle(b"S OE3GAS\r")
+    session.send_and_read_until_idle(b"mdcheck_scan test\r")
+    session.send_and_read_until_idle(b"created for the mdcheck_scan probe\r")
+    store_resp = session.send_and_read_until_idle(MAILBOX_ABANDON_ENTRY_COMMAND)
+    msg_number = parse_stored_message_number(
+        store_resp.decode("ascii", errors="replace")
+    )
+    log.line(f"Test message stored as # {msg_number}")
+    session.send_and_read_until_idle(MAILBOX_EXIT_COMMAND)
+
+    session.enter_host_mode()
+    hit: Optional[bytes] = None
+    try:
+        session.drain_pending_frames()
+
+        print()
+        print(
+            f"About to send up to {len(candidates)} Host Mode query frames "
+            f"('M?' with no argument, A-Z) looking for the MDCHECK "
+            f"mnemonic. Denylisted, never sent: "
+            f"{[m.decode() for m in MDCHECK_SCAN_DENYLIST]}."
+        )
+        print(
+            "Every candidate is a query only -- nothing writes, kills, or "
+            "transmits."
+        )
+        if input("Proceed? [y/N] ").strip().lower() != "y":
+            log.result("MDCHECK_SCAN", "INFO", "scan skipped by operator")
+            return
+
+        hit = scan_for_mdcheck_mnemonic(candidates, session.probe_mdcheck_mnemonic)
+
+        if hit is not None:
+            log.line(
+                f"HIT: {hit.decode()} -- confirming with L, then leaving "
+                f"the mailbox"
+            )
+            session.send_maildrop_host_frame(b"L\r")
+            session.send_maildrop_host_frame(MAILBOX_EXIT_COMMAND)
+    finally:
+        session.exit_host_mode()
+
+    host_after_resp = session.query("HOST")
+    if "cmd:" not in host_after_resp:
+        log.line(
+            f"WARNING: no 'cmd:' prompt seen after leaving Host Mode -- "
+            f"raw response: {host_after_resp!r}"
+        )
+    session.normalize()
+
+    if hit is not None:
+        log.result(
+            "MDCHECK_SCAN", "INFO",
+            f"{hit.decode()} looks like the MDCHECK mnemonic -- its "
+            f"response contained the mailbox prompt text"
+        )
+    else:
+        log.result(
+            "MDCHECK_SCAN", "INFO",
+            f"no hit among {len(candidates)} candidates -- MDCHECK may not "
+            f"be reachable as a two-letter Host Mode mnemonic at all; a "
+            f"MailDrop dialog would then have to drive the mailbox over "
+            f"the verbose path instead (see Backlog.md)"
+        )
+
+
 # ===========================================================================
 # CLI
 # ===========================================================================
@@ -2373,15 +2591,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "(P14/P17/P20/P24). t17/t103/pthuff/t111/t112/mi only query/"
             "set parameters; siam is receive-only but needs a tuned "
             "receiver; maildrop is an interactive local (serial, not "
-            "radio) recording terminal; maildrop_host is a read-only "
-            "Host Mode probe; t101 TRANSMITS and needs a second receiver."
+            "radio) recording terminal; maildrop_host and mdcheck_scan "
+            "are read-only Host Mode probes; t101 TRANSMITS and needs a "
+            "second receiver."
         ),
     )
     p.add_argument(
         "test",
         choices=[
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
-            "mi", "maildrop", "maildrop_host", "all",
+            "mi", "maildrop", "maildrop_host", "mdcheck_scan", "all",
         ],
     )
     p.add_argument("--port", help="Serial port, e.g. COM3 (default: pk232py.ini)")
@@ -2444,6 +2663,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "mi":       [lambda s, l: test_mi(s, l)],
         "maildrop": [lambda s, l: test_maildrop(s, l, args.skip_power_cycle)],
         "maildrop_host": [lambda s, l: test_maildrop_host(s, l)],
+        "mdcheck_scan": [lambda s, l: test_mdcheck_scan(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
