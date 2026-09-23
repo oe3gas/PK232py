@@ -906,6 +906,38 @@ Grows over time.
   unanswered one aborts instead of being logged and quietly continued
   past, the same class of fix as P15's "no reported success without
   proof".
+- **Mailbox commands (and `MDCHECK`) terminate with CR only, not
+  CR+LF (P35, 2026-09-23).** The TRM terminates commands with a bare
+  CR; the trailing LF `MailDropSession` used to send was a software
+  addition, not a protocol requirement. `MailDropSession._send()` now
+  sends `\r` for every mailbox command including `MDCHECK` — the one
+  place in that module still using `\r\n` before this. **Not a
+  retroactive bugfix:** every successful MailDrop run to date (P20–P24,
+  P27–P31) used the `\r\n` form and worked fine on Device A (PACTOR,
+  11.09.1995) — this is alignment with the manual, not a claim that
+  `\r\n` was broken there. **`L` on Device B (MBX, 01.08.1991) is still
+  unexplained** (`hw_logs/20260923_204041_maildrop_session.log`):
+  `open()` PASSed (Host Mode left, `MDCHECK` recognised, `bracket
+  ='square'`, `free=18340`), but the very next command, `L`, got `***
+  What?` back. Three indistinguishable-from-the-log hypotheses: (1) the
+  orphaned LF from `MDCHECK\r\n` got processed by the mailbox as its own
+  empty command, and that stray response bled into `L`'s read window;
+  (2) a genuine MBX-generation firmware difference; (3) the two
+  responses were simply concatenated in one buffer with no protocol
+  cause at all. `MailDropSession` now has an optional raw trace callback
+  (`trace: Callable[[str, bytes], None]`, `("tx"|"rx"|"discard", data)`,
+  P35.1 — `None` by default, no behaviour change unless a caller wires
+  it; `tools/hw_check.py`'s `maildrop_session` subcommand does) that
+  logs every raw block sent/received, exactly like
+  `Session.send_and_read_until_idle()` already does — the next real run
+  will show what actually came back after `MDCHECK` and after `L`, and
+  settle which hypothesis is correct. Independently of that: `parse_error()`
+  now only looks at what comes after a command's own echoed line
+  (`protocol.split_after_echo()`, matched on `<command>\r\n` as a whole
+  unit — a bare substring search would wrongly match `L` inside the
+  prompt's own `(B,E,K,L,R,S)` command list) — a stray leftover fragment
+  in front of the real echo can no longer be misattributed to the
+  following command's result.
 - **A Windows console turns a typed Ctrl-Z into an `EOFError`, not the
   two literal characters `^`/`Z` (found 22.09.2026, P23).** An operator
   trying to end a MailDrop message with the real Ctrl-Z key closed the
