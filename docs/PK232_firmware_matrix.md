@@ -68,6 +68,7 @@ EPROMs ist der eigentliche Beweis (siehe §5).
 | A | 11.09.1995 | PACTOR | Der gesamte unter `CLAUDE.md` → "Known Gotchas" dokumentierte Bestand an Hardware-Befunden (Mnemonics, MailDrop-Ablauf, Packet-/Channel-Verhalten, runde Prompt-Klammer, …) stammt von diesem Gerät. | `hw_logs/` (P9–P31), `CLAUDE.md` |
 | A | 11.09.1995 | PACTOR | `MI` = MFILTER (nicht MDCHECK) — siehe Anmerkung unten. | T115, `CLAUDE.md` |
 | B | 01.08.1991 | MBX | Nur die eckige Prompt-Klammer (`[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >`) ist von diesem Gerät gemessen — ein einzelner Datenpunkt, kein Vergleichsscan gegen Gerät A. | `hw_logs/20260923_184302_maildrop_session.log` (P31) |
+| B | 01.08.1991 | MBX | MDCHECK hat kein Host-Mode-Kürzel — `mdcheck_scan` fand keinen Treffer unter denselben 23 Kandidaten wie auf Gerät A. Der Befund gilt damit über zwei Firmwaregenerationen (MBX + PACTOR). | T118, `hw_logs/20260923_203256_mdcheck_scan.log` (P34) |
 | C | 30.12.1988 | BASE | MailDrop fehlt auf diesem Gerät — direkt mit einem Terminalprogramm (PuTTY) geprüft, nicht über die App. | Betreiberangabe, 23.09.2026 |
 
 **Kandidat für einen echten Generationsunterschied:** `MI` löst auf Gerät A
@@ -76,10 +77,12 @@ beide Befehle führt (bekannter Widerspruch im Handbuch selbst, T115,
 `CLAUDE.md`). Gerät A ist PACTOR-Generation, genau die Generation, die
 MFILTER laut §2 überhaupt erst einführt. Gerät B (MBX-Generation, eine
 Stufe früher) hat MFILTER laut der Hypothese in §4 noch **nicht** — dort
-könnte `MI` also tatsächlich MDCHECK bedeuten (oder gar nichts). Ungeprüft;
-genau dafür existiert `tools/hw_check.py mdcheck_scan` bereits (gebaut für
-T118, `docs/P26_MDCHECK_Mnemonic_Spec.md`) — ein Lauf auf Gerät B würde das
-direkt klären.
+könnte `MI` also tatsächlich MDCHECK bedeuten (oder gar nichts). **Weiterhin
+ungeprüft** — der Gerät-B-`mdcheck_scan`-Lauf oben klärt das NICHT: `MI`
+steht auf der Denyliste des Scans (gilt als bereits identifiziert, wird nie
+mitgesendet), auf keinem der beiden Geräte. Für diesen Kandidaten braucht es
+einen gezielten Lauf von `tools/hw_check.py mi` auf Gerät B, nicht
+`mdcheck_scan`.
 
 ---
 
