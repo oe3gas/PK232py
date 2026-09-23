@@ -1596,6 +1596,24 @@ class LoggingSerialPort:
         setattr(self._real_port, name, value)
 
 
+_INIT_PHASE_SOH = 0x01
+
+
+def classify_init_phase(sent: bytes, received: bytes) -> str:
+    """Turn the init phase's raw bytes into a plain-language hint for the
+    operator (P30.3) - a HELP, not a verdict; the raw bytes are always
+    logged above it regardless, so a wrong guess here costs nothing."""
+    if not received:
+        return "no data at all -- port held elsewhere or wrong port"
+    if _INIT_PHASE_SOH in received:
+        return "TNC still in Host Mode"
+    if received.strip(b"\r\n") == sent.strip(b"\r\n"):
+        return "TNC already awake -- needs CR (see P29)"
+    if b"cmd:" not in received:
+        return "banner truncated -- timeout too short"
+    return "wakeup answered normally"
+
+
 class _RunLogHandler(logging.Handler):
     """Forwards Python logging records into the same RunLog/log file the
     harness already writes to (P30.2's "raise pk232py.comm to DEBUG and
@@ -1613,6 +1631,20 @@ class _RunLogHandler(logging.Handler):
             self._log.line(f"[{record.name}] {self.format(record)}")
         except Exception:
             self.handleError(record)
+
+
+def _log_init_phase_summary(log: "RunLog", wrapper: "LoggingSerialPort") -> None:
+    """P30.3: a plain-language hint at the end of the run, from whatever
+    the init phase actually sent/received - never a replacement for the
+    raw bytes already logged above it."""
+    sent = bytes(wrapper.sent_total)
+    received = bytes(wrapper.received_total)
+    hint = classify_init_phase(sent, received)
+    log.line(
+        f"init phase summary: sent {len(sent)} B, received {len(received)} B "
+        f"-- {hint}"
+    )
+    log.result("MAILDROP_SESSION", "INFO", f"init phase: {hint}")
 
 
 # ===========================================================================
@@ -3290,15 +3322,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     }
 
     exit_code = 0
+    init_phase_summarized = False
     try:
         if not args.dry_run:
             session.connect()
+            if "port" in capture_box:
+                _log_init_phase_summary(log, capture_box["port"])
+                init_phase_summarized = True
         for fn in test_fns[args.test]:
             fn(session, log)
     except HWCheckError as exc:
         log.line(f"ERROR: {exc}")
         log.result(args.test, "FAIL", str(exc))
         exit_code = 1
+        if "port" in capture_box and not init_phase_summarized:
+            _log_init_phase_summary(log, capture_box["port"])
     except KeyboardInterrupt:
         log.line("ERROR: interrupted by operator")
         exit_code = 1
