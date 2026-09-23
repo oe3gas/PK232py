@@ -125,7 +125,7 @@ class _Recorder:
 # MailDropSession sends and response shapes hw_logs/ recorded for each.
 _HAPPY_SCRIPT = {
     b"\x03\r": b"\r\ncmd:cmd:",
-    b"MDCHECK\r\n": b"MDCHECK\r\n(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >\r\n",
+    b"MDCHECK\r": b"MDCHECK\r\n(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >\r\n",
     b"S OE3GAS\r": b"S OE3GAS\r\nSubject:\r\n",
     b"Test Subjekt\r": b"Test Subjekt\r\nEnter message, ^Z (CTRL-Z) or /EX to end\r\n\r\n",
     b"hello world\r": b"hello world\r\n",
@@ -236,7 +236,7 @@ class TestAbortRecoversWithoutFalseSuccess:
     def test_no_prompt_after_mdcheck_recovers_to_closed(self):
         script = {
             b"\x03\r": b"\r\ncmd:cmd:",
-            b"MDCHECK\r\n": b"MDCHECK\r\n",  # no prompt at all - fault injected
+            b"MDCHECK\r": b"MDCHECK\r\n",  # no prompt at all - fault injected
             b"/EX\r": b"",
             b"B\r": b"",
         }
@@ -258,7 +258,7 @@ class TestAbortRecoversWithoutFalseSuccess:
     def test_no_prompt_and_no_cmd_ends_in_failed(self):
         script = {
             b"\x03\r": b"\r\ncmd:cmd:",
-            b"MDCHECK\r\n": b"MDCHECK\r\n",  # no prompt - fault injected
+            b"MDCHECK\r": b"MDCHECK\r\n",  # no prompt - fault injected
             b"/EX\r": b"",
             b"B\r": b"",
             # Note: no b"\x03\r" -> "cmd:" response is scripted for the
@@ -314,7 +314,7 @@ class TestRecoveryPath:
 
     _NO_PROMPT_SCRIPT = {
         b"\x03\r": b"\r\ncmd:cmd:",
-        b"MDCHECK\r\n": b"MDCHECK\r\n",  # no prompt at all - triggers _recover()
+        b"MDCHECK\r": b"MDCHECK\r\n",  # no prompt at all - triggers _recover()
         b"/EX\r": b"",
         b"B\r": b"",
     }
@@ -327,10 +327,10 @@ class TestRecoveryPath:
         session.open()
         assert _pump_until(lambda: session.state in ("CLOSED", "FAILED"))
 
-        # 1: open()'s own attempt (\x03\r, MDCHECK\r\n), then recovery's
+        # 1: open()'s own attempt (\x03\r, MDCHECK\r), then recovery's
         # own steps 1-4 (/EX, B, \x03\r again for its OWN cmd: check).
         assert channel.writes == [
-            b"\x03\r", b"MDCHECK\r\n", b"/EX\r", b"B\r", b"\x03\r",
+            b"\x03\r", b"MDCHECK\r", b"/EX\r", b"B\r", b"\x03\r",
         ]
         assert channel.enter_calls == 1        # step 5
         assert session.state == "CLOSED"       # step 6 confirmed it
@@ -360,3 +360,121 @@ class TestClaimGuardsAgainstOverlap:
         assert session._claim() is False
         session._busy = False
         assert session._claim() is True
+
+
+class TestTraceCallback:
+    """P35.1: an optional raw trace callback -- tx before every send, rx
+    after every read (even an empty one), discard when stale bytes were
+    dropped before a command. Every OTHER test in this file passes no
+    trace at all (the default, None) and its behaviour is unchanged
+    under P35 -- that itself is evidence for the "no callback -> no
+    change" half of the Definition of Done."""
+
+    def test_tx_and_rx_traced_for_open(self):
+        channel = FakeChannel(_HAPPY_SCRIPT)
+        events: list = []
+        session = _fast(
+            MailDropSession(
+                channel, _can_open_yes,
+                trace=lambda kind, data: events.append((kind, data)),
+            )
+        )
+        rec = _Recorder().connect(session)
+
+        session.open()
+        assert _pump_until(lambda: session.state == "ACTIVE")
+
+        assert ("tx", b"\x03\r") in events
+        assert ("tx", b"MDCHECK\r") in events
+        assert any(
+            kind == "rx" and b"18536 free" in data for kind, data in events
+        )
+
+    def test_discard_traced_when_stale_bytes_were_pending(self):
+        channel = FakeChannel(_HAPPY_SCRIPT)
+        events: list = []
+        session = _fast(
+            MailDropSession(
+                channel, _can_open_yes,
+                trace=lambda kind, data: events.append((kind, data)),
+            )
+        )
+        rec = _Recorder().connect(session)
+
+        session.open()
+        assert _pump_until(lambda: session.state == "ACTIVE")
+
+        # Simulate a leftover fragment still in flight from a prior
+        # exchange (the P35 finding) sitting in the channel's buffer
+        # right before the next command is sent.
+        channel._pending.extend(b"stray leftover bytes")
+
+        session.list()
+        assert _pump_until(lambda: rec.listings or rec.failures)
+
+        assert ("discard", b"stray leftover bytes") in events
+
+    def test_no_trace_callback_means_no_behaviour_change(self):
+        channel = FakeChannel(_HAPPY_SCRIPT)
+        session = _fast(MailDropSession(channel, _can_open_yes))  # trace=None
+        rec = _Recorder().connect(session)
+
+        session.open()
+        assert _pump_until(lambda: session.state == "ACTIVE")
+        assert rec.prompts and rec.prompts[0].free == 18536
+
+
+class TestErrorAttributionAfterEcho:
+    """P35.3: parse_error() must only look at what came after the ECHO
+    of the command actually sent -- not the whole response buffer, which
+    (hw_logs/20260923_204041_maildrop_session.log, P35) can contain a
+    stray leftover fragment from a PRIOR command bleeding into this
+    one's own read window."""
+
+    def test_merged_buffer_error_not_attributed_to_list(self):
+        # An artificially merged buffer recreating the suspected shape:
+        # MDCHECK's own tail, a stray '*** What?' + reprinted prompt (the
+        # orphaned-LF artifact), THEN 'L's own real echo+response, all
+        # landing in ONE read window for list().
+        merged = (
+            b"You have mail.\r\n"
+            b"(AEA PK-232M)  18340 free  (B,E,K,L,R,S) >\r\n"
+            b"*** What?\r\n"
+            b"(AEA PK-232M)  18340 free  (B,E,K,L,R,S) >\r\n"
+            b"L\r\nMsg#    Size To     From   @ BBS  Date       Time   Title\r\n"
+            b"  1 PN    36 OE3GAS OE3GAS        22-Sep-26  18:00  Test\r\n"
+            b"(AEA PK-232M)  18340 free  (B,E,K,L,R,S) >\r\n"
+        )
+        script = dict(_HAPPY_SCRIPT)
+        script[b"L\r"] = merged
+        channel = FakeChannel(script)
+        session = _fast(MailDropSession(channel, _can_open_yes))
+        rec = _Recorder().connect(session)
+
+        session.open()
+        assert _pump_until(lambda: session.state == "ACTIVE")
+
+        session.list()
+        assert _pump_until(lambda: rec.listings or rec.failures)
+
+        assert rec.failures == []       # the stray '*** What?' must NOT surface
+        assert len(rec.listings) == 1
+        assert rec.listings[0][0].title == "Test"
+
+    def test_missing_echo_falls_back_to_whole_response_and_logs(self, caplog):
+        script = dict(_HAPPY_SCRIPT)
+        # No 'L\r\n' echo anywhere in this response at all.
+        script[b"L\r"] = b"*** What?\r\n(AEA PK-232M)  18340 free  (B,E,K,L,R,S) >\r\n"
+        channel = FakeChannel(script)
+        session = _fast(MailDropSession(channel, _can_open_yes))
+        rec = _Recorder().connect(session)
+
+        session.open()
+        assert _pump_until(lambda: session.state == "ACTIVE")
+
+        with caplog.at_level("WARNING"):
+            session.list()
+            assert _pump_until(lambda: rec.failures)
+
+        assert rec.failures == ["*** What?"]
+        assert any("no echo of" in r.message for r in caplog.records)
