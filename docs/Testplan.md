@@ -1,6 +1,6 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-23 — T118 answered on Device B (P34): no hit, same as Device A, across two firmware generations; run also exposed and fixed an echo-without-execution tool gap**
-**Previous stand: 2026-09-23 — T119 partial result on real hardware (P31): steps through MDCHECK confirmed, aborted at prompt recognition (fixed, re-run needed)**
+**Updated: 2026-09-23 — T119 partial result on Device B (P35): open PASS, list FAIL ('*** What?', cause open), recovery path fully confirmed**
+**Previous stand: 2026-09-23 — T118 answered on Device B (P34): no hit, same as Device A, across two firmware generations; run also exposed and fixed an echo-without-execution tool gap**
 
 ---
 
@@ -1528,7 +1528,22 @@ Both gaps are fixed under P31 (`protocol.py` now accepts both bracket
 forms; the harness waits for `MailDropSession.state` to reach `CLOSED`/
 `FAILED` before checking) — steps 2–13 are still unexercised.
 
-**Status:** ⬜ OPEN — re-run on real hardware needed after the P31 fixes.
+**Partial result, 23.09.2026, Device B (MBX, 01.08.1991)** (P35,
+`hw_logs/20260923_204041_maildrop_session.log`): step 1 (`open`)
+**PASS** — Host Mode left, `Ctrl-C` confirmed, `MDCHECK` recognised
+(`bracket='square'`, `free=18340`). Step 2 (`list_empty`) **FAIL** —
+`L` got `*** What?` back instead of a listing; cause not yet settled,
+see CLAUDE.md's "Mailbox commands terminate with CR only" gotcha for the
+three candidate explanations. The recovery/rückweg from P31 ran to
+completion and is fully confirmed: `leave()` → Host Mode re-entered →
+`HPOLL` answered → session state `CLOSED`. Fixed under P35 (MDCHECK now
+sent with `\r` not `\r\n`; `parse_error()` scoped to what comes after a
+command's own echo; `MailDropSession` now traces every raw block sent/
+received when a trace callback is wired, which `maildrop_session` now
+does) — steps 2–13 still unexercised, re-run needed with the trace
+active to see what actually came back after `MDCHECK` and after `L`.
+
+**Status:** ⬜ OPEN — re-run on real hardware needed after the P35 fixes.
 
 ---
 
