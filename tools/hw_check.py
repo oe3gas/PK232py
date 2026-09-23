@@ -140,11 +140,14 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import logging
 import re
 import sys
 import time
 from pathlib import Path
 from typing import Callable, Optional
+
+import serial  # only for the maildrop_session port-factory injection (P30.2)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SRC = _REPO_ROOT / "src"
@@ -1538,6 +1541,78 @@ def release_leftover_port(sm, log: "RunLog") -> bool:
     )
     sm.disconnect_port()
     return True
+
+
+class LoggingSerialPort:
+    """Thin pass-through wrapper around a real serial.Serial object
+    (P30.2). Logs write()/read()/reset_input_buffer()/close() with a
+    timestamp, hex AND text (control characters visible, matching every
+    other subcommand's own protocol log format) and keeps a running total
+    of every byte sent/received for the end-of-run summary; everything
+    else (in_waiting, is_open, rts, dtr, port, baudrate, flush(),
+    open(), ...) passes straight through unchanged via
+    __getattr__/__setattr__.
+
+    Injected ONLY for maildrop_session, via SerialManager's existing
+    set_port_factory() seam - chosen deliberately over monkeypatching:
+    the seam already exists for exactly this (a dev-only mock plugging
+    into a generic factory), so there is nothing smaller to build.
+    """
+
+    def __init__(self, real_port, log: "RunLog") -> None:
+        object.__setattr__(self, "_real_port", real_port)
+        object.__setattr__(self, "_log", log)
+        object.__setattr__(self, "sent_total", bytearray())
+        object.__setattr__(self, "received_total", bytearray())
+
+    def write(self, data: bytes):
+        self.sent_total.extend(data)
+        self._log.line(
+            f">> hex={data.hex(' ').upper()} text={format_bytes_with_controls(data)}"
+        )
+        return self._real_port.write(data)
+
+    def read(self, size: int = 1) -> bytes:
+        data = self._real_port.read(size)
+        if data:
+            self.received_total.extend(data)
+            self._log.line(
+                f"<< hex={data.hex(' ').upper()} text={format_bytes_with_controls(data)}"
+            )
+        return data
+
+    def reset_input_buffer(self) -> None:
+        self._log.line("-- reset_input_buffer()")
+        self._real_port.reset_input_buffer()
+
+    def close(self) -> None:
+        self._log.line("-- close() (port released)")
+        self._real_port.close()
+
+    def __getattr__(self, name):
+        return getattr(self._real_port, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._real_port, name, value)
+
+
+class _RunLogHandler(logging.Handler):
+    """Forwards Python logging records into the same RunLog/log file the
+    harness already writes to (P30.2's "raise pk232py.comm to DEBUG and
+    write to the same file") - so serial_manager.py's own
+    ``logger.debug("Wakeup response (%d B): %s", ...)`` (and everything
+    else at DEBUG level) lands in hw_logs/..._maildrop_session.log
+    alongside the harness's own lines, instead of nowhere."""
+
+    def __init__(self, log: "RunLog") -> None:
+        super().__init__()
+        self._log = log
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self._log.line(f"[{record.name}] {self.format(record)}")
+        except Exception:
+            self.handleError(record)
 
 
 # ===========================================================================
@@ -3171,6 +3246,27 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     session = Session(port or "DRYRUN", baud or 9600, args.dry_run, log, app_config)
 
+    # P30.2: maildrop_session gets byte-level capture of the init phase
+    # (SerialManager's own set_port_factory() seam, no monkeypatching) and
+    # pk232py.comm raised to DEBUG, written into the same log file - both
+    # scoped to this one subcommand, since it is the one with a reported,
+    # otherwise-invisible wakeup failure (P30).
+    capture_box: dict = {}
+    comm_log_handler: Optional[_RunLogHandler] = None
+    comm_logger = logging.getLogger("pk232py.comm")
+    if args.test == "maildrop_session" and not args.dry_run:
+        def _capturing_port_factory(**kw):
+            wrapper = LoggingSerialPort(serial.Serial(**kw), log)
+            capture_box["port"] = wrapper
+            return wrapper
+
+        session.sm.set_port_factory(_capturing_port_factory)
+
+        comm_log_handler = _RunLogHandler(log)
+        comm_log_handler.setLevel(logging.DEBUG)
+        comm_logger.addHandler(comm_log_handler)
+        comm_logger.setLevel(logging.DEBUG)
+
     test_fns: dict[str, list] = {
         "t17":    [lambda s, l: test_t17(s, l)],
         "t103":   [lambda s, l: test_t103(s, l, app_config)],
@@ -3211,6 +3307,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             session.disconnect()
         except Exception as exc:  # pragma: no cover - best-effort cleanup
             log.line(f"(cleanup warning: {exc})")
+        if comm_log_handler is not None:
+            comm_logger.removeHandler(comm_log_handler)
+            comm_logger.setLevel(logging.NOTSET)
         log.summary()
         log.close()
 
