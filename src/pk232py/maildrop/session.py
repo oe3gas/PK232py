@@ -431,12 +431,25 @@ class MailDropSession(QObject):
             self._recover()
 
     def _enter_host_mode_or_fail(self) -> None:
+        """Steps 5+6 of the recovery path (P31.2): re-enter Host Mode over
+        the existing SerialManager path (step 5), then CONFIRM it before
+        ever reporting CLOSED (step 6) -- is_host_mode only flips True
+        once SerialManager's own Host Mode entry has actually completed
+        a real round trip with the TNC (the HOST 3 handshake's HPOLL ACK,
+        SERIAL_CONNECTION_STATE_MACHINE.md), so this is real evidence,
+        not a hopeful flag check (P15's "no reported success without
+        proof", CLAUDE.md).
+
+        Called only after the TNC was already confirmed at a working
+        cmd: prompt (leave()'s own 'B' -> cmd:, or _recover()'s Ctrl-C+CR
+        -> cmd:) -- so a failure here specifically means the TNC is
+        sitting in verbose mode, not that it is unresponsive."""
         self._channel.enter_host_mode()
         if not self._wait_for(lambda: self._channel.is_host_mode, self.HOST_MODE_TIMEOUT_S):
             self._set_state("FAILED")
             self.failed.emit(
-                "left the mailbox but could not re-enter Host Mode -- "
-                "power-cycle the TNC and reconnect"
+                "TNC is in verbose mode -- Host Mode re-entry did not "
+                "complete; reconnect the application"
             )
             return
         self._set_state("CLOSED")
@@ -444,8 +457,9 @@ class MailDropSession(QObject):
     def _recover(self) -> None:
         """The one recovery path, reachable from ACTIVE, OPENING or
         FAILED (P27.2): /EX (in case text entry is open), B, Ctrl-C+CR,
-        confirm cmd:, re-enter Host Mode. Never silently reports success
-        — that is the lesson from P15 (CLAUDE.md)."""
+        confirm cmd:, re-enter Host Mode, confirm THAT too
+        (_enter_host_mode_or_fail(), steps 5+6). Never silently reports
+        success — that is the lesson from P15 (CLAUDE.md)."""
         logger.info("MailDropSession: running the recovery path")
         try:
             self._send(b"/EX\r", max_total=self.CMD_TIMEOUT_S)
@@ -463,10 +477,14 @@ class MailDropSession(QObject):
             logger.warning("recovery: Ctrl-C step failed", exc_info=True)
 
         if "cmd:" not in resp:
+            # The TNC did not even answer Ctrl-C+CR - unlike a failed
+            # Host Mode re-entry (see _enter_host_mode_or_fail()), this
+            # means the TNC itself is not responding to anything, the
+            # PK-232 hang CLAUDE.md/P30 documented, not a mode mismatch.
             self._set_state("FAILED")
             self.failed.emit(
-                "could not confirm the TNC returned to cmd: after a "
-                "MailDrop error -- power-cycle the TNC and reconnect"
+                "TNC did not respond to Ctrl-C after a MailDrop error -- "
+                "it may be hung; power-cycle the TNC and reconnect"
             )
             return
 
