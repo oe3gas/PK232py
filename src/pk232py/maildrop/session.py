@@ -118,15 +118,26 @@ class MailDropSession(QObject):
 
     def __init__(
         self, channel, can_open: Callable[[], tuple], parent=None,
+        trace: Optional[Callable[[str, bytes], None]] = None,
     ) -> None:
         """*channel* is a SerialManagerChannel (or, in tests, a fake with
         the same write()/read_new()/enter_host_mode()/exit_host_mode()/
         is_host_mode shape). *can_open* is injected so this class never
         has to know the channel model — it just asks "is now OK?" and
-        gets (bool, reason)."""
+        gets (bool, reason).
+
+        *trace* (P35.1), when given, is called as trace(kind, data) with
+        the RAW bytes of every outgoing write ("tx"), every completed
+        idle-gap read ("rx", possibly empty on a timeout), and any stale
+        bytes dropped before a command is sent ("discard") — this class
+        keeps no record of its own traffic otherwise, which made the
+        23.09.2026 'L' -> '*** What?' finding (P35) impossible to
+        diagnose from the log alone. None (the default) means no tracing
+        at all — behaviour is unchanged from before P35."""
         super().__init__(parent)
         self._channel = channel
         self._can_open = can_open
+        self._trace = trace
         self._state = "CLOSED"
         self._busy = False
         self._busy_lock = threading.Lock()
@@ -168,7 +179,9 @@ class MailDropSession(QObject):
         or *max_total* elapses — the same idle-gap approach
         `tools/hw_check.py`'s `Session.read_until_idle()` already proved
         against real hardware, since the mailbox's own prompt is not
-        `cmd:` and cannot be waited for that way."""
+        `cmd:` and cannot be waited for that way. Traces the raw bytes
+        collected as "rx" (P35.1), even if empty (a timeout with nothing
+        received is itself useful evidence, not a gap to leave silent)."""
         idle = self.IDLE_S if idle is None else idle
         max_total = self.CMD_TIMEOUT_S if max_total is None else max_total
         deadline = time.monotonic() + max_total
@@ -182,12 +195,31 @@ class MailDropSession(QObject):
             elif time.monotonic() - idle_since >= idle:
                 break
             time.sleep(0.05)
-        return bytes(buf).decode("ascii", errors="replace")
+        raw = bytes(buf)
+        if self._trace is not None:
+            self._trace("rx", raw)
+        return raw.decode("ascii", errors="replace")
 
     def _send(
         self, data: bytes, idle: Optional[float] = None, max_total: Optional[float] = None,
     ) -> str:
-        self._channel.read_new()  # drop anything stale before sending
+        # Drop anything stale before sending (P35.3) — and make it
+        # visible when there WAS something: a byte still in flight from a
+        # PRIOR command's own trailing response (e.g. an orphaned LF
+        # processed by the mailbox as its own empty command, P35 finding)
+        # landing here instead of in that command's own read window is
+        # exactly the kind of gap that made 'L' -> '*** What?' impossible
+        # to diagnose from the log alone.
+        discarded = self._channel.read_new()
+        if discarded:
+            logger.info(
+                "MailDropSession: discarded %d byte(s) before sending %r: %r",
+                len(discarded), data, discarded,
+            )
+            if self._trace is not None:
+                self._trace("discard", discarded)
+        if self._trace is not None:
+            self._trace("tx", data)
         self._channel.write(data)
         return self._read_until_idle(idle=idle, max_total=max_total)
 
@@ -239,9 +271,16 @@ class MailDropSession(QObject):
                 self._recover()
                 return
 
-            # 'MDCHECK\r\n' — the exact bytes hw_logs/*_maildrop*.log show
-            # opening the mailbox from the top-level cmd: prompt.
-            resp = self._send(b"MDCHECK\r\n", idle=self.IDLE_S, max_total=self.OPEN_TIMEOUT_S)
+            # 'MDCHECK\r' (P35.2) — the TRM terminates commands with CR;
+            # the '\r\n' this used to send worked on every successful
+            # Device A (PACTOR, 1995) run, so this is not a retroactive
+            # bugfix for that device, just alignment with the manual. On
+            # Device B (MBX, 1991) the trailing LF is suspected (P35,
+            # unconfirmed without the trace above) of being processed by
+            # the mailbox as its own empty command line, producing a
+            # stray '*** What?' that then bled into the next command's
+            # response window.
+            resp = self._send(b"MDCHECK\r", idle=self.IDLE_S, max_total=self.OPEN_TIMEOUT_S)
             info = protocol.find_prompt(resp)
             if info is None:
                 self.failed.emit(f"no mailbox prompt after MDCHECK: {resp!r}")
@@ -256,6 +295,28 @@ class MailDropSession(QObject):
             self._recover()
 
     # -- commands in ACTIVE ----------------------------------------------
+
+    def _parse_error_after_echo(self, sent: bytes, resp: str) -> Optional[str]:
+        """P35.3: parse_error() returns the FIRST error line found
+        anywhere in *resp* — correct only once *resp* has been narrowed
+        to what came back for THIS command. Splits off *sent*'s own
+        echoed line (protocol.split_after_echo()) first, so a stray
+        leftover fragment sitting in front of the real echo (from a
+        PRIOR command's response window bleeding into this one, the
+        23.09.2026 'L' -> '*** What?' finding, P35) cannot be
+        misattributed to this command. Falls back to evaluating the
+        whole response — logged, not silent — if the echo cannot be
+        found at all."""
+        command_text = sent.decode("ascii", errors="replace").rstrip("\r\n")
+        remainder, echo_found = protocol.split_after_echo(command_text, resp)
+        if not echo_found:
+            logger.warning(
+                "MailDropSession: no echo of %r found in the response -- "
+                "evaluating the whole response for an error: %r",
+                command_text, resp,
+            )
+            return protocol.parse_error(resp)
+        return protocol.parse_error(remainder)
 
     def _run_command(self, worker: Callable[[], None]) -> None:
         if self._state != "ACTIVE":
@@ -272,9 +333,10 @@ class MailDropSession(QObject):
     def _list_worker(self) -> None:
         try:
             # 'L' — hw_logs/*_maildrop*.log, the mailbox's own list command.
-            resp = self._send(b"L\r")
+            cmd = b"L\r"
+            resp = self._send(cmd)
             self._report_prompt(resp)
-            err = protocol.parse_error(resp)
+            err = self._parse_error_after_echo(cmd, resp)
             if err is not None:
                 self.failed.emit(err)
                 return
@@ -290,9 +352,10 @@ class MailDropSession(QObject):
         try:
             # A space before the argument is required (CLAUDE.md: 'R2'
             # -> '*** Not enough', 'R 2' works).
-            resp = self._send(f"R {number}\r".encode("ascii"))
+            cmd = f"R {number}\r".encode("ascii")
+            resp = self._send(cmd)
             self._report_prompt(resp)
-            err = protocol.parse_error(resp)
+            err = self._parse_error_after_echo(cmd, resp)
             if err is not None:
                 self.failed.emit(err)
                 return
@@ -311,12 +374,13 @@ class MailDropSession(QObject):
     def _kill_worker(self, number: int) -> None:
         try:
             # 'K <n>' — hw_logs/20260922_184337_maildrop.log ('K 1' -> '*** Done.').
-            resp = self._send(f"K {number}\r".encode("ascii"))
+            cmd = f"K {number}\r".encode("ascii")
+            resp = self._send(cmd)
             self._report_prompt(resp)
             if "*** Done." in resp:
                 self.killed.emit(number)
                 return
-            err = protocol.parse_error(resp) or f"unexpected response: {resp!r}"
+            err = self._parse_error_after_echo(cmd, resp) or f"unexpected response: {resp!r}"
             self.failed.emit(err)
         except Exception as exc:
             logger.exception("MailDropSession.kill failed")
@@ -372,11 +436,12 @@ class MailDropSession(QObject):
 
             # '/EX' — every hw_logs/*_maildrop*.log message ends its text
             # entry this way ('^Z' does NOT end a message, CLAUDE.md).
-            resp = self._send(b"/EX\r", max_total=self.CMD_TIMEOUT_S)
+            cmd = b"/EX\r"
+            resp = self._send(cmd, max_total=self.CMD_TIMEOUT_S)
             self._report_prompt(resp)
             m = _STORED_RE.search(resp)
             if not m:
-                err = protocol.parse_error(resp) or f"no confirmation: {resp!r}"
+                err = self._parse_error_after_echo(cmd, resp) or f"no confirmation: {resp!r}"
                 self.failed.emit(err)
                 return
             self.stored.emit(int(m.group(1)))
