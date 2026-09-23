@@ -1,6 +1,6 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-21 — +T110 (P14 solo hardware check tool); links T17/T86, T101, T103 to tools/hw_check.py**
-**Previous stand: 2026-09-20 — Packet channel model (ChannelBar) sprint, +T87–T93 (incl. the _make_host_frame() channel-nibble bugfix); +T94–T97 (P9 per-channel TX buffer); +T98–T101 (P10 channel 0 = UI channel); +T102 (link-message button gating bugfix); +T103–T105 (P11 USERS parameter); +T106 (P12 parameter dialog wiring audit); +T107–T109 (P13 upload coverage)**
+**Updated: 2026-09-23 — +T118 (P26 mdcheck_scan); T117 extended with the first maildrop_host hardware run's result and the P26.1 tool fix**
+**Previous stand: 2026-09-21 — +T110 (P14 solo hardware check tool); links T17/T86, T101, T103 to tools/hw_check.py**
 
 ---
 
@@ -48,6 +48,7 @@
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P22: first full MailDrop hardware run (18:43, fixed tool) — T116 PASS for `L`/`S`/`R`/`K`/`B`, list format, numbering, memory accounting; all recorded in CLAUDE.md. Power-cycle confirmation reworked to a `done`/`skip` loop (a blank Enter used to be silently read as skip); recorder now sets `DAYTIME` (reusing `ParamsUploader._cmd()`) before `MDCHECK` so the list shows real dates; suggested sequence replaced with round-2's foreign-FROM/@BBS/bulletin/traffic-type/EDIT questions; added tool-only `parse_maildrop_list()`/`maildrop_response_has_e_trailer()` |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py` | P23: round-2 hardware run (19:16) confirmed `@BBS`, `SB`/`ST`, the date/time format and the power-cycle test - T116 PASS extended; the P22 "size + ~48 bytes" memory formula withdrawn (7 messages show 84 or 112 bytes, unrelated to size). Found and fixed two tool bugs the run itself exposed: `SB`/`ST` left the state machine at MAILBOX because ENTRY was detected from the typed command, not the response (now response-based, P23.2); a real Ctrl-Z keypress produces an `EOFError` on a Windows console, so `^Z` was never actually sent - `EOFError` in ENTRY now sends `$1A` instead of closing the terminal (P23.3). Round 3 sequence targets the two still-open questions (foreign FROM, `^Z` message end); `--skip-power-cycle` added since round 2 already passed it |
 | **2026-09-22** | `tools/hw_check.py`, `test_hw_check.py`, `src/pk232py/maildrop/maildrop.py` (docstring only), `CLAUDE.md`, `Backlog.md` | P24: round-3 hardware run (20:00) closed T116 (foreign FROM confirmed, `^Z` confirmed NOT ending a message, `/E` trailer corrected to non-general, R-needs-a-space and non-ASCII-is-the-tool's-own-encoding findings); `maildrop.py`'s MailDrop Host Mode mnemonic table marked UNVERIFIED (same class of error as `MI`/T47 — nothing renamed, a future package's job) and filed as a Backlog Priority 1 (it is dead code today, but the 8 mnemonics it would send were never measured); new read-only `maildrop_host` subcommand (P24.2) probes the `$60`/`$70` MailDrop-login Host Mode data channel implied by `HOST 3`'s bit 1, never sends `S`/`K`/`E`, one `y/N` confirmation before any unknown frame goes out; +T117 (OPEN — not yet run) |
+| **2026-09-23** | `serial_manager.py` (comment only), `tools/hw_check.py`, `test_hw_check.py`, `CLAUDE.md` | P26: T117's first hardware run (21:13) exposed a tool bug — `maildrop_host` mistook a bare `$5F` data acknowledgement for a real mailbox response and skipped Probe B; fixed with `has_mailbox_data_frame()` (P26.1). Corrected `serial_manager.py`'s wrong `HOST 3` comment ("undocumented poll level" → the real bit-field meaning; the byte sequence itself is unchanged). New read-only `mdcheck_scan` subcommand (P26.2) searches all 23 non-denylisted `M?` mnemonics for the one that answers with the mailbox prompt, since the TRM's own `MI` entry for MDCHECK contradicts T115's hardware-confirmed `MI` = MFILTER; stops at the first hit. No other `src/pk232py/` changes; +T118, T117 updated |
 
 ---
 
@@ -1383,6 +1384,55 @@ number with `R <n>` if a list came back, sends `B`, and leaves Host Mode.
 3. Was a login needed — did the bare `L` (Probe A) work, or only after
    `MDCHECK` (Probe B)?
 4. Does the list/read output match the verbose-mode path byte-for-byte?
+
+**First hardware run (2026-09-22, 21:13,
+`hw_logs/20260922_211322_maildrop_host.log`):** Probe A (`L`, no login)
+got back exactly one frame — `ctl=0x5F` `data=b'XX\x00'`, the generic
+Host Mode data acknowledgement every write gets (T101), not mailbox
+content. **No `$70` frame at all.** The tool's verdict logic at the time
+treated "Probe A got any frame" as "login not needed" and reported that,
+so Probe B (`MDCHECK` login, then `L` again) never ran — a false
+conclusion, not a real measurement of whether login is needed. **Fixed
+P26.1:** `has_mailbox_data_frame()` now requires a frame that is not
+`$4F`/`$5F`; `should_run_maildrop_host_probe_b()` and the verdict logic
+both use it, so a bare `$5F` ack no longer counts and Probe B runs
+whenever Probe A got only acks. This also settled the TRM's own
+contradiction about the `MI` mnemonic (ch.12 lists it for both `MDCheck`
+and `MFIlter`) — T115 already measured `MI` = MFILTER, so `MI` is not
+the answer either, and the real MDCHECK mnemonic is unknown; see T118 /
+`mdcheck_scan`.
+
+**Status:** 🔶 PARTIAL — real hardware run done, but the run itself
+exposed a tool bug (see above) rather than answering questions 1–4;
+needs a **re-run** with the fixed tool. Not closed.
+
+---
+
+### T118 — mdcheck_scan: find the Host Mode mnemonic for MDCHECK, OPEN
+The TRM's own Host Mode mnemonic table (ch.12) is internally
+contradictory: it lists `MI` for both `MDCheck` and `MFIlter`. T115
+already measured `MI` = MFILTER by hardware (`MI` → `$80`, verbose
+`MFILTER` → `$80`), so the manual's MDCHECK entry is simply wrong and the
+real Host Mode mnemonic for MDCHECK — if one even exists — is unknown.
+`tools/hw_check.py mdcheck_scan` (P26.2) searches for it without
+guessing: it creates one test message the same way `maildrop_host` does,
+then in Host Mode queries every `M?` mnemonic (A–Z) with no argument,
+except the denylisted `MO` (MORSE), `MI` (MFILTER, already identified)
+and `MM` (MEMORY, has a read side effect) — 23 candidates — stopping at
+the first response containing the mailbox prompt's own text.
+
+1. `python tools/hw_check.py --port COM6 mdcheck_scan`
+2. Confirm the single `y/N` prompt (up to 23 read-only Host Mode queries,
+   naming the three mnemonics that will never be sent)
+3. Let the scan run to completion (stops early on a hit)
+
+**Expected result:** either a single mnemonic is reported as a hit
+(record it, the exact frame text, and add it to CLAUDE.md's
+hardware-confirmed mnemonic table), or the scan reports no hit at all
+among the 23 candidates — itself a complete, useful result: it would mean
+MDCHECK is not reachable as a two-letter Host Mode mnemonic, and any
+future MailDrop dialog must drive the mailbox over the verbose path
+instead (record as a `Backlog.md` decision point, not a failure).
 
 **Status:** ⬜ OPEN — not yet run on real hardware.
 

@@ -1,6 +1,6 @@
 # PK232PY — Development Backlog
 
-**Last updated:** 2026-09-20 (Packet channel model sprint)
+**Last updated:** 2026-09-23 (P26 — mdcheck_scan, T117 tool-bug correction)
 **Current version:** v0.1 (development)
 
 ---
@@ -66,6 +66,34 @@ it unwired until T117 (MailDrop over Host Mode, `docs/Testplan.md`)
 is measured on real hardware; then replace this module's guessed
 mnemonic table with a version built on the measured `$60`/`$70`
 protocol, rather than fixing individual mnemonics piecemeal.
+
+### MDCHECK's Host Mode mnemonic is unknown — search in progress (P26, 2026-09-23)
+
+The TRM's own Host Mode mnemonic table (ch.12) is internally
+contradictory: it lists `MI` for both `MDCheck` and `MFIlter`. T115
+already measured `MI` = MFILTER on real hardware, so the manual's
+MDCHECK entry is simply wrong — the real mnemonic (if MDCHECK has one at
+all) is unmeasured. `tools/hw_check.py mdcheck_scan` (P26.2, T118)
+searches the remaining 23 `M?` mnemonics for one that answers with the
+mailbox prompt, stopping at the first hit.
+
+**Decision point once T118 has run (per the spec, `docs/
+P26_MDCHECK_Mnemonic_Spec.md`):** a hit gives a real mnemonic to add to
+CLAUDE.md's hardware-confirmed table and to the `$60`/`$70`-based
+mnemonic table this section's plan (above) already calls for. **A "no
+hit" result is equally decisive, not a failure:** it would mean MDCHECK
+is not reachable as a two-letter Host Mode mnemonic at all, so any
+future MailDrop dialog must open the mailbox over the verbose path
+(`MDCHECK\r\n`, as `maildrop`/`maildrop_host` already do) even while the
+rest of the session runs in Host Mode — not guess at a mnemonic that
+does not exist. Either outcome, record it here and close this item.
+
+Separately, T117's first hardware run (2026-09-22 21:13) found no `$70`
+frame at all — only the generic `$5F` acknowledgement — but the run
+itself exposed a tool bug (`maildrop_host` mistook that ack for a real
+response and skipped Probe B, fixed P26.1) rather than answering the
+question. T117 needs a **re-run** with the fixed tool before the
+"leave it unwired until T117 is measured" plan above can be acted on.
 
 ### `SignalMode.handle_frame()` reports any CMD_RESP as a SIAM result — ✅ FIXED (P18.2, 2026-09-22)
 

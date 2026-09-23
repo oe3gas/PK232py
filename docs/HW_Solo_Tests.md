@@ -3,8 +3,9 @@
 Printable operator guide for running the `tools/hw_check.py` checks against
 a real PK-232MBX. See `docs/P14_HW_Solo_Check_Spec.md` for the original four
 checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`,
-`docs/P20_MailDrop_Measure_Spec.md` for `mi`/`maildrop`, and
-`docs/P24_MailDrop_HostMode_Spec.md` for `maildrop_host`; `CLAUDE.md` /
+`docs/P20_MailDrop_Measure_Spec.md` for `mi`/`maildrop`,
+`docs/P24_MailDrop_HostMode_Spec.md` for `maildrop_host`, and
+`docs/P26_MDCHECK_Mnemonic_Spec.md` for `mdcheck_scan`; `CLAUDE.md` /
 `Backlog.md` have background on each finding.
 
 ---
@@ -43,6 +44,11 @@ checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`,
   never transmits — but it does send unknown, previously-unmeasured Host
   Mode frames, so you get exactly one `y/N` confirmation before that
   happens. No second receiver needed.
+- **Only for `mdcheck_scan`:** same preparation as `maildrop_host` (it
+  creates its own test message the same way). It only sends Host Mode
+  *queries* (no argument) — nothing writes, kills, or transmits — but up
+  to 23 of them, so you get one `y/N` confirmation naming the count and
+  the three mnemonics it will never send. No second receiver needed.
 
 ## 2. Order
 
@@ -57,6 +63,8 @@ checks, `docs/P17_HW_Measure_Spec.md` for `siam`/`t111`/`t112`,
    interactive session (see `docs/P20_MailDrop_Measure_Spec.md`).
 6. Run `maildrop_host` afterwards, on its own (see
    `docs/P24_MailDrop_HostMode_Spec.md`).
+7. Run `mdcheck_scan` last, on its own, once `maildrop_host` has already
+   run at least once (see `docs/P26_MDCHECK_Mnemonic_Spec.md`).
 
 ```
 python tools/hw_check.py --port COM3 all
@@ -67,6 +75,7 @@ python tools/hw_check.py --port COM6 siam
 python tools/hw_check.py --port COM6 mi
 python tools/hw_check.py --port COM6 maildrop
 python tools/hw_check.py --port COM6 maildrop_host
+python tools/hw_check.py --port COM6 mdcheck_scan
 ```
 
 Add `--dry-run` to any command first if you just want to see what each
@@ -216,6 +225,11 @@ test *would* do without touching the TNC at all — it never opens the port.
   verbose `HOST` afterwards (no guessed mnemonic — just the same `HOST`
   query as before, to see if leaving Host Mode changed anything observable).
   `finally` always leaves Host Mode and verbose-checks for a `cmd:` prompt.
+  **Fixed P26.1 (2026-09-23):** "got a response" means a genuine mailbox
+  data frame (anything that is not `$4F`/`$5F`), not just any frame at
+  all — the first hardware run's Probe A got back only the generic `$5F`
+  data-acknowledgement byte pair and the tool wrongly called that "login
+  not needed", skipping Probe B. A bare `$5F` ack no longer counts.
 - **No PASS/FAIL** — like `siam`/`maildrop`, this is a measurement of an
   unmeasured protocol area, not a verdict. The printed summary answers four
   questions — copy all four into `Testplan.md`:
@@ -229,6 +243,34 @@ test *would* do without touching the TNC at all — it never opens the port.
      or does the framing/format differ?
 - Add `--dry-run` first to see all five planned frames (`L`, `MDCHECK`,
   `L`, `R <n>`, `B`) in hex without touching the TNC.
+
+### `mdcheck_scan` — which Host Mode mnemonic is MDCHECK?
+- **Why:** the TRM's own Host Mode mnemonic table is self-contradictory —
+  it lists `MI` for both `MDCheck` and `MFIlter`, and `mi`/T115 already
+  confirmed by measurement that `MI` is really MFILTER. So the real
+  MDCHECK mnemonic (if it has one at all) is unknown, and this searches
+  for it instead of guessing.
+- **What happens:** creates one test message via the same known-safe
+  verbose path `maildrop_host` uses, verbose-queries and warns on
+  `XMITOK`, enters Host Mode and drains pending frames, then asks **one**
+  `y/N` confirmation naming the up-to-23 candidates and the three
+  denylisted mnemonics (`MO` MORSE, `MI` MFILTER — already identified,
+  `MM` MEMORY — has a read side effect). Then queries each remaining `M?`
+  mnemonic (A–Z) with no argument, one at a time, stopping at the very
+  first response that contains the mailbox prompt's own text
+  (`(AEA PK-232M` and `free`) — in whichever frame type it arrives as. On
+  a hit, confirms with a `$60`-CTL `L` (list) and leaves the mailbox with
+  `B`. `finally` always leaves Host Mode; afterwards verbose-checks for a
+  `cmd:` prompt and normalizes again.
+- **No PASS/FAIL** — this is a search, not a verdict. If a candidate hits,
+  record the mnemonic and the exact frame captured in `Testplan.md`, then
+  add it to CLAUDE.md's hardware-confirmed mnemonic table. **A "no hit"
+  result is itself a complete, useful answer** — it means MDCHECK is not
+  reachable as a two-letter Host Mode mnemonic at all, and any future
+  MailDrop dialog must drive the mailbox over the verbose path instead;
+  record that as a `Backlog.md` decision point, not as a failed test.
+- Add `--dry-run` first to see all 23 candidate frames in hex and the
+  three denylisted mnemonics, without touching the TNC.
 
 ## 4. Checklist
 
@@ -244,6 +286,7 @@ test *would* do without touching the TNC at all — it never opens the port.
 | MI |  |  |  |
 | MAILDROP |  |  |  |
 | MAILDROP_HOST |  |  |  |
+| MDCHECK_SCAN |  |  |  |
 
 ## 5. Where results go
 
