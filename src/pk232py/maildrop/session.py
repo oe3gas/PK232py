@@ -130,6 +130,7 @@ class MailDropSession(QObject):
         self._state = "CLOSED"
         self._busy = False
         self._busy_lock = threading.Lock()
+        self._abort_requested = threading.Event()
 
     @property
     def state(self) -> str:
@@ -360,6 +361,12 @@ class MailDropSession(QObject):
                 self._abort_send()
                 return
 
+            if self._abort_requested.is_set():
+                self._abort_requested.clear()
+                self.failed.emit("send aborted after subject (abort() called)")
+                self._abort_send()
+                return
+
             for line in (clean_body.splitlines() or [""]):
                 self._send((line + "\r").encode("ascii"))
 
@@ -385,6 +392,17 @@ class MailDropSession(QObject):
             self._send(b"/EX\r", max_total=self.CMD_TIMEOUT_S)
         except Exception:
             logger.warning("MailDropSession: /EX abort itself failed")
+
+    def abort(self) -> None:
+        """Request that an in-flight send() stop as soon as it safely can
+        (P28: the maildrop_session harness's --abort-test, the hardware
+        probe for a failure path unit tests can only fake). Checked once,
+        right after the subject is accepted and before any body line is
+        sent — the earliest point a half-typed message can still be
+        abandoned with a plain /EX (CLAUDE.md: /EX is the only reliable
+        way to end message entry; ^Z does not). No effect on any other
+        command, and no effect at all if nothing is running."""
+        self._abort_requested.set()
 
     # -- leaving / recovery ------------------------------------------------
 

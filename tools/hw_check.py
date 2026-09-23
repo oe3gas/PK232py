@@ -61,14 +61,26 @@ required except for T101:
             that contains the mailbox prompt text. Query-only - no
             candidate writes, kills, or transmits. See
             docs/P26_MDCHECK_Mnemonic_Spec.md.
+    maildrop_session
+            Drives the real pk232py.maildrop.MailDropSession against
+            hardware for T119 (P28) - a harness, not a second protocol
+            implementation: it only calls open()/list()/send()/read()/
+            kill()/leave() and logs the signals they fire. Runs the full
+            open -> list -> send (personal/foreign-FROM/bulletin) -> list
+            -> read -> kill -> list -> leave sequence, then confirms Host
+            Mode is active again with an HPOLL query. --abort-test adds an
+            extra probe: reopen, start a send(), abort() it right after
+            the subject is accepted, confirm the recovery path runs and
+            reports failure, never success. See
+            docs/P28_MailDrop_Session_Harness_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
             and recorded individually), and NOT
-            mi/maildrop/maildrop_host/mdcheck_scan (mi is fine alone but
-            grouped with its guided counterpart; maildrop, maildrop_host
-            and mdcheck_scan are interactive/exploratory), so each must be
-            run on its own.
+            mi/maildrop/maildrop_host/mdcheck_scan/maildrop_session (mi is
+            fine alone but grouped with its guided counterpart; maildrop,
+            maildrop_host, mdcheck_scan and maildrop_session are
+            interactive/exploratory), so each must be run on its own.
 
 Usage::
 
@@ -84,6 +96,9 @@ Usage::
     python tools/hw_check.py --port COM6 maildrop_host
     python tools/hw_check.py --port COM6 mdcheck_scan
     python tools/hw_check.py --dry-run mdcheck_scan
+    python tools/hw_check.py --port COM6 maildrop_session
+    python tools/hw_check.py --port COM6 maildrop_session --abort-test
+    python tools/hw_check.py --dry-run maildrop_session
     python tools/hw_check.py --dry-run all      # no port opened at all
 
 ------------------------------------------------------------------------------
@@ -136,13 +151,14 @@ _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from PyQt6.QtCore import QCoreApplication  # noqa: E402
+from PyQt6.QtCore import QCoreApplication, QObject, QTimer, pyqtSignal  # noqa: E402
 
 from pk232py.comm.serial_manager import SerialManager  # noqa: E402
 from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
 from pk232py.comm.frame import build_command, _dle_escape  # noqa: E402
 from pk232py.comm.constants import SOH, ETB  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
+from pk232py.maildrop import MailDropSession, SerialManagerChannel  # noqa: E402
 from pk232py.modes.signal_analysis import SignalMode  # noqa: E402
 from pk232py.modes.packet_hf import HFPacketMode  # noqa: E402
 from pk232py.modes.packet_vhf import VHFPacketMode  # noqa: E402
@@ -905,6 +921,360 @@ def scan_for_mdcheck_mnemonic(
         if is_mdcheck_scan_hit(frames):
             return mnemonic
     return None
+
+
+# ---------------------------------------------------------------------------
+# P28 -- maildrop_session harness: drives the real MailDropSession for T119
+# ---------------------------------------------------------------------------
+#
+# This harness contains NO protocol parsing and builds NO mailbox command
+# of its own (P28's hard rule) - it only calls MailDropSession's public
+# open()/list()/read()/kill()/send()/leave() and reacts to the signals it
+# already fires. Anything that looks like validation below (checking a
+# MailDropEntry's .mtype/.frm/.to) inspects data pk232py.maildrop.protocol
+# already parsed - it is not a second parser of raw TNC text.
+
+_MAILDROP_STEP_TIMEOUT_MS = 20_000  # one command's worth of real hardware time
+_MAILDROP_CLEANUP_TIMEOUT_MS = 30_000  # leave() + Host Mode re-entry, generous
+
+
+class MaildropStep:
+    """One step of the maildrop_session sequence (P28): *action* calls
+    exactly one MailDropSession method, *signal_name* names the signal
+    that completes it, *expect* (only for "state_changed") the state
+    value that counts as success, *validate* an optional
+    ``(payload, ctx) -> (bool, detail)`` check against the ALREADY-PARSED
+    object the signal carried (a MailDropEntry/list of them, never raw
+    text)."""
+
+    def __init__(self, name, action, signal_name, expect=None, validate=None):
+        self.name = name
+        self.action = action
+        self.signal_name = signal_name
+        self.expect = expect
+        self.validate = validate
+
+
+def _validate_list_three(entries: list, ctx: dict) -> tuple:
+    numbers = {e.number: e for e in entries}
+    wanted = {
+        "send_personal": ctx.get("send_personal"),
+        "send_foreign_from": ctx.get("send_foreign_from"),
+        "send_bulletin": ctx.get("send_bulletin"),
+    }
+    missing = {k: n for k, n in wanted.items() if n not in numbers}
+    if missing:
+        return False, f"missing message(s) {missing} in listing {sorted(numbers)}"
+
+    personal = numbers[wanted["send_personal"]]
+    foreign = numbers[wanted["send_foreign_from"]]
+    bulletin = numbers[wanted["send_bulletin"]]
+    problems = []
+    if personal.mtype != "P":
+        problems.append(f"#{personal.number} mtype={personal.mtype!r}, expected P")
+    if foreign.frm != "DL1ABC":
+        problems.append(f"#{foreign.number} frm={foreign.frm!r}, expected DL1ABC")
+    if bulletin.mtype != "B":
+        problems.append(f"#{bulletin.number} mtype={bulletin.mtype!r}, expected B")
+    if bulletin.to != "ALL":
+        problems.append(f"#{bulletin.number} to={bulletin.to!r}, expected ALL")
+    if problems:
+        return False, "; ".join(problems)
+    return True, (
+        f"personal=#{personal.number} foreign=#{foreign.number} "
+        f"bulletin=#{bulletin.number}"
+    )
+
+
+def _validate_read_first(payload: tuple, ctx: dict) -> tuple:
+    entry, body = payload
+    expected_num = ctx.get("send_personal")
+    if entry.number != expected_num:
+        return False, f"read #{entry.number}, expected #{expected_num}"
+    if _MAILDROP_SESSION_BODY_TEXT not in body:
+        return False, f"body does not match what was sent: {body!r}"
+    return True, f"#{entry.number} body matches: {body!r}"
+
+
+def _validate_list_after_kill(entries: list, ctx: dict) -> tuple:
+    numbers = {e.number for e in entries}
+    killed_num = ctx.get("send_personal")
+    if killed_num in numbers:
+        return False, f"killed message #{killed_num} still present: {sorted(numbers)}"
+    still_expected = {ctx.get("send_foreign_from"), ctx.get("send_bulletin")}
+    missing = still_expected - numbers
+    if missing:
+        return False, f"message(s) {missing} missing after kill: {sorted(numbers)}"
+    return True, f"#{killed_num} gone, others intact: {sorted(numbers)}"
+
+
+_MAILDROP_SESSION_BODY_TEXT = "hello from the maildrop_session harness"
+
+
+def _start_abort_send(session, ctx: dict) -> None:
+    """send(), then immediately abort() (P28's --abort-test). The subject
+    exchange alone takes over a second (idle-gap detection), so abort()
+    - called synchronously right after send() spawns its worker thread -
+    is certain to run before the worker reaches the post-subject check."""
+    session.send(
+        "OE3GAS", "", "", "P", "T119 abort test", "this must never be sent",
+    )
+    session.abort()
+
+
+def build_maildrop_session_steps(mycall: str, abort_test: bool) -> list:
+    """The T119 step sequence (P28.1's table), plus the optional
+    --abort-test probe. Pure data/orchestration - no I/O, unit-testable
+    without a session at all."""
+    steps = [
+        MaildropStep(
+            "open", lambda s, ctx: s.open(), "state_changed", expect="ACTIVE",
+        ),
+        MaildropStep("list_empty", lambda s, ctx: s.list(), "listing"),
+        MaildropStep(
+            "send_personal",
+            lambda s, ctx: s.send(
+                mycall, "", "", "P", "T119 personal", _MAILDROP_SESSION_BODY_TEXT,
+            ),
+            "stored",
+        ),
+        MaildropStep(
+            "send_foreign_from",
+            lambda s, ctx: s.send(
+                mycall, "", "DL1ABC", "P", "T119 foreign from",
+                "foreign FROM test",
+            ),
+            "stored",
+        ),
+        MaildropStep(
+            "send_bulletin",
+            lambda s, ctx: s.send("ALL", "", "", "B", "T119 bulletin", "bulletin test"),
+            "stored",
+        ),
+        MaildropStep(
+            "list_three", lambda s, ctx: s.list(), "listing",
+            validate=_validate_list_three,
+        ),
+        MaildropStep(
+            "read_first", lambda s, ctx: s.read(ctx["send_personal"]),
+            "message_read", validate=_validate_read_first,
+        ),
+        MaildropStep(
+            "kill_first", lambda s, ctx: s.kill(ctx["send_personal"]), "killed",
+        ),
+        MaildropStep(
+            "list_after_kill", lambda s, ctx: s.list(), "listing",
+            validate=_validate_list_after_kill,
+        ),
+        MaildropStep(
+            "leave", lambda s, ctx: s.leave(), "state_changed", expect="CLOSED",
+        ),
+    ]
+    if abort_test:
+        steps += [
+            MaildropStep(
+                "reopen_for_abort", lambda s, ctx: s.open(), "state_changed",
+                expect="ACTIVE",
+            ),
+            MaildropStep("send_then_abort", _start_abort_send, "failed"),
+            MaildropStep(
+                "leave_after_abort", lambda s, ctx: s.leave(), "state_changed",
+                expect="CLOSED",
+            ),
+        ]
+    return steps
+
+
+class MaildropSessionRunner(QObject):
+    """Drives a MailDropSession-shaped object through an ordered
+    MaildropStep sequence (P28), calling only ITS public API and acting
+    only on the signals it fires - see the module-level note above this
+    class for why that is a hard rule, not a style choice.
+
+    *session* needs the same six signals (state_changed/prompt_info/
+    listing/message_read/stored/killed/failed) and six methods (open/
+    list/read/kill/send/leave) as the real MailDropSession - tests pass a
+    lightweight fake with the same shape, no serial interface at all.
+    *on_finished(ok: bool)* is called exactly once, after any required
+    cleanup (see _finish()).
+    """
+
+    def __init__(self, session, log: "RunLog", steps: list, on_finished) -> None:
+        super().__init__()
+        self.session = session
+        self.log = log
+        self.steps = steps
+        self.on_finished = on_finished
+        self.index = 0
+        self.ctx: dict = {}
+        self.results: list = []   # list[(name, "PASS"/"FAIL", detail)]
+        self._stopped = False
+        self._cleanup_ok = False
+        self._timer: Optional[QTimer] = None
+
+        session.state_changed.connect(self._on_state_changed)
+        session.prompt_info.connect(self._on_prompt_info)
+        session.listing.connect(self._on_listing)
+        session.message_read.connect(self._on_message_read)
+        session.stored.connect(self._on_stored)
+        session.killed.connect(self._on_killed)
+        session.failed.connect(self._on_failed)
+
+    def start(self) -> None:
+        self._run_current()
+
+    def _current(self) -> Optional[MaildropStep]:
+        if self._stopped or self.index >= len(self.steps):
+            return None
+        return self.steps[self.index]
+
+    def _run_current(self) -> None:
+        step = self._current()
+        if step is None:
+            self._finish(True)
+            return
+        self.log.line(f"--- step {self.index + 1}/{len(self.steps)}: {step.name} ---")
+        self._arm_timeout(step)
+        step.action(self.session, self.ctx)
+
+    def _arm_timeout(self, step: MaildropStep) -> None:
+        self._cancel_timeout()
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(lambda: self._on_timeout(step))
+        self._timer.start(_MAILDROP_STEP_TIMEOUT_MS)
+
+    def _cancel_timeout(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
+    def _on_timeout(self, step: MaildropStep) -> None:
+        if self._current() is not step:
+            return
+        self._fail_step(
+            step,
+            f"timed out after {_MAILDROP_STEP_TIMEOUT_MS / 1000:.0f}s "
+            f"waiting for {step.signal_name!r}",
+        )
+
+    def _pass_step(self, step: MaildropStep, detail: str = "") -> None:
+        if self._current() is not step:
+            return
+        self._cancel_timeout()
+        self.results.append((step.name, "PASS", detail))
+        self.log.result(step.name, "PASS", detail)
+        self.index += 1
+        self._run_current()
+
+    def _fail_step(self, step: MaildropStep, detail: str) -> None:
+        if self._current() is not step:
+            return
+        self._cancel_timeout()
+        self.results.append((step.name, "FAIL", detail))
+        self.log.result(step.name, "FAIL", detail)
+        self._finish(False)
+
+    def _finish(self, ok: bool) -> None:
+        """Runs exactly once. If the mailbox is still open (a mid-sequence
+        command failed without the session's own open()/leave() recovery
+        ever running), calls leave() as cleanup before reporting done -
+        this IS 'den Ruckweg der Sitzung anstossen' from the spec, done
+        entirely through the public API (P28.1 step 6)."""
+        if self._stopped:
+            return
+        self._stopped = True
+        self._cancel_timeout()
+        self._cleanup_ok = ok
+        if getattr(self.session, "state", None) == "ACTIVE":
+            self.log.line(
+                "finally: session state is 'ACTIVE', not CLOSED -- "
+                "calling leave() as cleanup"
+            )
+            self.session.state_changed.connect(self._on_cleanup_state)
+            self._arm_cleanup_timeout()
+            self.session.leave()
+        else:
+            self.on_finished(ok)
+
+    def _arm_cleanup_timeout(self) -> None:
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(lambda: self._on_cleanup_state("TIMEOUT"))
+        self._timer.start(_MAILDROP_CLEANUP_TIMEOUT_MS)
+
+    def _on_cleanup_state(self, state: str) -> None:
+        if state not in ("CLOSED", "FAILED", "TIMEOUT"):
+            return
+        self._cancel_timeout()
+        try:
+            self.session.state_changed.disconnect(self._on_cleanup_state)
+        except Exception:
+            pass
+        self.log.line(f"finally: session state is now {state!r}")
+        self.on_finished(self._cleanup_ok)
+
+    # -- signal handlers: log EVERY signal unconditionally, act only when
+    # it is what the current step is waiting for ------------------------
+
+    def _on_state_changed(self, state: str) -> None:
+        self.log.line(f"state_changed: {state}")
+        step = self._current()
+        if step and step.signal_name == "state_changed" and state == step.expect:
+            self._pass_step(step, f"state={state}")
+
+    def _on_prompt_info(self, info) -> None:
+        self.log.line(
+            f"prompt_info: free={info.free} commands={info.commands} "
+            f"have_mail={info.have_mail}"
+        )
+        step = self._current()
+        if step and step.signal_name == "prompt_info":
+            self._pass_step(step, f"free={info.free}")
+
+    def _on_listing(self, entries: list) -> None:
+        self.log.line(f"listing: {len(entries)} entry/ies")
+        for e in entries:
+            self.log.line(
+                f"    #{e.number} {e.mtype}{'Y' if e.read else 'N'} "
+                f"to={e.to} from={e.frm} bbs={e.bbs!r} stamp={e.stamp!r} "
+                f"title={e.title!r}"
+            )
+        step = self._current()
+        if step and step.signal_name == "listing":
+            ok, detail = step.validate(entries, self.ctx) if step.validate else (True, f"{len(entries)} entries")
+            (self._pass_step if ok else self._fail_step)(step, detail)
+
+    def _on_message_read(self, entry, body: str) -> None:
+        self.log.line(f"message_read: #{entry.number} body={body!r}")
+        step = self._current()
+        if step and step.signal_name == "message_read":
+            ok, detail = step.validate((entry, body), self.ctx) if step.validate else (True, "")
+            (self._pass_step if ok else self._fail_step)(step, detail)
+
+    def _on_stored(self, number: int) -> None:
+        self.log.line(f"stored: #{number}")
+        step = self._current()
+        if step and step.signal_name == "stored":
+            self.ctx[step.name] = number
+            self._pass_step(step, f"#{number}")
+
+    def _on_killed(self, number: int) -> None:
+        self.log.line(f"killed: #{number}")
+        step = self._current()
+        if step and step.signal_name == "killed":
+            self._pass_step(step, f"#{number}")
+
+    def _on_failed(self, text: str) -> None:
+        self.log.line(f"failed: {text}")
+        step = self._current()
+        if step is None:
+            return
+        if step.signal_name == "failed":
+            # This step EXPECTS a failure - the --abort-test probe.
+            self._pass_step(step, text)
+        else:
+            self._fail_step(step, text)
 
 
 def run_maildrop_interactive(
@@ -2579,6 +2949,79 @@ def test_mdcheck_scan(session: Session, log: RunLog) -> None:
         )
 
 
+def test_maildrop_session(
+    session: Session, log: RunLog, app_config: AppConfig, abort_test: bool,
+) -> None:
+    log.line(
+        "--- maildrop_session (P28) -- drives the real MailDropSession, T119 ---"
+    )
+    mycall = (app_config.hf_packet.mycall or "NOCALL").upper()
+    steps = build_maildrop_session_steps(mycall, abort_test)
+
+    if session.dry_run:
+        log.line(
+            f"[dry-run] would enter Host Mode (existing SerialManager path, "
+            f"not rebuilt here), then run these {len(steps)} steps against "
+            f"the real MailDropSession, calling only its public API:"
+        )
+        for i, step in enumerate(steps, start=1):
+            expect = f" -> {step.expect}" if step.expect else ""
+            log.line(f"[dry-run]   {i}. {step.name} (waits for {step.signal_name!r}{expect})")
+        log.result("MAILDROP_SESSION", "INFO", "dry-run, nothing sent")
+        return
+
+    # Step 1 (P28.1): build the connection exactly like the app does --
+    # connect + wakeup already happened in main() via session.connect();
+    # parameter upload is skipped (--skip-upload, on by default: the
+    # parameters are already verified by other subcommands and the
+    # upload costs about a minute); enter Host Mode over the existing,
+    # already-proven path.
+    session.enter_host_mode()
+
+    channel = SerialManagerChannel(session.sm)
+    md_session = MailDropSession(
+        channel,
+        # can_open(): this harness runs solo with no channel ever
+        # connected, so always yes. In the running application, this
+        # callback is the channel-connected precondition check
+        # (CLAUDE.md's "MailDrop session" gotcha) -- MailDropSession
+        # itself does not know the channel model at all.
+        can_open=lambda: (True, ""),
+    )
+
+    app = QCoreApplication.instance()
+    outcome: dict = {}
+
+    def on_finished(ok: bool) -> None:
+        outcome["ok"] = ok
+        app.quit()
+
+    runner = MaildropSessionRunner(md_session, log, steps, on_finished)
+    runner.start()
+    app.exec()
+
+    log.line("Confirming Host Mode is active again (HPOLL query)")
+    hp_frame = session.query_host(b"HP")
+    if hp_frame is not None:
+        log.result(
+            "MAILDROP_SESSION", "INFO",
+            f"HPOLL answered -- Host Mode confirmed active: {hp_frame.text!r}"
+        )
+    else:
+        log.result(
+            "MAILDROP_SESSION", "INFO",
+            "no HPOLL response -- Host Mode state unclear, check the log"
+        )
+
+    passed = sum(1 for _, verdict, _ in runner.results if verdict == "PASS")
+    log.result(
+        "MAILDROP_SESSION", "PASS" if outcome.get("ok") else "FAIL",
+        f"{passed}/{len(steps)} steps passed"
+    )
+    for name, verdict, detail in runner.results:
+        log.line(f"    {verdict:4s} {name}: {detail}")
+
+
 # ===========================================================================
 # CLI
 # ===========================================================================
@@ -2592,15 +3035,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "set parameters; siam is receive-only but needs a tuned "
             "receiver; maildrop is an interactive local (serial, not "
             "radio) recording terminal; maildrop_host and mdcheck_scan "
-            "are read-only Host Mode probes; t101 TRANSMITS and needs a "
-            "second receiver."
+            "are read-only Host Mode probes; maildrop_session drives the "
+            "real MailDropSession end to end (T119); t101 TRANSMITS and "
+            "needs a second receiver."
         ),
     )
     p.add_argument(
         "test",
         choices=[
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
-            "mi", "maildrop", "maildrop_host", "mdcheck_scan", "all",
+            "mi", "maildrop", "maildrop_host", "mdcheck_scan",
+            "maildrop_session", "all",
         ],
     )
     p.add_argument("--port", help="Serial port, e.g. COM3 (default: pk232py.ini)")
@@ -2617,6 +3062,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--skip-power-cycle", action="store_true",
         help="maildrop only: skip the power-cycle test (already PASSed "
              "in an earlier round, Testplan T116)"
+    )
+    p.add_argument(
+        "--skip-upload", action="store_true", default=True,
+        help="maildrop_session only: skip ParamsUploader before entering "
+             "Host Mode (default: skipped -- parameters are already "
+             "verified via other subcommands, and a full upload costs "
+             "about a minute)"
+    )
+    p.add_argument(
+        "--abort-test", action="store_true",
+        help="maildrop_session only: add the --abort-test probe (reopen, "
+             "start a send(), abort() it after the subject, confirm the "
+             "recovery path runs and reports failure, never success)"
     )
     return p
 
@@ -2664,6 +3122,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         "maildrop": [lambda s, l: test_maildrop(s, l, args.skip_power_cycle)],
         "maildrop_host": [lambda s, l: test_maildrop_host(s, l)],
         "mdcheck_scan": [lambda s, l: test_mdcheck_scan(s, l)],
+        "maildrop_session": [
+            lambda s, l: test_maildrop_session(s, l, app_config, args.abort_test)
+        ],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
