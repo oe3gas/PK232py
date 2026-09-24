@@ -28,6 +28,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from pk232py.ui.screens.packet_screen import HFPacketScreen, UI_CHANNEL
@@ -210,27 +211,142 @@ class TestUserLimitTooltipOnly:
     def test_channels_at_or_below_limit_get_no_extra_tooltip(self):
         screen = _make_screen()
         screen.channel_bar.set_user_limit(1)
-        assert "USERS is set to" not in screen.channel_bar._chips[1].toolTip()
+        assert "USERS is set to" not in screen.channel_bar._chips[1].button.toolTip()
 
     def test_channels_above_limit_get_the_warning_line(self):
         screen = _make_screen()
         screen.channel_bar.set_user_limit(1)
         for ch in range(2, 10):
-            tip = screen.channel_bar._chips[ch].toolTip()
+            tip = screen.channel_bar._chips[ch].button.toolTip()
             assert "USERS is set to 1" in tip
             assert "will not be accepted" in tip
 
     def test_ui_channel_never_gets_the_warning_line(self):
         screen = _make_screen()
         screen.channel_bar.set_user_limit(0)
-        assert "USERS" not in screen.channel_bar._chips[UI_CHANNEL].toolTip()
+        assert "USERS" not in screen.channel_bar._chips[UI_CHANNEL].button.toolTip()
 
     def test_no_lock_or_style_change_above_the_limit(self):
         screen = _make_screen()
         screen.channel_bar.set_user_limit(1)
         chip = screen.channel_bar._chips[5]
-        assert chip.isEnabled()
-        assert chip.isCheckable()
+        assert chip.button.isEnabled()
+        assert chip.button.isCheckable()
         # Still selectable and usable exactly like any other chip.
         screen.channel_bar.set_current(5)
         assert screen.channel_bar.current() == 5
+
+
+class TestChipConnectFlow:
+    """P42.4 — connect/disconnect happen through the channel chips
+    themselves, with no separate Connect/Dest/…/Disconnect row."""
+
+    def test_click_on_other_chip_only_switches(self):
+        screen = _make_screen()
+        screen.channel_bar.set_current(1)
+        screen.channel_bar._on_chip_clicked(3)
+        assert screen.channel_bar.current() == 3
+        assert not screen.channel_bar.is_editing()
+
+    def test_second_click_on_current_free_chip_opens_editor(self):
+        screen = _make_screen()
+        screen.channel_bar.set_current(3)
+        screen.channel_bar._on_chip_clicked(3)
+        assert screen.channel_bar._chips[3].is_editing()
+
+    def test_busy_chip_does_not_open_editor(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(4, "connected", "OE1XYZ")
+        screen.channel_bar.set_current(4)
+        screen.channel_bar._on_chip_clicked(4)
+        assert not screen.channel_bar.is_editing()
+
+    def test_ui_channel_does_not_open_editor(self):
+        screen = _make_screen()
+        screen.channel_bar.set_current(UI_CHANNEL)
+        screen.channel_bar._on_chip_clicked(UI_CHANNEL)
+        assert not screen.channel_bar.is_editing()
+
+    def test_enter_with_valid_callsign_emits_connect_requested_on_that_channel(self):
+        screen = _make_screen()
+        received: list[tuple[int, str]] = []
+        screen.channel_bar.connect_requested.connect(
+            lambda ch, call: received.append((ch, call))
+        )
+        screen.channel_bar.start_edit(3)
+        chip = screen.channel_bar._chips[3]
+        chip.editor.setText("oe3xyz-9")
+        chip.editor.returnPressed.emit()
+
+        assert received == [(3, "OE3XYZ-9")]
+        assert not chip.is_editing()
+
+    def test_invalid_callsign_keeps_field_open_and_emits_nothing(self):
+        screen = _make_screen()
+        received: list[tuple[int, str]] = []
+        screen.channel_bar.connect_requested.connect(
+            lambda ch, call: received.append((ch, call))
+        )
+        screen.channel_bar.start_edit(3)
+        chip = screen.channel_bar._chips[3]
+        chip.editor.setText("!!not valid!!")
+        chip.editor.returnPressed.emit()
+
+        assert received == []
+        assert chip.is_editing()
+
+    def test_escape_closes_without_a_signal(self):
+        screen = _make_screen()
+        received: list[tuple[int, str]] = []
+        screen.channel_bar.connect_requested.connect(
+            lambda ch, call: received.append((ch, call))
+        )
+        screen.channel_bar.start_edit(3, "OE3XYZ")
+        chip = screen.channel_bar._chips[3]
+
+        chip.cancel_edit()
+
+        assert received == []
+        assert not chip.is_editing()
+
+    def test_mheard_double_click_prefills_the_first_free_chip(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(1, "connected", "DL1ABC")
+
+        screen.mheard_panel.connect_requested.emit("OE3XYZ")
+
+        assert screen.channel_bar.current() == 2   # channel 1 is busy
+        chip = screen.channel_bar._chips[2]
+        assert chip.is_editing()
+        assert chip.editor.text() == "OE3XYZ"
+
+    def test_ctrl_d_disconnects_the_busy_current_channel(self):
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QKeyEvent
+
+        screen = _make_screen()
+        received: list[int] = []
+        screen.channel_bar.disconnect_requested.connect(received.append)
+        screen.channel_bar.set_channel_state(4, "connected", "OE1XYZ")
+        screen.channel_bar.set_current(4)
+
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_D,
+                        Qt.KeyboardModifier.ControlModifier)
+        screen.eventFilter(screen.tx_input, ev)
+
+        assert received == [4]
+
+    def test_ctrl_d_on_a_free_channel_does_nothing(self):
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QKeyEvent
+
+        screen = _make_screen()
+        received: list[int] = []
+        screen.channel_bar.disconnect_requested.connect(received.append)
+        screen.channel_bar.set_current(3)
+
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_D,
+                        Qt.KeyboardModifier.ControlModifier)
+        screen.eventFilter(screen.tx_input, ev)
+
+        assert received == []
