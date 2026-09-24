@@ -226,6 +226,18 @@ class MailDropConfig:
     tmail:       bool = False
     third_party: bool = False
 
+    # -- Local archive (PC side, P38) --------------------------------
+    # These never go to the TNC (UPLOAD_EXEMPT in
+    # test_param_dialogs_roundtrip.py) - they only control PK232PY's own
+    # local copy of MailDrop messages. This package (P38) builds only the
+    # storage and these settings, no session-mask wiring yet - see
+    # maildrop/archive.py and docs/P38_MailDrop_Archive_Spec.md.
+    archive_enabled:       bool = False
+    archive_path:          str  = "~/.pk232py/maildrop_archive.db"
+    archive_sync:          str  = "manual"          # manual | on_session_end
+    archive_restore:       str  = "never"           # never | ask | auto
+    archive_restore_scope: str  = "unread"          # all | unread | none
+
 
 @dataclass
 class AppearanceConfig:
@@ -557,6 +569,11 @@ class ConfigManager:
         d.mmsg        = s.getboolean("mmsg",        d.mmsg)
         d.tmail       = s.getboolean("tmail",       d.tmail)
         d.third_party = s.getboolean("third_party", d.third_party)
+        d.archive_enabled       = s.getboolean("archive_enabled",       d.archive_enabled)
+        d.archive_path          = s.get("archive_path",                 d.archive_path)
+        d.archive_sync          = s.get("archive_sync",                 d.archive_sync)
+        d.archive_restore       = s.get("archive_restore",              d.archive_restore)
+        d.archive_restore_scope = s.get("archive_restore_scope",        d.archive_restore_scope)
 
     def _build_amtor(self) -> None:
         a = self.app.amtor
@@ -599,6 +616,11 @@ class ConfigManager:
             "kilonfwd": str(d.kilonfwd).lower(), "maildrop": str(d.maildrop).lower(),
             "mdmon": str(d.mdmon).lower(), "mmsg": str(d.mmsg).lower(),
             "tmail": str(d.tmail).lower(), "third_party": str(d.third_party).lower(),
+            "archive_enabled": str(d.archive_enabled).lower(),
+            "archive_path": d.archive_path,
+            "archive_sync": d.archive_sync,
+            "archive_restore": d.archive_restore,
+            "archive_restore_scope": d.archive_restore_scope,
         }
 
     def _apply_appearance(self) -> None:

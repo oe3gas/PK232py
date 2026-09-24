@@ -237,6 +237,15 @@ UPLOAD_EXEMPT: dict[tuple[str, str], str] = {
     # --- Misc: same follow-up ---
     ("misc", "mark"): "not yet audited for upload — see Backlog",
     ("misc", "space"): "not yet audited for upload — see Backlog",
+
+    # --- MailDrop: local archive settings (P38) - PC-side bookkeeping,
+    # never a TNC parameter, so they can never appear in an upload command
+    # by design, not because of a follow-up. ---
+    ("maildrop", "archive_enabled"): "local archive setting, not a TNC parameter",
+    ("maildrop", "archive_path"): "local archive setting, not a TNC parameter",
+    ("maildrop", "archive_sync"): "local archive setting, not a TNC parameter",
+    ("maildrop", "archive_restore"): "local archive setting, not a TNC parameter",
+    ("maildrop", "archive_restore_scope"): "local archive setting, not a TNC parameter",
 }
 
 
@@ -392,6 +401,11 @@ _ENUM_FIELDS: dict[str, list[str]] = {
     "dfrom_mode": ["ALL", "NONE", "YES", "NO"],
     "mfrom_mode": ["ALL", "NONE", "YES", "NO"],
     "mto_mode":   ["ALL", "NONE", "YES", "NO"],
+    # P38 - local MailDrop archive settings, QComboBox with a closed item
+    # list, same reasoning as the *_mode fields above.
+    "archive_sync":          ["manual", "on_session_end"],
+    "archive_restore":       ["never", "ask", "auto"],
+    "archive_restore_scope": ["unread", "all", "none"],
 }
 
 
