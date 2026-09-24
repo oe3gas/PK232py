@@ -99,6 +99,25 @@ class MailDropParamsDialog(QDialog):
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
+    def set_locked(self, locked: bool, reason: str = "") -> None:
+        """Disable (never hide) every parameter field, with *reason* as
+        the tooltip (P37 Teil D.3) - e.g. once SerialManager.detect_
+        maildrop() has confirmed this firmware has no MailDrop option at
+        all (docs/DEVICES.md Device C). Locking rather than hiding keeps
+        the dialog layout stable and lets the operator still see what
+        MailDrop parameters exist. OK/Cancel are left alone - saving
+        locked-but-unchanged values is harmless, and Cancel always works.
+        """
+        widgets = [
+            self._le_homebbs, self._le_mymail, self._sb_lastmsg,
+            self._le_mdprompt, self._le_tmprompt, self._te_mtext,
+            self._chk_third_party, self._chk_kilonfwd, self._chk_maildrop,
+            self._chk_mdmon, self._chk_mmsg, self._chk_tmail,
+        ]
+        for w in widgets:
+            w.setEnabled(not locked)
+            w.setToolTip(reason if locked else "")
+
     def set_values(self, **kw) -> None:
         if "homebbs"     in kw: self._le_homebbs.setText(str(kw["homebbs"]).upper())
         if "mymail"      in kw: self._le_mymail.setText(str(kw["mymail"]).upper())

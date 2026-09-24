@@ -1177,6 +1177,14 @@ class MainWindow(QMainWindow):
             )
             n = uploader.upload()
             self._log_monitor(f"[SYS] {n} parameters uploaded")
+            self._update_maildrop_button_tooltip(
+                getattr(self._serial, 'has_maildrop', None)
+            )
+            if getattr(self._serial, 'has_maildrop', None) is False:
+                self._log_monitor(
+                    "[SYS] TNC has no MailDrop — "
+                    "MailDrop commands skipped, button stays disabled"
+                )
             if connect_mode == "host":
                 self._vt_append(
                     f"[SYS] {n} parameters uploaded -- entering Host Mode...\n"
@@ -2838,6 +2846,26 @@ class MainWindow(QMainWindow):
         """
         return
 
+    def _update_maildrop_button_tooltip(self, has_maildrop) -> None:
+        """P37 Teil D.3 - btn_maildrop stays disabled either way (no
+        MailDrop dialog exists yet, see _on_packet_maildrop() above), but
+        its tooltip should say WHY: the generic "not implemented yet"
+        when MailDrop capability is unknown/present, or the more useful
+        "this firmware has no MailDrop" once detect_maildrop() has
+        actually confirmed the firmware lacks it (docs/DEVICES.md Device
+        C). Called after ParamsUploader.upload() from the background
+        upload thread - only touches a QWidget's tooltip text, the same
+        class of cross-thread call this codebase's _log_monitor()/
+        _vt_append() calls from that same thread already make.
+        """
+        if has_maildrop is False:
+            tooltip = "This firmware has no MailDrop"
+        else:
+            tooltip = "MailDrop dialog not implemented yet"
+        for screen in set(self._opmode_screens.values()):
+            if isinstance(screen, PacketBaseScreen):
+                screen.btn_maildrop.setToolTip(tooltip)
+
     def _on_packet_mheard(self) -> None:
         """MHEARD Refresh — poll the heard-stations list line by line (T41).
 
@@ -3924,6 +3952,10 @@ class MainWindow(QMainWindow):
     def _on_params_maildrop(self) -> None:
         """Open MailDrop Parameters dialog."""
         dlg = MailDropParamsDialog(parent=self)
+        if getattr(self._serial, 'has_maildrop', None) is False:
+            # P37 Teil D.3: lock, never hide - detect_maildrop() has
+            # confirmed this firmware has no MailDrop option at all.
+            dlg.set_locked(True, "This firmware has no MailDrop")
         md = self._app_config.maildrop
         dlg.set_values(
             homebbs=md.homebbs, mymail=md.mymail, mtext=md.mtext,
