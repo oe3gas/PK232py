@@ -23,6 +23,7 @@ and gives the user control over when to switch to Host Mode.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from typing import Optional
@@ -84,9 +85,36 @@ _CMD_HPOLL_Y  = bytes([0x01, 0x4F, ord('H'), ord('P'), ord('Y'), 0x17])
 _HPOLL_ACK    = bytes([0x01, 0x4F, ord('H'), ord('P'), 0x00, 0x17])
 
 # TNC response classifiers
-_BANNER_MARKERS = (b"AEA", b"Ver.", b"PK-232", b"Copyright")
-_PROMPT_MARKER  = b"cmd:"
-_SOH_BYTE       = 0x01
+_BANNER_MARKERS  = (b"AEA", b"Ver.", b"PK-232", b"Copyright")
+_PROMPT_MARKER   = b"cmd:"
+_SOH_BYTE        = 0x01
+# P37: firmware release date and "using defaults" flag, both read straight
+# off the boot banner (docs/PK232_firmware_matrix.md §1) - the release date
+# format itself varies by firmware generation ('01.AUG.91' seen on Device B,
+# hw_logs/20260924_181446_maildrop_session.log), so this is captured
+# verbatim and never normalised into a canonical date.
+_RELEASE_RE      = re.compile(rb"Release\s+(\S+)")
+_DEFAULTS_MARKER = b"is using default values"
+
+
+def _parse_release(banner: bytes) -> Optional[str]:
+    """Firmware release date exactly as printed in the boot banner, or
+    None if no banner was captured at all (P37 - nothing here invents a
+    value; see SerialManager.tnc_release)."""
+    if not banner:
+        return None
+    m = _RELEASE_RE.search(banner)
+    return m.group(1).decode('ascii', errors='replace') if m else None
+
+
+def _parse_defaults_flag(banner: bytes) -> Optional[bool]:
+    """True if the boot banner said 'is using default values' (bbRAM
+    reset to factory config, CLAUDE.md - no RAM buffer battery), False if
+    a banner was captured without that phrase, None if no banner was
+    captured at all (P37 - see SerialManager.tnc_defaults)."""
+    if not banner:
+        return None
+    return _DEFAULTS_MARKER in banner
 
 
 def _wakeup_log_message(resp: bytes) -> tuple[int, str]:
@@ -322,6 +350,21 @@ class SerialManager(QObject):
     def tnc_banner(self) -> str:
         """TNC boot banner as a decoded string (for logging/display)."""
         return self._tnc_banner.decode('ascii', errors='replace').strip()
+
+    @property
+    def tnc_release(self) -> Optional[str]:
+        """Firmware release date exactly as printed in the boot banner
+        (e.g. '01.AUG.91'), or None if no banner was captured, e.g. when
+        the TNC was already at the cmd: prompt at connect time (P37) -
+        nothing here invents a value or normalises the date format."""
+        return _parse_release(self._tnc_banner)
+
+    @property
+    def tnc_defaults(self) -> Optional[bool]:
+        """True if the boot banner said 'is using default values', False
+        if a banner was captured without that phrase, None if no banner
+        was captured at all (P37)."""
+        return _parse_defaults_flag(self._tnc_banner)
 
     # ------------------------------------------------------------------
     # Port factory seam (generic; default = real serial.Serial)

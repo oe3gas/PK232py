@@ -12,7 +12,24 @@ from __future__ import annotations
 
 import logging
 
-from pk232py.comm.serial_manager import _wakeup_log_message
+from pk232py.comm.serial_manager import (
+    _parse_defaults_flag,
+    _parse_release,
+    _wakeup_log_message,
+)
+
+# Real fixture, hw_logs/20260924_181446_maildrop_session.log (Device B,
+# MBX, 01.08.1991) -- the exact 176-byte wakeup response, banner included.
+_DEVICE_B_BANNER = bytes.fromhex(
+    "00 00 00 00 00 0d 0a 0d 0a 0d 0a 50 4b 2d 32 33 32 4d 20 69 73 20 75 "
+    "73 69 6e 67 20 64 65 66 61 75 6c 74 20 76 61 6c 75 65 73 2e 0d 0a 20 "
+    "20 0d 0a 0d 0a 0d 0a 11 41 45 41 20 50 4b 2d 32 33 32 4d 20 44 61 74 "
+    "61 20 43 6f 6e 74 72 6f 6c 6c 65 72 0d 0a 43 6f 70 79 72 69 67 68 74 "
+    "20 28 43 29 20 31 39 38 36 2d 31 39 39 31 20 62 79 0d 0a 41 64 76 61 "
+    "6e 63 65 64 20 45 6c 65 63 74 72 6f 6e 69 63 20 41 70 70 6c 69 63 61 "
+    "74 69 6f 6e 73 2c 20 49 6e 63 2e 0d 0a 52 65 6c 65 61 73 65 20 30 31 "
+    "2e 41 55 47 2e 39 31 0d 0a 0d 0a 63 6d 64 3a"
+)
 
 
 class TestWakeupLogMessage:
@@ -37,3 +54,26 @@ class TestWakeupLogMessage:
         level, message = _wakeup_log_message(b"")
         assert level == logging.WARNING
         assert "without prompt (0 bytes)" in message
+
+
+class TestBannerProvenance:
+    """P37 - firmware release date and 'using defaults' flag, both read
+    straight off the boot banner (docs/PK232_firmware_matrix.md §1)."""
+
+    def test_release_extracted_from_real_device_b_banner(self):
+        assert _parse_release(_DEVICE_B_BANNER) == "01.AUG.91"
+
+    def test_defaults_flag_true_on_real_device_b_banner(self):
+        assert _parse_defaults_flag(_DEVICE_B_BANNER) is True
+
+    def test_no_banner_captured_gives_none_not_a_guess(self):
+        # P37: "nichts erfinden" - an empty banner (TNC already at cmd:
+        # at connect time) must not be reported as any particular release
+        # or defaults state.
+        assert _parse_release(b"") is None
+        assert _parse_defaults_flag(b"") is None
+
+    def test_defaults_flag_false_when_banner_lacks_the_phrase(self):
+        banner = b"AEA PK-232 ...\r\nRelease 11.SEP.95\r\n\r\ncmd:"
+        assert _parse_release(banner) == "11.SEP.95"
+        assert _parse_defaults_flag(banner) is False
