@@ -744,28 +744,35 @@ Grows over time.
     | 7 | 30 | 112 | `DB0MUC` |
 
     `Size` itself still reliably equals `len(subject) + len(text) + 9`
-    (confirmed for all seven). But bytes-used does **not** scale with
-    `Size` at all — messages of very different sizes (30 through 52) all
-    cost 84 bytes unless `@BBS` was given, in which case it jumps to 112
-    regardless of size. Unconfirmed guess: allocation happens in fixed
-    28-byte blocks, and specifying a BBS costs one block more — **not
-    verified**, do not build on it without measuring further.
+    (confirmed for all seven, and again on Device B, P37). But bytes-used
+    does **not** scale with `Size` at all — messages of very different
+    sizes (30 through 52) all cost 84 bytes unless `@BBS` was given, in
+    which case it jumps to 112 regardless of size. **The "BBS costs one
+    block more" guess is withdrawn (P37, 2026-09-24, T119, Device B,
+    `hw_logs/20260924_181446_maildrop_session.log`):** a 24.09.2026 run
+    with three messages and no `@BBS` involved at all still showed sizes
+    61→112, 43→84, 35→84 bytes — the 112-byte jump tracked the larger
+    message, not a BBS field. There is no rule connecting size, `@BBS`
+    and bytes-used visible from either device's data so far.
     **Design consequence, independent of the exact mechanism:** never
-    precompute whether a message will fit. After writing each message
-    back, re-read the free-byte count from the mailbox prompt and stop
-    before `*** No free memory` — the prompt is the only reliable source
-    of remaining space.
-  - **A stray `/E` line after a read message's text is NOT a general
-    format element — corrected 22.09.2026, P24 (round 3,
-    `hw_logs/20260922_200013_maildrop.log`).** Round 1 found exactly one
-    `R` response ending in `/E`, and P22/P23 wrongly generalised that as
-    "the firmware always appends this". Round 3's two `R` responses
-    (`hw_logs/20260922_200013_maildrop.log`) both ended cleanly with
-    `\r\n<text>\r\n\r\n`, no `/E` at all. **Design consequence:** a
-    reader must TOLERATE a trailing `/E` line if present, but must NOT
-    expect or require one — `tools/hw_check.py::maildrop_response_has_e_trailer()`
-    already only detects it (tool-only), it never assumed one was
-    always there, so no tool change was needed for this correction.
+    precompute whether a message will fit, and never derive free space
+    from size/`@BBS`. Always re-read the free-byte count from the
+    mailbox prompt after writing each message and stop before
+    `*** No free memory` — the prompt is the only reliable source of
+    remaining space, on both devices measured so far.
+  - **A stray `/E` line after a read message's text occurs regularly and
+    is discarded — reclassified 24.09.2026 (P37, T119, Device B,
+    `hw_logs/20260924_181446_maildrop_session.log`), correcting the
+    22.09.2026 P24 call that a single occurrence (round 1) was an
+    isolated fluke.** Round 3 (P24) happened to show two clean `R`
+    responses with no `/E`; the 24.09.2026 Device B run showed it again
+    (`...harness\r\n/E\r\n`), so "einmalig beobachtet" understated it —
+    it recurs, just not on every single `R`. `parse_read()` already
+    strips it correctly and requires no change. **Design consequence,
+    unchanged:** a reader must TOLERATE a trailing `/E` line when
+    present, but must NOT require one — `tools/hw_check.py::
+    maildrop_response_has_e_trailer()` already only detects it
+    (tool-only), never assumed one was always there.
   - **Foreign FROM confirmed working, 22.09.2026 round 3:** `S <to> <
     <from>` (less-than sign, matching the STABO handbook — round 1/2 both
     mistyped `>`) sets the message's From field to `<from>` while To
@@ -915,23 +922,27 @@ Grows over time.
   retroactive bugfix:** every successful MailDrop run to date (P20–P24,
   P27–P31) used the `\r\n` form and worked fine on Device A (PACTOR,
   11.09.1995) — this is alignment with the manual, not a claim that
-  `\r\n` was broken there. **`L` on Device B (MBX, 01.08.1991) is still
-  unexplained** (`hw_logs/20260923_204041_maildrop_session.log`):
-  `open()` PASSed (Host Mode left, `MDCHECK` recognised, `bracket
-  ='square'`, `free=18340`), but the very next command, `L`, got `***
-  What?` back. Three indistinguishable-from-the-log hypotheses: (1) the
+  `\r\n` was broken there. **`L` on Device B (MBX, 01.08.1991) — resolved
+  2026-09-24 (P37, T119, `hw_logs/20260924_181446_maildrop_session.log`):
+  hypothesis (1), a software artefact, not the firmware.** The
+  23.09.2026 run (`hw_logs/20260923_204041_maildrop_session.log`) had
+  `open()` PASS (Host Mode left, `MDCHECK` recognised, `bracket
+  ='square'`, `free=18340`), then `L` got `*** What?` back; three
+  indistinguishable-from-that-log hypotheses were on the table: (1) the
   orphaned LF from `MDCHECK\r\n` got processed by the mailbox as its own
   empty command, and that stray response bled into `L`'s read window;
   (2) a genuine MBX-generation firmware difference; (3) the two
   responses were simply concatenated in one buffer with no protocol
-  cause at all. `MailDropSession` now has an optional raw trace callback
-  (`trace: Callable[[str, bytes], None]`, `("tx"|"rx"|"discard", data)`,
-  P35.1 — `None` by default, no behaviour change unless a caller wires
-  it; `tools/hw_check.py`'s `maildrop_session` subcommand does) that
-  logs every raw block sent/received, exactly like
-  `Session.send_and_read_until_idle()` already does — the next real run
-  will show what actually came back after `MDCHECK` and after `L`, and
-  settle which hypothesis is correct. Independently of that: `parse_error()`
+  cause at all. `MailDropSession` gained an optional raw trace callback
+  right after this fix (`trace: Callable[[str, bytes], None]`,
+  `("tx"|"rx"|"discard", data)`, P35.1 — `None` by default, no behaviour
+  change unless a caller wires it; `tools/hw_check.py`'s
+  `maildrop_session` subcommand does), and the very next hardware run
+  settled it: with `MDCHECK\r` alone, the prompt comes back clean and
+  `L` answers normally — **10/10 `maildrop_session` steps PASS**, full
+  MailDrop protocol (`L`/`S`/`SB`/`R`/`K`/`B`/`<`-foreign-FROM) confirmed
+  identical on MBX and PACTOR generations. Independently of that:
+  `parse_error()`
   now only looks at what comes after a command's own echoed line
   (`protocol.split_after_echo()`, matched on `<command>\r\n` as a whole
   unit — a bare substring search would wrongly match `L` inside the
