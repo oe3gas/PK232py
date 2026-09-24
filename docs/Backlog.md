@@ -1,6 +1,6 @@
 # PK232PY — Development Backlog
 
-**Last updated:** 2026-09-23 (P34 — echo-without-execution tool safety gate, TNC starting-state question open)
+**Last updated:** 2026-09-23 (P36 — flaky test_maildrop_session.py fixed: Qt cross-thread signal race, not a thread leak)
 **Current version:** v0.1 (development)
 
 ---
@@ -761,6 +761,81 @@ Kein neuer "Stop TX"-Button nötig — die vorhandenen Pfade decken alle Modes a
   now recovers from this safely either way (P34,
   `confirm_command_prompt()`), so there is no urgency — this is a curiosity
   worth settling if it recurs, not a blocker.
+
+### Flaky test found and fixed — Qt cross-thread signal race in test_maildrop_session.py (P36, 2026-09-23)
+**Reproduced deterministically** (no `pytest-randomly` is installed — test
+order is already fixed by collection order, so the flake is purely a
+timing race, not order-dependence): looping `.venv\Scripts\python.exe -m
+pytest -q -x` caught
+`TestRecoveryPath::test_ends_in_failed_when_host_mode_never_confirms`
+failing on run 1 of 20 (roughly 1 in 10, matching the earlier
+in-session observation) with
+```
+assert 'verbose mode' in "no mailbox prompt after MDCHECK: 'MDCHECK\\r\\n'"
+```
+— `rec.failures[-1]` was the FIRST failure `open()` had already reported,
+not the SECOND one the recovery path reports when Host Mode never
+confirms.
+
+**Root cause (confirmed, not guessed):** `MailDropSession._set_state()`
+writes `self._state` as a plain Python attribute and THEN calls
+`self.state_changed.emit(...)` — the attribute becomes visible to
+another thread (no Qt marshalling needed) strictly *before* the signal
+is even queued, let alone delivered. `_enter_host_mode_or_fail()`'s
+failure branch does `self._set_state("FAILED")` immediately followed by
+`self.failed.emit("...verbose mode...")` on the next line — two
+DIFFERENT signals a hair apart on the worker thread. The test polled
+`session.state` (the plain attribute, races ahead) and, the instant it
+read `"FAILED"`, immediately asserted on `rec.failures[-1]` (populated
+only once the `failed` signal has actually been delivered via
+`QApplication.processEvents()`) — a classic TOCTOU gap between an
+un-marshalled attribute and a queued signal for a LATER piece of state
+from the SAME worker function. Confirmed empirically, not by "increasing
+a timeout and hoping": `threading.active_count()` stayed at 1 after 30
+scripted `open()` cycles with no explicit joins (see below) — ruling out
+an actual leaked/lingering thread as the cause, isolating it to signal-
+vs-attribute ordering instead.
+- **Not a thread leak** (checked per the task): `MailDropSession._start()`
+  spawns a `daemon=True` thread with no reference kept and no `.join()`
+  anywhere, by design (fire-and-forget). Measured directly: 30 scripted
+  `open()` cycles with no joins, `threading.active_count()` returns to 1
+  (just MainThread) within half a second of settling. Worker threads
+  finish correctly; they just don't finish *synchronously with* the
+  observable a test was polling.
+- **Not a wall-clock-dependent timeout being too short**, either — the
+  failure's own assertion text proves the WRONG (but real, already-
+  delivered) failure message was read, not that a wait timed out. The
+  `_fast()`-shrunk class-attribute timeouts (`HOST_MODE_TIMEOUT_S = 1.0`
+  etc.) remain necessary bounds against a genuinely hung worker and were
+  left untouched — raising them would not have addressed this race at
+  all, and per instruction they were not touched as a "fix".
+- **Fix (isolates the actual race, `test_maildrop_session.py`):** every
+  `_pump_until(lambda: session.state == ...)` wait in the file — 9 call
+  sites — now waits on the Qt-signal-delivered `rec.*` data the test
+  goes on to assert next (`rec.prompts or rec.failures`,
+  `rec.state_changes and rec.state_changes[-1] in (...)`, or, for the
+  one CONFIRMED flake, the exact content:
+  `rec.failures and "verbose mode" in rec.failures[-1]`), instead of the
+  plain `session.state` attribute. A signal only becomes observable to
+  the test after an actual `processEvents()` round-trip, which — every
+  case checked — always happens after the worker thread's own trailing
+  work for that same signal (including releasing its busy flag) is
+  already done; the plain attribute does not carry that guarantee.
+  `session.state` is still asserted afterwards as a plain sanity check,
+  now safe because the signal-based wait has already proven the worker
+  is done. Verified: 60/60 repeated runs of the file green after the
+  fix (`.venv\Scripts\python.exe -m pytest
+  src/pk232py/tests/test_maildrop_session.py -q`, looped), versus a
+  reproducible ~1-in-10 failure rate before it.
+- **General lesson — Qt-Threading-Rennen sind wiederkehrende Kundschaft:**
+  any test elsewhere that polls a `MailDropSession`/similar QObject's
+  plain Python attribute (not a signal) as its ONLY synchronization
+  point, then immediately asserts on a signal-delivered value the same
+  worker function sets *later*, is exposed to the same class of race.
+  Watch for this pattern in any future `MailDropSession`-mask (UI) work
+  or other QObject-with-background-thread code — prefer waiting on the
+  actual signal-delivered data over a plain attribute whenever a test's
+  very next assertion depends on it.
 
 ---
 
