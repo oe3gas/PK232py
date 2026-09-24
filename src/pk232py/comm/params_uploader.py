@@ -77,7 +77,21 @@ class ParamsUploader:
                 "ParamsUploader: TNC has no PACTOR - "
                 "skipping PACTOR-specific commands"
             )
-        commands = self._build_commands(has_pactor=has_pactor)
+        # MailDrop capability has no boot-banner marker (unlike PACTOR),
+        # so it is queried here, in verbose mode, right before the
+        # upload (P37) - detect_maildrop() never sends MDCHECK. A
+        # detection failure (None) must not lock out an existing
+        # feature, so only an explicit False skips the MailDrop block.
+        detect_maildrop = getattr(self._serial, 'detect_maildrop', None)
+        has_maildrop = detect_maildrop() if detect_maildrop else True
+        if has_maildrop is False:
+            logger.info(
+                "ParamsUploader: TNC has no MailDrop - "
+                "skipping MailDrop commands"
+            )
+        commands = self._build_commands(
+            has_pactor=has_pactor, has_maildrop=(has_maildrop is not False),
+        )
         logger.info("ParamsUploader: uploading %d commands", len(commands))
         sent = 0
         for cmd in commands:
@@ -94,7 +108,9 @@ class ParamsUploader:
         logger.info("ParamsUploader: upload complete (%d commands)", sent)
         return sent
 
-    def _build_commands(self, has_pactor: bool = True) -> list[bytes]:
+    def _build_commands(
+        self, has_pactor: bool = True, has_maildrop: bool = True,
+    ) -> list[bytes]:
         """Build the full list of verbose-mode parameter commands."""
         cmds: list[bytes] = []
         cmds.append(self._cmd("EXPERT", "ON"))  # enable expert params
@@ -245,21 +261,30 @@ class ParamsUploader:
         ]
 
         # - MailDrop -
-        md = self._config.maildrop
-        if md.homebbs:
-            cmds.append(self._cmd("HOMEBBS", md.homebbs.upper()))
-        if md.mymail:
-            cmds.append(self._cmd("MYMAIL", md.mymail.upper()))
-        cmds += [
-            self._bool("MAILDROP",  md.maildrop),
-            self._bool("MDMON",     md.mdmon),
-            self._bool("MMSG",      md.mmsg),
-            self._bool("TMAIL",     md.tmail),
-            self._bool("3RDPARTY",  md.third_party),
-            self._bool("KILONFWD",  md.kilonfwd),
-        ]
-        if md.mtext:
-            cmds.append(self._cmd("MTEXT", md.mtext))
+        # Skipped entirely on firmware without MailDrop (P37, Device C /
+        # docs/DEVICES.md) - every command below would otherwise come
+        # back '?What?' (one log line here instead of seven error
+        # responses from the TNC).
+        if has_maildrop:
+            md = self._config.maildrop
+            if md.homebbs:
+                cmds.append(self._cmd("HOMEBBS", md.homebbs.upper()))
+            if md.mymail:
+                cmds.append(self._cmd("MYMAIL", md.mymail.upper()))
+            cmds += [
+                self._bool("MAILDROP",  md.maildrop),
+                self._bool("MDMON",     md.mdmon),
+                self._bool("MMSG",      md.mmsg),
+                self._bool("TMAIL",     md.tmail),
+                self._bool("3RDPARTY",  md.third_party),
+                self._bool("KILONFWD",  md.kilonfwd),
+            ]
+            if md.mtext:
+                cmds.append(self._cmd("MTEXT", md.mtext))
+        else:
+            logger.debug(
+                "Skipping MailDrop commands - TNC has no MailDrop option"
+            )
 
         # - UTC time -
         if tnc.utc_tnc_time:
