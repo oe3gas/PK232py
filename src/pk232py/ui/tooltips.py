@@ -30,13 +30,17 @@ LERNMODUS — three non-obvious design points
 
 3. WHY SOME WIDGETS LIVE IN SCREEN_TOOLTIPS, NOT THE GLOBAL DICT.
    A few attribute names are REUSED across screens with DIFFERENT meanings —
-   e.g. btn_connect is an AX.25 connect on the Packet screens but a PACTOR
-   connect on PactorScreen; btn_rxrev reverses RTTY mark/space tones but flips
-   the FAX image; btn_lock is Morse sync vs FAX start; btn_clear clears the FAX
-   image vs the MHEARD list. A single flat dict keyed by attribute name cannot
-   tell them apart, so those collisions are resolved in SCREEN_TOOLTIPS, keyed
-   by the widget's class name. The global pass runs first; the per-class pass
-   runs second and overrides the colliding keys with the screen-correct text.
+   e.g. btn_rxrev reverses RTTY mark/space tones but flips the FAX image;
+   btn_lock is Morse sync vs FAX start; btn_clear clears the FAX image vs the
+   MHEARD list. A single flat dict keyed by attribute name cannot tell them
+   apart, so those collisions are resolved in SCREEN_TOOLTIPS, keyed by the
+   widget's class name. The global pass runs first; the per-class pass runs
+   second and overrides the colliding keys with the screen-correct text.
+   (btn_connect/btn_disconnect used to be exactly this kind of collision,
+   AX.25 Packet vs PACTOR — P42 removed Packet's Connect/Disconnect buttons
+   entirely, so PactorScreen is now the sole owner of these two names and
+   its SCREEN_TOOLTIPS entry is the only one ever actually applied; no
+   global fallback for them is needed any more.)
 
    (The AMTOR screen has NO btn_wideshft / btn_mopt: WIDESHFT is an FSK-only
    control for Baudot/ASCII RTTY, and AMTOR runs at a fixed 100 Bd, so neither
@@ -84,10 +88,11 @@ TOOLTIPS: dict[str, str] = {
 
     # ------------------------------------------------------------------
     # Packet (HF Packet / VHF Packet)
-    # btn_connect / btn_disconnect here are AX.25; PactorScreen overrides them.
+    # P42: Connect/Disconnect have no buttons of their own any more — a
+    # callsign is typed directly into a free channel chip (see ChannelChip
+    # in packet_screen.py); btn_connect/btn_disconnect now belong to
+    # PactorScreen alone (SCREEN_TOOLTIPS below).
     # ------------------------------------------------------------------
-    "btn_connect":    "Connect — initiate an AX.25 connection to the destination callsign.\nEnter the callsign in the Dest field first.",
-    "btn_disconnect": "Disconnect — terminate the current AX.25 connection.",
     "btn_unproto":    "Unproto — transmit UI frames without a connection (broadcast).\nMutually exclusive with Connect.",
     "btn_maildrop":   "MailDrop — access the TNC built-in mailbox.\nLogs in to the MailDrop node.",
 
