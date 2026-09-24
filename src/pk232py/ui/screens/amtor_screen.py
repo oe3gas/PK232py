@@ -48,6 +48,7 @@ from .opmode_rtty_base import (
     style_rx_widget, style_tx_widget,
     BTN_W, SPACING, MACRO_COUNT,
 )
+from .screen_focus_controller import is_keyboard_input_widget
 
 
 # ---------------------------------------------------------------------------
@@ -169,15 +170,11 @@ class AmtorScreen(QWidget):
         from PyQt6.QtCore import QEvent
         from PyQt6.QtWidgets import QApplication
         if event.type() == QEvent.Type.KeyPress:
-            # Walk parent chain: in an app-wide filter obj may be an
-            # internal child widget, not the QLineEdit/QTextEdit itself.
-            def _is_input(w):
-                while w is not None:
-                    if isinstance(w, (QTextEdit, QLineEdit)):
-                        return True
-                    w = w.parent()
-                return False
-            if _is_input(self.focusWidget()) or _is_input(obj):
+            # is_keyboard_input_widget() walks the parent chain and
+            # covers every keyboard-input widget type (QComboBox,
+            # QAbstractSpinBox too, not just QLineEdit/QTextEdit — P41).
+            if (is_keyboard_input_widget(self.focusWidget())
+                    or is_keyboard_input_widget(obj)):
                 return super().eventFilter(obj, event)
             if hasattr(self, "tx_input") and self.tx_input is not None:
                 self.tx_input.setFocus()
