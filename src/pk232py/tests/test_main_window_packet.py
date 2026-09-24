@@ -29,6 +29,8 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PyQt6.QtCore import Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from pk232py.comm.frame import FrameKind
@@ -84,13 +86,58 @@ def wired_vhf():
     w._opmode_stack.setCurrentWidget(w._opmode_screens["VHF Packet"])
     w._wire_mode_callbacks()
     screen = w._opmode_screens["VHF Packet"]
-    return w, screen
+    yield w, screen
+    # Teardown (P41): MainWindow.__init__() installs itself as an
+    # app-wide event filter (QApplication.instance().installEventFilter(
+    # self)) - every filter installed on the QApplication singleton stays
+    # active until explicitly removed, regardless of whether the Python
+    # object that owns it is later garbage-collected. Without this,
+    # every test using this fixture leaves one more stale MainWindow
+    # answering EVERY keypress event for the rest of the pytest session;
+    # by the time enough of them pile up, one of their eventFilter()
+    # calls can throw against its own now-stale state (e.g. a screen a
+    # later test switched away from), which pytest-qt's exception
+    # capturing surfaces as a failure in a LATER, unrelated test -
+    # exactly what made TestKeyboardFocusHandling flaky depending on how
+    # many earlier tests in the full suite had already used this fixture.
+    QApplication.instance().removeEventFilter(w)
+    # closeEvent() asks "TNC is still connected. Exit anyway?" via
+    # QMessageBox.question() whenever _serial.is_connected is True -
+    # _StubSerial.is_connected is a class attribute hardcoded to True (the
+    # test bodies need that to exercise the "connected" TNC commands), so
+    # w.close() would otherwise pop a real modal dialog that never gets a
+    # button click under the offscreen QPA platform - the whole pytest
+    # process hangs forever. Flip it to False for the teardown-only close;
+    # by now the test body is done with it.
+    w._serial.is_connected = False
+    w.close()
+    # deleteLater() + processEvents(), not just close()/hide(): several
+    # TestKeyboardFocusHandling tests call show()/activateWindow() on a
+    # FRESH MainWindow (needed so QTest.keyClick() exercises the real
+    # app-wide event filter under realistic focus/activation state, see
+    # that class's docstring). A merely closed-but-not-destroyed MainWindow
+    # leaves its top-level QWidget (and its running QTimers, e.g. the
+    # Packet screen's UTC clock) alive under the offscreen QPA platform;
+    # once enough of them pile up across the full test run,
+    # qWaitForWindowActive() on a later test's fresh window hangs forever
+    # instead of returning quickly - reproduced 25.09.2026 running this
+    # file's full suite (test 25 of 28 hung; passed in isolation).
+    w.deleteLater()
+    QApplication.instance().processEvents()
 
 
 class TestUnprotoUsesChannelZero:
-    """T98."""
+    """T98.
 
-    def test_unproto_on_switches_to_channel_zero_and_locks_buttons(self, wired_vhf):
+    P42 note: Connect/Disconnect no longer have buttons of their own, so
+    the old "locks buttons" assertion here is now covered instead by
+    TestConnectRejectedOnChannelZero (the UI channel's chip refuses to
+    open its inline connect editor at all). This class keeps the parts of
+    T98 that are still meaningful: the channel-0 switch itself and
+    Unproto's own enable/disable state.
+    """
+
+    def test_unproto_on_switches_to_channel_zero(self, wired_vhf):
         w, screen = wired_vhf
         screen.channel_bar.set_current(3)
         screen.tx_input.setPlainText("draft on ch3")
@@ -98,8 +145,6 @@ class TestUnprotoUsesChannelZero:
         screen.btn_unproto.setChecked(True)
 
         assert screen.current_channel() == 0
-        assert not screen.btn_connect.isEnabled()
-        assert not screen.btn_disconnect.isEnabled()
 
     def test_unproto_off_does_not_auto_jump_channel(self, wired_vhf):
         w, screen = wired_vhf
@@ -110,7 +155,7 @@ class TestUnprotoUsesChannelZero:
         screen.btn_unproto.setChecked(False)
         assert screen.current_channel() == 0   # operator must pick a chip
 
-    def test_selecting_qso_channel_turns_unproto_off_and_unlocks(self, wired_vhf):
+    def test_selecting_qso_channel_turns_unproto_off(self, wired_vhf):
         w, screen = wired_vhf
         screen.channel_bar.set_current(3)
         screen.tx_input.setPlainText("draft on ch3")
@@ -120,7 +165,6 @@ class TestUnprotoUsesChannelZero:
         screen.channel_bar.set_current(3)
 
         assert not screen.btn_unproto.isChecked()
-        assert screen.btn_connect.isEnabled()
         assert screen.tx_input.toPlainText() == "draft on ch3"   # P9 preserved
 
     def test_channel_zero_state_change_reenables_unproto(self, wired_vhf):
@@ -137,46 +181,65 @@ class TestUnprotoUsesChannelZero:
 
 
 class TestConnectRejectedOnChannelZero:
-    """T99."""
+    """T99 - channel 0 (UI channel) can never hold a connection.
 
-    def test_connect_on_channel_zero_sends_no_frame(self, wired_vhf, monkeypatch):
+    Under the old Connect/Dest row this was enforced in MainWindow (a
+    warning dialog + un-checking btn_connect). P42 moved the guard to the
+    source instead: ChannelChip.start_edit() refuses to open its inline
+    editor at all for channel 0, so connect_requested can never even be
+    emitted for it - MainWindow's _on_chip_connect_requested() is never
+    reached, and no serial frame is ever built.
+    """
+
+    def test_channel_zero_chip_refuses_to_open_its_editor(self, wired_vhf):
         w, screen = wired_vhf
-        monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
-
         screen.channel_bar.set_current(0)
-        screen.set_dest_callsign("OE1XYZ")
-        screen.btn_connect.setChecked(True)
 
+        screen.channel_bar.start_edit_current()
+
+        assert not screen.channel_bar.is_editing()
         assert w._serial.calls == []
-        assert not screen.btn_connect.isChecked()
         assert screen.channel_bar.state(0) == "free"
+
+    def test_channel_zero_never_emits_connect_requested(self, wired_vhf):
+        w, screen = wired_vhf
+        received: list[tuple[int, str]] = []
+        screen.channel_bar.connect_requested.connect(
+            lambda ch, call: received.append((ch, call))
+        )
+
+        screen.channel_bar.start_edit(0, "OE1XYZ")
+
+        assert not screen.channel_bar.is_editing()
+        assert received == []
+        assert w._serial.calls == []
 
 
 class TestLinkMessageGatedByVisibleChannel:
     """T102 — a link message for a channel other than the visible one must
-    not touch Connect/Disconnect/Unproto; ChannelBar itself still updates
-    (it is a separate, always-on, per-channel consumer of the same message)."""
+    not touch Unproto's enabled state (P42: Connect/Disconnect no longer
+    have buttons to gate — set_link_state() only owns Unproto now, see its
+    docstring); ChannelBar itself still updates (it is a separate,
+    always-on, per-channel consumer of the same message)."""
 
-    def test_message_for_other_channel_does_not_change_buttons(self, wired_vhf):
+    def test_message_for_other_channel_does_not_change_unproto(self, wired_vhf):
         w, screen = wired_vhf
         mode = w._modes.current_mode
 
         # Channel 4 connects while it is the visible channel.
         screen.channel_bar.set_current(4)
         mode.handle_frame(_FakeLinkMsgFrame(4, "CONNECTED to OE1XYZ"))
-        assert screen.btn_disconnect.isEnabled()
+        assert not screen.btn_unproto.isEnabled()
 
-        # Switch away to the UI channel.
+        # Switch away to the UI channel — Unproto re-enables (channel 0
+        # can never itself be busy).
         screen.channel_bar.set_current(0)
-        assert not screen.btn_connect.isEnabled()
-        assert not screen.btn_disconnect.isEnabled()
         assert screen.btn_unproto.isEnabled()
 
         # A link message for channel 4 arrives while channel 0 is visible.
         mode.handle_frame(_FakeLinkMsgFrame(4, "CONNECTED to OE1XYZ"))
 
-        # Buttons must stay exactly as the visible channel (0) dictates.
-        assert not screen.btn_disconnect.isEnabled()
+        # Unproto must stay exactly as the visible channel (0) dictates.
         assert screen.btn_unproto.isEnabled()
         # ChannelBar itself is unaffected by this fix -- channel 4 still
         # shows connected, since that consumer is not channel-gated.
@@ -192,7 +255,7 @@ class TestLinkMessageGatedByVisibleChannel:
         mode.handle_frame(_FakeLinkMsgFrame(4, "CONNECTED to OE1XYZ"))
 
         screen.channel_bar.set_current(4)
-        assert screen.btn_disconnect.isEnabled()
+        assert not screen.btn_unproto.isEnabled()
 
 
 class TestPassallMnemonic:
@@ -371,3 +434,142 @@ class TestMaildropGate:
         assert screen.btn_maildrop.toolTip() == "disconnect channel 5 first"
         assert not w._act_maildrop.isEnabled()
         assert w._act_maildrop.toolTip() == "disconnect channel 5 first"
+
+
+class TestKeyboardFocusHandling:
+    """P41: MainWindow.eventFilter() must not redirect keystrokes away
+    from a focused input field just because it is a QComboBox
+    (editable or not) rather than a QLineEdit - hardware-confirmed
+    24.09.2026 (typing into the VHF Packet screen's Dest field landed
+    in the TX window instead). The Dest field itself was an editable
+    QComboBox (cb_dest) at the time of that finding; P42 removed it
+    entirely in favour of a callsign typed directly into a channel chip's
+    own inline QLineEdit editor (ChannelChip.editor) - the test below now
+    exercises that editor instead, still covering the exact same
+    QLineEdit-type-field regression the P41 fix was for. Reproduces the
+    bug through the REAL
+    app-wide event filter (MainWindow.eventFilter, installed on
+    QApplication itself) with QTest.keyClick(), not by calling any
+    screen's own eventFilter() directly - that is not the code path a
+    real keystroke actually takes for these fields (see the
+    is_keyboard_input_widget() docstring in screen_focus_controller.py
+    for why).
+
+    QTest.keyClick(TARGET, ...) is always given the specific widget to
+    click, never QApplication.focusWidget() - a whole pytest session
+    creates many MainWindow instances across many test files without
+    ever closing one (a pre-existing pattern in this fixture, not
+    introduced here), so QApplication-wide "current focus widget"
+    tracking is not reliable enough to use as the click TARGET once
+    other tests have run first; it is only used, via setFocus() below,
+    to put the app-wide event filter into the real state a genuine
+    keystroke would find it in (self.focusWidget() inside eventFilter()
+    is one of two conditions checked - the other, obj itself, is exactly
+    what QTest.keyClick()'s target becomes).
+    """
+
+    def _settle(self, w):
+        w.show()
+        w.activateWindow()
+        QTest.qWaitForWindowActive(w)
+        _app.processEvents()
+
+    def test_chip_editor_keeps_typed_text_out_of_tx_window(self, wired_vhf):
+        w, screen = wired_vhf
+        self._settle(w)
+        screen.tx_input.clear()
+        screen.channel_bar.start_edit_current()   # opens the current chip's editor
+        field = screen.channel_bar._chips[screen.channel_bar.current()].editor
+        field.clear()
+        field.setFocus()
+        _app.processEvents()
+
+        QTest.keyClick(field, Qt.Key.Key_O)
+        _app.processEvents()
+
+        assert field.text() == "o"
+        assert screen.tx_input.toPlainText() == ""
+
+    def test_via_field_still_works(self, wired_vhf):
+        # The "via" field (le_unproto) is a plain QLineEdit and already
+        # worked before P41 - the control/negative test from the spec.
+        w, screen = wired_vhf
+        self._settle(w)
+        screen.tx_input.clear()
+        screen.le_unproto.clear()
+        screen.le_unproto.setFocus()
+        _app.processEvents()
+
+        QTest.keyClick(screen.le_unproto, Qt.Key.Key_C)
+        _app.processEvents()
+
+        assert screen.le_unproto.text() == "c"
+        assert screen.tx_input.toPlainText() == ""
+
+    def test_button_focus_still_redirects_to_tx_window(self, wired_vhf):
+        # Existing behaviour must not regress: a NoFocus button never
+        # actually keeps keyboard focus, but simulate the channel bar/
+        # button case by focusing a button-like widget directly and
+        # confirm a keystroke still lands in tx_input.
+        w, screen = wired_vhf
+        self._settle(w)
+        screen.tx_input.clear()
+        screen.btn_unproto.setFocus()
+        _app.processEvents()
+
+        QTest.keyClick(screen.btn_unproto, Qt.Key.Key_Z)
+        _app.processEvents()
+
+        assert screen.tx_input.toPlainText() == "z"
+
+    def test_monitor_combo_changes_value_without_leaking_into_tx_window(
+        self, wired_vhf,
+    ):
+        w, screen = wired_vhf
+        self._settle(w)
+        assert screen.combo_monitor.currentText() == screen.MONITOR_DEFAULT
+        screen.tx_input.clear()
+        screen.combo_monitor.setFocus()
+        _app.processEvents()
+
+        # A digit other than the default proves the combo actually
+        # reacted, not merely that it stayed unchanged.
+        QTest.keyClick(screen.combo_monitor, Qt.Key.Key_2)
+        _app.processEvents()
+
+        assert screen.combo_monitor.currentText() == "2"
+        assert screen.tx_input.toPlainText() == ""
+
+    def test_hbaud_combo_changes_value_without_leaking_into_tx_window(
+        self, wired_vhf,
+    ):
+        w, screen = wired_vhf
+        self._settle(w)
+        assert screen.combo_hbaud.currentText() == screen.HBAUD_DEFAULT
+        screen.tx_input.clear()
+        screen.combo_hbaud.setFocus()
+        _app.processEvents()
+
+        # Qt's non-editable QComboBox type-ahead jumps to the item
+        # starting with the typed character - "9" -> "9600".
+        QTest.keyClick(screen.combo_hbaud, Qt.Key.Key_9)
+        _app.processEvents()
+
+        assert screen.combo_hbaud.currentText() == "9600"
+        assert screen.tx_input.toPlainText() == ""
+
+    def test_ctrl_up_in_open_chip_editor_does_not_step_channel(self, wired_vhf):
+        w, screen = wired_vhf
+        self._settle(w)
+        screen.channel_bar.set_current(2)
+        screen.channel_bar.start_edit_current()
+        field = screen.channel_bar._chips[2].editor
+        field.setFocus()
+        _app.processEvents()
+
+        QTest.keyClick(
+            field, Qt.Key.Key_Up, Qt.KeyboardModifier.ControlModifier,
+        )
+        _app.processEvents()
+
+        assert screen.channel_bar.current() == 2
