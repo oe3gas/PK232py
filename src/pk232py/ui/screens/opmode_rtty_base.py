@@ -46,6 +46,7 @@ from .ui_theme import (
 from .macro_store import (
     MacroStore, MacroEditDialog, MACRO_COUNT, add_hline, apply_macro_tooltips,
 )
+from .screen_focus_controller import is_keyboard_input_widget
 
 # ---------------------------------------------------------------------------
 # Layout constants (same across all RTTY screens)
@@ -721,16 +722,13 @@ class RttyBaseScreen(QWidget):
 
     def eventFilter(self, obj, event) -> bool:
         if event.type() == QEvent.Type.KeyPress:
-            from PyQt6.QtWidgets import QTextEdit, QLineEdit
-            # Walk parent chain: in an app-wide filter obj may be an
-            # internal child widget, not the QLineEdit/QTextEdit itself.
-            def _is_input(w):
-                while w is not None:
-                    if isinstance(w, (QTextEdit, QLineEdit)):
-                        return True
-                    w = w.parent()
-                return False
-            if _is_input(self.focusWidget()) or _is_input(obj):
+            # is_keyboard_input_widget() walks the parent chain and
+            # covers every keyboard-input widget type, including
+            # QComboBox and QAbstractSpinBox (P41) — not just
+            # QLineEdit/QTextEdit. Shared with the other opmode screens
+            # instead of a locally copied type check (P41.2).
+            if (is_keyboard_input_widget(self.focusWidget())
+                    or is_keyboard_input_widget(obj)):
                 return super().eventFilter(obj, event)
             if hasattr(self, 'tx_input') and self.tx_input is not None:
                 self.tx_input.setFocus()
