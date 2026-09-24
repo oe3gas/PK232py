@@ -1055,6 +1055,14 @@ the Morse operating screen, not in the shared setup dialog).
 **Status:** ✅ PASS (2026-09-20 — all three checks green across all six
 dialogs after the TXSMT/AERPACK/ALFPACK fixes).
 
+**P38 update (2026-09-24):** the five new local MailDrop archive fields
+(`archive_enabled`/`archive_path`/`archive_sync`/`archive_restore`/
+`archive_restore_scope`, `MailDropParamsDialog`'s new "Local archive
+(PC side)" section) pass Tests A/B/C automatically — no new test code
+needed beyond registering the three combo-box fields in
+`_ENUM_FIELDS` (same mechanism as `cfrom_mode` etc.), since the audit
+iterates `dataclasses.fields()` generically.
+
 ### T107 — Upload coverage
 Automatic, via `test_param_dialogs_roundtrip.py::test_field_reaches_upload`
 (Test D — see "P12 checks" note in T106; this is the fourth link in the
@@ -1081,6 +1089,11 @@ TNC). Not a manual test case — status follows the test run.
 **Status:** ✅ PASS (2026-09-20 — HF Packet's three named findings fixed;
 everything else formally exempted with a cited reason, not silently
 ignored).
+
+**P38 update (2026-09-24):** the five new local MailDrop archive fields
+are exempted by design, not a follow-up gap — they are PC-side settings
+(`UPLOAD_EXEMPT`, reason "local archive setting, not a TNC parameter")
+and must never appear in an upload command at all.
 
 ### T108 — Access filters on real hardware (hardware, OPEN)
 1. Set `CFROM YES <a station you control>`, initialise
@@ -1594,6 +1607,29 @@ MailDrop"; opening `Parameters → MailDrop...` shows every field disabled
 with the same tooltip, none hidden.
 
 **Status:** ⬜ OPEN — needs a real run with Device C connected.
+
+---
+
+### T121 — Local MailDrop archive: disabled by default creates no file
+`MailDropArchive`/`open_archive()` (P38, `maildrop/archive.py`) is
+PK232PY's own local record of MailDrop messages — deliberately optional
+(`MailDropConfig.archive_enabled = False` by default) since collecting/
+restoring costs real time and suspends packet operation for the whole
+session (measured 24.09.2026, Device B, T119: ~4s open, ~6–7s per
+message, ~3s leave). This test only checks the "off means off" contract,
+software-verified (`test_maildrop_archive.py::TestOpenArchive`); no
+hardware or UI wiring involved yet (this package builds no session-mask
+wiring at all — Backlog.md).
+
+1. `open_archive(MailDropConfig(archive_enabled=False, archive_path=<any path>))`
+2. **Expected result:** returns `None`; no file exists at `archive_path`
+   afterwards.
+3. `open_archive(MailDropConfig(archive_enabled=True, archive_path=<path>))`
+4. **Expected result:** returns a `MailDropArchive`; the file now exists.
+
+**Status:** ✅ PASS (2026-09-24, software-verified —
+`test_maildrop_archive.py::TestOpenArchive::test_disabled_creates_no_file`/
+`test_enabled_creates_the_file`).
 
 ---
 
