@@ -56,6 +56,7 @@ from .screens.fax_screen     import FaxScreen
 from .screens.pactor_screen  import PactorScreen
 from .screens.packet_screen  import HFPacketScreen, VHFPacketScreen
 from .screens.tx_controller import TxController
+from .screens.screen_focus_controller import is_keyboard_input_widget
 
 logger = logging.getLogger(__name__)
 
@@ -1525,22 +1526,26 @@ class MainWindow(QMainWindow):
                 status = "FEC TX"
             else:
                 status = "STBY"
-            # Packet only: gate Connect/Disconnect by link state so a second CO
-            # cannot be sent while connected or calling. Guarded by hasattr so
-            # AMTOR/PACTOR screens (no set_link_state) are unaffected.
+            # Packet only: gate Unproto by link state (T39 — a connected/
+            # pending QSO channel must not also run UNPROTO UI frames).
+            # Guarded by hasattr so AMTOR/PACTOR screens (no set_link_state)
+            # are unaffected. P42: set_link_state() no longer also gates
+            # Connect/Disconnect buttons — those buttons no longer exist;
+            # a connect now comes from a chip's own inline editor (which
+            # ChannelChip itself already refuses to open on a busy channel)
+            # and a disconnect from the chip's context menu / Ctrl+D (both
+            # already channel-state-aware), so nothing here needs to gate them.
             #
             # Bug fixed 2026-09-20: set_link_state() used to fire for EVERY
             # link message regardless of which channel it came from. With
             # multiple channels this is wrong — a CONNECTED on channel 4
-            # would enable Disconnect and lock Unproto even while the
-            # operator is looking at a different chip (e.g. the UI channel),
-            # and pressing that "enabled" Disconnect would then send DI on
-            # whatever channel is CURRENTLY selected, not channel 4. Button
-            # gating must only react to a message about the visible channel;
-            # _set_status() is an EVENT display, not a channel display, so it
-            # keeps showing every message regardless (see the trailing
+            # would lock Unproto even while the operator is looking at a
+            # different chip (e.g. the UI channel). Gating must only react
+            # to a message about the visible channel; _set_status() is an
+            # EVENT display, not a channel display, so it keeps showing
+            # every message regardless (see the trailing
             # screen._set_status(status) call below, outside this guard).
-            # This leaves exactly two triggers for button gating:
+            # This leaves exactly two triggers for Unproto gating:
             #   1. a channel switch (_on_packet_channel_changed() already
             #      calls set_link_state(channel_bar.state(new_channel)))
             #   2. a link message about the channel that is CURRENTLY selected
@@ -2466,9 +2471,10 @@ class MainWindow(QMainWindow):
     def _wire_pactor_buttons(self, screen) -> None:
         """Connect PACTOR mode buttons to TNC commands.
 
-        Only wires if screen is a PactorScreen instance —
-        PacketBaseScreen also has btn_connect and would otherwise
-        receive the PACTOR slots, causing a double warning dialog.
+        Only wires if screen is a PactorScreen instance — PactorScreen's
+        btn_connect/btn_disconnect are unrelated to Packet's own connect
+        flow (P42: Packet has no such buttons any more; connects/disconnects
+        there come from the channel chips instead, see _wire_packet_buttons).
         """
         from .screens.pactor_screen import PactorScreen
         if not isinstance(screen, PactorScreen):
@@ -2500,8 +2506,6 @@ class MainWindow(QMainWindow):
         Uses try/disconnect to avoid stacking signals on repeated calls.
         Skips silently for any screen that is not a PacketBaseScreen.
         """
-        if not hasattr(screen, "btn_connect"):
-            return
         from .screens.packet_screen import PacketBaseScreen
         if not isinstance(screen, PacketBaseScreen):
             return
@@ -2514,12 +2518,11 @@ class MainWindow(QMainWindow):
                 pass
             signal.connect(slot)
 
-        # Connect button: visual feedback in screen + CO frame in MainWindow
-        _rewire(screen.btn_connect.toggled, screen.on_connect_toggled)
-        _rewire(screen.btn_connect.toggled, self._on_packet_connect)
-
-        # Disconnect button
-        _rewire(screen.btn_disconnect.clicked, self._on_packet_disconnect)
+        # Connect / Disconnect (P42): no more buttons — a callsign typed
+        # into a free chip's inline editor (or the "Connect via…" dialog)
+        # and a chip's own context menu / Ctrl+D drive this now.
+        _rewire(screen.channel_bar.connect_requested, self._on_chip_connect_requested)
+        _rewire(screen.channel_bar.disconnect_requested, self._on_chip_disconnect_requested)
 
         # Unproto button: visual feedback in screen + UN frame in MainWindow
         _rewire(screen.btn_unproto.toggled, screen.on_unproto_toggled)
@@ -2738,84 +2741,50 @@ class MainWindow(QMainWindow):
     # Packet slots
     # ------------------------------------------------------------------
 
-    def _on_packet_connect(self, checked: bool) -> None:
-        """Connect button toggled — send CO frame to TNC.
+    def _on_chip_connect_requested(self, channel: int, callsign: str) -> None:
+        """A channel chip's inline editor (or the "Connect via…" dialog)
+        committed a callsign — send CO frame to TNC on *channel* (P42).
 
-        checked=True:  validate Dest field, send CO {callsign} on the
-            channel currently selected in the ChannelBar.
-        checked=False: no TNC command — user uses Disconnect button to DI.
+        Replaces the old Connect-button flow (_on_packet_connect): channel 0
+        can never reach here (ChannelChip refuses to open its editor there),
+        and an empty callsign can never reach here either (ChannelChip's own
+        _commit() validates it and never emits connect_requested if invalid)
+        — so this only needs the TNC connectivity guard before sending.
         """
         if not self._serial.is_connected or not self._serial.is_host_mode:
             return
-        if not checked:
-            return
         screen = self._opmode_stack.currentWidget()
-        if not hasattr(screen, "dest_callsign"):
-            return
-
-        from .screens.packet_screen import UI_CHANNEL
-        if hasattr(screen, "current_channel") and screen.current_channel() == UI_CHANNEL:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self, "Packet Connect",
-                "Channel 0 is the UI/monitor channel and cannot hold a "
-                "connection.\nSelect a channel from 1 to 9 to connect."
-            )
-            screen.btn_connect.blockSignals(True)
-            screen.btn_connect.setChecked(False)
-            screen.btn_connect.blockSignals(False)
-            screen.on_connect_toggled(False)   # public method on PacketBaseScreen
-            return
-
-        callsign = screen.dest_callsign()
-        if not callsign:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self, "Packet Connect",
-                "Please enter a destination callsign in the Dest field."
-            )
-            screen.btn_connect.blockSignals(True)
-            screen.btn_connect.setChecked(False)
-            screen.btn_connect.blockSignals(False)
-            screen.on_connect_toggled(False)   # public method on PacketBaseScreen
-            return
-        channel = screen.current_channel()
         # CONNECT is a CHANNEL command: it must go out with CTL=$4x (the
         # selected channel), not the general-command CTL=$4F. send_command()
         # rebuilds the frame with CTL=$4F and the channel is lost — the TNC
         # then treats CO as a plain command and ignores the connect request.
         # send_channel_command() writes the $4x channel frame (build_ch_cmd)
         # directly, preserving the channel (no longer hardcoded to 1 — the
-        # channel comes from the ChannelBar chip the user selected).
+        # channel comes from the chip the user typed the callsign into).
         self._serial.send_channel_command(channel, b'CO', callsign.encode('ascii'))
-        screen.add_dest_history(callsign)
         self._log_monitor(f"[PACKET] Connecting ch{channel} → {callsign}")
-        # Disable Connect immediately (CALLING): the CO is out, awaiting
-        # CONNECTED — prevent a second CO before the link comes up. Disconnect
-        # stays enabled so the user can abort. (set_link_state exists only on
-        # the packet screen.)
+        # set_link_state("calling") disables Unproto (T39) while the CO is
+        # out, awaiting CONNECTED. (set_link_state exists only on the
+        # packet screen.)
         if hasattr(screen, "set_link_state"):
             screen.set_link_state("calling")
-        screen.channel_bar.set_channel_state(channel, "calling", callsign)
+        if hasattr(screen, "channel_bar"):
+            screen.channel_bar.set_channel_state(channel, "calling", callsign)
         self._update_maildrop_gate_ui()
 
-    def _on_packet_disconnect(self) -> None:
-        """Disconnect button clicked — send DI frame to TNC on the current channel."""
+    def _on_chip_disconnect_requested(self, channel: int) -> None:
+        """A channel chip's context-menu "Disconnect" entry or Ctrl+D on a
+        busy channel — send DI frame to TNC on *channel* (P42, replaces the
+        old Disconnect-button flow, _on_packet_disconnect)."""
         if not self._serial.is_connected or not self._serial.is_host_mode:
             return
         screen = self._opmode_stack.currentWidget()
-        channel = screen.current_channel() if hasattr(screen, "current_channel") else 1
         # DISCONNECT is a channel command too — send the $4x channel frame, not
-        # a $4F general command (see _on_packet_connect).
+        # a $4F general command (see _on_chip_connect_requested).
         self._serial.send_channel_command(channel, b'DI')
         self._log_monitor(f"[PACKET] Disconnect sent ch{channel}")
         if hasattr(screen, "_set_status"):
             screen._set_status("DISCONNECTED")
-        if hasattr(screen, "btn_connect"):
-            screen.btn_connect.blockSignals(True)
-            screen.btn_connect.setChecked(False)
-            screen.btn_connect.blockSignals(False)
-            screen.on_connect_toggled(False)   # public method on PacketBaseScreen
         if hasattr(screen, "channel_bar"):
             screen.channel_bar.set_channel_state(channel, "free")
         self._update_maildrop_gate_ui()
@@ -3701,37 +3670,28 @@ class MainWindow(QMainWindow):
             screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
 
         from .screens.packet_screen import UI_CHANNEL
-        if hasattr(screen, "btn_connect") and hasattr(screen, "btn_disconnect"):
-            if channel == UI_CHANNEL:
-                # Channel 0 is the UI/unproto/monitor channel — there is
-                # nothing to connect to there.
-                screen.btn_connect.setEnabled(False)
-                screen.btn_disconnect.setEnabled(False)
-                # Channel 0 can never itself be calling/connected (P10.1's
-                # set_channel_state() refuses that), so Unproto must always
-                # be selectable while it is current — even if it was left
-                # disabled by set_link_state() while viewing a different,
-                # busy channel a moment ago.
-                if hasattr(screen, "btn_unproto"):
-                    screen.btn_unproto.setEnabled(True)
-            elif hasattr(screen, "set_link_state") and hasattr(screen, "channel_bar"):
-                # set_link_state() stays the sole authority on Connect/
-                # Disconnect/Unproto enablement (T39) — reuse it with this
-                # channel's own state instead of unconditionally re-enabling
-                # both buttons, so a channel that is itself calling/connected
-                # keeps its own locks intact.
-                screen.set_link_state(screen.channel_bar.state(channel))
-                # T39, rebased onto the channel model: moving to a QSO
-                # channel while Unproto is still on means the operator wants
-                # that channel for a connection, so turn Unproto off.
-                # blockSignals avoids re-entering _on_packet_unproto() (which
-                # would otherwise jump back to channel 0); only the visual
-                # reset is replayed directly, as the spec requires.
-                if hasattr(screen, "btn_unproto") and screen.btn_unproto.isChecked():
-                    screen.btn_unproto.blockSignals(True)
-                    screen.btn_unproto.setChecked(False)
-                    screen.btn_unproto.blockSignals(False)
-                    screen.on_unproto_toggled(False)
+        if hasattr(screen, "set_link_state") and hasattr(screen, "channel_bar"):
+            # set_link_state() stays the sole authority on Unproto
+            # enablement (T39 — P42 dropped its former Connect/Disconnect
+            # button role, see set_link_state()'s own docstring). Channel 0
+            # can never itself be calling/connected (P10.1's
+            # set_channel_state() refuses that), so state(UI_CHANNEL) is
+            # always "free" and this alone re-enables Unproto whenever the
+            # UI channel becomes current — even if it was left disabled by
+            # a different, busy channel a moment ago.
+            screen.set_link_state(screen.channel_bar.state(channel))
+            # T39, rebased onto the channel model: moving to a QSO channel
+            # (never channel 0 itself) while Unproto is still on means the
+            # operator wants that channel for a connection, so turn Unproto
+            # off. blockSignals avoids re-entering _on_packet_unproto()
+            # (which would otherwise jump back to channel 0); only the
+            # visual reset is replayed directly, as the spec requires.
+            if (channel != UI_CHANNEL and hasattr(screen, "btn_unproto")
+                    and screen.btn_unproto.isChecked()):
+                screen.btn_unproto.blockSignals(True)
+                screen.btn_unproto.setChecked(False)
+                screen.btn_unproto.blockSignals(False)
+                screen.on_unproto_toggled(False)
 
         self._log_monitor(f"[PACKET] Channel → {channel}")
 
@@ -3810,8 +3770,9 @@ class MainWindow(QMainWindow):
         tx_input. Grabs the complete text, sends it as build_data() on the
         current channel, then clears that channel's TX buffer.
 
-        Only fires when connected (btn_connect is checked) or in
-        unproto mode (btn_unproto is checked).
+        Only fires when connected on the current channel (P42:
+        channel_bar.state(channel) == "connected" — there is no
+        btn_connect any more) or in unproto mode (btn_unproto is checked).
 
         P9.4: the channel number is read from current_channel() exactly
         ONCE, right here, and every later step in this method (send_data,
@@ -3827,15 +3788,17 @@ class MainWindow(QMainWindow):
         if screen is None or not hasattr(screen, 'tx_input'):
             return
 
-        # Only send when connected or in unproto mode
-        connected = (hasattr(screen, 'btn_connect')
-                     and screen.btn_connect.isChecked())
+        channel = screen.current_channel() if hasattr(screen, "current_channel") else 1
+
+        # Only send when connected on this channel or in unproto mode (P42:
+        # channel_bar state replaces the old btn_connect.isChecked() check).
+        connected = (hasattr(screen, "channel_bar")
+                     and screen.channel_bar.state(channel) == "connected")
         unproto   = (hasattr(screen, 'btn_unproto')
                      and screen.btn_unproto.isChecked())
         if not connected and not unproto:
             return
 
-        channel = screen.current_channel() if hasattr(screen, "current_channel") else 1
         text = screen.tx_text() if hasattr(screen, "tx_text") else screen.tx_input.toPlainText()
         if not text.strip():
             return
@@ -4639,8 +4602,20 @@ class MainWindow(QMainWindow):
                     # If the active screen has a ScreenFocusController
                     # and an input field currently has focus, pass the
                     # keypress through without redirecting to tx_input.
+                    # is_keyboard_input_widget() is the registration-free
+                    # fallback (P41): ScreenFocusController alone missed
+                    # editable QComboBox fields entirely (Dest — Qt
+                    # delivers FocusIn to the combo box itself, not its
+                    # inner lineEdit(), even though that lineEdit() is
+                    # what was registered) and plain QComboBox/
+                    # QAbstractSpinBox fields that were never registered
+                    # at all (Monitor, HBAUD). Checking both here rather
+                    # than replacing focus_ctrl is deliberate — see
+                    # screen_focus_controller.py's module docstring.
                     _focus_ctrl = getattr(screen, 'focus_ctrl', None)
-                    if _focus_ctrl is not None and _focus_ctrl.is_active():
+                    if ((_focus_ctrl is not None and _focus_ctrl.is_active())
+                            or is_keyboard_input_widget(self.focusWidget())
+                            or is_keyboard_input_widget(obj)):
                         return super().eventFilter(obj, event)
                     elif obj is not tx:
                         # Redirect all other keypresses to tx_input.
