@@ -69,7 +69,8 @@ EPROMs ist der eigentliche Beweis (siehe §5).
 | A | 11.09.1995 | PACTOR | `MI` = MFILTER (nicht MDCHECK) — siehe Anmerkung unten. | T115, `CLAUDE.md` |
 | B | 01.08.1991 | MBX | Nur die eckige Prompt-Klammer (`[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >`) ist von diesem Gerät gemessen — ein einzelner Datenpunkt, kein Vergleichsscan gegen Gerät A. | `hw_logs/20260923_184302_maildrop_session.log` (P31) |
 | B | 01.08.1991 | MBX | MDCHECK hat kein Host-Mode-Kürzel — `mdcheck_scan` fand keinen Treffer unter denselben 23 Kandidaten wie auf Gerät A. Der Befund gilt damit über zwei Firmwaregenerationen (MBX + PACTOR). | T118, `hw_logs/20260923_203256_mdcheck_scan.log` (P34) |
-| B | 01.08.1991 | MBX | `MDCHECK` öffnet die Mailbox zuverlässig (Prompt erkannt), aber der direkt folgende `L`-Befehl antwortet mit `*** What?` — auf Gerät A funktioniert dieselbe Abfolge anstandslos. Ursache noch offen, siehe §6. | T119 (P35), `hw_logs/20260923_204041_maildrop_session.log` |
+| B | 01.08.1991 | MBX | `MDCHECK` öffnete am 23.09. die Mailbox, aber `L` antwortete `*** What?` — **Ursache geklärt, 24.09.: ein überzähliges LF, das die App nach `MDCHECK` mitschickte, nicht die Firmware.** Mit `MDCHECK\r` allein kommt der Prompt sauber, `L` antwortet normal. | T119 (P37), `hw_logs/20260924_181446_maildrop_session.log` |
+| B | 01.08.1991 | MBX | Volles MailDrop-Protokoll (`L`, `S`, `SB`, `R`, `K`, `B`, `<`-Fremdabsender) **10/10 Schritte PASS** — identisch zu Gerät A (PACTOR-Generation). `Größe = Betreff + Text + 9` bestätigt auf diesem Gerät; die Speicherverbrauch-Hypothese (Block pro `@BBS`) weiter widerlegt (61→112, 43→84, 35→84 Bytes in diesem Lauf, kein `@BBS` beteiligt). | T119 (P37), `hw_logs/20260924_181446_maildrop_session.log` |
 | C | 30.12.1988 | BASE | MailDrop fehlt auf diesem Gerät — direkt mit einem Terminalprogramm (PuTTY) geprüft, nicht über die App. | Betreiberangabe, 23.09.2026 |
 
 **Kandidat für einen echten Generationsunterschied:** `MI` löst auf Gerät A
@@ -412,20 +413,18 @@ fahren:
   wird aus Banner-Datum + Query-Nachbarn derselben Generation abgeleitet. Wo ein
   direkter Befehl empirisch interessiert, lässt er sich am Gerät gezielt (mit
   gültigem Argument, Sender aus/Dummy-Load) manuell testen.
-- **Verhält sich `L` (MailDrop LIST) auf MBX (Gerät B) anders als auf
-  PACTOR (Gerät A)? (P35, 23.09.2026, offen.)** Auf Gerät A öffnet
-  `MDCHECK` die Mailbox und `L` listet zuverlässig (P20–P24). Auf Gerät
-  B öffnete `MDCHECK` die Mailbox ebenso (Prompt erkannt,
-  `bracket='square'`, `free=18340`), aber der direkt folgende `L`-Befehl
-  antwortete mit `*** What?`
-  (`hw_logs/20260923_204041_maildrop_session.log`). Drei aus dem
-  Mitschnitt nicht unterscheidbare Ursachen — ein Software-Artefakt
-  (überzähliges LF nach `MDCHECK`, seitdem entfernt, P35.2), ein echter
-  Generationsunterschied im MailDrop-Befehlssatz, oder verschmolzene
-  Antwortpuffer ohne Protokollursache — siehe CLAUDE.md, "Mailbox
-  commands terminate with CR only". `MailDropSession` protokolliert
-  jetzt jeden Rohblock (P35.1); ein erneuter Lauf auf Gerät B mit
-  aktivem Mitschnitt sollte klären, welche der drei zutrifft.
+- ~~**Verhält sich `L` (MailDrop LIST) auf MBX (Gerät B) anders als auf
+  PACTOR (Gerät A)?**~~ **Geklärt, 24.09.2026 (P37, T119,
+  `hw_logs/20260924_181446_maildrop_session.log`):** Software-Artefakt,
+  keine Generationsdifferenz. Die App schickte nach `MDCHECK` ein
+  überzähliges LF (`MDCHECK\r\n`); die Mailbox wertete das als eigenen
+  (leeren) Befehl, dessen Antwort dem folgenden `L` in die Quere kam.
+  Mit `MDCHECK\r` allein (die P35-Fix, bereits vor diesem Lauf im Code)
+  kommt der Prompt sauber, und `L` antwortet normal (`*** Message not
+  found.` auf der leeren Mailbox, dann echte Listen nach dem Versenden).
+  Das volle MailDrop-Protokoll (`L`,
+  `S`, `SB`, `R`, `K`, `B`, `<`-Fremdabsender) ist damit für MBX und
+  PACTOR als identisch bestätigt — siehe §2a.
 
 Nach dem ersten realen Dreifach-Scan lassen sich fast alle L→H hochstufen — und
 genau die Befehle, die zwischen 1988/1991/1995 kippen, sind die gesuchten
