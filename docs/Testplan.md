@@ -1570,6 +1570,33 @@ the same finding recorded against the device/generation table.
 
 ---
 
+### T120 — MailDrop capability detection on Device C (BASE, 1988), OPEN
+Device C (`docs/DEVICES.md`) has no MailDrop at all (operator-confirmed
+via PuTTY, 23.09.2026). P37 added `SerialManager.detect_maildrop()` (a
+verbose-mode `MAILDROP` query, never `MDCHECK`) so the app itself can
+tell, and wired the result into `ParamsUploader.upload()` (skips the
+whole MailDrop command block) and the UI (`btn_maildrop` tooltip,
+`MailDropParamsDialog.set_locked()`). Software/mock-verified only so
+far (`test_serial_manager.py::TestClassifyMaildropResponse`,
+`test_params_uploader.py::TestMaildropCapabilitySkip`,
+`test_params_maildrop_dialog.py`) — never run against Device C itself.
+
+1. Connect the app to Device C and let it initialise normally (verbose
+   mode → parameter upload → Host Mode, whichever `connect_mode` is
+   configured).
+2. Watch the verbose-mode traffic (or the log) during the upload.
+
+**Expected result:** the `MAILDROP` capability query answers `?What?`;
+none of `MAILDROP`/`MDMON`/`MMSG`/`TMAIL`/`3RDPARTY`/`KILONFWD`/`MTEXT`
+are sent afterwards (no `?What?` from any of those seven); the Packet
+screens' MailDrop button shows the tooltip "This firmware has no
+MailDrop"; opening `Parameters → MailDrop...` shows every field disabled
+with the same tooltip, none hidden.
+
+**Status:** ⬜ OPEN — needs a real run with Device C connected.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
