@@ -57,6 +57,26 @@ def _maildrop_data(data: bytes, ctl: int = 0x70) -> HostFrame:
     return HostFrame(ctl=ctl, channel=15, data=data, kind=FrameKind.RX_DATA)
 
 
+class TestFormatDeviceLine:
+    """P37 - the 'device: ...' line every hw_check log/summary opens with."""
+
+    def test_full_banner_known(self):
+        line = hw_check.format_device_line("01.AUG.91", False, True)
+        assert line == (
+            "device: release=01.AUG.91  pactor=no  defaults=yes  "
+            "(source: banner)"
+        )
+
+    def test_pactor_device(self):
+        line = hw_check.format_device_line("11.SEP.95", True, False)
+        assert "pactor=yes" in line
+        assert "defaults=no" in line
+
+    def test_no_banner_is_unknown_not_a_guess(self):
+        line = hw_check.format_device_line(None, True, None)
+        assert line == "device: unknown (no banner - TNC was already awake)"
+
+
 class TestEvaluateT17:
     def test_px_is_the_toggle(self):
         # PX (PASSALL) responds Y/N; PS (PASS) responds with a char/hex value.

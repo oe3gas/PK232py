@@ -184,6 +184,10 @@ class RunLog:
     def __init__(self, path: Optional[Path]):
         self._fh = open(path, "w", encoding="utf-8") if path else None
         self.findings: list[tuple[str, str, str]] = []
+        # P37: set by Session.connect() once the banner is known (or
+        # known absent) -- repeated as the first line of summary() too,
+        # so device provenance survives a "just read the tail" skim.
+        self.device_line: Optional[str] = None
 
     def line(self, text: str = "") -> None:
         ts = datetime.datetime.now().strftime("%H:%M:%S")
@@ -201,6 +205,8 @@ class RunLog:
     def summary(self) -> None:
         self.line()
         self.line("=== SUMMARY (copy into Testplan.md) ===")
+        if self.device_line:
+            self.line(self.device_line)
         if not self.findings:
             self.line("(nothing recorded)")
         for label, verdict, detail in self.findings:
@@ -215,6 +221,25 @@ class RunLog:
 # ===========================================================================
 # Pure logic - unit-testable without any serial interface at all
 # ===========================================================================
+
+def format_device_line(
+    release: Optional[str], pactor: bool, defaults: Optional[bool],
+) -> str:
+    """P37: the 'device: ...' line every hw_check log opens with (once
+    the banner is known) and every summary() repeats, built from
+    SerialManager's banner-derived tnc_release/has_pactor/tnc_defaults.
+
+    release is None only when no banner was captured at all - the TNC
+    was already at the cmd: prompt when this session connected. That is
+    the ONLY case reported as 'unknown': nothing here guesses a device
+    identity from anything but the banner itself.
+    """
+    if release is None:
+        return "device: unknown (no banner - TNC was already awake)"
+    return (
+        f"device: release={release}  pactor={'yes' if pactor else 'no'}  "
+        f"defaults={'yes' if defaults else 'no'}  (source: banner)"
+    )
 
 def evaluate_t17(px_response: str, ps_response: str) -> dict:
     """Classify the PX/PS query responses (T17).
@@ -1857,6 +1882,11 @@ class Session:
                 "the application first) and try again."
             )
         self.log.line("TNC in verbose mode")
+        device_line = format_device_line(
+            self.sm.tnc_release, self.sm.has_pactor, self.sm.tnc_defaults,
+        )
+        self.log.device_line = device_line
+        self.log.line(device_line)
 
     def disconnect(self) -> None:
         if not self.sm.is_connected:
