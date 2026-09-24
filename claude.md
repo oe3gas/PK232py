@@ -886,13 +886,39 @@ Grows over time.
   wakeup, since `exit_host_mode()` itself sets `_verbose_ready = False`
   and nothing else sets it back to `True`; use an ACTIVE Ctrl-C+CR probe
   (matching `tools/hw_check.py`'s own `normalize()`) to confirm `cmd:`
-  instead of polling that property. `message_store.py`'s existing
-  `MailMessage`/schema does **not** cover what a real archive needs (own
-  durable ID ✓, read status ✓, sender ✓ — but no TNC message number, no
-  `@ BBS`, no P/T/B type, and `received_at` is the LOCAL receipt
-  timestamp, not the TNC's own store-time stamp) — left unchanged
-  per P27.3 (a future archive package's job, not a schema migration
-  bolted onto this one), see Backlog.md.
+  instead of polling that property. `message_store.py`'s schema did
+  **not** cover what a real archive needs (own durable ID ✓, read status
+  ✓, sender ✓ — but no TNC message number, no `@ BBS`, no P/T/B type,
+  and `received_at` was the LOCAL receipt timestamp, not the TNC's own
+  store-time stamp) — left unchanged under P27.3 at the time (a future
+  archive package's job, not a schema migration bolted onto this one);
+  **replaced outright by `maildrop/archive.py` under P38** (see the
+  dedicated bullet below) — `message_store.py` is deleted.
+- **MailDrop local archive — optional, off by default (P38, 2026-09-24).**
+  `maildrop/archive.py`'s `MailDropArchive` is PK232PY's own durable
+  record of MailDrop messages, entirely separate from the TNC's volatile
+  mailbox. **Deliberately optional and defaults to OFF**
+  (`MailDropConfig.archive_enabled = False`) — collecting/restoring
+  costs real time and suspends packet operation for the whole session
+  (measured 24.09.2026, Device B, T119): opening the session ~4s,
+  **each message ~6–7s**, leaving ~3s — 20 messages is a good two
+  minutes with the TNC unreachable to other stations (BUSY). Nothing in
+  this package collects or restores anything automatically; that is
+  explicitly the next package's job (the session mask, Backlog.md) —
+  `archive_sync`/`archive_restore`/`archive_restore_scope` are saved
+  settings with no effect yet, and the dialog says so
+  ("takes effect once the MailDrop session window is available").
+  **Key is a content fingerprint, never the TNC message number** — SHA-256
+  over `mtype|to_call|from_call|bbs|subject|body` (deliberately excluding
+  the TNC timestamp, which is set at store time and would differ after a
+  restore-then-collect round trip) — consistent with the existing "TNC
+  message numbers are not durable across a power-cycle" rule elsewhere
+  in this file. `open_archive(config)` is the only place a
+  `MailDropConfig` becomes a `MailDropArchive` instance, and returns
+  `None` **without ever creating a database file** when
+  `archive_enabled` is `False` — "nothing happens automatically unless
+  the user turned it on" is the whole point of this package, not just
+  its UI copy.
 - **P31 (2026-09-23) hardened the above against the first real hardware
   run of the full session harness.** Two gaps the first `maildrop_session`
   run against real hardware (`hw_logs/20260923_184302_maildrop_session.log`)
