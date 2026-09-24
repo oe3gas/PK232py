@@ -157,7 +157,13 @@ class TestHappyPathLifecycle:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state in ("ACTIVE", "FAILED"))
+        # Waits on the SIGNAL-delivered result (rec.prompts/rec.failures),
+        # not on session.state -- session.state is a plain attribute the
+        # worker thread sets BEFORE its final signal emit()s and BEFORE
+        # releasing its own busy flag, so polling it alone can observe
+        # "done" a hair before rec.prompts/the next _claim() is actually
+        # safe to rely on (found via a real flake, P36/Backlog.md).
+        assert _pump_until(lambda: rec.prompts or rec.failures)
         assert session.state == "ACTIVE"
         assert rec.prompts and rec.prompts[0].free == 18536
         assert channel.exit_calls == 1
@@ -182,7 +188,10 @@ class TestHappyPathLifecycle:
         assert rec.killed == [1]
 
         session.leave()
-        assert _pump_until(lambda: session.state == "CLOSED")
+        assert _pump_until(
+            lambda: rec.state_changes and rec.state_changes[-1] in ("CLOSED", "FAILED")
+        )
+        assert session.state == "CLOSED"
         assert channel.enter_calls == 1
 
         assert rec.failures == []
@@ -220,7 +229,7 @@ class TestSendGuards:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state == "ACTIVE")
+        assert _pump_until(lambda: rec.prompts or rec.failures)
         channel.writes.clear()
 
         session.send("oe3gas", "", "", "P", "subject", "line one\n/EX\nline two")
@@ -245,7 +254,9 @@ class TestAbortRecoversWithoutFalseSuccess:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state in ("CLOSED", "FAILED"))
+        assert _pump_until(
+            lambda: rec.state_changes and rec.state_changes[-1] in ("CLOSED", "FAILED")
+        )
 
         assert session.state == "CLOSED"          # recovery succeeded
         assert "ACTIVE" not in rec.state_changes   # never claimed success
@@ -287,7 +298,9 @@ class TestAbortRecoversWithoutFalseSuccess:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state in ("CLOSED", "FAILED"))
+        assert _pump_until(
+            lambda: rec.state_changes and rec.state_changes[-1] in ("CLOSED", "FAILED")
+        )
 
         assert session.state == "FAILED"
         assert "ACTIVE" not in rec.state_changes
@@ -325,7 +338,9 @@ class TestRecoveryPath:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state in ("CLOSED", "FAILED"))
+        assert _pump_until(
+            lambda: rec.state_changes and rec.state_changes[-1] in ("CLOSED", "FAILED")
+        )
 
         # 1: open()'s own attempt (\x03\r, MDCHECK\r), then recovery's
         # own steps 1-4 (/EX, B, \x03\r again for its OWN cmd: check).
@@ -337,13 +352,22 @@ class TestRecoveryPath:
         assert "ACTIVE" not in rec.state_changes
 
     def test_ends_in_failed_when_host_mode_never_confirms(self):
+        # P36 (Backlog.md): this test used to poll session.state alone,
+        # a plain attribute the worker thread sets BEFORE emitting its
+        # OWN failed() signal -- state could already read "FAILED" while
+        # the earlier open() failure ("no mailbox prompt after MDCHECK")
+        # was still the last thing rec.failures had seen, making
+        # rec.failures[-1] flaky. Waiting on the exact content being
+        # asserted removes the race by construction: this can only
+        # return True once the SECOND failure has actually landed.
         channel = _NonConfirmingChannel(self._NO_PROMPT_SCRIPT)
         session = _fast(MailDropSession(channel, _can_open_yes))
         rec = _Recorder().connect(session)
 
         session.open()
         assert _pump_until(
-            lambda: session.state in ("CLOSED", "FAILED"), timeout=3.0
+            lambda: rec.failures and "verbose mode" in rec.failures[-1],
+            timeout=3.0,
         )
 
         assert session.state == "FAILED"       # never CLOSED without proof
@@ -382,7 +406,7 @@ class TestTraceCallback:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state == "ACTIVE")
+        assert _pump_until(lambda: rec.prompts or rec.failures)
 
         assert ("tx", b"\x03\r") in events
         assert ("tx", b"MDCHECK\r") in events
@@ -402,7 +426,7 @@ class TestTraceCallback:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state == "ACTIVE")
+        assert _pump_until(lambda: rec.prompts or rec.failures)
 
         # Simulate a leftover fragment still in flight from a prior
         # exchange (the P35 finding) sitting in the channel's buffer
@@ -420,7 +444,7 @@ class TestTraceCallback:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state == "ACTIVE")
+        assert _pump_until(lambda: rec.prompts or rec.failures)
         assert rec.prompts and rec.prompts[0].free == 18536
 
 
@@ -452,7 +476,7 @@ class TestErrorAttributionAfterEcho:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state == "ACTIVE")
+        assert _pump_until(lambda: rec.prompts or rec.failures)
 
         session.list()
         assert _pump_until(lambda: rec.listings or rec.failures)
@@ -470,7 +494,7 @@ class TestErrorAttributionAfterEcho:
         rec = _Recorder().connect(session)
 
         session.open()
-        assert _pump_until(lambda: session.state == "ACTIVE")
+        assert _pump_until(lambda: rec.prompts or rec.failures)
 
         with caplog.at_level("WARNING"):
             session.list()
