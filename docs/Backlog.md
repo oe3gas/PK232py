@@ -311,6 +311,26 @@ onto one decoder in a later session — out of scope for the channel-model
 sprint (hard constraint: no serial-layer changes beyond the one-line
 channel-nibble fix).
 
+### Tech debt — keyboard-redirect eventFilter copied across five screens (P41, 2026-09-24)
+
+Five opmode screens (`amtor_screen.py`, `morse_screen.py`,
+`opmode_rtty_base.py` — shared by Baudot/ASCII, `packet_screen.py`,
+`pactor_screen.py`) each carry their own, near-identical `eventFilter()`
+that redirects keypresses to `tx_input`, plus MainWindow's OWN, larger
+app-wide `eventFilter()` doing the same redirect for Host Mode generally
+(the actual mechanism a real keystroke goes through — see the P41
+gotcha in CLAUDE.md's UI section for why the per-screen copies are not
+the live code path for most fields). P41 unified the "is this a
+keyboard-input widget" CHECK into one shared function
+(`screen_focus_controller.is_keyboard_input_widget()`), same pattern as
+the frame-decoder and wakeup-message duplication this project has hit
+before (see "Tech debt — two parallel Host Mode frame decoders" above)
+— but the surrounding redirect LOGIC itself (the `if not is_input: ...
+tx.setFocus(); sendEvent(tx, event); return True` shape) is still six
+separate copies (five screens + MainWindow), not one. Consolidating
+those into a single reusable filter class is a larger refactor than
+P41's bug-fix scope — not done here, filed for a future session.
+
 ### Packet — Channel model (ChannelBar) — ✅ DONE (2026-09-20, software/headless)
 
 - ✅ `ChannelBar` (10 chips, free/calling/connected state + partner callsign,
@@ -921,6 +941,41 @@ AMTOR nutzt TxController. TX startet bei ARQ CONNECTED
   save/reload-mailbox part of this is now a **Beta-blocking requirement**,
   not a v0.2+ nice-to-have; see "MailDrop — persist mailbox to disk" under
   Priority 2 (P18, 2026-09-22, no RAM buffer battery confirmed).
+
+---
+
+## Completed (2026-09-24 — P42 Connect-in-chip sprint)
+
+From `docs/P42_Connect_In_Chip_Spec.md`. Full detail in CLAUDE.md's
+"Connect happens IN the chip" gotcha (Packet section) and Testplan.md
+T33–T39/T83/T87/T93/T98/T99/T102/T123–T124. Builds on the P41
+keyboard-redirect fix (`is_keyboard_input_widget()`), which this sprint's
+first full-suite run also hardened — see the two P42 gotchas under
+Known Gotchas / Repo-tooling in CLAUDE.md.
+
+| Item | Notes |
+|------|-------|
+| Connect/Dest/…/Disconnect row removed | `btn_connect`, `btn_disconnect`, `cb_dest`, `btn_connect_dialog`, `dest_callsign()`, `set_dest_callsign()`, `add_dest_history()`, `on_connect_toggled()` all deleted from `packet_screen.py` — no identifier of theirs remains anywhere in the Packet code path (grep-verified). |
+| `ChannelChip` (`packet_screen.py`) | Each chip is now a `QStackedLayout` of a button page and an inline `QLineEdit` editor page. Opens on: a second click on the already-current free chip, a double-click on any free chip, or "Connect…" from its context menu. Never opens for a busy chip or channel 0 (`UI_CHANNEL`) — enforced once, in `start_edit()`/`_show_menu()`. `Esc` or losing focus cancels; `Enter` validates via `maildrop.protocol.validate_callsign()` (red border + tooltip if invalid) and emits `connect_requested(channel, callsign)`. |
+| `ChannelBar.request_connect()` / `.start_edit_first_free()` | New public methods — the former is the one place history-bookkeeping + `connect_requested` emission happens (used by both a chip's own Enter and the "Connect via…" dialog); the latter opens the FIRST free, non-UI chip's editor, prefilled — wired straight to `MheardPanel.connect_requested`, replacing the old `set_dest_callsign` wiring. |
+| `PacketConnectDialog` redesign | Channel is now a fixed, non-editable label (was a `QSpinBox` the operator could disagree with the calling chip on) — it always comes from whichever chip's "Connect via…" opened it. Gained its own callsign field (`cb_dest` used to supply that). |
+| `MainWindow._on_chip_connect_requested`/`_on_chip_disconnect_requested` | Replace `_on_packet_connect`/`_on_packet_disconnect`. No channel-0 guard needed in either — `ChannelChip` already refuses to ever emit `connect_requested`/open a context menu for it, so the old warning-dialog path is gone entirely, not just moved. |
+| `set_link_state()` narrowed | Now only gates `btn_unproto` (T39) — its former Connect/Disconnect button-enable role is gone along with those buttons. `_on_packet_channel_changed()`'s dead `UI_CHANNEL` branch (there was nothing left to disable there) removed accordingly. |
+| `_on_packet_tx_enter()` connected-check | `channel_bar.state(channel) == "connected"` replaces `btn_connect.isChecked()`. |
+| Ctrl+D disconnect, Enter-opens-edit | New: Ctrl+D disconnects the current busy channel (Packet has no `[^D]`/TxController concept to collide with); Enter in `le_unproto`/`combo_monitor`/`combo_hbaud` (none had a `returnPressed` behaviour of their own) opens the current chip's editor if none is already open. |
+| Tests | `TestChipConnectFlow` (9 new cases, `test_packet_screen.py`); T98/T99/T102 rewritten in `test_main_window_packet.py` for the new UI (old button-based assertions replaced with chip/Unproto-state equivalents); two P41 `TestKeyboardFocusHandling` tests updated from `cb_dest.lineEdit()` to a chip's `.editor`. |
+| `tooltips.py` | `btn_connect`/`btn_disconnect` global entries removed (PactorScreen's `SCREEN_TOOLTIPS` override was already the only one ever applied in practice — Packet no longer has these attributes at all). |
+| P41 fixture-teardown hang found and fixed | `test_main_window_packet.py`'s `wired_vhf` fixture teardown (added in P41, never run against the file's full suite until this sprint) called `w.close()` on a `MainWindow` whose stub `_serial.is_connected` is hardcoded `True` — `closeEvent()` pops a real, un-clickable `QMessageBox` under the offscreen QPA platform, hanging the whole pytest process forever. Fixed: flip `is_connected = False` before `close()`, plus `deleteLater()` + `processEvents()` to stop the closed-but-undestroyed window's timers from slowing down later tests' `show()`/`activateWindow()` calls. See CLAUDE.md's two new Repo/tooling gotchas. |
+
+**Verification:** full suite (`.venv\Scripts\python.exe -m pytest
+src/pk232py/tests/`) — 509 passed, ~90s, including the newly-fixed
+`test_main_window_packet.py` run to completion for what appears to be the
+first time since P41 added the `wired_vhf` teardown. `docs/mockups/
+packet_screen.py` + `pr_chip_normal.png`/`pr_chip_edit.png` (operator-
+provided reference, not production code) committed alongside.
+Hardware re-test (type a callsign into a free chip, Enter, verify
+connection; then Ctrl+D) still open — left for the operator per the
+spec's Definition of Done.
 
 ---
 
