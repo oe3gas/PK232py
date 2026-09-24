@@ -2,7 +2,7 @@
 
 > This file is the single entry point for Claude Code to understand the
 > PK232PY project. Read it completely before touching any source file.
-> Last updated: 2026-09-23
+> Last updated: 2026-09-24
 
 ---
 
@@ -54,12 +54,19 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
 ### Active/recently completed work
 
 - **Packet channel model / ChannelBar sprint (2026-09-20, software/headless-
-  verified):** `ChannelBar` (10-chip multi-channel selector), `cb_dest`
-  history combo (replaces `le_dest` on Packet screens only), ALL/CH RX
-  filtering, Capture, MHEARD channel column, `HFPacketMode.on_channel_state`.
+  verified):** `ChannelBar` (10-chip multi-channel selector), a `cb_dest`
+  history combo (replaced `le_dest` on Packet screens only — itself later
+  removed entirely, P42, 2026-09-24, see below), ALL/CH RX filtering,
+  Capture, MHEARD channel column, `HFPacketMode.on_channel_state`.
   MainWindow's Packet connect/disconnect/TX no longer hardcode channel 1. See
   §"Channel model" under Known Gotchas / Packet, and Backlog.md's "Completed
   (2026-09-20 — Packet channel model / ChannelBar sprint)" block.
+- **Connect-in-chip sprint (P42, 2026-09-24, software-verified):** the
+  Connect/Dest/…/Disconnect row is gone — a callsign is typed directly into
+  a free `ChannelChip`'s own inline editor. See the "Connect happens IN the
+  chip" bullet under Known Gotchas / Packet for the full operation table,
+  and the P41 fixture-teardown gotchas under Known Gotchas / Repo-tooling
+  (found finishing this sprint's first full-suite run).
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -309,10 +316,33 @@ QLineEdit itself. Installing the controller directly on each field avoids that.
 *Registered fields (editable QLineEdit only):*
 - `PactorScreen` → `le_dest`
 - `AmtorScreen` → `le_dest`
-- `PacketBaseScreen` → `le_dest`, `le_unproto`
+- `PacketBaseScreen` → `le_unproto` (its `cb_dest` history combo — added
+  in the 2026-09-20 ChannelBar sprint, briefly registered here as
+  `cb_dest.lineEdit()` after the P41 fix, 2026-09-24 — is GONE entirely:
+  P42, 2026-09-24, removed the whole Connect/Dest/…/Disconnect row. A
+  connect callsign is now typed into a channel chip's own inline
+  `QLineEdit` editor, which needs **no** `ScreenFocusController`
+  registration at all — see the note just below.)
 
 QLabel identity fields (`lbl_mycall`, `lbl_myptcall`, …) are display-only and
 are **NOT** registered — they are labels, not input fields.
+
+**A field does not need to be registered here at all if it only needs the
+keyboard-redirect exemption (P41, 2026-09-24) — see the "keyboard
+redirection and combo boxes" gotcha under "UI / PyQt6" below.**
+`ScreenFocusController` tracks FocusIn/FocusOut on the exact object it is
+installed on; for an editable `QComboBox` such as the old `cb_dest`, Qt
+delivers `FocusIn` (and `QWidget.focusWidget()` afterwards) to the
+**combo box itself**, not to its inner `lineEdit()` — hardware-confirmed,
+not merely a docs mismatch, and this is exactly the class of bug P41
+fixed. `MainWindow.eventFilter()` now ALSO checks
+`screen_focus_controller.is_keyboard_input_widget()` as a
+registration-free fallback that recognises every keyboard-input widget
+type generically by walking the parent chain — this is why a channel
+chip's inline editor (P42) needed no registration here to get the same
+exemption `cb_dest` needed a workaround for; `ScreenFocusController`
+itself was left in place rather than retired, since MainWindow's
+Level-1 filter also still checks its `is_active()`.
 
 ### 7. Opmode switch state machine
 
@@ -1178,7 +1208,9 @@ Grows over time.
   Connect/Disconnect/TX act on right now" — `PacketBaseScreen.current_channel()`
   is a thin proxy to `channel_bar.current()`. MainWindow no longer hardcodes
   channel 1 anywhere in the Packet connect/disconnect/TX path — see
-  `_on_packet_connect`/`_on_packet_disconnect`/`_on_packet_tx_enter`.
+  `_on_chip_connect_requested`/`_on_chip_disconnect_requested`/`_on_packet_tx_enter`
+  (P42, 2026-09-24, renamed from `_on_packet_connect`/`_on_packet_disconnect`
+  — see the "connect in the chip" bullet below).
 - **Channel 0 is the UI/unproto/monitor channel, not a QSO channel (P10,
   2026-09-20).** AEA Host Mode only has `$2x` for outgoing data with
   `x` = 0–9 — there is no `$2F`. So Unproto is not its own channel; it is the
@@ -1194,12 +1226,45 @@ Grows over time.
   `_update_chip()` (one place, not scattered). `_on_packet_unproto()`
   (`main_window.py`) just calls `channel_bar.set_current(0)` — turning
   Unproto on/off no longer touches Connect/Disconnect directly; that is
-  `_on_packet_channel_changed()`'s job now (channel 0 → both disabled;
-  channel N → `set_link_state(channel_bar.state(N))`, which also turns
-  Unproto back off if it was still on — the T39 mutual exclusion, rebased
-  onto channel selection instead of a direct button lock). This is also
-  consistent with the rest of the app: every non-Packet operating mode
-  already only ever uses channel 0 (TRM 4.3).
+  `_on_packet_channel_changed()`'s job now (`set_link_state(channel_bar.state(
+  channel))`, which also turns Unproto back off if it was still on when
+  moving to a QSO channel — the T39 mutual exclusion, rebased onto channel
+  selection instead of a direct button lock; P42, 2026-09-24: since there
+  are no more Connect/Disconnect buttons at all, `set_link_state()` now
+  only ever touches Unproto's own enabled state — see the "connect in the
+  chip" bullet below). This is also consistent with the rest of the app:
+  every non-Packet operating mode already only ever uses channel 0 (TRM 4.3).
+- **Connect happens IN the chip, not in a separate row (P42, 2026-09-24).**
+  The old `Connect · Dest · … · Disconnect` row is gone — `btn_connect`,
+  `btn_disconnect`, `cb_dest`, `btn_connect_dialog`, `dest_callsign()`,
+  `set_dest_callsign()`, `add_dest_history()` no longer exist anywhere in
+  the Packet code path. Reasoning: the channel is the place a connection is
+  made, so a connect can never land on a channel other than the one being
+  looked at — and it removes the P41 failure class (an input field living
+  in its own row, one keyboard-redirect exception away from swallowing
+  every keystroke) by construction, since there is no other row left to get
+  that exception wrong on (see `ChannelChip`'s own docstring in
+  `packet_screen.py`). Operation:
+
+  | Action | Result |
+  |---|---|
+  | Click a different chip | switches the current channel only |
+  | Click the already-current free chip, or double-click any free chip, or "Connect…" in its context menu | opens that chip's inline callsign editor |
+  | Enter with a valid callsign in the editor | `ChannelBar.request_connect()` → `connect_requested(ch, callsign)` → `MainWindow._on_chip_connect_requested()` sends `CO` on that channel |
+  | Enter with an invalid callsign | editor stays open, red border + tooltip, no signal |
+  | Esc, or losing focus, while editing | closes the editor, no signal |
+  | "Connect via…" in a free chip's context menu | `PacketConnectDialog` (callsign + optional digipeater path, channel fixed to the chip that opened it) |
+  | "Disconnect" in a busy chip's context menu, or Ctrl+D while that channel is current | `disconnect_requested(ch)` → `MainWindow._on_chip_disconnect_requested()` sends `DI` on that channel |
+  | Double-click an unconnected MHEARD row | `ChannelBar.start_edit_first_free()` — opens the FIRST free chip's editor, prefilled with the heard callsign (not necessarily the currently selected chip) |
+  | Enter in `le_unproto`/`combo_monitor`/`combo_hbaud` while no chip editor is open | opens the current chip's editor (`ChannelBar.start_edit_current()`) — none of those three fields had a `returnPressed` behaviour of their own to shadow |
+
+  Channel 0 (UI channel) and any busy chip never open an editor at all —
+  enforced once, in `ChannelChip.start_edit()`/`_show_menu()` — so
+  `_on_chip_connect_requested()` needs no channel-0 guard of its own
+  (defense-in-depth was deliberately NOT added there; there is no code path
+  left that could reach it with channel 0). `PacketConnectDialog` no longer
+  has an editable channel field (it used to be a `QSpinBox`) — the channel
+  always comes from whichever chip's "Connect via…" entry opened it.
 - **The channel bar always shows ten chips, but `USERS` decides how many
   actually work (P11, 2026-09-20).** `ChannelBar` can display channels 0–9
   regardless of hardware capability — but the PK-232 itself only accepts as
@@ -1230,6 +1295,46 @@ Grows over time.
 
 ### UI / PyQt6
 
+- **Keyboard redirection to the TX window must exempt EVERY
+  keyboard-input widget type, not just `QLineEdit`/`QTextEdit`
+  (P41, 2026-09-24, hardware-confirmed).** Every opmode screen with a
+  TX window redirects keypresses there so typing works without a prior
+  click (§5/§6's EventFilter architecture) — the exception check that
+  stops this from stealing focus from a real input field used to only
+  recognise `QLineEdit`/`QTextEdit`. Found on the VHF Packet screen:
+  clicking into **Dest** (`cb_dest`, an editable `QComboBox`) and typing
+  a callsign put the characters in the TX window instead. **Root cause,
+  confirmed by direct testing, not just code reading:** for an editable
+  `QComboBox`, Qt delivers `FocusIn` and `QWidget.focusWidget()` results
+  to the **combo box widget itself**, never to its inner `lineEdit()` —
+  even when `.setFocus()` is called directly on that inner `lineEdit()`.
+  `ScreenFocusController` (§6 Level 3) had `cb_dest.lineEdit()`
+  registered, exactly as intended, and it still never saw a `FocusIn`
+  event, because Qt never sent one to that object. A plain, non-editable
+  `QComboBox` (Monitor, HBAUD on the Packet screen) has the same
+  problem for a different reason — it was never registered with
+  `ScreenFocusController` at all, since that class's own docstring only
+  ever mentions `QLineEdit`. Morse's `sb_mspeed`/`sb_mweight`/`sb_mid`
+  `QSpinBox` fields had the identical gap (no focus-controller at all
+  on that screen). **Fix:** `screen_focus_controller.
+  is_keyboard_input_widget(widget)` — a registration-free, parent-chain-
+  walking check against `QLineEdit`, `QTextEdit`, `QPlainTextEdit`,
+  `QComboBox`, and `QAbstractSpinBox` — is now consulted by
+  `MainWindow.eventFilter()` ALONGSIDE (not instead of)
+  `screen.focus_ctrl.is_active()`, and by each opmode screen's own
+  Level-2 fallback filter (`amtor_screen.py`, `morse_screen.py`,
+  `opmode_rtty_base.py` — shared by Baudot/ASCII, `packet_screen.py`,
+  `pactor_screen.py`; NAVTEX/Signal/FAX have no TX window and no such
+  filter at all). `ScreenFocusController` itself was kept, not retired —
+  see §6 for the fuller reasoning. **NoFocus buttons and the channel
+  bar's chips are deliberately excluded** (§5: `Qt.FocusPolicy.NoFocus`
+  on every `QPushButton`) — focusing one of those must still redirect to
+  the TX window exactly as before; `is_keyboard_input_widget()`'s type
+  list does not include `QPushButton`/`QAbstractButton`, so this is
+  unaffected. As a direct consequence, Ctrl+Up/Ctrl+Down channel
+  stepping (bound to `tx_input`'s own keypresses) no longer fires while
+  a Packet-screen input field has focus either — that bug was a
+  side-effect of the same misrouting, not a separate fix.
 - **A `set_mode(name)` call with no `mode_instance` silently loses
   configuration (P19, 2026-09-22).** `ModeManager.set_mode()` builds a
   fresh `cls()` whenever `mode_instance` is `None` — that instance only
@@ -1448,6 +1553,38 @@ Grows over time.
   history are two independent questions; always check the latter with
   `git log --all -- <path>` / `git ls-files <path>` before trusting that
   a module's history exists.
+- **A test that calls `MainWindow.close()` can hang the whole pytest
+  process forever, not just fail (P42, 2026-09-24, found running
+  `test_main_window_packet.py`'s full file for the first time after the
+  P41 fixture-teardown fix was added).** `MainWindow.closeEvent()` calls
+  `QMessageBox.question()` ("TNC is still connected. Exit anyway?")
+  whenever `self._serial.is_connected` is true — and `test_main_window_
+  packet.py`'s `_StubSerial.is_connected` is a class attribute hardcoded
+  to `True` (the test bodies need that to exercise "connected TNC"
+  commands). Under the `QT_QPA_PLATFORM=offscreen` platform used for
+  headless test runs, a real modal `QMessageBox` still calls `exec()` and
+  blocks — there is no display for a human to click a button on, and
+  nothing auto-dismisses it, so the process hangs indefinitely rather
+  than erroring. The `wired_vhf` fixture's teardown now sets
+  `w._serial.is_connected = False` immediately before `w.close()` for
+  exactly this reason. **General rule:** before calling `.close()` (or
+  triggering any other path that can reach `closeEvent()`) on a
+  `MainWindow` built with a stub/fake serial object in a test, check
+  whether that stub reports "connected" — if so, flip it to disconnected
+  first, or the close can silently hang the whole test run instead of
+  failing loudly.
+- **A `MainWindow` that is merely `.close()`d, not destroyed, still costs
+  something in a long headless test run (P42, 2026-09-24).** Closing hides
+  the window but does not delete the Qt object or stop its running
+  `QTimer`s (e.g. the Packet screen's UTC clock, `_utc_timer`). A test file
+  that builds many `MainWindow` instances via a function-scoped fixture
+  (here, 28 uses of `wired_vhf` in one file) without destroying each one
+  measurably slowed down later tests that call `show()`/`activateWindow()`/
+  `QTest.qWaitForWindowActive()` under the offscreen platform — easy to
+  mistake for a hang if only the first sign (a very long-running `pytest`
+  process with near-zero measured CPU time) is checked, rather than letting
+  it run to completion. The fixture teardown now also calls `w.deleteLater()`
+  + `QApplication.instance().processEvents()` after `w.close()`.
 
 ### Dead Code / Cleanup
 
