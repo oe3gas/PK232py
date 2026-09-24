@@ -22,7 +22,7 @@ before assuming the code changed or the earlier run was wrong.
 |---|---|---|---|---|---|---|---|
 | **A** | 11.09.1995 | PACTOR | ja | ja | rund | 22.09.2026 (T115, T116) | Quelle aller `CLAUDE.md` "Known Gotchas"-Befunde bis 22.09.2026 (Mnemonics, MailDrop-Ablauf, Packet-/Channel-Verhalten). `MI` = MFILTER (T115). |
 | **B** | 01.AUG.91 | MBX | nein | ja | eckig | 24.09.2026 (T119, P37) | MDCHECK hat kein Host-Mode-Kürzel (T118, wie Gerät A). Volles MailDrop-Protokoll (`L`/`S`/`SB`/`R`/`K`/`B`/`<`-Fremdabsender) 10/10 PASS, identisch zu Gerät A. |
-| **C** | 30.12.1988 | BASE | nein | **nein** | unbekannt | 23.09.2026 (Betreiberangabe, PuTTY) | Nie über die App/`hw_check.py` angeschlossen — MailDrop-Abwesenheit direkt mit einem Terminalprogramm geprüft, nicht gemessen über das hier dokumentierte Werkzeug. |
+| **C** | 30.12.1988 | BASE | nein | **nein** | unbekannt | 23.09.2026 (Betreiberangabe, PuTTY) | Nie über die App/`hw_check.py` angeschlossen — MailDrop-Abwesenheit direkt mit einem Terminalprogramm geprüft, nicht gemessen über das hier dokumentierte Werkzeug. Ab P37 (24.09.2026) erkennt die App das automatisch über `SerialManager.detect_maildrop()` (`MAILDROP`-Abfrage, verbose, vor dem Upload — niemals `MDCHECK`); noch nicht an diesem Gerät verifiziert. |
 
 **Release-Spalte, Genauigkeit:** Gerät B ist die einzige Zeile mit einer
 byte-genauen Banner-Erfassung (P30/P37, `hw_logs/20260924_181446_maildrop_session.log`)
@@ -56,6 +56,13 @@ und nicht nachträglich vereinheitlicht, um nichts zu erfinden.
 - Gerät C wurde nie über `hw_check.py` angeschlossen — Prompt-Klammernform,
   MDCHECK-Verhalten und jedes andere `hw_check`-Ergebnis für dieses Gerät
   sind offen.
+- `SerialManager.detect_maildrop()` (P37) noch nicht gegen echte
+  Gerät-C-Hardware verifiziert — software-/mock-geprüft
+  (`test_serial_manager.py`, `test_params_uploader.py`,
+  `test_params_maildrop_dialog.py`). Erster echter Test: App mit Gerät C
+  starten, Upload beobachten (kein `?What?` für MailDrop-Befehle
+  erwartet) und prüfen, dass MailDrop-Button/-Dialog gesperrt bleiben,
+  siehe `Testplan.md`.
 - `MI` auf Gerät B (MFILTER oder MDCHECK?) — siehe
   `docs/PK232_firmware_matrix.md` §2a, "Kandidat für einen echten
   Generationsunterschied".
