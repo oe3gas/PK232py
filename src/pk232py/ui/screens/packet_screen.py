@@ -1147,17 +1147,18 @@ class PacketBaseScreen(QWidget):
         tool_row = QHBoxLayout()
         tool_row.setSpacing(SPACING)
 
-        # MailDrop login — DISABLED (P21.5, hardware-confirmed 22.09.2026):
-        # the T47 "PASS" only ever verified that _on_packet_maildrop()'s
-        # build_command(b'MI') frame is accepted by the TNC, never what MI
-        # actually means. Host Mode MI reads back the SAME value as verbose
-        # MFILTER (MI$80 / MFIlter $80) — MI is MFILTER, not MailDrop login;
-        # the button never logged in to the mailbox at all. Disabled until a
-        # real MailDrop dialog exists (see Backlog.md); do not re-enable by
-        # just changing the mnemonic without re-verifying against the TRM.
+        # MailDrop session dialog (P39) — opens maildrop_dialog.py's
+        # MailDropDialog, wired in main_window.py's
+        # _on_open_maildrop_dialog(). Never sends a Host Mode frame of
+        # its own (that was the P21.5 bug: 'MI' is MFILTER, not a
+        # MailDrop login — MDCHECK has no Host Mode mnemonic at all,
+        # CLAUDE.md). Starts disabled; MainWindow._update_maildrop_
+        # gate_ui() enables it and sets the real tooltip once the four
+        # gate conditions (connection, mode, channel, has_maildrop) are
+        # known — this default is only what shows before that first runs.
         self.btn_maildrop = _no_focus_btn("MailDrop", BTN_W)
         self.btn_maildrop.setEnabled(False)
-        self.btn_maildrop.setToolTip("MailDrop dialog not implemented yet")
+        self.btn_maildrop.setToolTip("connect to the TNC first")
         tool_row.addWidget(self.btn_maildrop)
 
         # Files / QSO Log: not implemented in v0.1 (Backlog Priority 2) —

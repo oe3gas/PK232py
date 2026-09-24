@@ -179,6 +179,13 @@ class MainWindow(QMainWindow):
         self._system_style_name = QApplication.instance().style().objectName()
         self._apply_palette()
 
+        # P39.5: PromptInfo.have_mail from the last MailDrop session —
+        # colours btn_maildrop when post is waiting. None until a session
+        # has actually reported it once; MDMON as a second, live-operation
+        # source is future work (Backlog.md), so nothing here guesses in
+        # the meantime.
+        self._maildrop_have_mail: Optional[bool] = None
+
         self._build_ui()
         self._connect_signals()
         self._update_connection_ui(False)
@@ -282,7 +289,19 @@ class MainWindow(QMainWindow):
         self._act_recovery.triggered.connect(self._on_recovery)
         tnc_menu.addAction(self._act_recovery)
 
- # View 
+        tnc_menu.addSeparator()
+
+        # MailDrop session (P39) — a dialog, not a mode; see
+        # maildrop_dialog.py's own docstring for why. Same open path and
+        # gate as btn_maildrop on the Packet screens (_maildrop_gate()).
+        self._act_maildrop = QAction("&MailDrop...", self)
+        self._act_maildrop.setStatusTip(
+            "Open the MailDrop session (local mailbox administration)"
+        )
+        self._act_maildrop.triggered.connect(self._on_open_maildrop_dialog)
+        tnc_menu.addAction(self._act_maildrop)
+
+ # View
         view_menu = mb.addMenu("&View")
 
         self._act_monitor = QAction("Monitor Window", self)
@@ -1177,9 +1196,7 @@ class MainWindow(QMainWindow):
             )
             n = uploader.upload()
             self._log_monitor(f"[SYS] {n} parameters uploaded")
-            self._update_maildrop_button_tooltip(
-                getattr(self._serial, 'has_maildrop', None)
-            )
+            self._update_maildrop_gate_ui()
             if getattr(self._serial, 'has_maildrop', None) is False:
                 self._log_monitor(
                     "[SYS] TNC has no MailDrop — "
@@ -1336,6 +1353,7 @@ class MainWindow(QMainWindow):
         # Only override focus to verbose terminal if not in Host Mode.
         if not self._serial.is_host_mode:
             self._vt_input.setFocus()
+        self._update_maildrop_gate_ui()
 
     def _wire_mode_callbacks(self) -> None:
         """Connect the active mode's data callbacks to the UI."""
@@ -1551,6 +1569,7 @@ class MainWindow(QMainWindow):
             screen.channel_bar.set_channel_state(channel, state, partner)
             if hasattr(screen, "mheard_panel"):
                 screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
+            self._update_maildrop_gate_ui()
         return handler
 
     def _wire_screen_buttons(self) -> None:
@@ -2507,7 +2526,7 @@ class MainWindow(QMainWindow):
         _rewire(screen.btn_unproto.toggled, self._on_packet_unproto)
 
         # MailDrop button
-        _rewire(screen.btn_maildrop.clicked, self._on_packet_maildrop)
+        _rewire(screen.btn_maildrop.clicked, self._on_open_maildrop_dialog)
 
         # APRS decode toggle — VHFPacketScreen only (hidden in HFPacketScreen)
         if hasattr(screen, "btn_aprs"):
@@ -2778,6 +2797,7 @@ class MainWindow(QMainWindow):
         if hasattr(screen, "set_link_state"):
             screen.set_link_state("calling")
         screen.channel_bar.set_channel_state(channel, "calling", callsign)
+        self._update_maildrop_gate_ui()
 
     def _on_packet_disconnect(self) -> None:
         """Disconnect button clicked — send DI frame to TNC on the current channel."""
@@ -2798,6 +2818,7 @@ class MainWindow(QMainWindow):
             screen.on_connect_toggled(False)   # public method on PacketBaseScreen
         if hasattr(screen, "channel_bar"):
             screen.channel_bar.set_channel_state(channel, "free")
+        self._update_maildrop_gate_ui()
 
     def _on_packet_unproto(self, checked: bool) -> None:
         """Unproto button toggled — set TNC UNPROTO path.
@@ -2831,40 +2852,73 @@ class MainWindow(QMainWindow):
         self._serial.send_command(frame[2:4], frame[4:-1])
         self._log_monitor(f"[PACKET] UNPROTO path \u2192 {path}")
 
-    def _on_packet_maildrop(self) -> None:
-        """MailDrop button - DISABLED (P21.5).
-
-        This used to send build_command(b'MI'), believing MI was the
-        MDCHECK MailDrop login. Hardware-confirmed 22.09.2026
-        (tools/hw_check.py mi): Host Mode MI reads back the SAME value as
-        verbose MFILTER (MI$80 / MFIlter $80) - MI is MFILTER, not
-        MailDrop login. This never logged in to the mailbox at all.
-        btn_maildrop is disabled in packet_screen.py until a real
-        MailDrop dialog exists (see Backlog.md); kept here as a no-op
-        rather than removed, in case something other than the disabled
-        button still triggers it.
+    def _maildrop_gate(self) -> tuple:
+        """P39: the ONE place that decides whether the MailDrop session
+        dialog can be opened right now, and why not — both btn_maildrop
+        (Packet screens) and the TNC -> MailDrop... menu action read
+        this via _update_maildrop_gate_ui(), so they can never disagree.
+        Checked in dependency order: a connection is needed before a
+        mode means anything, a Packet mode is needed before its channel
+        bar exists, and has_maildrop is only known once connected.
         """
-        return
+        if not self._serial.is_connected or not self._serial.is_host_mode:
+            return False, "connect to the TNC first"
+        mode_name = self._modes.current_mode_name
+        if mode_name not in ("HF Packet", "VHF Packet"):
+            return False, "switch to HF or VHF Packet first"
+        screen = self._opmode_screens.get(mode_name)
+        busy = screen.channel_bar.channel_map() if screen is not None else {}
+        if busy:
+            ch = next(iter(busy.values()))
+            return False, f"disconnect channel {ch} first"
+        if getattr(self._serial, 'has_maildrop', None) is False:
+            return False, "this firmware has no MailDrop"
+        return True, ""
 
-    def _update_maildrop_button_tooltip(self, has_maildrop) -> None:
-        """P37 Teil D.3 - btn_maildrop stays disabled either way (no
-        MailDrop dialog exists yet, see _on_packet_maildrop() above), but
-        its tooltip should say WHY: the generic "not implemented yet"
-        when MailDrop capability is unknown/present, or the more useful
-        "this firmware has no MailDrop" once detect_maildrop() has
-        actually confirmed the firmware lacks it (docs/DEVICES.md Device
-        C). Called after ParamsUploader.upload() from the background
-        upload thread - only touches a QWidget's tooltip text, the same
-        class of cross-thread call this codebase's _log_monitor()/
-        _vt_append() calls from that same thread already make.
+    def _update_maildrop_gate_ui(self) -> None:
+        """Apply _maildrop_gate() to both entry points (P39.5). Cheap
+        enough to call from every place any of the four conditions could
+        change — connect/disconnect, Host Mode enter/exit, mode switch,
+        channel state, and once has_maildrop becomes known after upload.
         """
-        if has_maildrop is False:
-            tooltip = "This firmware has no MailDrop"
-        else:
-            tooltip = "MailDrop dialog not implemented yet"
+        if not hasattr(self, '_act_maildrop'):
+            return   # menu not built yet (called during early setup)
+        can_open, reason = self._maildrop_gate()
+        self._act_maildrop.setEnabled(can_open)
+        self._act_maildrop.setToolTip("" if can_open else reason)
+        from .screens.packet_screen import PacketBaseScreen
         for screen in set(self._opmode_screens.values()):
             if isinstance(screen, PacketBaseScreen):
-                screen.btn_maildrop.setToolTip(tooltip)
+                screen.btn_maildrop.setEnabled(can_open)
+                screen.btn_maildrop.setToolTip("" if can_open else reason)
+                if self._maildrop_have_mail:
+                    screen.btn_maildrop.setStyleSheet(
+                        "QPushButton { background-color: #8a6a1e; }"
+                    )
+                else:
+                    screen.btn_maildrop.setStyleSheet("")
+
+    def _on_open_maildrop_dialog(self) -> None:
+        """P39.5: btn_maildrop and TNC -> MailDrop... both land here.
+        Re-checks the gate right before opening (defense in depth — the
+        button/menu state could be a redraw behind reality) rather than
+        trusting that whichever widget fired this is still accurate.
+        """
+        can_open, reason = self._maildrop_gate()
+        if not can_open:
+            QMessageBox.information(self, "MailDrop", reason.capitalize())
+            return
+        mode_name = self._modes.current_mode_name
+        screen = self._opmode_screens.get(mode_name)
+        from .dialogs.maildrop_dialog import MailDropDialog
+        dlg = MailDropDialog(
+            self._serial, screen.channel_bar if screen else None,
+            self._app_config.hf_packet.mycall, self._app_config.maildrop,
+            parent=self,
+        )
+        dlg.exec()
+        self._maildrop_have_mail = dlg.last_have_mail
+        self._update_maildrop_gate_ui()
 
     def _on_packet_mheard(self) -> None:
         """MHEARD Refresh — poll the heard-stations list line by line (T41).
@@ -4374,6 +4428,7 @@ class MainWindow(QMainWindow):
             self._sb_mode.setText("Mode: OFFLINE")
             self._mode_combo.setEnabled(False)
             self._set_mode_indicator("offline")
+        self._update_maildrop_gate_ui()
 
     def _update_host_mode_ui(self, active: bool) -> None:
         """Switch view and enable mode selector when Host Mode is active."""
@@ -4445,6 +4500,7 @@ class MainWindow(QMainWindow):
             self._opmode_timer.stop()
             self._set_sig(self._ssl_ptt, False)
             self._set_sig(self._ssl_con, False)
+        self._update_maildrop_gate_ui()
 
     # ------------------------------------------------------------------
     # Output helpers
