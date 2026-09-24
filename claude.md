@@ -919,6 +919,45 @@ Grows over time.
   `archive_enabled` is `False` — "nothing happens automatically unless
   the user turned it on" is the whole point of this package, not just
   its UI copy.
+- **The MailDrop session window is a modal dialog, never a ComboBox
+  opmode entry (P39, 2026-09-24).** `ui/dialogs/maildrop_dialog.py`'s
+  `MailDropDialog` — see the module's own docstring for the fuller
+  reasoning, kept as a comment in the file per the spec. MailDrop is not
+  a TNC operating mode; MDCHECK logs the TNC into its own mailbox
+  *within* Packet operation, it does not switch modes (`OPMODE_SWITCH_
+  STATE_MACHINE.md` never sees it). Giving it a ComboBox entry would
+  burden the mode-switch state machine with something that is not a
+  mode, and raise the meaningless question of what a mode switch means
+  while a mailbox session is running.
+  **Two entry points, one gate:** `btn_maildrop` (Packet screens) and
+  the `TNC → MailDrop…` menu action both open the same dialog and are
+  both governed by `MainWindow._maildrop_gate()` — the single place all
+  four blocking conditions are computed, so the two entry points can
+  never disagree: `has_maildrop is False` → "this firmware has no
+  MailDrop"; a channel connected on the active Packet screen →
+  "disconnect channel N first"; current mode not HF/VHF Packet →
+  "switch to HF or VHF Packet first"; not connected/not Host Mode →
+  "connect to the TNC first". The channel information comes from the
+  active screen's own `ChannelBar.channel_map()` and the mode from
+  `ModeManager.current_mode_name` — neither is re-derived. This
+  supersedes P21.5's permanently-disabled button (it used to send
+  `build_command(b'MI')` on the mistaken belief `MI` was a MailDrop
+  login, CLAUDE.md's mnemonic-table gotcha) — the button now sends no
+  Host Mode frame of its own at all, only opens the dialog.
+  **The dialog itself never polls `MailDropSession.state`** (this
+  file's "two truths" Qt gotcha) — every redraw is driven by the
+  `state_changed` signal's own delivered value, cached only for
+  rendering. A window-close gesture (X/Esc/Close) while a session is
+  ACTIVE asks for confirmation and only actually closes the `QDialog`
+  once `CLOSED` arrives — never merely once `leave()` was called, and
+  never at all while `FAILED` (which offers Retry — rebuilding a fresh
+  `MailDropSession`/`SerialManagerChannel`, since the old session object
+  cannot itself recover from `FAILED` — and Close). The "Where" column
+  (`TNC only`/`archive only`/`TNC + archive`) is a header-field match
+  against the local archive, deliberately NOT `archive.py`'s own
+  duplicate-detection fingerprint — a listing has no body text, so an
+  exact fingerprint match is only possible once a message has actually
+  been read.
 - **P31 (2026-09-23) hardened the above against the first real hardware
   run of the full session harness.** Two gaps the first `maildrop_session`
   run against real hardware (`hw_logs/20260923_184302_maildrop_session.log`)
