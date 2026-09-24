@@ -513,6 +513,23 @@ Grows over time.
 - **PACTOR-only commands → `?What?` without the PACTOR option:** `MYPTCALL`,
   `ARQTOL`, `MOPT`, `EXPERT OFF`, `PTHUFF`, `PT200`, `PTOVER`. Gate them behind
   `SerialManager.has_pactor`. See §9.
+- **The 1988 BASE-generation firmware has no MailDrop at all (Device C,
+  `docs/DEVICES.md`) — detected via a query, not the banner (P37,
+  2026-09-24).** Unlike PACTOR, MailDrop capability leaves no marker in
+  the boot banner, so `SerialManager.detect_maildrop()` sends a bare
+  `MAILDROP` in verbose mode, before the parameter upload, and
+  classifies the response (`MAildrop  ON|OFF` → capable, `?What?` → not
+  capable, no/unclear answer → unknown, treated as capable so a flaky
+  probe can never lock out an existing feature) — cached as
+  `has_maildrop`. **`MDCHECK` must never appear in this detection path**
+  — it logs into the mailbox and halts packet operation, which a
+  capability probe must not do. `ParamsUploader.upload()` calls this
+  right before building commands and skips the whole MailDrop block
+  (`MAILDROP`/`MDMON`/`MMSG`/`TMAIL`/`3RDPARTY`/`KILONFWD`/`MTEXT`) with
+  one log line when it comes back `False`, instead of seven `?What?`
+  responses. `btn_maildrop` (Packet screens) and every field in the
+  MailDrop Parameters dialog (`MailDropParamsDialog.set_locked()`) stay
+  disabled — never hidden — with a tooltip naming the reason.
 - **FAX never leaves Host Mode** (no verbose path); the TNC decodes the audio
   and streams ESC-L pixels. See §4.
 - **`MOPT` = Morse Option, `ARQTOL` = AMTOR ARQ tolerance** — both are
