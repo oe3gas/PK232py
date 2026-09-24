@@ -65,7 +65,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from PyQt6.QtCore import Qt, QTimer, QEvent, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QEvent, pyqtSignal, QStringListModel
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication, QWidget,
@@ -73,7 +73,8 @@ from PyQt6.QtWidgets import (
     QTextEdit, QLineEdit, QPushButton,
     QComboBox, QFrame, QSizePolicy,
     QScrollArea, QSplitter, QButtonGroup,
-    QDialog, QFormLayout, QSpinBox, QDialogButtonBox,
+    QDialog, QFormLayout, QDialogButtonBox,
+    QStackedLayout, QMenu, QCompleter,
 )
 
 from .opmode_rtty_base import (
@@ -82,6 +83,8 @@ from .opmode_rtty_base import (
     style_rx_widget, style_tx_widget,
     BTN_W, SPACING, MACRO_COUNT,
 )
+from .screen_focus_controller import is_keyboard_input_widget
+from ...maildrop.protocol import validate_callsign
 
 
 # ---------------------------------------------------------------------------
@@ -114,21 +117,6 @@ BANDS: dict[str, dict] = {
     },
 }
 
-_STYLE_CONNECT_OFF = (
-    "QPushButton {"
-    "  background-color: #445566; color: white;"
-    "  border: 1px solid #334455; border-radius: 4px;"
-    "  font-weight: bold; padding: 4px 8px;"
-    "}"
-    "QPushButton:hover { background-color: #556677; }"
-)
-_STYLE_CONNECT_ON = (
-    "QPushButton {"
-    "  background-color: #3a7a3a; color: white;"
-    "  border: 2px solid #2a5a2a; border-radius: 4px;"
-    "  font-weight: bold; padding: 4px 8px;"
-    "}"
-)
 _STYLE_UNPROTO_OFF = (
     "QPushButton {"
     "  background-color: #445566; color: white;"
@@ -203,14 +191,214 @@ _CHIP_BORDER_CURRENT = "#ffb400"   # amber, 2px — marks the current channel
 # (which set_channel_state() prevents from ever changing anyway).
 _UI_CHANNEL_FILL = "#2a6496"
 
+# ChannelChip editor border — amber while typing, red once an Enter with an
+# invalid callsign leaves the field open for correction (P42.1).
+_EDIT_STYLE_NORMAL = (
+    "QLineEdit { background-color: #12303f; color: #ffffff;"
+    " border: 2px solid #e8b23a; border-radius: 4px; }"
+)
+_EDIT_STYLE_INVALID = (
+    "QLineEdit { background-color: #12303f; color: #ffffff;"
+    " border: 2px solid #d05a5a; border-radius: 4px; }"
+)
+
+
+class ChannelChip(QWidget):
+    """One channel chip: a button that turns into an inline callsign
+    field (P42).
+
+    Why the chip and not a separate Connect/Dest row: the channel is the
+    place a connection is made — typing the callsign directly into the
+    chip you are looking at means a connect can never land on a channel
+    other than the one you see, and it removes the P41 failure class
+    (an input field living in its own row, one keyboard-redirect
+    exception away from swallowing every keystroke) by construction —
+    there is no other row left to get that exception wrong on.
+
+    Free chip  -> a click (while already current), a double-click, or the
+                  "Connect…" context-menu entry opens the inline editor;
+                  typing a callsign and pressing Enter connects on THIS
+                  channel. Escape or losing focus cancels.
+    Busy chip  -> shows the partner callsign; no editor, "Disconnect" and
+                  "Copy callsign" instead.
+    Channel 0 (UI) -> no editor, no context menu entries — there is
+                  nothing to connect to there (P10).
+
+    ChannelBar owns the aggregate state (styling, "current" tracking,
+    channel_map()); this class only owns its own button/editor stack and
+    the interactions listed above, so ChannelBar._update_chip() reaches
+    into `.button`/`.editor` directly rather than duplicating state here.
+    """
+
+    clicked               = pyqtSignal(int)         # plain click
+    double_clicked        = pyqtSignal(int)         # double click
+    edit_requested        = pyqtSignal(int)         # "Connect…" (context menu)
+    connect_via_requested = pyqtSignal(int)         # "Connect via…"
+    disconnect_requested  = pyqtSignal(int)         # "Disconnect"
+    connect_requested     = pyqtSignal(int, str)    # Enter, valid callsign
+
+    def __init__(self, channel: int, parent=None):
+        super().__init__(parent)
+        self._channel = channel
+        self._state = "free"
+        self._partner = ""
+
+        self._stack = QStackedLayout(self)
+        self._stack.setContentsMargins(0, 0, 0, 0)
+
+        self.button = QPushButton()
+        self.button.setCheckable(True)
+        # NoFocus: chips must never steal keyboard focus from tx_input
+        # (CLAUDE.md §5 — applies to every QPushButton in the app).
+        self.button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.button.setMinimumWidth(CHIP_MIN_W)
+        self.button.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.button.setFixedHeight(34)
+        lay = QVBoxLayout(self.button)
+        lay.setContentsMargins(2, 1, 2, 1)
+        lay.setSpacing(0)
+        self._lbl_num = QLabel(str(channel))
+        self._lbl_num.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
+        self._lbl_num.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_call = QLabel("")
+        self._lbl_call.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._lbl_call.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self._lbl_num)
+        lay.addWidget(self._lbl_call)
+        self.button.clicked.connect(lambda: self.clicked.emit(self._channel))
+        # Double-click and right-click on a QPushButton do not reliably
+        # propagate to the parent widget's own event handlers (unlike
+        # unhandled key/context-menu events on some other widget types) —
+        # installing directly on the button, rather than overriding
+        # mouseDoubleClickEvent()/contextMenuEvent() on this wrapper,
+        # avoids relying on that propagation at all.
+        self.button.installEventFilter(self)
+
+        self.editor = QLineEdit()
+        self.editor.setFixedHeight(34)
+        self.editor.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.editor.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        self.editor.setPlaceholderText("call")
+        self.editor.setMaxLength(20)
+        self.editor.setStyleSheet(_EDIT_STYLE_NORMAL)
+        self.editor.returnPressed.connect(self._commit)
+        self.editor.installEventFilter(self)   # Escape / focus-out
+
+        self._stack.addWidget(self.button)
+        self._stack.addWidget(self.editor)
+        self._stack.setCurrentIndex(0)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def channel(self) -> int:
+        return self._channel
+
+    def is_editing(self) -> bool:
+        return self._stack.currentIndex() == 1
+
+    def set_display(self, num_text: str, call_text: str, checked: bool,
+                     style: str, tooltip: str) -> None:
+        """Apply ChannelBar's per-state rendering to this chip's button.
+        ChannelBar computes colours/state text (it already owns the
+        theme-aware fill/border logic); this just applies it, and stores
+        state/partner for this chip's OWN context-menu logic below."""
+        self._lbl_num.setText(num_text)
+        self._lbl_call.setText(call_text)
+        self.button.blockSignals(True)
+        self.button.setChecked(checked)
+        self.button.blockSignals(False)
+        self.button.setStyleSheet(style)
+        self.button.setToolTip(tooltip)
+
+    def set_state(self, state: str, partner: str) -> None:
+        self._state = state
+        self._partner = partner
+
+    def start_edit(self, prefill: str = "") -> None:
+        if self._channel == UI_CHANNEL or self._state != "free":
+            return
+        self.editor.setStyleSheet(_EDIT_STYLE_NORMAL)
+        self.editor.setToolTip("")
+        self.editor.setText(prefill)
+        self._stack.setCurrentIndex(1)
+        self.editor.setFocus()
+        self.editor.selectAll()
+
+    def cancel_edit(self) -> None:
+        self._stack.setCurrentIndex(0)
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.button:
+            if event.type() == QEvent.Type.MouseButtonDblClick:
+                self.double_clicked.emit(self._channel)
+                return True
+            if event.type() == QEvent.Type.ContextMenu:
+                self._show_menu(event.globalPos())
+                return True
+        elif obj is self.editor:
+            if (event.type() == QEvent.Type.KeyPress
+                    and event.key() == Qt.Key.Key_Escape):
+                self.cancel_edit()
+                return True
+            if event.type() == QEvent.Type.FocusOut and self.is_editing():
+                # Losing focus without pressing Enter behaves like Esc
+                # (P42.1) - do not consume the event itself, Qt still
+                # needs to deliver the real focus-out.
+                self.cancel_edit()
+        return super().eventFilter(obj, event)
+
+    def _commit(self) -> None:
+        call = self.editor.text().strip().upper()
+        if not validate_callsign(call):
+            self.editor.setStyleSheet(_EDIT_STYLE_INVALID)
+            self.editor.setToolTip(
+                "Enter a valid callsign: letters and digits, optional "
+                "'-SSID' (e.g. OE3XYZ-9)."
+            )
+            return
+        self._stack.setCurrentIndex(0)
+        self.connect_requested.emit(self._channel, call)
+
+    def _show_menu(self, global_pos) -> None:
+        if self._channel == UI_CHANNEL:
+            return   # P10: no context menu on the UI channel
+        menu = QMenu(self)
+        if self._state == "free":
+            act = menu.addAction("Connect…")
+            act.triggered.connect(lambda: self.edit_requested.emit(self._channel))
+            act = menu.addAction("Connect via…")
+            act.triggered.connect(
+                lambda: self.connect_via_requested.emit(self._channel)
+            )
+        else:
+            act = menu.addAction("Disconnect")
+            act.triggered.connect(
+                lambda: self.disconnect_requested.emit(self._channel)
+            )
+            act = menu.addAction("Copy callsign")
+            act.triggered.connect(self._copy_callsign)
+        menu.exec(global_pos)
+
+    def _copy_callsign(self) -> None:
+        if self._partner:
+            QApplication.clipboard().setText(self._partner)
+
 
 class ChannelBar(QWidget):
     """Row of 10 channel chips (0-9) mirroring the PK-232's multi-channel model.
 
     A chip shows the channel number while free, and the partner callsign once
     a connect attempt is under way or a link is up. Chip fill colour encodes
-    state (grey/amber/green); a 2px amber border marks the *current* channel
-    — the one Connect/Disconnect/TX actions in PacketBaseScreen act on.
+    state (grey/amber/green); a 2px amber border marks the *current* channel.
+    Since P42, the chip is also where a connect happens — see ChannelChip.
 
     Lernmodus — why a local model and not a TNC query: the PK-232 Host Mode
     has no CSTATUS command; the channel is only ever known from the CTL
@@ -218,16 +406,28 @@ class ChannelBar(QWidget):
     So ChannelBar simply remembers what HFPacketMode.on_channel_state told it.
     """
 
-    channel_changed = pyqtSignal(int)
+    channel_changed  = pyqtSignal(int)
+    connect_requested    = pyqtSignal(int, str)   # channel, callsign (P42)
+    connect_via_requested = pyqtSignal(int)       # "Connect via…" (P42)
+    disconnect_requested = pyqtSignal(int)        # context menu / Ctrl+D (P42)
+
+    # Recently used callsigns, shared by every chip's inline editor via one
+    # QCompleter (P42 — replaces the old cb_dest QComboBox history).
+    _HISTORY_MAX = 10
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current = 1
         self._state: dict[int, str] = {ch: "free" for ch in range(CHANNEL_COUNT)}
         self._partner: dict[int, str] = {ch: "" for ch in range(CHANNEL_COUNT)}
-        self._chips: dict[int, QPushButton] = {}
+        self._chips: dict[int, ChannelChip] = {}
         # USERS (P11.5) — advisory only, see set_user_limit().
         self._user_limit: int = CHANNEL_COUNT - 1
+
+        self._history: list[str] = []
+        self._history_model = QStringListModel([])
+        self._completer = QCompleter(self._history_model, self)
+        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
@@ -237,36 +437,32 @@ class ChannelBar(QWidget):
         row.setSpacing(2)
 
         for ch in range(CHANNEL_COUNT):
-            chip = QPushButton()
-            chip.setCheckable(True)
-            # NoFocus: chips must never steal keyboard focus from tx_input
-            # (CLAUDE.md §5 — applies to every QPushButton in the app).
-            chip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            chip.setMinimumWidth(CHIP_MIN_W)
-            chip.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-            )
-            chip.setFixedHeight(34)
-            lay = QVBoxLayout(chip)
-            lay.setContentsMargins(2, 1, 2, 1)
-            lay.setSpacing(0)
-            lbl_num = QLabel(str(ch))
-            lbl_num.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
-            lbl_num.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_call = QLabel("")
-            lbl_call.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-            lbl_call.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lay.addWidget(lbl_num)
-            lay.addWidget(lbl_call)
-            chip._lbl_num = lbl_num     # stashed for _update_chip()
-            chip._lbl_call = lbl_call
+            chip = ChannelChip(ch)
+            chip.editor.setCompleter(self._completer)
+            chip.clicked.connect(self._on_chip_clicked)
+            chip.double_clicked.connect(self._on_chip_double_clicked)
+            chip.edit_requested.connect(self._on_chip_edit_requested)
+            chip.connect_requested.connect(self._on_chip_connect_requested)
+            chip.connect_via_requested.connect(self.connect_via_requested)
+            chip.disconnect_requested.connect(self.disconnect_requested)
 
-            self._group.addButton(chip, ch)
+            self._group.addButton(chip.button, ch)
             self._chips[ch] = chip
             row.addWidget(chip, 1)
 
-        self._group.idClicked.connect(self._on_chip_clicked)
         self._select(self._current, emit=False)
+
+    # -- history (P42, replaces the old cb_dest combo history) ----------
+
+    def add_history(self, callsign: str) -> None:
+        callsign = callsign.strip().upper()
+        if not callsign:
+            return
+        if callsign in self._history:
+            self._history.remove(callsign)
+        self._history.insert(0, callsign)
+        del self._history[self._HISTORY_MAX:]
+        self._history_model.setStringList(self._history)
 
     # ------------------------------------------------------------------
     # Public API
@@ -356,13 +552,74 @@ class ChannelBar(QWidget):
     # ------------------------------------------------------------------
 
     def _on_chip_clicked(self, ch: int) -> None:
+        """A click selects — UNLESS the clicked chip is already the
+        current, free channel, in which case it opens that chip's
+        inline editor instead (P42.1's table: 'Klick auf den bereits
+        gewählten freien Chip öffnet die Eingabe')."""
+        if ch == self._current and ch != UI_CHANNEL and self._state[ch] == "free":
+            self._chips[ch].start_edit()
+            return
         self._select(ch, emit=True)
+
+    def _on_chip_double_clicked(self, ch: int) -> None:
+        """Double-click always opens the editor on a free chip,
+        regardless of which channel was current before (P42.1)."""
+        self._select(ch, emit=True)
+        self._chips[ch].start_edit()
+
+    def _on_chip_edit_requested(self, ch: int) -> None:
+        """'Connect…' context-menu entry — same as a double-click."""
+        self._on_chip_double_clicked(ch)
+
+    def _on_chip_connect_requested(self, ch: int, callsign: str) -> None:
+        self.request_connect(ch, callsign)
+
+    def request_connect(self, ch: int, callsign: str) -> None:
+        """Record *callsign* in history and emit connect_requested(ch, callsign).
+
+        Public (not just the chip's own Enter-to-connect callback) because
+        the "Connect via…" dialog also reaches this same path — it bypasses
+        the chip's inline editor entirely (it can add a digipeater path),
+        but still needs the same history bookkeeping (P42.2).
+        """
+        self.add_history(callsign)
+        self.connect_requested.emit(ch, callsign)
+
+    def start_edit_first_free(self, prefill: str = "") -> None:
+        """Open the editor on the first free, non-UI channel, prefilled
+        (P42 — MHEARD double-click on an unconnected station: 'the first
+        free chip', not necessarily the one currently selected)."""
+        for ch in range(1, CHANNEL_COUNT):
+            if self._state[ch] == "free":
+                self.start_edit(ch, prefill)
+                return
+
+    def start_edit(self, ch: int, prefill: str = "") -> None:
+        """Select *ch* and open its editor, prefilled (P42 — used by the
+        MHEARD double-click handler in PacketBaseScreen). No-op for a
+        busy chip or the UI channel; ChannelChip.start_edit() enforces
+        that itself, this just also makes sure *ch* becomes current."""
+        if ch == UI_CHANNEL or self._state.get(ch) != "free":
+            return
+        self._select(ch, emit=True)
+        self._chips[ch].start_edit(prefill)
+
+    def start_edit_current(self) -> None:
+        """Open the editor on whichever channel is current, if it is
+        free (P42.1 — Enter pressed while focus is outside the TX
+        window, e.g. in the via/Monitor/HBAUD fields)."""
+        self._chips[self._current].start_edit()
+
+    def is_editing(self) -> bool:
+        """True while any chip's inline editor is open (P42.3 — used to
+        suppress Ctrl+Up/Ctrl+Down channel stepping while typing)."""
+        return any(chip.is_editing() for chip in self._chips.values())
 
     def _select(self, ch: int, emit: bool) -> None:
         changed = ch != self._current
         self._current = ch
         self._group.blockSignals(True)
-        self._chips[ch].setChecked(True)
+        self._chips[ch].button.setChecked(True)
         self._group.blockSignals(False)
         for c in self._chips:
             self._update_chip(c)
@@ -381,21 +638,19 @@ class ChannelBar(QWidget):
         partner = self._partner[ch]
         is_current = ch == self._current
         is_ui_channel = ch == UI_CHANNEL
-
-        chip._lbl_num.setText("UI" if is_ui_channel else str(ch))
-        chip._lbl_call.setText(partner if partner else "")
+        chip.set_state(state, partner)
 
         fill = _UI_CHANNEL_FILL if is_ui_channel else _CHIP_FILL.get(state, _CHIP_FILL["free"])
         border = _CHIP_BORDER_CURRENT if is_current else "#333333"
         border_w = 2 if is_current else 1
-        chip.setStyleSheet(
+        style = (
             "QPushButton {"
             f"  background-color: {fill}; color: white;"
             f"  border: {border_w}px solid {border}; border-radius: 4px;"
             "}"
         )
         if is_ui_channel:
-            chip.setToolTip(
+            tip = (
                 "UI / Unproto / Monitor channel.\n"
                 "No connection can be made here — text typed on this "
                 "channel is sent by the TNC as a UI frame along the "
@@ -407,7 +662,8 @@ class ChannelBar(QWidget):
                 f"Channel {ch}\n"
                 f"State: {state}\n"
                 f"Partner: {partner or '—'}\n"
-                "Click to select as the current channel for Connect/TX.\n"
+                "Click to select; click again (or double-click, or "
+                "right-click → Connect…) to type a callsign.\n"
                 "Ctrl+Up / Ctrl+Down steps through channels."
             )
             if ch > self._user_limit:
@@ -415,7 +671,13 @@ class ChannelBar(QWidget):
                     f"\nUSERS is set to {self._user_limit} — incoming "
                     "connects on this channel will not be accepted."
                 )
-            chip.setToolTip(tip)
+        chip.set_display(
+            "UI" if is_ui_channel else str(ch),
+            partner if partner else "",
+            is_current,
+            style,
+            tip,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +718,8 @@ class _MheardRowWidget(QWidget):
 
         tip = (f"Connected on channel {channel} — double-click to switch to it."
                if self._connected else
-               f"Double-click to fill “{callsign}” into Dest.")
+               f"Double-click to open a connect field prefilled with "
+               f"“{callsign}” on the first free channel.")
         self.setToolTip(tip)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 (Qt override)
@@ -472,7 +735,9 @@ class MheardPanel(QWidget):
         set_channel_map(mapping)   — {callsign: channel} of connected stations
         clear()
         btn_refresh   — connect clicked to MainWindow._on_packet_mheard()
-        connect_requested(str)     — double-click on an unconnected station
+        connect_requested(str)     — double-click on an unconnected station;
+                                     PacketBaseScreen wires this straight to
+                                     ChannelBar.start_edit_first_free() (P42)
         channel_requested(int)     — double-click on a connected station
     """
 
@@ -582,28 +847,34 @@ class MheardPanel(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# PacketConnectDialog — "..." button next to Dest (advanced connect options)
+# PacketConnectDialog — "Connect via…" chip context-menu entry
 # ---------------------------------------------------------------------------
 
 class PacketConnectDialog(QDialog):
-    """Minimal advanced-connect dialog: channel + digipeater path.
+    """Advanced connect dialog: callsign + digipeater path, fixed channel.
+
+    P42: the channel is no longer an editable field here — it comes from
+    whichever chip's "Connect via…" context-menu entry opened the dialog,
+    so a mismatch between the dialog and the chip that launched it can no
+    longer happen (there is no field left to disagree with the chip on).
 
     v0.1: no persistence across sessions (Backlog Priority 2 item
-    "Connect-Dialog-Persistenz"). Returns (channel, path) via exec()/fields().
+    "Connect-Dialog-Persistenz"). Returns (callsign, path) via
+    exec()/callsign()/path(); channel() echoes back the fixed channel.
     """
 
-    def __init__(self, current_channel: int, parent=None):
+    def __init__(self, channel: int, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Packet Connect — advanced")
+        self.setWindowTitle(f"Packet Connect — advanced (channel {channel})")
+        self._channel = channel
         form = QFormLayout(self)
 
-        self.spin_channel = QSpinBox()
-        # P10: channel 0 is the UI/unproto/monitor channel, not a QSO
-        # channel — Connect always needs 1-9. If the dialog is opened while
-        # channel 0 is current, QSpinBox clamps setValue(0) up to 1.
-        self.spin_channel.setRange(1, CHANNEL_COUNT - 1)
-        self.spin_channel.setValue(current_channel)
-        form.addRow("Channel:", self.spin_channel)
+        form.addRow("Channel:", QLabel(str(channel)))
+
+        self.le_call = QLineEdit()
+        self.le_call.setPlaceholderText("e.g. OE3XYZ-9")
+        self.le_call.setMaxLength(20)
+        form.addRow("Callsign:", self.le_call)
 
         self.le_path = QLineEdit()
         self.le_path.setPlaceholderText("e.g. OE1ABC-8 (digipeater, optional)")
@@ -618,7 +889,10 @@ class PacketConnectDialog(QDialog):
         form.addRow(buttons)
 
     def channel(self) -> int:
-        return self.spin_channel.value()
+        return self._channel
+
+    def callsign(self) -> str:
+        return self.le_call.text().strip().upper()
 
     def path(self) -> str:
         return self.le_path.text().strip().upper()
@@ -641,14 +915,18 @@ class PacketBaseScreen(QWidget):
     Attributes accessed by MainWindow (see CLAUDE.md hard constraints — these
     names must not change):
         mheard_panel, mheard_panel.btn_refresh, mheard_panel.btn_clear
-        btn_connect, btn_disconnect, btn_unproto, btn_maildrop, btn_aprs
+        btn_unproto, btn_maildrop, btn_aprs
         btn_eas, btn_passall, btn_mrpt, btn_mid, btn_squelch
         combo_hbaud, combo_monitor, rx_display, tx_input, macro_buttons
-        set_mycall(), set_link_state(), on_connect_toggled(),
-        on_unproto_toggled(), _set_status()
+        set_mycall(), set_link_state(), on_unproto_toggled(), _set_status()
 
-    New in this sprint (channel model + regrouped rows):
-        channel_bar, cb_dest, dest_callsign(), set_dest_callsign(),
+    Channel model (P10 sprint), connect-in-chip (P42 — Connect/Dest/…/
+    Disconnect row removed; a callsign is typed directly into the free
+    channel chip you want to connect on):
+        channel_bar          ChannelBar — channel_bar.connect_requested(ch,
+                              callsign), .connect_via_requested(ch),
+                              .disconnect_requested(ch) are what MainWindow
+                              wires instead of button clicks
         append_channel_data(), append_monitor_data(), set_view_all(),
         current_channel()
     """
@@ -691,19 +969,41 @@ class PacketBaseScreen(QWidget):
         self._build_ui()
 
         # ScreenFocusController: tracks focus on editable QLineEdit fields.
-        # cb_dest is an editable QComboBox — its internal QLineEdit is what
-        # actually receives focus, so that (not the QComboBox) is registered.
-        # lbl_mycall is a QLabel — no focus tracking needed.
+        # A chip's own inline callsign editor needs NO registration here —
+        # is_keyboard_input_widget() (P41) recognises any QLineEdit/QComboBox/
+        # etc. by type as it walks the parent chain, so it is exempted from
+        # the TX-window redirect regardless of registration. le_unproto is
+        # still registered because ScreenFocusController is also how
+        # MainWindow's Level-1 filter decides is_active() (see eventFilter()
+        # docstring there); lbl_mycall is a QLabel — no focus tracking needed.
         from .screen_focus_controller import ScreenFocusController
         self.focus_ctrl = ScreenFocusController(
-            fields=[self.cb_dest.lineEdit(), self.le_unproto],
+            fields=[self.le_unproto],
             parent=self,
         )
 
         # Pure UI wiring (no TNC frame, so no MainWindow round-trip needed):
-        # double-clicking an MHEARD row either fills Dest or switches channel.
-        self.mheard_panel.connect_requested.connect(self.set_dest_callsign)
+        # double-clicking an MHEARD row on an unconnected station opens the
+        # first free chip's inline editor, prefilled (P42); on a connected
+        # one it just switches to that channel.
+        self.mheard_panel.connect_requested.connect(
+            self.channel_bar.start_edit_first_free
+        )
         self.mheard_panel.channel_requested.connect(self.channel_bar.set_current)
+
+        # "Connect via…" chip context-menu entry — advanced dialog with a
+        # digipeater path field (P42.2). Pure UI (no TNC frame) until the
+        # dialog is accepted, at which point it re-enters the same
+        # ChannelBar.request_connect() path a plain chip Enter would use.
+        self.channel_bar.connect_via_requested.connect(self._on_connect_via_requested)
+
+        # Enter in one of these fields, while no chip editor is already
+        # open, opens the current chip's editor instead of doing nothing
+        # (P42.1's "Enter bei gewähltem freien Chip, Fokus nicht im
+        # TX-Fenster" row) — none of them has a returnPressed handler of
+        # its own, so this cannot shadow any existing behaviour.
+        for _fld in (self.le_unproto, self.combo_monitor, self.combo_hbaud):
+            _fld.installEventFilter(self)
 
         # Intercept Enter in tx_input → send as AX.25 DATA frame.
         # _packet_send_slot is set by MainWindow._wire_mode_callbacks().
@@ -745,16 +1045,39 @@ class PacketBaseScreen(QWidget):
                     event.modifiers() & _Qt.KeyboardModifier.ControlModifier:
                 self.channel_bar.step(-1 if event.key() == _Qt.Key.Key_Up else 1)
                 return True
+            # Ctrl+D disconnects the CURRENT channel (P42.2) — Packet has
+            # no TxController/[^D] EOT concept (see the Hold-TX comment
+            # above), so Ctrl+D is free to mean "disconnect" here, unlike
+            # on the character-ACK modes.
+            if (event.key() == _Qt.Key.Key_D and
+                    event.modifiers() & _Qt.KeyboardModifier.ControlModifier):
+                ch = self.channel_bar.current()
+                if ch != UI_CHANNEL and self.channel_bar.state(ch) != "free":
+                    self.channel_bar.disconnect_requested.emit(ch)
+                return True
+        # Enter in one of the non-TX fields registered in __init__, while no
+        # chip editor is already open, opens the CURRENT chip's editor
+        # (P42.1 — "Enter bei gewähltem freien Chip, Fokus nicht im
+        # TX-Fenster"). ChannelBar.start_edit_current() is itself a no-op
+        # on a busy chip or channel 0, so this is safe to call unconditionally.
+        if (event.type() == QEvent.Type.KeyPress
+                and obj in (getattr(self, 'le_unproto', None),
+                            getattr(self, 'combo_monitor', None),
+                            getattr(self, 'combo_hbaud', None))
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and not self.channel_bar.is_editing()):
+            self.channel_bar.start_edit_current()
+            return True
         if event.type() == QEvent.Type.KeyPress:
-            # Walk parent chain: in an app-wide filter obj may be an
-            # internal child widget, not the QLineEdit/QTextEdit itself.
-            def _is_input(w):
-                while w is not None:
-                    if isinstance(w, (QTextEdit, QLineEdit)):
-                        return True
-                    w = w.parent()
-                return False
-            if _is_input(self.focusWidget()) or _is_input(obj):
+            # is_keyboard_input_widget() walks the parent chain and
+            # covers every keyboard-input widget type, including
+            # QComboBox (Dest, Monitor, HBAUD) and QAbstractSpinBox —
+            # not just QLineEdit/QTextEdit (P41: an editable QComboBox's
+            # own widget, not its inner lineEdit(), is what actually
+            # receives focus/events, so the old QLineEdit-only check
+            # never matched it).
+            if (is_keyboard_input_widget(self.focusWidget())
+                    or is_keyboard_input_widget(obj)):
                 return super().eventFilter(obj, event)
             if hasattr(self, "tx_input") and self.tx_input is not None:
                 self.tx_input.setFocus()
@@ -783,41 +1106,30 @@ class PacketBaseScreen(QWidget):
         self.lbl_mycall.setText(callsign.upper() if callsign else "---")
 
     # ------------------------------------------------------------------
-    # Dest field (P1.3) — cb_dest is an editable QComboBox; MainWindow talks
-    # to it only through these two methods, never .text()/.currentText().
+    # Connect via… (P42.2) — the chip's context-menu entry for the advanced
+    # dialog (callsign + optional digipeater path). A plain connect never
+    # goes through here at all: it comes straight from ChannelChip's own
+    # inline editor via ChannelBar.request_connect().
     # ------------------------------------------------------------------
 
-    def dest_callsign(self) -> str:
-        """Return the trimmed, uppercased destination callsign (may include
-        a ' VIA ...' digipeater path — connect_frame() accepts that as-is)."""
-        return self.cb_dest.currentText().strip().upper()
+    def _on_connect_via_requested(self, channel: int) -> None:
+        """'Connect via…' chip context-menu entry.
 
-    def set_dest_callsign(self, call: str) -> None:
-        """Set the Dest field (e.g. from an MHEARD double-click)."""
-        self.cb_dest.setCurrentText(call.strip().upper())
-
-    def add_dest_history(self, callsign: str) -> None:
-        """Remember *callsign* at the top of the Dest history (max 10)."""
-        callsign = callsign.strip().upper()
-        if not callsign:
-            return
-        idx = self.cb_dest.findText(callsign)
-        if idx >= 0:
-            self.cb_dest.removeItem(idx)
-        self.cb_dest.insertItem(0, callsign)
-        self.cb_dest.setCurrentIndex(0)
-        while self.cb_dest.count() > 10:
-            self.cb_dest.removeItem(self.cb_dest.count() - 1)
-
-    def _on_connect_dialog(self) -> None:
-        """'...' button next to Dest — pick channel + optional digi path."""
-        dlg = PacketConnectDialog(self.channel_bar.current(), parent=self)
+        Right-click works on any free chip regardless of which channel is
+        currently selected, so this also switches the ChannelBar to
+        *channel* before requesting the connect — the same "become current"
+        step a plain chip Enter-to-connect already gets for free (its
+        editor cannot even open without the chip becoming current first).
+        """
+        dlg = PacketConnectDialog(channel, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.channel_bar.set_current(dlg.channel())
+            call = dlg.callsign()
+            if not call:
+                return
             path = dlg.path()
-            if path:
-                base = self.dest_callsign()
-                self.set_dest_callsign(f"{base} VIA {path}" if base else "")
+            full = f"{call} VIA {path}" if path else call
+            self.channel_bar.set_current(channel)
+            self.channel_bar.request_connect(channel, full)
 
     # ------------------------------------------------------------------
     # Channel-bound RX (P1.4) — filtering happens at append time, not by
@@ -1035,51 +1347,11 @@ class PacketBaseScreen(QWidget):
 
         add_hline(root)
 
-        # 3. Connect row: Connect · Dest · ... · Disconnect ────────────
-        connect_row = QHBoxLayout()
-        connect_row.setSpacing(SPACING)
-
-        self.btn_connect = _no_focus_btn("Connect", BTN_W)
-        self.btn_connect.setCheckable(True)
-        self.btn_connect.setStyleSheet(_STYLE_CONNECT_OFF)
-        self.btn_connect.setToolTip(
-            "Initiate AX.25 CONNECT to Dest callsign on the current channel\n"
-            "(see the channel bar below). TNC mnemonic: CO (connect channel)"
-        )
-        connect_row.addWidget(self.btn_connect)
-
-        self.cb_dest = QComboBox()
-        self.cb_dest.setEditable(True)
-        self.cb_dest.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.cb_dest.setFixedWidth(CALL_W + 20)
-        self.cb_dest.lineEdit().setMaxLength(20)
-        self.cb_dest.setFont(QFont("Courier New", 10))
-        self.cb_dest.lineEdit().setPlaceholderText("e.g. OE3XYZ")
-        self.cb_dest.setToolTip(
-            "Destination callsign for AX.25 CONNECT.\n"
-            "May include SSID and a digipeater path, e.g.\n"
-            "OE3XYZ-9 or OE3XYZ-9 VIA OE1ABC-8.\n"
-            "Dropdown remembers recently used callsigns."
-        )
-        connect_row.addWidget(self.cb_dest)
-
-        self.btn_connect_dialog = _no_focus_btn("…", 28)
-        self.btn_connect_dialog.setToolTip(
-            "Advanced connect options: pick the channel and an optional\n"
-            "digipeater path before connecting."
-        )
-        self.btn_connect_dialog.clicked.connect(self._on_connect_dialog)
-        connect_row.addWidget(self.btn_connect_dialog)
-
-        self.btn_disconnect = _no_focus_btn("Disconnect", BTN_W)
-        self.btn_disconnect.setToolTip(
-            "Send AX.25 DISCONNECT on the current channel.\n"
-            "TNC mnemonic: DI (disconnect channel)"
-        )
-        self.btn_disconnect.setEnabled(False)
-        connect_row.addWidget(self.btn_disconnect)
-        connect_row.addStretch()
-        root.addLayout(connect_row)
+        # P42: the old "Connect · Dest · ... · Disconnect" row is gone —
+        # a callsign is typed directly into the free channel chip you want
+        # to connect on (see ChannelChip/ChannelBar above and CLAUDE.md's
+        # channel-model section). "Connect via…" (digipeater path) is a
+        # chip context-menu entry, wired to PacketConnectDialog.
 
         # 4. Unproto row: Unproto · via · Monitor ───────────────────────
         unproto_row = QHBoxLayout()
@@ -1467,66 +1739,26 @@ class PacketBaseScreen(QWidget):
         self._options_container.setVisible(checked)
 
     def set_link_state(self, state: str) -> None:
-        """Enable/disable the Connect/Disconnect buttons for an AX.25 link state.
+        """Update status/Unproto for an AX.25 link state change (P42).
 
-        Called by MainWindow on link transitions so a second CONNECT cannot be
-        sent while a link is up or pending (which would draw an
-        ALREADY_CONNECTED error / undefined behaviour from a real TNC).
+        Called by MainWindow on link transitions. Connect/Disconnect no
+        longer have their own buttons to enable/disable (P42 — a connect
+        now comes from a chip's inline editor, which ChannelChip itself
+        already refuses to open on a busy channel; a disconnect comes from
+        the chip's context menu or Ctrl+D, both already channel-state-aware).
+        This method now only owns the T39 Connect/Unproto mutual exclusion:
 
         state:
-          'connected' / 'calling' — Connect disabled (no double CO), Disconnect
-              enabled, Unproto disabled. CALLING keeps Connect pressed-but-
-              disabled so it cannot be un-toggled into a half-aborted state; use
-              Disconnect to abort.
-          anything else (disconnected / idle) — Connect re-enabled and visually
-              released, Disconnect disabled, Unproto re-enabled.
-
-        T39: Connect and Unproto are mutually exclusive (like PTT modes) — a
-        connected/pending AX.25 link must not also run UNPROTO UI frames, so the
-        Unproto button is greyed while a link is up or calling and restored once
-        the link is down.
-
-        Does NOT touch the status pill (caller owns _set_status) and blocks
-        signals while releasing Connect so it does not re-fire the toggle/CO.
+          'connected' / 'calling' — Unproto disabled (no UNPROTO UI frames
+              while a QSO link is up or pending on some channel).
+          anything else (disconnected / idle) — Unproto re-enabled.
         """
-        if state.lower() in ("connected", "calling"):
-            self.btn_connect.setEnabled(False)
-            self.btn_disconnect.setEnabled(True)
-            self.btn_unproto.setEnabled(False)   # T39: no UNPROTO while linked
-        else:
-            self.btn_connect.setEnabled(True)
-            self.btn_connect.blockSignals(True)
-            self.btn_connect.setChecked(False)
-            self.btn_connect.blockSignals(False)
-            self.btn_connect.setStyleSheet(_STYLE_CONNECT_OFF)
-            self.btn_disconnect.setEnabled(False)
-            self.btn_unproto.setEnabled(True)    # T39: UNPROTO available when idle
-
-    def on_connect_toggled(self, checked: bool) -> None:
-        """Visual feedback for Connect button toggle.
-
-        Wired by MainWindow._wire_packet_buttons().
-        Actual CO/DI frame is sent by MainWindow._on_packet_connect().
-        """
-        if checked:
-            self.btn_connect.setStyleSheet(_STYLE_CONNECT_ON)
-            self.btn_unproto.blockSignals(True)
-            self.btn_unproto.setChecked(False)
-            self.btn_unproto.blockSignals(False)
-            self.btn_unproto.setStyleSheet(_STYLE_UNPROTO_OFF)
-            self._set_status("CALLING")
-        else:
-            self.btn_connect.setStyleSheet(_STYLE_CONNECT_OFF)
-            self._set_status("STBY")
+        self.btn_unproto.setEnabled(state.lower() not in ("connected", "calling"))
 
     def on_unproto_toggled(self, checked: bool) -> None:
         """Visual feedback for Unproto button toggle."""
         if checked:
             self.btn_unproto.setStyleSheet(_STYLE_UNPROTO_ON)
-            self.btn_connect.blockSignals(True)
-            self.btn_connect.setChecked(False)
-            self.btn_connect.blockSignals(False)
-            self.btn_connect.setStyleSheet(_STYLE_CONNECT_OFF)
             self._set_status("UNPROTO TX")
         else:
             self.btn_unproto.setStyleSheet(_STYLE_UNPROTO_OFF)
