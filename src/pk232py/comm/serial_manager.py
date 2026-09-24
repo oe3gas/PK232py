@@ -117,6 +117,42 @@ def _parse_defaults_flag(banner: bytes) -> Optional[bool]:
     return _DEFAULTS_MARKER in banner
 
 
+def _classify_maildrop_response(text: str) -> Optional[bool]:
+    """Classify a verbose-mode 'MAILDROP' (no argument) query response
+    (P37, docs/P37_T119_Provenance_Capability_Spec.md Teil D).
+
+    Unlike PACTOR, MailDrop capability has no boot-banner marker - the
+    only way to know is to ask, in verbose mode, before the parameter
+    upload. This never sends MDCHECK: MDCHECK logs into the mailbox and
+    halts packet operation, which a capability probe must never do.
+
+    Returns:
+        True  - a line named MAILDROP answered (its ON/OFF state does
+                not matter, only that the command exists).
+        False - an error line ('?What?', '?bad', ...) - the command
+                does not exist on this firmware (e.g. the 1988 BASE
+                generation, docs/DEVICES.md Device C).
+        None  - no clear answer (empty/garbled/no matching line) - a
+                detection failure, which callers must treat as "unknown,
+                assume capable", never as "no MailDrop" (an existing
+                feature must not be locked out by a flaky probe).
+    """
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("?"):
+            return False
+        token = line.split()[0]
+        # The TNC answers in its own mixed-case abbreviated form
+        # ('MAildrop'), never in the exact uppercase we sent - skip our
+        # own echoed command line (same "echo vs. real answer" rule as
+        # tools/hw_check.py::parse_query_value(), P21.1).
+        if token.upper() == "MAILDROP" and token != "MAILDROP":
+            return True
+    return None
+
+
 def _wakeup_log_message(resp: bytes) -> tuple[int, str]:
     """P35.4: what to log after the wakeup read, and at what level.
 
@@ -322,6 +358,10 @@ class SerialManager(QObject):
         self._port_factory     = None
         # TNC boot banner — captured during init for capability detection
         self._tnc_banner: bytes = b""
+        # MailDrop capability — unlike has_pactor, not in the banner, so
+        # this stays None until detect_maildrop() actively queries it
+        # (P37). None means "not yet detected", never "no MailDrop".
+        self._has_maildrop: Optional[bool] = None
         # Shared buffer: ReaderThread writes here, _read_raw_until reads here
         self._rx_buf           = bytearray()
         self._rx_buf_lock      = threading.Lock()
@@ -365,6 +405,38 @@ class SerialManager(QObject):
         if a banner was captured without that phrase, None if no banner
         was captured at all (P37)."""
         return _parse_defaults_flag(self._tnc_banner)
+
+    @property
+    def has_maildrop(self) -> Optional[bool]:
+        """MailDrop capability, as last determined by detect_maildrop()
+        (P37). None until detect_maildrop() has actually been called, or
+        if its query gave no clear answer - callers must treat None as
+        "unknown, assume capable", never as "no MailDrop"."""
+        return self._has_maildrop
+
+    def detect_maildrop(self, timeout: float = 3.0) -> Optional[bool]:
+        """Actively query MAILDROP (no argument) in verbose mode (P37) and
+        cache the result in has_maildrop. Must be called while already in
+        verbose mode (e.g. from ParamsUploader.upload(), before Host Mode
+        entry) - built like has_pactor, but via a query instead of a
+        passive banner read, since MailDrop capability has no banner
+        marker. Never sends MDCHECK - see _classify_maildrop_response().
+        """
+        if not self.is_connected:
+            return self._has_maildrop
+        raw = bytearray()
+
+        def _capture(data: bytes) -> None:
+            raw.extend(data)
+
+        self.raw_data_received.connect(_capture)
+        try:
+            self.write_verbose_wait(b"MAILDROP\r\n", timeout=timeout)
+        finally:
+            self.raw_data_received.disconnect(_capture)
+        text = bytes(raw).decode("ascii", errors="replace")
+        self._has_maildrop = _classify_maildrop_response(text)
+        return self._has_maildrop
 
     # ------------------------------------------------------------------
     # Port factory seam (generic; default = real serial.Serial)

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 
 from pk232py.comm.serial_manager import (
+    _classify_maildrop_response,
     _parse_defaults_flag,
     _parse_release,
     _wakeup_log_message,
@@ -77,3 +78,27 @@ class TestBannerProvenance:
         banner = b"AEA PK-232 ...\r\nRelease 11.SEP.95\r\n\r\ncmd:"
         assert _parse_release(banner) == "11.SEP.95"
         assert _parse_defaults_flag(banner) is False
+
+
+class TestClassifyMaildropResponse:
+    """P37 Teil D - MailDrop capability detection via a verbose-mode
+    'MAILDROP' query, never MDCHECK."""
+
+    def test_on_answers_true(self):
+        assert _classify_maildrop_response(
+            "MAILDROP\r\nMAildrop  ON\r\ncmd:"
+        ) is True
+
+    def test_off_still_answers_true_the_command_exists(self):
+        assert _classify_maildrop_response(
+            "MAILDROP\r\nMAildrop  OFF\r\ncmd:"
+        ) is True
+
+    def test_what_error_answers_false(self):
+        assert _classify_maildrop_response(
+            "MAILDROP\r\n?What?\r\ncmd:"
+        ) is False
+
+    def test_empty_or_garbled_answers_none_not_a_guess(self):
+        assert _classify_maildrop_response("") is None
+        assert _classify_maildrop_response("cmd:") is None
