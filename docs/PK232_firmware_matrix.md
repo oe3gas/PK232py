@@ -4,9 +4,10 @@ Begleitdokument zu `tools/pk232_fw_scan.py`.
 Ziel: Überblick, welche Verbose-Befehle welche Firmware-Generation kennt — und
 wie man das am realen Gerät **empirisch** validiert.
 
-> **Verwandtes Dokument:** `docs/DEVICES.md` (P32) ist das Inventar der drei
-> vorhandenen EPROMs/Geräte (A/B/C) mit der Spalte, an welchem Gerät ein
-> Befund entstand. Diese Datei hier beantwortet eine andere Frage — welcher
+> **Verwandtes Dokument:** `docs/DEVICES.md` (P37 — ersetzt den nie
+> umgesetzten P32-Entwurf) ist das Inventar der drei vorhandenen
+> EPROMs/Geräte (A/B/C) mit der Spalte, an welchem Gerät ein Befund
+> entstand. Diese Datei hier beantwortet eine andere Frage — welcher
 > Befehl in welcher Firmware-**Generation** existiert, unabhängig davon,
 > welches physische Gerät gerade am Port hängt.
 
