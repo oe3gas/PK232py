@@ -490,6 +490,26 @@ Grows over time.
 
 ### TNC / firmware v7.1
 
+- **A measurement finding is valid for the device it was measured on —
+  attribute by device, not just by date (P37, 2026-09-24;
+  `docs/DEVICES.md` is the inventory).** Every finding below dated up to
+  and including 22.09.2026 was measured on **Device A** (11.09.1995,
+  PACTOR generation, round prompt bracket); every hardware run from
+  23.09.2026 onward (P29 and later) was measured on **Device B**
+  (01.AUG.91 / 01.08.1991, MBX generation, square prompt bracket) unless
+  the entry says otherwise (Device C, 30.12.1988, BASE generation, has
+  never been connected through the app or `hw_check.py` at all — see
+  `docs/DEVICES.md`). **Rule: where behaviour diverges between two runs,
+  check the firmware/device first — via the `device:` line every
+  `hw_check.py` log/summary now carries (`SerialManager.tnc_release`/
+  `has_pactor`/`tnc_defaults`) — before assuming the code changed or an
+  earlier run was wrong.** This is exactly what settled the 23.09.2026
+  `L` → `*** What?` mystery on Device B (see the "Mailbox commands
+  terminate with CR only" gotcha below): it looked like it might be a
+  genuine MBX-vs-PACTOR difference until the 24.09.2026 re-run showed it
+  was a software artefact all along, present on Device B only because
+  that was the device on hand that week, not because of anything
+  firmware-specific.
 - **PACTOR-only commands → `?What?` without the PACTOR option:** `MYPTCALL`,
   `ARQTOL`, `MOPT`, `EXPERT OFF`, `PTHUFF`, `PT200`, `PTOVER`. Gate them behind
   `SerialManager.has_pactor`. See §9.
