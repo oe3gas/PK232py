@@ -513,24 +513,42 @@ inherits `VH N` (would have undone its own `VH Y`). Hardware re-test pending.
 ---
 
 ### T33 — Connect: empty Dest warning
-1. VHF Packet, Dest empty → click **Connect**
+**UI note (P42, 2026-09-24):** the Connect button and Dest field this test
+was written against no longer exist — a callsign is now typed directly
+into a free channel chip's own inline editor, which cannot be submitted
+empty at all (`ChannelChip._commit()` only ever emits `connect_requested`
+for a non-empty, valid callsign; an empty field pressing Enter is a no-op,
+no warning dialog). Original steps/result kept below as history; the
+software-verified equivalent is `TestChipConnectFlow` in
+`test_packet_screen.py` (an invalid/empty callsign keeps the editor open
+with no signal, rather than popping a warning dialog).
 
-**Expected result:** Warning dialog "Packet Connect"
+1. ~~VHF Packet, Dest empty → click **Connect**~~
 
-**Status:** ✅ PASS (2026-06-19, mock)
+**Expected result (historical):** Warning dialog "Packet Connect"
+
+**Status:** ✅ PASS (2026-06-19, mock) — superseded by P42's UI redesign,
+see the note above.
 **Note:** Warning dialog fires correctly when Dest empty.
 
 ---
 
 ### T34 — Connect: CO frame sent
-1. VHF Packet, Dest = "OE3XYZ-9" → click **Connect**
+**UI note (P42, 2026-09-24):** rewritten for the connect-in-chip UI — type
+the callsign into channel 1's own chip editor (click the current free chip
+again, or double-click it, to open it), then press Enter.
+
+1. VHF Packet, channel 1 selected — click chip 1 again (or double-click
+   it) to open its editor, type "OE3XYZ-9", press Enter
 
 **Expected result:**
-- Connect button pressed (blue)
+- Chip 1 immediately shows "OE3XYZ-9" (amber "calling" fill)
 - Serial: `01 40 01 43 4F ...` (CH_CMD ch=1, CO, callsign bytes)
 - Status: **● CALLING**
 
-**Status:** ✅ PASS (2026-06-19, mock)
+**Status:** ✅ PASS (2026-06-19, mock; UI updated 2026-09-24 for P42 — see
+`TestChipConnectFlow::test_enter_with_valid_callsign_emits_connect_requested_on_that_channel`
+in `test_packet_screen.py` and `MainWindow._on_chip_connect_requested()`).
 **Note:** CTL=$41 channel frame confirmed (bugfix 47f5845 — was $4F).
 TX: `01 41 43 4F 4F 45 31 58 59 5A 17`
 
@@ -545,7 +563,9 @@ TX: `01 41 43 4F 4F 45 31 58 59 5A 17`
 
 **Status:** ✅ PASS (2026-06-19, mock)
 **Note:** $51 LINK_MSG "CONNECTED to OE1XYZ" → ● CONNECTED (green).
-Hardware test against real second station still outstanding.
+Hardware test against real second station still outstanding. Unaffected
+by the P42 UI redesign — this is the RX/status-label side, not Connect
+itself.
 
 ---
 
@@ -558,38 +578,53 @@ Hardware test against real second station still outstanding.
 
 **Status:** ✅ PASS (2026-06-19, mock)
 **Note:** L / R 2 / R 4 / D sent and echoed correctly (TX yellow).
-BBS responses appear in RX display.
+BBS responses appear in RX display. Unaffected by the P42 UI redesign —
+this exercises `tx_input`, not Connect.
 
 ---
 
 ### T37 — Disconnect: DI frame + status pill
-1. VHF Packet, connected → click **Disconnect**
+**UI note (P42, 2026-09-24):** the Disconnect button this test was written
+against no longer exists — disconnect now comes from the busy chip's own
+context-menu "Disconnect" entry, or Ctrl+D while that channel is current.
+
+1. VHF Packet, connected on channel 1 — right-click chip 1 → "Disconnect"
+   (or select chip 1 and press Ctrl+D)
 
 **Expected result:**
 - Serial: `01 40 01 44 49 17` (CH_CMD ch=1, DI)
 - Status pill → **● STBY**
 
-**Status:** ✅ PASS (2026-06-19, mock)
+**Status:** ✅ PASS (2026-06-19, mock; UI updated 2026-09-24 for P42 — see
+`TestChipConnectFlow::test_ctrl_d_disconnects_the_busy_current_channel` in
+`test_packet_screen.py` and `MainWindow._on_chip_disconnect_requested()`).
 **Note:** Both directions verified:
-(a) Disconnect button → $41 DI → ● DISCONNECTED
+(a) Disconnect (button, historically) → $41 DI → ● DISCONNECTED
 (b) Remote disconnect via BBS "D" command → ● DISCONNECTED
 Hardware test against real second station still outstanding.
 
 ---
 
 ### T83 — Mock-TNC BBS: Connect-button gating
+**UI note (P42, 2026-09-24):** rewritten for the connect-in-chip UI — there
+is no Connect/Disconnect button pair to gate any more; gating now means
+"does the chip's editor open at all".
 Prerequisite: `python tools/mock_tnc_bbs.py --trace`
 
-1. Initial: Connect enabled, Disconnect disabled
-2. Click **Connect** (Dest: OE1XYZ) → CALLING
-3. After CONNECTED: Connect DISABLED (no double CO possible), Disconnect ENABLED
-4. Click **Disconnect** → DISCONNECTED
-5. Connect ENABLED again + uncheckable, Disconnect DISABLED
+1. Initial: chip 1 free → opens its editor (click again, or double-click)
+2. Type "OE1XYZ" + Enter → CALLING (editor closes, chip shows the callsign)
+3. After CONNECTED: clicking chip 1 again just re-selects it, no editor
+   opens (busy chip) — right-click offers "Disconnect", not "Connect…"
+4. Right-click chip 1 → "Disconnect" (or Ctrl+D) → DISCONNECTED
+5. Chip 1 is free again — clicking it again opens its editor
 6. Re-connect possible
 
-**Expected result:** Button gating correct in every state.
+**Expected result:** Editor-open/context-menu gating correct in every state
+(the direct equivalent of the old button gating).
 
-**Status:** ✅ PASS (2026-06-19, mock — commits packet_screen.py + main_window.py)
+**Status:** ✅ PASS (2026-06-19, mock — commits packet_screen.py +
+main_window.py; UI updated 2026-09-24 for P42, see `TestChipConnectFlow`
+in `test_packet_screen.py`)
 
 ---
 
@@ -620,13 +655,22 @@ sends `build_command(b'UN', le_unproto.text())`. Trace: `ctl=0x4F data=b'UNCQ VI
 ---
 
 ### T39 — Connect and Unproto mutual exclusion
-1. Unproto ON → Connect button greyed
-2. Connect/CALLING/CONNECTED → Unproto button greyed
-3. Unproto OFF (link idle) → Connect re-enabled; link down → Unproto re-enabled
+**UI note (P42, 2026-09-24):** there is no `btn_connect`/`btn_disconnect`
+to grey any more — a busy channel's chip simply refuses to open its own
+inline editor (see T99), which is the connect-in-chip equivalent of
+"Connect greyed". The Unproto side of the exclusion is unchanged.
 
-**Status:** ✅ PASS (2026-06-22, code-verified) — `set_link_state()` greys/restores
-`btn_unproto` on connected/calling/idle; `_on_packet_unproto()` greys/restores
-`btn_connect` (link-busy proxy = `btn_disconnect.isEnabled()`). Mutual exclusion
+1. Unproto ON (UI chip selected) → the UI chip's own context menu is empty
+   (P10, no connect possible there) either way
+2. Connect/CALLING/CONNECTED on a QSO channel → Unproto button greyed
+3. Unproto OFF (link idle) → link down → Unproto re-enabled
+
+**Status:** ✅ PASS (2026-06-22, code-verified; UI updated 2026-09-24 for
+P42) — `set_link_state()` greys/restores `btn_unproto` on
+connected/calling/idle (now its ONLY job, see `set_link_state()`'s own
+docstring); `ChannelChip.start_edit()`/`_show_menu()` refuse to open on a
+busy channel or channel 0, which is what replaces the old
+`_on_packet_unproto()` button-greying half of this test. Mutual exclusion
 both directions. Interactive mock re-click pending.
 
 ---
@@ -729,15 +773,21 @@ bar…" / "MainWindow: packet channel routing…" commits; interactive
 mock-GUI (`tools/mock_tnc_bbs.py`) and hardware re-tests still open.
 
 ### T87 — Channel selection via chip click
+**UI note (P42, 2026-09-24):** step 2 rewritten — the Dest field/Connect
+button it named no longer exist; the callsign now goes directly into
+chip 4's own editor.
+
 1. Packet screen (Host Mode) — click channel chip 4 in the ChannelBar
-2. Enter a Dest callsign → click **Connect**
+2. Click chip 4 again (now current and free) to open its editor, type a
+   callsign, press Enter
 
 **Expected result:** CO goes out with CTL=$44 (channel 4), not $41; chip 4
 shows the amber "calling" fill immediately.
 
 **Status:** ✅ PASS (2026-09-20, headless — stub `_serial`, see
-`_on_packet_connect`/`ChannelBar.set_channel_state`). Interactive mock-GUI
-re-click and hardware re-test pending.
+`_on_packet_connect`/`ChannelBar.set_channel_state`; UI updated 2026-09-24
+for P42, see `_on_chip_connect_requested`). Interactive mock-GUI re-click
+and hardware re-test pending.
 
 ### T88 — Channel stepping via Ctrl+Up / Ctrl+Down
 1. Packet screen, focus in `tx_input` — press **Ctrl+Down** three times
@@ -805,8 +855,11 @@ Numbered T93, not T90 as first sketched — T90 above was already taken by
 
 Prerequisite: `python tools/mock_tnc_bbs.py --trace`
 
+**UI note (P42, 2026-09-24):** step 1 rewritten — Dest/Connect no longer
+exist; the callsign now goes into chip 3's own editor.
+
 1. Packet screen (Host Mode via the mock) — select channel 3 in the
-   ChannelBar, Dest = OE1XYZ, click **Connect**
+   ChannelBar, click it again to open its editor, type OE1XYZ, press Enter
 2. Observe the `CO` frame's CTL byte and the mock's `CONNECTED to OE1XYZ`
    reply
 
@@ -897,26 +950,41 @@ From `docs/P10_UI_Channel_Spec.md`. Continues the existing numbering —
 T87–T97 above are unchanged.
 
 ### T98 — Unproto switches to the UI channel
+**UI note (P42, 2026-09-24):** step 3's "Connect and Disconnect are
+locked" no longer applies literally (those buttons are gone) — its
+connect-in-chip equivalent is T99 (the UI chip's editor never opens at
+all). Steps 1/2/4 and the channel-switch/TX-draft behaviour are unchanged.
+
 1. Select channel 3, type text, do not send
 2. Turn Unproto on
 3. **Expected result:** the `UI` chip is active, the TX window shows the
-   Unproto draft (empty at first), Connect and Disconnect are locked
+   Unproto draft (empty at first)
 4. Select chip 3 → Unproto turns off, the text from step 1 is back
 
 **Status:** ✅ PASS (2026-09-20, headless — full app against the real
 `tools/mock_tnc_bbs.py` `LoopbackTNC`, plus `TestUnprotoUsesChannelZero` in
-`test_main_window_packet.py`). Interactive manual click-through and
-hardware re-test still open, as with the rest of this sprint's Packet
-tests.
+`test_main_window_packet.py`; rewritten 2026-09-24 for P42 — the
+Connect/Disconnect-button assertions moved to `TestConnectRejectedOnChannelZero`,
+see T99). Interactive manual click-through and hardware re-test still
+open, as with the rest of this sprint's Packet tests.
 
 ### T99 — Connect on channel 0 is rejected
-1. Select the `UI` chip, enter a callsign in Dest, press Connect
-2. **Expected result:** no `CO` frame goes out, a warning dialog appears,
-   the button un-checks
+**UI note (P42, 2026-09-24):** rewritten — there is no Dest field, Connect
+button, or warning dialog any more. The guard moved to the source:
+`ChannelChip.start_edit()` refuses to open its editor at all for the UI
+channel, so `connect_requested` can never even be emitted for it.
+
+1. Select the `UI` chip, try to open its inline editor (click it again,
+   double-click it, or try the context menu)
+2. **Expected result:** no editor opens (no context menu at all, per P10),
+   no `connect_requested` signal fires, no `CO` frame goes out
 
 **Status:** ✅ PASS (2026-09-20, headless — full app against the real
 `LoopbackTNC` [`_serial.calls`/trace shows no `CO`], plus
-`TestConnectRejectedOnChannelZero` in `test_main_window_packet.py`).
+`TestConnectRejectedOnChannelZero` in `test_main_window_packet.py`;
+rewritten 2026-09-24 for P42, see also
+`TestChipConnectFlow::test_ui_channel_does_not_open_editor` in
+`test_packet_screen.py`).
 
 ### T100 — Monitor traffic in the CH view
 1. View set to `CH`, chip 3 active → monitored frames do **not** appear
@@ -956,18 +1024,27 @@ for every link message regardless of channel, so a CONNECTED on one channel
 could enable Disconnect while a different chip was on screen — pressing
 that Disconnect would then send `DI` on the wrong channel.
 
+**UI note (P42, 2026-09-24):** there is no Disconnect button left to
+enable/disable — `set_link_state()` now only ever gates Unproto (see its
+docstring), so this test's observable now checks Unproto instead. Chip 4
+disconnecting is unaffected — the chip's own context-menu "Disconnect"/
+Ctrl+D are already channel-scoped by construction (T37), which is exactly
+what this bug was never about in the first place.
+
 1. Connect on channel 4
-2. Switch to the `UI` chip
+2. Switch to the `UI` chip → Unproto unlocked (channel 0 is never busy)
 3. Trigger a link message for channel 4 (mock)
 
-**Expected result:** Disconnect stays locked, Unproto stays unlocked, chip
-4 stays green (ChannelBar itself is a separate, always-on consumer of the
-same message and is unaffected). Switching back to chip 4 re-enables
-Disconnect.
+**Expected result:** Unproto stays unlocked, chip 4 stays green (ChannelBar
+itself is a separate, always-on consumer of the same message and is
+unaffected). Switching back to chip 4 shows Unproto locked again (that
+channel's own real state).
 
 **Status:** ✅ PASS (2026-09-20, headless — full app against the real
 `tools/mock_tnc_bbs.py` `LoopbackTNC`, plus
-`TestLinkMessageGatedByVisibleChannel` in `test_main_window_packet.py`).
+`TestLinkMessageGatedByVisibleChannel` in `test_main_window_packet.py`;
+rewritten 2026-09-24 for P42, test renamed to
+`test_message_for_other_channel_does_not_change_unproto`).
 
 ---
 
@@ -1669,6 +1746,88 @@ real TNC.
 
 **Status:** ⬜ OPEN — needs real hardware (Device A or B, both have
 MailDrop; see docs/DEVICES.md).
+
+---
+
+### T123 — Typing into every Packet-screen input field, live GUI
+`is_keyboard_input_widget()` (P41) — software-verified against the real
+app-wide event filter with `QTest.keyClick()`
+(`test_main_window_packet.py::TestKeyboardFocusHandling`); the Dest-field
+case reproduces hardware-confirmed 24.09.2026 (typing a callsign landed
+in the TX window instead). Never run through the actual live GUI.
+
+**UI note (P42, 2026-09-24):** steps 2 and 7 rewritten — the separate Dest
+field they were written against no longer exists; the same QLineEdit-type
+regression is now exercised through a channel chip's own inline editor
+instead (`ChannelChip.editor`), which needs the exact same
+`is_keyboard_input_widget()` exemption `cb_dest` needed a workaround for,
+but requires **no** `ScreenFocusController` registration to get it (see
+CLAUDE.md §6).
+
+1. Connect to the TNC, activate HF or VHF Packet, enter Host Mode.
+2. Open a free chip's inline editor (click the current chip again, or
+   double-click any free chip), type a callsign.
+   **Expected:** the callsign appears in the chip's editor, not the TX
+   window.
+3. Click into **via**, type a path.
+   **Expected:** appears in via (already worked before P41 — the
+   control case).
+4. Click into **Monitor**, press a digit key.
+   **Expected:** the Monitor selection changes; TX window stays
+   unaffected.
+5. Click into **HBAUD**, press a key matching one of its values.
+   **Expected:** same as Monitor.
+6. Click a button (e.g. Unproto) or a channel-bar chip (without opening
+   its editor), then type.
+   **Expected:** unchanged existing behaviour — characters land in the
+   TX window, since buttons/chips are `Qt.FocusPolicy.NoFocus` and never
+   actually keep keyboard focus.
+7. With a chip's editor open, press `Ctrl+Up`/`Ctrl+Down`.
+   **Expected:** no channel change; plain arrow keys still move the
+   cursor within the field.
+
+**Status:** ⬜ OPEN — needs a live-GUI click-through; software-verified
+already covers all seven steps
+(`test_main_window_packet.py::TestKeyboardFocusHandling`, updated
+2026-09-24 for P42's chip editor), including Monitor and HBAUD actually
+changing value (not just staying at their default) without leaking into
+the TX window.
+
+---
+
+### T124 — Connect-in-chip interaction (P42), software-verified
+`test_packet_screen.py::TestChipConnectFlow` and
+`test_main_window_packet.py::TestConnectRejectedOnChannelZero`. Never run
+through the actual live GUI.
+
+1. Click a different chip → switches the current channel only, no editor
+   opens.
+2. Click the already-current free chip a second time (or double-click any
+   free chip, or "Connect…" from its context menu) → opens that chip's
+   inline editor.
+3. A busy chip, or the `UI` chip → none of the above ever opens an editor.
+4. Enter a valid callsign in an open editor → `connect_requested(ch,
+   callsign)` fires for THAT channel; `CO` goes out on it (T34/T87/T93).
+5. Enter an invalid callsign → editor stays open, red border + tooltip, no
+   signal.
+6. `Esc`, or losing focus, while editing → closes the editor, no signal.
+7. Double-click an unconnected MHEARD row → opens the FIRST free chip's
+   editor (not necessarily the currently selected one), prefilled with the
+   heard callsign.
+8. Typing in an open chip editor never leaks into the TX window (T123).
+9. `Ctrl+Up`/`Ctrl+Down` while a chip editor is open does not change the
+   channel (T123 step 7).
+10. `Ctrl+D` while a busy channel is current → disconnects it (T37); on a
+    free channel → does nothing.
+11. "Connect via…" on a free chip's context menu → `PacketConnectDialog`
+    (callsign + optional digipeater path), channel fixed to the chip that
+    opened it, not editable in the dialog.
+
+**Status:** ✅ PASS (2026-09-24, headless — `TestChipConnectFlow` (9 cases)
+in `test_packet_screen.py`, plus `TestConnectRejectedOnChannelZero`'s two
+cases in `test_main_window_packet.py` for step 3's UI-channel case).
+Interactive manual click-through and hardware re-test open (see the
+Definition of Done in `docs/P42_Connect_In_Chip_Spec.md`).
 
 ---
 
