@@ -111,34 +111,77 @@ item: MDCHECK is not reachable as a two-letter Host Mode mnemonic.
 `$60`/`$70` channel itself, which P27's `MailDropSession` does not use
 at all, since it never needed to.)
 
-### MailDrop session mask (UI) — not started (P27 follow-up, 2026-09-23; storage half done under P38)
+### MailDrop session mask (UI) — ✅ DONE (P39, 2026-09-24, hardware run still open — T122)
 
-`MailDropSession`/`protocol.py` (P27) implement the full mailbox
-protocol and state machine, but **build no UI at all** — by design,
-P27's own scope note says so explicitly. A future sprint needs a
-session mask (dialog or dockable panel) that:
-- wires `can_open()` to the real channel-connected check (which channel
-  model/`ChannelBar` state counts as "busy" needs deciding — see the
-  channel-model gotchas in CLAUDE.md)
-- shows `listing`/`message_read` in a real widget, drives `send()` from
-  a compose form (subject/body/to/bbs/frm/mtype), and surfaces
-  `sanitize_body()`'s change list to the operator BEFORE sending, not
-  silently
-- displays `prompt_info.free` (remaining mailbox space) and `failed()`
-  text in the status bar
-- decides, at the UI layer, whether a given `frm` "differs from MYCALL"
-  (`build_send_command()` does not know MYCALL — see its docstring)
-- **P38 update:** the storage side now exists (`maildrop/archive.py`,
-  `MailDropArchive`/`open_archive()`) and `MailDropConfig.archive_sync`/
-  `archive_restore`/`archive_restore_scope` are already there in the
-  Parameters dialog, saved but inert (P38.3) — THIS is the package that
-  gives them effect: call `archive.add(entry, body, device=...)` after
-  every `message_read`, honour `archive_sync` ("manual" = only on an
-  explicit button, "on_session_end" = collect automatically in
-  `leave()`), and `archive_restore`/`archive_restore_scope` when
-  `MYCALL`/banner-defaults indicate the TNC came up factory-fresh (see
-  CLAUDE.md "no RAM buffer battery"). Do not build a second store —
-  `archive.py` is deliberately the only place with this schema.
+`MailDropSession`/`protocol.py` (P27) built the state machine with no UI
+of its own by design; P38 built the storage half
+(`maildrop/archive.py`). P39 built the mask itself:
+`ui/dialogs/maildrop_dialog.py`'s `MailDropDialog` — a modal dialog, not
+an opmode ComboBox entry (see CLAUDE.md's MailDrop section for why).
+- `can_open()` is wired to the real channel model: the active Packet
+  screen's `ChannelBar.channel_map()`, injected at dialog-construction
+  time, never re-derived.
+- `listing`/`message_read` fill a real `QTreeWidget` + reader pane;
+  `send()` is driven from `MailComposeDialog`, which reuses
+  `check_body()`/`sanitize_body()` rather than reimplementing either
+  rule, and shows the sanitization preview before sending.
+- `prompt_info.free` and `failed()` text both show in the dialog (header
+  free-byte count, status line).
+- `frm` "differs from MYCALL" is decided at the UI layer exactly as
+  flagged: `_advance_restore()` blanks `frm` when it equals the
+  operator's own MYCALL, passing it through unchanged (a genuine
+  foreign FROM) otherwise.
+- `archive_sync`/`archive_restore`/`archive_restore_scope` are still
+  only SAVED settings (P38.3) — this package's "Sync to archive"/
+  "Restore to TNC" toolbar buttons are USER-TRIGGERED (`manual`) only;
+  wiring `archive_sync="on_session_end"` to fire automatically inside
+  `leave()`, and `archive_restore`/`archive_restore_scope` to prompt
+  when the TNC comes up factory-fresh, is not built and is its own
+  follow-up (see the dedicated Sync/Restore item below) — the DoD for
+  P39 never required it, and the settings already say in the dialog
+  that "on_session_end"/"ask"/"auto" have no effect yet.
+
+**Hardware confirmation still open (T122, Testplan.md):** the whole
+dialog is software/mock-verified only (`test_maildrop_dialog.py` against
+a fake `MailDropSession`, `test_main_window_packet.py::TestMaildropGate`
+for the four-condition button/menu gate) — never run against a real TNC.
+
+### MailDrop dialog — Header.../EDIT locked, unmeasured (P39, 2026-09-24)
+
+`btn_header` in `maildrop_dialog.py` is permanently disabled with the
+tooltip "EDIT not measured yet" — the mailbox's `E` (EDIT) command
+(status/callsign editing per the STABO handbook) has never been run
+against real hardware, so its exact syntax and response shape are
+unknown. Needs a `tools/hw_check.py` probe (read-only where possible,
+same caution as every other MailDrop command measurement in this
+project) before `Header...` can do anything.
+
+### MailDrop button — MDMON as a second "mail waiting" source (P39, 2026-09-24)
+
+`btn_maildrop`'s amber "mail waiting" colouring (P39.5) currently has
+exactly one source: `PromptInfo.have_mail` from the LAST session that
+was actually opened — nothing colours the button before a session has
+ever run once, and nothing updates it live while Packet operation
+continues afterwards. `MDMON` (already an uploaded `MailDropConfig`
+field) is documented to announce mail activity from other stations'
+sessions passing through, in principle observable without opening a
+session at all — see the identical open question already filed under
+"MDMON eavesdropped traffic" (P38.3 Backlog item) for archiving; the
+same unmeasured signal would also answer this "second source" question.
+Do not wire this without first measuring what `MDMON` actually announces.
+
+### MailDrop dialog — Sync/Restore auto-trigger, still a separate follow-up (P39, 2026-09-24)
+
+P39 built `MailDropConfig.archive_sync`/`archive_restore`/
+`archive_restore_scope` as real, working USER-TRIGGERED toolbar buttons
+("Sync to archive"/"Restore to TNC", `manual` behaviour only) — but the
+CONFIGURABLE automatic behaviour the settings describe
+(`archive_sync="on_session_end"` collecting automatically inside
+`leave()`; `archive_restore`/`archive_restore_scope` prompting on a
+factory-fresh TNC, `ask`/`auto`) is not wired to anything yet.
+`params_maildrop.py`'s settings copy was updated under P39 to say this
+precisely (manual sync/restore already works via the session window;
+automatic modes do not yet) — update it again once this is built.
 
 ### MailDrop archive (message_store.py schema gap) — ✅ DONE (P38, 2026-09-24)
 
