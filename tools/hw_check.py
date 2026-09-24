@@ -2894,11 +2894,20 @@ def _maildrop_set_daytime(session: Session, log: RunLog) -> None:
     has no use for the clock, only maildrop's own 'L' listing does.
 
     Reuses ParamsUploader._cmd() and its exact 'yymmddHHMMSS' UTC format
-    (comm/params_uploader.py) rather than rebuilding the command."""
+    (comm/params_uploader.py) rather than rebuilding the command.
+
+    P37: aborts the run (dry-run exempt) if the set is not confirmed in
+    the response - DAYTIME being set is the entire reason a caller reaches
+    for this function (real dates/senders in the mailbox listing instead
+    of dot-runs), so a silent failure here is the same class of bug as
+    P34's 'no reported success without proof', not an ordinary parameter
+    that can be logged and continued past."""
     now = datetime.datetime.now(datetime.timezone.utc)
     cmd = ParamsUploader._cmd("DAYTIME", now.strftime("%y%m%d%H%M%S"))
     resp = session.verbose_bytes(cmd)
     log.line(f"DAYTIME set to {now:%y%m%d%H%M%S} (UTC): {resp!r}")
+    if not session.dry_run and parse_query_value("DAYTIME", resp) is None:
+        raise HWCheckError(f"DAYTIME set not confirmed -- response: {resp!r}")
 
 
 def test_maildrop(
@@ -3277,15 +3286,33 @@ def test_maildrop_session(
 
     if session.dry_run:
         log.line(
-            f"[dry-run] would enter Host Mode (existing SerialManager path, "
-            f"not rebuilt here), then run these {len(steps)} steps against "
-            f"the real MailDropSession, calling only its public API:"
+            f"[dry-run] would set MYCALL (via normalize(), from config, "
+            f"only if the TNC is at the factory default) and DAYTIME "
+            f"(via _maildrop_set_daytime(), same as the maildrop "
+            f"recorder), then enter Host Mode (existing SerialManager "
+            f"path, not rebuilt here), then run these {len(steps)} steps "
+            f"against the real MailDropSession, calling only its public "
+            f"API:"
         )
         for i, step in enumerate(steps, start=1):
             expect = f" -> {step.expect}" if step.expect else ""
             log.line(f"[dry-run]   {i}. {step.name} (waits for {step.signal_name!r}{expect})")
         log.result("MAILDROP_SESSION", "INFO", "dry-run, nothing sent")
         return
+
+    # Step 0 (P37): set MYCALL and DAYTIME while still in verbose mode,
+    # before Host Mode entry -- without this, every message the steps
+    # below store carries the factory 'PK232' as sender and dot-run
+    # date/time columns (CLAUDE.md: no RAM buffer battery, both reset on
+    # every power-off). normalize() is the existing MYCALL-from-config
+    # path (reused, not reimplemented) and also confirms cmd:/PACKET/
+    # MYCALL/XMITOK first; _maildrop_set_daytime() is the same DAYTIME
+    # call the maildrop recorder already uses. Both abort the whole run
+    # on failure (P34 rule: state a later step depends on must be
+    # confirmed, never guessed) rather than continuing into a session
+    # that would silently show PK232/dot-runs again.
+    session.normalize()
+    _maildrop_set_daytime(session, log)
 
     # Step 1 (P28.1): build the connection exactly like the app does --
     # connect + wakeup already happened in main() via session.connect();
@@ -3294,13 +3321,13 @@ def test_maildrop_session(
     # upload costs about a minute); enter Host Mode over the existing,
     # already-proven path.
     #
-    # P30.1 point 4, checked: unlike maildrop/maildrop_host/mdcheck_scan,
-    # this function does none of its own verbose-mode work (no
-    # normalize(), no test message built over the verbose path) before
-    # handing the port to Host Mode -- it goes straight from the already-
-    # verbose session.connect() (done in main()) to enter_host_mode()
-    # below. There is nothing here that needs its own port access to
-    # finish and close first.
+    # P30.1 point 4, checked (P37 update): unlike maildrop/maildrop_host/
+    # mdcheck_scan, this function builds no test message of its own over
+    # the verbose path -- but as of P37 it does call normalize() and set
+    # DAYTIME (Step 0 above) before handing the port to Host Mode, so the
+    # "none of its own verbose-mode work" claim from P28 no longer holds;
+    # both calls finish and leave the port idle before enter_host_mode()
+    # below needs it.
     session.enter_host_mode()
 
     # P35.1: MailDropSession keeps no record of its own traffic unless
