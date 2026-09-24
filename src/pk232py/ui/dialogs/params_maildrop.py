@@ -178,8 +178,10 @@ class MailDropParamsDialog(QDialog):
         archive_layout.addWidget(self._lbl_archive_auto_warn)
 
         effect_note = QLabel(
-            "Sync and restore take effect once the MailDrop session "
-            "window is available."
+            "The MailDrop session window's 'Sync to archive'/'Restore to "
+            "TNC' buttons already use this archive (manual only). "
+            "Automatic sync/restore (on_session_end / ask / auto) is not "
+            "wired up yet - see Backlog.md."
         )
         effect_note.setWordWrap(True)
         archive_layout.addWidget(effect_note)
