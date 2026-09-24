@@ -1,6 +1,6 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-23 — T119 partial result on Device B (P35): open PASS, list FAIL ('*** What?', cause open), recovery path fully confirmed**
-**Previous stand: 2026-09-23 — T118 answered on Device B (P34): no hit, same as Device A, across two firmware generations; run also exposed and fixed an echo-without-execution tool gap**
+**Updated: 2026-09-24 — T119 PASS on Device B (P37): 10/10 steps, LF cause confirmed as the P35 fix, /E trailer reclassified as regular**
+**Previous stand: 2026-09-23 — T119 partial result on Device B (P35): open PASS, list FAIL ('*** What?', cause open), recovery path fully confirmed**
 
 ---
 
@@ -1543,7 +1543,30 @@ received when a trace callback is wired, which `maildrop_session` now
 does) — steps 2–13 still unexercised, re-run needed with the trace
 active to see what actually came back after `MDCHECK` and after `L`.
 
-**Status:** ⬜ OPEN — re-run on real hardware needed after the P35 fixes.
+**Full result, 24.09.2026, Device B (MBX, 01.08.1991)** (P37,
+`hw_logs/20260924_181446_maildrop_session.log`): **10 of 10 steps PASS**
+— open, list (empty), send personal, send with a foreign FROM, send a
+bulletin, list (three entries), read, kill, list (after kill), leave —
+plus the closing `HPOLL` query confirming Host Mode active again. The
+P35 fix (MDCHECK sent with `\r`, not `\r\n`) was the actual cause of the
+23.09.2026 `L` → `*** What?` failure: with the extra LF gone, `MDCHECK`
+produces a clean prompt and `L` answers `*** Message not found.`
+normally — a software bug, not a firmware difference between Device A
+and Device B. The `/E` trailer after a read message's text
+(`...harness\r\n/E\r\n`) reappeared here, same as the single P31
+occurrence — `parse_read()` already strips it correctly, so this is
+purely a re-classification: no longer "observed once" but "occurs
+regularly, and is discarded", see CLAUDE.md. The P22/P23 memory-cost
+hypothesis is further undermined: this run's three messages went
+61→112, 43→84, 35→84 bytes — the same 112-byte jump seen on Device A
+only for a *smaller* message that *did* specify `@BBS`, so size and
+`@BBS` presence together still explain nothing; free memory continues
+to be read only from the mailbox prompt, never computed.
+`Größe = Betreff + Text + 9` and the foreign-FROM `<` syntax both hold
+unchanged on this firmware. See `docs/PK232_firmware_matrix.md` §2a for
+the same finding recorded against the device/generation table.
+
+**Status:** ✅ PASS — all 10 steps confirmed on Device B, 24.09.2026.
 
 ---
 
