@@ -49,3 +49,52 @@ class TestSetLocked:
         assert dlg._le_homebbs.isEnabled()
         assert dlg._chk_maildrop.isEnabled()
         assert dlg._le_homebbs.toolTip() == ""
+
+    def test_archive_widgets_never_locked_by_set_locked(self):
+        # Archive settings are PC-side, independent of TNC MailDrop
+        # capability (P38) - set_locked() must not touch them.
+        dlg = MailDropParamsDialog()
+        dlg.set_locked(True, "This firmware has no MailDrop")
+        assert dlg._chk_archive_enabled.isEnabled()
+        assert dlg._le_archive_path.isEnabled()
+
+
+class TestArchiveSection:
+    """P38.1 - local MailDrop archive settings section."""
+
+    def test_defaults_match_config(self):
+        dlg = MailDropParamsDialog()
+        values = dlg.get_values()
+        assert values["archive_enabled"] is False
+        assert values["archive_path"] == "~/.pk232py/maildrop_archive.db"
+        assert values["archive_sync"] == "manual"
+        assert values["archive_restore"] == "never"
+        assert values["archive_restore_scope"] == "unread"
+
+    def test_round_trips_through_set_and_get_values(self):
+        dlg = MailDropParamsDialog()
+        dlg.set_values(
+            archive_enabled=True,
+            archive_path="/tmp/archive.db",
+            archive_sync="on_session_end",
+            archive_restore="auto",
+            archive_restore_scope="all",
+        )
+        values = dlg.get_values()
+        assert values["archive_enabled"] is True
+        assert values["archive_path"] == "/tmp/archive.db"
+        assert values["archive_sync"] == "on_session_end"
+        assert values["archive_restore"] == "auto"
+        assert values["archive_restore_scope"] == "all"
+
+    def test_auto_warning_hidden_by_default_shown_for_auto(self):
+        # The dialog is never shown in this test, so isVisible() would
+        # always read False regardless of setVisible() (a real ancestor
+        # chain is required for that) - isHidden() reflects the widget's
+        # own explicit visibility flag instead.
+        dlg = MailDropParamsDialog()
+        assert dlg._lbl_archive_auto_warn.isHidden()
+        dlg.set_values(archive_restore="auto")
+        assert not dlg._lbl_archive_auto_warn.isHidden()
+        dlg.set_values(archive_restore="never")
+        assert dlg._lbl_archive_auto_warn.isHidden()

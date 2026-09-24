@@ -6,8 +6,8 @@ from __future__ import annotations
 import logging
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFormLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QSpinBox, QTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -24,6 +24,13 @@ class MailDropParamsDialog(QDialog):
         # flags
         third_party=False, kilonfwd=True,
         maildrop=False, mdmon=False, mmsg=True, tmail=False,
+        # Local archive (PC side, P38) - matches MailDropConfig's own
+        # defaults in config.py.
+        archive_enabled=False,
+        archive_path="~/.pk232py/maildrop_archive.db",
+        archive_sync="manual",
+        archive_restore="never",
+        archive_restore_scope="unread",
     )
 
     def __init__(self, parent=None) -> None:
@@ -92,12 +99,118 @@ class MailDropParamsDialog(QDialog):
         fl.addLayout(row)
         root.addWidget(flags_group)
 
+        # ── Local archive (PC side, P38) ────────────────────────────────
+        # This section is PK232PY's own bookkeeping, never sent to the TNC
+        # (see MailDropConfig.archive_* in config.py and UPLOAD_EXEMPT in
+        # test_param_dialogs_roundtrip.py). This package builds only the
+        # storage and these settings - archive_sync/archive_restore have
+        # no effect yet, there is no MailDrop session window to act on
+        # them (docs/P38_MailDrop_Archive_Spec.md P38.3).
+        archive_group = QGroupBox("Local archive (PC side)")
+        archive_layout = QVBoxLayout(archive_group)
+
+        intro = QLabel(
+            "Keeps a local copy of MailDrop messages on this PC, since "
+            "the TNC itself loses its mailbox on every power-off. These "
+            "settings are never sent to the TNC."
+        )
+        intro.setWordWrap(True)
+        archive_layout.addWidget(intro)
+
+        self._chk_archive_enabled = QCheckBox("Enable local archive")
+        archive_layout.addWidget(self._chk_archive_enabled)
+
+        path_row = QHBoxLayout()
+        path_row.addWidget(QLabel("Path:"))
+        self._le_archive_path = QLineEdit()
+        path_row.addWidget(self._le_archive_path)
+        self._btn_archive_path = QPushButton("Browse...")
+        self._btn_archive_path.clicked.connect(self._on_browse_archive_path)
+        path_row.addWidget(self._btn_archive_path)
+        archive_layout.addLayout(path_row)
+
+        sync_row = QHBoxLayout()
+        sync_row.addWidget(QLabel("Sync:"))
+        self._cb_archive_sync = QComboBox()
+        self._cb_archive_sync.addItem("manual (only on demand)", "manual")
+        self._cb_archive_sync.addItem(
+            "on_session_end (collect automatically when leaving the session)",
+            "on_session_end",
+        )
+        sync_row.addWidget(self._cb_archive_sync)
+        archive_layout.addLayout(sync_row)
+
+        restore_row = QHBoxLayout()
+        restore_row.addWidget(QLabel("Restore:"))
+        self._cb_archive_restore = QComboBox()
+        self._cb_archive_restore.addItem("never", "never")
+        self._cb_archive_restore.addItem(
+            "ask (when the TNC comes up at factory defaults)", "ask",
+        )
+        self._cb_archive_restore.addItem("auto", "auto")
+        self._cb_archive_restore.currentIndexChanged.connect(
+            self._update_archive_auto_warning
+        )
+        restore_row.addWidget(self._cb_archive_restore)
+        archive_layout.addLayout(restore_row)
+
+        scope_row = QHBoxLayout()
+        scope_row.addWidget(QLabel("Restore scope:"))
+        self._cb_archive_restore_scope = QComboBox()
+        self._cb_archive_restore_scope.addItem("unread", "unread")
+        self._cb_archive_restore_scope.addItem("all", "all")
+        self._cb_archive_restore_scope.addItem("none", "none")
+        scope_row.addWidget(self._cb_archive_restore_scope)
+        archive_layout.addLayout(scope_row)
+
+        restore_cost = QLabel(
+            "Restoring messages takes about 7 seconds each and suspends "
+            "packet operation for the whole session - other stations "
+            "receive BUSY."
+        )
+        restore_cost.setWordWrap(True)
+        archive_layout.addWidget(restore_cost)
+
+        self._lbl_archive_auto_warn = QLabel(
+            '"auto" also makes the application take longer to start.'
+        )
+        self._lbl_archive_auto_warn.setWordWrap(True)
+        archive_layout.addWidget(self._lbl_archive_auto_warn)
+
+        effect_note = QLabel(
+            "Sync and restore take effect once the MailDrop session "
+            "window is available."
+        )
+        effect_note.setWordWrap(True)
+        archive_layout.addWidget(effect_note)
+
+        root.addWidget(archive_group)
+
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
+
+    def _on_browse_archive_path(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Local MailDrop archive file",
+            self._le_archive_path.text(),
+            "SQLite database (*.db);;All files (*)",
+        )
+        if path:
+            self._le_archive_path.setText(path)
+
+    def _update_archive_auto_warning(self) -> None:
+        self._lbl_archive_auto_warn.setVisible(
+            self._cb_archive_restore.currentData() == "auto"
+        )
+
+    @staticmethod
+    def _set_combo_data(combo: QComboBox, value) -> None:
+        idx = combo.findData(value)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
 
     def set_locked(self, locked: bool, reason: str = "") -> None:
         """Disable (never hide) every parameter field, with *reason* as
@@ -131,6 +244,19 @@ class MailDropParamsDialog(QDialog):
             ("_chk_mmsg","mmsg"),("_chk_tmail","tmail"),
         ]:
             if key in kw: getattr(self, attr).setChecked(bool(kw[key]))
+        if "archive_enabled" in kw:
+            self._chk_archive_enabled.setChecked(bool(kw["archive_enabled"]))
+        if "archive_path" in kw:
+            self._le_archive_path.setText(str(kw["archive_path"]))
+        if "archive_sync" in kw:
+            self._set_combo_data(self._cb_archive_sync, kw["archive_sync"])
+        if "archive_restore" in kw:
+            self._set_combo_data(self._cb_archive_restore, kw["archive_restore"])
+        if "archive_restore_scope" in kw:
+            self._set_combo_data(
+                self._cb_archive_restore_scope, kw["archive_restore_scope"]
+            )
+        self._update_archive_auto_warning()
 
     def get_values(self) -> dict:
         return dict(
@@ -146,4 +272,9 @@ class MailDropParamsDialog(QDialog):
             mdmon       = self._chk_mdmon.isChecked(),
             mmsg        = self._chk_mmsg.isChecked(),
             tmail       = self._chk_tmail.isChecked(),
+            archive_enabled       = self._chk_archive_enabled.isChecked(),
+            archive_path          = self._le_archive_path.text().strip(),
+            archive_sync          = self._cb_archive_sync.currentData(),
+            archive_restore       = self._cb_archive_restore.currentData(),
+            archive_restore_scope = self._cb_archive_restore_scope.currentData(),
         )
