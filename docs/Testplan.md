@@ -1633,6 +1633,45 @@ wiring at all — Backlog.md).
 
 ---
 
+### T122 — MailDrop session dialog on real hardware, OPEN
+`ui/dialogs/maildrop_dialog.py`'s `MailDropDialog` (P39) — software/
+mock-verified against a fake `MailDropSession`
+(`test_maildrop_dialog.py`) and the four-condition button/menu gate
+(`test_main_window_packet.py::TestMaildropGate`); never run against a
+real TNC.
+
+1. Connect to the TNC (HF or VHF Packet, Host Mode), no channel
+   connected. `btn_maildrop` / `TNC → MailDrop…` should be enabled.
+2. Open the dialog — gate page shows the three-check list, click "Open
+   MailDrop session".
+3. **Expected:** progress shown while `OPENING`, then the session page
+   with the real mailbox listing and free-byte count.
+4. Write a new message (`New...`), send it — confirm it appears in the
+   list and, once selected, its body matches what was typed.
+5. Read the message back (select it, or after a restart of the
+   dialog) — body must match.
+6. Kill it — confirm the kill dialog names where it will be deleted
+   (TNC/archive/both correctly), then confirm it is gone from the list.
+7. Click "End session" — confirm the dialog returns to the gate page,
+   not closed, and a subsequent `HPOLL`-style check shows Host Mode
+   active again (same confirmation `MailDropSession` already does
+   internally).
+8. Re-open the dialog, connect a packet channel from another station,
+   then try to open the gate's session button again.
+   **Expected:** the entry point (button/menu) is already disabled with
+   "disconnect channel N first" once a channel connects — confirm this
+   reflects live without needing to reopen the dialog.
+9. With a session ACTIVE, close the dialog window (X or Esc).
+   **Expected:** confirmation prompt; `Cancel` leaves the session
+   running; confirming sends `B`, shows the leaving-Host-Mode progress
+   text, and the window only actually closes once Host Mode is
+   confirmed active again.
+
+**Status:** ⬜ OPEN — needs real hardware (Device A or B, both have
+MailDrop; see docs/DEVICES.md).
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
