@@ -111,7 +111,7 @@ item: MDCHECK is not reachable as a two-letter Host Mode mnemonic.
 `$60`/`$70` channel itself, which P27's `MailDropSession` does not use
 at all, since it never needed to.)
 
-### MailDrop session mask (UI) — not started (P27 follow-up, 2026-09-23)
+### MailDrop session mask (UI) — not started (P27 follow-up, 2026-09-23; storage half done under P38)
 
 `MailDropSession`/`protocol.py` (P27) implement the full mailbox
 protocol and state machine, but **build no UI at all** — by design,
@@ -128,34 +128,52 @@ session mask (dialog or dockable panel) that:
   text in the status bar
 - decides, at the UI layer, whether a given `frm` "differs from MYCALL"
   (`build_send_command()` does not know MYCALL — see its docstring)
+- **P38 update:** the storage side now exists (`maildrop/archive.py`,
+  `MailDropArchive`/`open_archive()`) and `MailDropConfig.archive_sync`/
+  `archive_restore`/`archive_restore_scope` are already there in the
+  Parameters dialog, saved but inert (P38.3) — THIS is the package that
+  gives them effect: call `archive.add(entry, body, device=...)` after
+  every `message_read`, honour `archive_sync` ("manual" = only on an
+  explicit button, "on_session_end" = collect automatically in
+  `leave()`), and `archive_restore`/`archive_restore_scope` when
+  `MYCALL`/banner-defaults indicate the TNC came up factory-fresh (see
+  CLAUDE.md "no RAM buffer battery"). Do not build a second store —
+  `archive.py` is deliberately the only place with this schema.
 
-### MailDrop archive (message_store.py schema gap) — not started (P27.3 finding, 2026-09-23)
+### MailDrop archive (message_store.py schema gap) — ✅ DONE (P38, 2026-09-24)
 
-P27.3 checked whether `message_store.py`'s existing `MailMessage`/SQLite
-schema could serve as the mailbox's local archive (spec: "own durable
-ID, TNC number as attribute, sender, BBS, type, read status, TNC's own
-timestamp, raw text"). **It does not fully match** — kept unchanged
-rather than migrated under P27 (that was the explicit instruction: "does
-not fit → do not restructure, note the finding — the archive is its own
-package"):
+P27.3 found `message_store.py`'s `MailMessage`/SQLite schema did not
+match what a real archive needs (own durable ID ✅, but no TNC message
+number, no `@ BBS`, no P/T/B type, and `received_at` was the LOCAL
+receipt timestamp, not the TNC's own store-time stamp). P38 replaced it
+outright with `maildrop/archive.py`'s `MailDropArchive` — `message_store.py`
+deleted, nothing else imported it. The new schema covers every field
+from the P27.3 table (`tnc_number`, `bbs`, `mtype`, `tnc_stamp`,
+`device`) plus a `fingerprint` column (hash of
+`mtype|to_call|from_call|bbs|subject|body`, deliberately excluding the
+TNC timestamp, which is set at store time and would differ after a
+restore-then-collect round trip) as the real duplicate-detection key —
+the TNC's own message numbers are **not** durable across a power-cycle
+and are only unique within one power-on period, so `id`/`fingerprint`
+are the archive's real keys, never `tnc_number` (kept only as a
+"last-session hint" attribute, exactly as CLAUDE.md's existing warning
+about this already said a future archive must do). See
+`test_maildrop_archive.py` for the dedup/`missing_in_tnc()` coverage.
+**Still open, deliberately, per P38.3's scope cut:** nothing calls
+`archive.add()` yet — see the "MailDrop session mask" item above.
 
-| Required | `MailMessage` has it? |
-|---|---|
-| own durable ID | ✅ `id` (SQLite autoincrement) |
-| TNC message number as an attribute | ❌ missing |
-| sender | ✅ `from_call` |
-| `@ BBS` | ❌ missing |
-| type (P/T/B) | ❌ missing (only from/to, no type column) |
-| read status | ✅ `read` |
-| the TNC's OWN stamp (stamped at store time) | ❌ `received_at` is the LOCAL receipt timestamp, generated fresh by `datetime.now()` — not the TNC's — see CLAUDE.md's "no RAM buffer battery"/date-stamping facts |
-| raw text | 🟡 `body` exists but is not clearly "raw vs. processed" |
+### MDMON eavesdropped traffic — could it be archived without a session at all? (P38.3, open, unmeasured)
 
-Also recall (CLAUDE.md): the TNC's own message numbers are **not**
-durable across a power-cycle and are only unique within one power-on
-period — any future archive's own `id` must stay the real key, never
-the TNC's number, which is exactly what `MailMessage.id` already is.
-A future archive package should design its own schema against
-`MailDropEntry` (protocol.py) rather than retrofitting this one.
+`MDMON` (already a MailDropConfig field, sent during upload) makes the
+TNC announce mail activity from OTHER stations' MailDrop sessions
+passing through — in principle traffic pk232py could observe without
+ever opening its OWN MDCHECK session (which suspends packet operation
+for its whole duration, docs/P38_MailDrop_Archive_Spec.md "Warum
+optional"). **Unmeasured:** what exactly `MDMON` announces (full
+messages, or just activity notices?), on which Host Mode/verbose
+channel, and whether it says anything `MailDropEntry`/`archive.add()`
+could actually use. Worth a dedicated `tools/hw_check.py` probe before
+building anything — do not assume the answer either way.
 
 ### `SignalMode.handle_frame()` reports any CMD_RESP as a SIAM result — ✅ FIXED (P18.2, 2026-09-22)
 
