@@ -517,32 +517,15 @@ def build_t112_frame_sequence(
 # P20 Teil C -- MI probe (does the MailDrop button actually send MFILTER?)
 # ---------------------------------------------------------------------------
 
-# The mnemonic the app's MailDrop button sends - must always equal whatever
-# main_window.py's _on_packet_maildrop() actually builds, or the probe
-# measures a different command than the one the app sends (P17.2 pattern).
-# TestMiProbeMnemonic in test_hw_check.py enforces this against the real
-# source file.
+# The mnemonic probed to confirm T115's MI = MFILTER finding (P20 Teil C).
+# Used to cross-check against the app's own MailDrop button before P39 -
+# that button sent build_command(b'MI') as its (wrong) idea of a MailDrop
+# login. P39 replaced the button with a real dialog that sends no Host
+# Mode frame of its own at all ("P21.5 (Knopf sendete MI) ist damit
+# abgeloest: kein Frame mehr, sondern ein Dialog"), so there is no longer
+# a button-sent mnemonic to cross-check this probe against - the finding
+# T115 already confirmed (MI = MFILTER) stands regardless.
 MI_PROBE_MNEMONIC = b'MI'
-
-_MAILDROP_BUTTON_FUNC_RE = re.compile(
-    r"def _on_packet_maildrop\(self\).*?(?=\n    def )", re.DOTALL
-)
-_BUILD_COMMAND_RE = re.compile(r"build_command\(b'([A-Za-z]{2})'\)")
-
-
-def extract_maildrop_button_mnemonic(main_window_source: str) -> Optional[str]:
-    """Pull the mnemonic _on_packet_maildrop() actually sends out of
-    main_window.py's SOURCE TEXT (P20 Teil C) - reading the file as text
-    rather than importing main_window.py, which would pull the entire
-    PyQt6 widget tree in just to compare two bytes literals (same
-    approach as extract_passall_toggle_mnemonic(), P17.2). Returns None
-    if the function or its build_command() call is not found (source
-    reshaped)."""
-    func_match = _MAILDROP_BUTTON_FUNC_RE.search(main_window_source)
-    if not func_match:
-        return None
-    cmd_match = _BUILD_COMMAND_RE.search(func_match.group(0))
-    return cmd_match.group(1) if cmd_match else None
 
 
 def evaluate_mi_probe(

@@ -290,18 +290,84 @@ class TestModeInstanceFactory:
         assert self._mx_sl_commands(w) == []
 
 
-class TestMaildropButtonDisabled:
-    """P21.5, hardware-confirmed 22.09.2026 (tools/hw_check.py mi): Host
-    Mode MI reads back the same value as verbose MFILTER - MI is
-    MFILTER, not MailDrop login. The button never logged in to the
-    mailbox at all, so it is disabled and its handler sends nothing
-    until a real MailDrop dialog exists."""
+class TestMaildropGate:
+    """P39: _maildrop_gate() is the ONE place all four blocking
+    conditions are computed; both btn_maildrop (Packet screens) and the
+    TNC -> MailDrop... menu action read it via _update_maildrop_gate_ui(),
+    so they can never disagree. Supersedes the old P21.5-era
+    TestMaildropButtonDisabled, which tested a button that unconditionally
+    sent a (wrong) Host Mode frame - P39 replaced that with a real dialog
+    that sends no frame of its own at all."""
 
-    def test_button_is_disabled(self, wired_vhf):
+    def test_all_conditions_met_is_open(self, wired_vhf):
+        w, _screen = wired_vhf
+        can_open, reason = w._maildrop_gate()
+        assert can_open is True
+        assert reason == ""
+
+    def test_not_connected_blocks(self, wired_vhf):
+        w, _screen = wired_vhf
+        w._serial.is_connected = False
+        can_open, reason = w._maildrop_gate()
+        assert can_open is False
+        assert reason == "connect to the TNC first"
+
+    def test_not_host_mode_blocks(self, wired_vhf):
+        w, _screen = wired_vhf
+        w._serial.is_host_mode = False
+        can_open, reason = w._maildrop_gate()
+        assert can_open is False
+        assert reason == "connect to the TNC first"
+
+    def test_wrong_mode_blocks(self, wired_vhf):
+        w, _screen = wired_vhf
+        w._modes._active_mode = None
+        can_open, reason = w._maildrop_gate()
+        assert can_open is False
+        assert reason == "switch to HF or VHF Packet first"
+
+    def test_connected_channel_blocks_and_names_it(self, wired_vhf):
         w, screen = wired_vhf
+        screen.channel_bar.set_channel_state(3, "connected", "OE3XYZ-9")
+        can_open, reason = w._maildrop_gate()
+        assert can_open is False
+        assert reason == "disconnect channel 3 first"
+
+    def test_calling_channel_also_blocks(self, wired_vhf):
+        w, screen = wired_vhf
+        screen.channel_bar.set_channel_state(5, "calling", "DL1ABC")
+        can_open, reason = w._maildrop_gate()
+        assert can_open is False
+        assert reason == "disconnect channel 5 first"
+
+    def test_has_maildrop_false_blocks(self, wired_vhf):
+        w, _screen = wired_vhf
+        w._serial.has_maildrop = False
+        can_open, reason = w._maildrop_gate()
+        assert can_open is False
+        assert reason == "this firmware has no MailDrop"
+
+    def test_has_maildrop_unknown_does_not_block(self, wired_vhf):
+        # _StubSerial has no has_maildrop attribute at all - a detection
+        # failure/unknown must not lock out the dialog (P37/P39: "assume
+        # capable" is the rule for every has_maildrop consumer).
+        w, _screen = wired_vhf
+        assert not hasattr(w._serial, "has_maildrop")
+        can_open, _reason = w._maildrop_gate()
+        assert can_open is True
+
+    def test_update_gate_ui_enables_button_and_menu(self, wired_vhf):
+        w, screen = wired_vhf
+        w._update_maildrop_gate_ui()
+        assert screen.btn_maildrop.isEnabled()
+        assert screen.btn_maildrop.toolTip() == ""
+        assert w._act_maildrop.isEnabled()
+
+    def test_update_gate_ui_disables_with_tooltip(self, wired_vhf):
+        w, screen = wired_vhf
+        screen.channel_bar.set_channel_state(5, "connected", "DL1ABC")
+        w._update_maildrop_gate_ui()
         assert not screen.btn_maildrop.isEnabled()
-
-    def test_handler_sends_no_frame(self, wired_vhf):
-        w, screen = wired_vhf
-        w._on_packet_maildrop()
-        assert w._serial.calls == []
+        assert screen.btn_maildrop.toolTip() == "disconnect channel 5 first"
+        assert not w._act_maildrop.isEnabled()
+        assert w._act_maildrop.toolTip() == "disconnect channel 5 first"

@@ -544,21 +544,6 @@ class TestRunWithRestore:
         assert "expected '1'" in out
 
 
-class TestMiProbeMnemonic:
-    """P20 Teil C: mi must query the SAME mnemonic as the app's own
-    MailDrop button (main_window._on_packet_maildrop()), or the tool
-    measures a different command than the one the application actually
-    sends (same pattern as TestT111Mnemonic, P17.2)."""
-
-    def test_matches_main_window_maildrop_button(self):
-        main_window_py = (
-            Path(__file__).resolve().parents[1] / "ui" / "main_window.py"
-        )
-        source = main_window_py.read_text(encoding="utf-8")
-        extracted = hw_check.extract_maildrop_button_mnemonic(source)
-
-        assert extracted is not None
-        assert extracted.encode("ascii") == hw_check.MI_PROBE_MNEMONIC
 
 
 class TestEvaluateMiProbe:
