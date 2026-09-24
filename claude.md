@@ -1187,6 +1187,36 @@ Grows over time.
   matches any `PacketBaseScreen` subclass, and `HFPacketMode` already calls
   `on_monitor_frame` — so **no change to `packet_hf.py` is needed** to enable
   APRS on HF; flipping `APRS_CAPABLE = True` is the entire change.
+- **A signal-emitting QObject has two truths — the directly-set attribute and
+  the value delivered through the signal queue — and they are not
+  simultaneous (P36, 2026-09-24).** A method like `MailDropSession._set_state()`
+  writes `self._state` as a plain Python attribute and only THEN calls
+  `self.state_changed.emit(...)` — the attribute becomes visible to another
+  thread (no Qt marshalling needed for a plain attribute) strictly *before*
+  the signal is even queued, let alone delivered via `processEvents()`. Any
+  test or application code that polls the plain attribute and then
+  immediately asserts on or branches on a value some LATER signal (from the
+  same worker function) delivers is exposed to a TOCTOU race — the attribute
+  can already show the new state while the signal-carried data (e.g. the
+  `failed`/`prompt_info` payload) hasn't arrived yet. **Rule: wait on the
+  signal-delivered value you are about to use next, never on the plain
+  attribute.** Confirmed root cause of a ~1-in-10 flaky failure in
+  `test_maildrop_session.py` (`TestRecoveryPath::
+  test_ends_in_failed_when_host_mode_never_confirms` polled `session.state`
+  then asserted on `rec.failures[-1]`, populated by the `failed` signal one
+  line later in `_enter_host_mode_or_fail()`) — fixed by waiting on the
+  `rec.*` signal-recorder data instead; see Backlog.md "Flaky test found and
+  fixed" (P36) for the full writeup. **Same pattern found outside the tests,
+  not yet fixed:** `tools/hw_check.py`'s `maildrop_session` subcommand polls
+  `md_session.state` directly (lines ~3364, 3368, 3376, 3391) after the
+  `MaildropSessionRunner` finishes, to decide whether to run the HPOLL
+  confirmation check — the surrounding `MaildropSessionRunner` itself
+  already does this correctly (connects `state_changed`/`failed` and reacts
+  to the signal, see `_on_state_changed`/`_on_failed`); only this later,
+  separate wait loop reads the raw attribute. Low real-world impact (worst
+  case: the "see its own failed() message above" log line prints before that
+  message has actually been flushed), so left as-is — flagged here for the
+  next time that code is touched.
 
 ### FAX (live image decode — implemented 2026-06-18, hardware-verified T82)
 
