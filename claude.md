@@ -210,6 +210,27 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   channel has its own RX document", "RX/TX is a QSplitter now", "MHEARD
   gains connection partners from live link messages") for the full
   writeup.
+- **Echo detection and prompt-terminated reads (P52, 2026-09-25, unit-
+  verified).** A console capture (25.09.2026, 23:30) proved the actual
+  trigger behind a fresh app restart failing to reconnect: (1) step 3's
+  HPOLL query got its own byte-identical echo back (verbose mode echoes
+  every byte, even binary frames) and mistook it for a genuine Host Mode
+  answer, sending a needless `HOST OFF`; (2) the detection chain's own
+  `read_until()` re-armed a short per-iteration deadline on every chunk
+  of new data, so a response split across more than one chunk (normal at
+  9600 Bd) could be cut off before its `cmd:` prompt ever completed —
+  explaining both the 4-instead-of-8-byte step 1 truncation in the same
+  capture and why `ParamsUploader.verify()`'s spot-check was getting "no
+  answer" for MYCALL/PACLEN/MAXFRAME even though the TNC was reachable
+  throughout. Fixed with `_read_until_prompt()`, one shared marker/idle/
+  timeout implementation now used by both the detection chain and
+  `write_verbose_wait()`, plus `is_hpoll_echo()` rejecting a byte-
+  identical reflection (a genuine answer is 6 bytes with a value byte,
+  not 5). `ParamsUploader.verify()`'s no-answer/mismatch cases and
+  `MainWindow`'s overall "verified (n/n)" summary now also reach the
+  verbose terminal, not just the log. See the "echoes everything" and
+  "don't read until the first pause" gotchas under Known Gotchas /
+  TNC-firmware for the full writeup.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -833,6 +854,29 @@ Grows over time.
   P43 and does not define the attribute at all (same convention as
   `has_pactor`) — only a real `SerialManager`, which always has it and
   starts every connection cycle at `False`, actually enforces this gate.
+- **In verbose command mode the PK-232 echoes everything, even binary
+  frames — an echo is not an answer (P52.2, 2026-09-25).** Answer
+  frames are longer and carry a value byte: real capture, 25.09.2026
+  23:30:43, step 3's HPOLL query `01 4f 48 50 17` (5 B, no value byte)
+  was answered with the identical 5 bytes right back — a verbose-mode
+  TNC reflecting the query, not a genuine `$4F` frame — and the old
+  detection chain mistook it for Host Mode confirmed, then sent a
+  needless `HOST OFF` (also just echoed) before giving up. A real
+  answer is 6 bytes with a value byte (same capture, 23:30:09: query
+  `01 4f 48 50 4e 17`, answer `01 4f 48 50 00 17`). Check length AND
+  content, not just that something came back that looks frame-shaped.
+- **Don't read until the first pause, read until the expected pattern
+  (P52.1, 2026-09-25).** At 9600 Bd the `cmd:` prompt and the boot
+  banner arrive in pieces; a 200ms pause does not mean the response is
+  complete. Proven by the same 25.09.2026 23:30:43 capture: step 1
+  returned after 184ms with only `2a 5c 0d 0a` (4 of the expected 8
+  bytes) — a working run at the same step saw `2a 5c 0d 0a 63 6d 64 3a`
+  (`cmd:` included) — because the detection chain's own read function
+  re-armed its deadline on every chunk of new data, which can only ever
+  shrink the remaining budget, never extend it. Fixed by
+  `_read_until_prompt()` (`serial_manager.py`), which always honours
+  the caller's full timeout regardless of how the response is chunked,
+  shared by the detection chain and `write_verbose_wait()`.
 - **A healthy TNC in Host Mode answers nothing in a plain terminal
   program either — silence alone never distinguishes "normal" from
   "stuck" (P45, 2026-09-25).** In Host Mode the TNC only processes
