@@ -463,7 +463,7 @@ class ChannelBar(QWidget):
     channel_changed  = pyqtSignal(int)
     connect_requested    = pyqtSignal(int, str)   # channel, callsign (P42)
     connect_via_requested = pyqtSignal(int)       # "Connect via…" (P42)
-    disconnect_requested = pyqtSignal(int)        # context menu / Ctrl+D (P42)
+    disconnect_requested = pyqtSignal(int)        # context menu / Ctrl+K (P42, P46.C.2)
 
     # Recently used callsigns, shared by every chip's inline editor via one
     # QCompleter (P42 — replaces the old cb_dest QComboBox history).
@@ -1221,11 +1221,17 @@ class PacketBaseScreen(QWidget):
                     event.modifiers() & _Qt.KeyboardModifier.ControlModifier:
                 self.channel_bar.step(-1 if event.key() == _Qt.Key.Key_Up else 1)
                 return True
-            # Ctrl+D disconnects the CURRENT channel (P42.2) — Packet has
-            # no TxController/[^D] EOT concept (see the Hold-TX comment
-            # above), so Ctrl+D is free to mean "disconnect" here, unlike
-            # on the character-ACK modes.
-            if (event.key() == _Qt.Key.Key_D and
+            # Ctrl+K disconnects the CURRENT channel (P42.2; moved from
+            # Ctrl+D to Ctrl+K in P46.C.2) — Packet has no TxController/
+            # [^D] EOT concept (see the Hold-TX comment above), so this key
+            # was free to mean "disconnect" here, unlike on the
+            # character-ACK modes. Moved off Ctrl+D because that shortcut
+            # now unambiguously means the TNC menu's "Disconnect + Close
+            # Serial Port" (Ctrl+D) - two different "disconnect" actions
+            # (station link vs. serial port) sharing one key was exactly
+            # the "Connect"/"Disconnect" ambiguity P46 set out to remove.
+            # Also available from the chip's own context menu regardless.
+            if (event.key() == _Qt.Key.Key_K and
                     event.modifiers() & _Qt.KeyboardModifier.ControlModifier):
                 ch = self.channel_bar.current()
                 if (ch != UI_CHANNEL
@@ -1922,7 +1928,7 @@ class PacketBaseScreen(QWidget):
         longer have their own buttons to enable/disable (P42 — a connect
         now comes from a chip's inline editor, which ChannelChip itself
         already refuses to open on a busy channel; a disconnect comes from
-        the chip's context menu or Ctrl+D, both already channel-state-aware).
+        the chip's context menu or Ctrl+K, both already channel-state-aware).
         This method now only owns the T39 Connect/Unproto mutual exclusion:
 
         state:
