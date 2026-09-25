@@ -2128,6 +2128,64 @@ Live hardware re-test open (steps 1-4 above, per the Definition of Done).
 
 ---
 
+### T130 — Link message appears in its own channel, not the visible one (P47)
+
+Bugfix (25.09.2026, screenshot): the UI chip (channel 0) showed
+`*** Retry count exceeded *** ... DISCONNECTED: OE3XTC ***` — that
+message belongs to channel 1, where the connect was running.
+`HFPacketMode._handle_link_msg()` already reads the channel from the
+`$5x` frame's own CTL nibble and calls `on_link_message(ch, text)`; two
+consumers already used it (ChannelBar/MHEARD, Unproto gating, T102) but
+the RX-window display (`_on_mode_link_message()`) ignored it and always
+wrote into whichever channel/screen happened to be visible. Analogous to
+T100 (the same ALL/CH filter, now reused for link messages instead of
+reimplemented).
+
+**Live sequence to run:**
+1. Connect to an unreachable callsign on channel 1, while channel 0 (UI)
+   is the visible chip.
+   **Expected:** the message does **not** appear on the UI chip's RX
+   window.
+2. Switch to channel 1.
+   **Expected:** the message is there, exactly as it happened
+   ("*** ... ***" format, unchanged colour semantics).
+3. Switch view to `ALL` (still on any channel).
+   **Expected:** the message appears with its channel noted, e.g.
+   `[CH1] *** DISCONNECTED: OE3XTC ***` — the same tag `append_channel_data()`
+   already uses for ordinary channel data (T100).
+4. Open **HF/VHF Packet Parameters → Display → "Show TNC link messages
+   in the UI channel"**, turn it on. Repeat step 1's connect attempt.
+   **Expected:** the message now ALSO appears on the UI chip, tagged
+   `[ch1] *** ... ***` in the text itself (not just the ALL-view tag,
+   since the UI channel is not necessarily in ALL view).
+5. Confirm AMTOR/PACTOR link messages (CONNECTED/DISCONN/...) still
+   appear exactly as before — these calls carry no channel argument at
+   all and are unaffected by this fix.
+
+**Unit-verified:**
+- `test_main_window_packet.py::TestLinkMessageAppearsInItsOwnChannel`
+  (9 cases) — a channel-1 message appears while channel 1 is visible;
+  the same message does not appear on the UI chip in `CH` view; `ALL`
+  view shows it with the `[CH1]` tag; channel 15 (`$5F`, not
+  channel-scoped — e.g. the generic data ack) always lands in the UI
+  channel regardless of the mirror setting, and is never duplicated by
+  it; the mirror setting is off by default (no leak into the UI
+  channel) and, when turned on, adds a second, `[ch1]`-tagged line in
+  the UI channel; a single-argument `on_link_message(msg)` call
+  (AMTOR/PACTOR, channel is `None`) is routed exactly as before P47;
+  `_set_status()` keeps firing regardless of the visible channel (T102's
+  own rule, unchanged).
+- `test_param_dialogs_roundtrip.py` — the new
+  `HFPacketConfig.show_link_messages_in_ui_channel` field passes Tests
+  A-C (widget↔config↔INI wiring) and is listed in `UPLOAD_EXEMPT` for
+  Test D ("display setting, not a TNC parameter" — it has no
+  corresponding TNC command at all).
+
+**Status:** ✅ PASS (2026-09-25, unit-verified — full suite green). Live
+hardware re-test open (steps 1-5 above).
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
