@@ -60,6 +60,7 @@ class HFPacketParamsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._build_main_tab(),    "Parameters")
         tabs.addTab(self._build_msg_tab(),     "Message Params")
+        tabs.addTab(self._build_display_tab(), "Display")
         root.addWidget(tabs)
 
         bb = QDialogButtonBox(
@@ -202,6 +203,28 @@ class HFPacketParamsDialog(QDialog):
 
         return w
 
+    def _build_display_tab(self) -> QWidget:
+        """PC-side display settings (P47) - never sent to the TNC."""
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self._chk_show_link_ui = QCheckBox(
+            "Show TNC link messages in the UI channel"
+        )
+        self._chk_show_link_ui.setToolTip(
+            "A link message (CONNECTED, DISCONNECTED, Retry count "
+            "exceeded, ...) always appears in the channel it actually "
+            "happened on. Turn this on to ALSO mirror every one of them "
+            "into the UI channel (chip 0), tagged with the channel it "
+            "came from, e.g. \"[ch1] *** DISCONNECTED: OE3XTC ***\" - "
+            "useful when the UI channel is the one you keep watching.\n"
+            "This is a display setting only; it is never sent to the TNC."
+        )
+        form.addRow(self._chk_show_link_ui)
+
+        return w
+
     # ------------------------------------------------------------------
     # Populate / apply
     # ------------------------------------------------------------------
@@ -255,6 +278,8 @@ class HFPacketParamsDialog(QDialog):
         self._chk_hid.setChecked(c.hid)
         self._chk_mbell.setChecked(c.mbell)
 
+        self._chk_show_link_ui.setChecked(c.show_link_messages_in_ui_channel)
+
     def apply_to(self, config: HFPacketConfig) -> None:
         """Write dialog values back into config."""
         config.paclen   = self._sb_paclen.value()
@@ -299,6 +324,9 @@ class HFPacketParamsDialog(QDialog):
         config.bitconv8 = self._chk_8bitconv.isChecked()
         config.hid      = self._chk_hid.isChecked()
         config.mbell    = self._chk_mbell.isChecked()
+
+        config.show_link_messages_in_ui_channel = \
+            self._chk_show_link_ui.isChecked()
 
     def _on_accept(self) -> None:
         # Validate the four access-filter callsign lists before writing
