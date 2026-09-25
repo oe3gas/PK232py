@@ -281,11 +281,15 @@ class MainWindow(QMainWindow):
 
         tnc_menu.addSeparator()
 
-        # Safety net: free the TNC from a stuck Host Mode without closing
-        # the port (sends the double-SOH resync frame, then HOST OFF).
-        self._act_recovery = QAction("Host Mode &Recovery", self)
+        # P46.B: the way out of ANY state - no connection, mid-error,
+        # stuck in Host Mode. Opens the port itself if needed (from the
+        # saved config), sends the resync sequence (double-SOH + HOST
+        # OFF), then runs the same P43/P44 detection chain as a normal
+        # connect - never gated on being connected already.
+        self._act_recovery = QAction("Emergency &Reconnect (Host Mode Recovery)", self)
+        self._act_recovery.setShortcut("Ctrl+R")
         self._act_recovery.setStatusTip(
-            "Emergency recovery: free TNC from stuck Host Mode"
+            "Emergency reconnect: recover the TNC from any state, including a stuck Host Mode"
         )
         self._act_recovery.triggered.connect(self._on_recovery)
         tnc_menu.addAction(self._act_recovery)
@@ -473,39 +477,17 @@ class MainWindow(QMainWindow):
         show_help(topic, parent=self)
 
     def _build_toolbar(self) -> None:
-        # ── Row 1: Connection controls ───────────────────────────────────────
+        # P46.C.1: Connect/Disconnect/Host Mode/Recovery used to live here
+        # too, alongside the mode selector - and "Connect" was ambiguous
+        # there (the serial connection to the TNC vs. the AX.25/PACTOR/
+        # AMTOR station connection the opmode screens already show their
+        # own Connect for). All TNC connection actions now live exclusively
+        # in the "TNC" menu (_build_menubar) - this toolbar only ever
+        # shows the operating-mode selector, the firmware label and the
+        # mode-indicator status, none of which have that ambiguity.
         tb = QToolBar("Main", self)
         tb.setMovable(False)
         self.addToolBar(tb)
-
-        self._tb_connect = tb.addAction("Connect")
-        self._tb_connect.setToolTip("Connect to TNC (Ctrl+T)")
-        self._tb_connect.triggered.connect(self._on_connect_verbose)
-
-        self._tb_disconnect = tb.addAction("Disconnect")
-        self._tb_disconnect.setToolTip("Disconnect (Ctrl+D)")
-        self._tb_disconnect.triggered.connect(self._on_disconnect)
-
-        tb.addSeparator()
-
-        self._tb_host_on = tb.addAction("Host Mode")
-        self._tb_host_on.setToolTip("Enter Host Mode")
-        self._tb_host_on.triggered.connect(self._on_host_mode_enter)
-
-        self._tb_recovery = tb.addAction("Recovery")
-        self._tb_recovery.setToolTip("Host Mode Recovery")
-        self._tb_recovery.triggered.connect(self._on_recovery)
-
-        # Toolbar buttons must not steal keyboard focus from the verbose
-        # command field / opmode tx_input (same NoFocus convention the opmode
-        # screen buttons already use). QToolButton via widgetForAction.
-        for _act in (self._tb_connect, self._tb_disconnect,
-                     self._tb_host_on, self._tb_recovery):
-            _btn = tb.widgetForAction(_act)
-            if _btn is not None:
-                _btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
-        tb.addSeparator()
 
         # Mode selector ComboBox
         tb.addWidget(QLabel(" Mode: "))
@@ -1323,24 +1305,9 @@ class MainWindow(QMainWindow):
         self._set_mode_indicator("error")
         self._sb_mode.setText("Mode: ERROR")
         self._mode_combo.setEnabled(False)
-        self._tb_host_on.setEnabled(False)
         self._act_connect_verbose.setEnabled(True)
         self._act_connect_host.setEnabled(True)
-        self._tb_connect.setEnabled(True)
         self._act_recovery.setEnabled(True)
-        self._tb_recovery.setEnabled(True)
-
-    def _on_host_mode_enter(self) -> None:
-        """Manual Host Mode entry from menu/toolbar.
-
-        Sets the indicator to SWITCHING immediately so the user sees
-        feedback while the TNC initialises. Replaced by HOST MODE once
-        _update_host_mode_ui(active=True) fires.
-        """
-        if self._serial.is_connected:
-            self._set_mode_indicator("switching")
-            self._sb_mode.setText("Mode: Switching to Host Mode...")
-            self._serial.enter_host_mode()
 
     def _on_host_mode_exit(self) -> None:
         if self._serial.is_connected:
@@ -1360,8 +1327,6 @@ class MainWindow(QMainWindow):
         already."""
         self._act_recovery.setEnabled(False)
         self._act_recovery.setText("Recovery running...")
-        self._tb_recovery.setEnabled(False)
-        self._tb_recovery.setText("Recovery running...")
         self._log_monitor("[SYS] Recovery: sending recovery frames...")
         self._serial.recovery(
             port_name=self._app_config.tnc.port,
@@ -1373,9 +1338,7 @@ class MainWindow(QMainWindow):
         verbose terminal's RX window (so it is still there in a later
         mitschnitt/capture, not just a transient status-bar line)."""
         self._act_recovery.setEnabled(True)
-        self._act_recovery.setText("Host Mode &Recovery")
-        self._tb_recovery.setEnabled(True)
-        self._tb_recovery.setText("Recovery")
+        self._act_recovery.setText("Emergency &Reconnect (Host Mode Recovery)")
         self._log_monitor(f"[SYS] Recovery: {message}")
         self._vt_append(
             f"[SYS] {message}\n",
@@ -4515,11 +4478,6 @@ class MainWindow(QMainWindow):
         # P46.B: Emergency Reconnect is the way out of ANY state - no
         # connection, mid-error, stuck in Host Mode - so unlike every
         # other TNC action here, it is never gated on `connected`.
-        self._tb_connect.setEnabled(not connected)
-        self._tb_disconnect.setEnabled(connected)
-        # "Enter Host Mode" only makes sense when connected and still in
-        # verbose mode (is_host_mode False right after connecting).
-        self._tb_host_on.setEnabled(connected and not self._serial.is_host_mode)
         self._update_serial_signals()
         if self._act_serial_status.isChecked():
             if connected:
@@ -4551,9 +4509,6 @@ class MainWindow(QMainWindow):
     def _update_host_mode_ui(self, active: bool) -> None:
         """Switch view and enable mode selector when Host Mode is active."""
         self._mode_combo.setEnabled(active or self._serial.is_connected)
-        # Toolbar "Enter Host Mode" is pointless while already in Host Mode.
-        # Enabled only when connected and NOT in Host Mode.
-        self._tb_host_on.setEnabled(not active and self._serial.is_connected)
         # CTRL+D is used as EOT marker in TX window during Host Mode.
         # Disable the Disconnect shortcut to prevent conflict.
         self._act_disconnect.setShortcut(
