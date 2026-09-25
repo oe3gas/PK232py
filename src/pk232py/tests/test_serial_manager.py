@@ -14,6 +14,8 @@ from __future__ import annotations
 import logging
 import time
 
+from PyQt6.QtCore import Qt
+
 from pk232py.comm.constants import FRAME_HOST_OFF, FRAME_RECOVERY
 from pk232py.comm.frame import build_command
 from pk232py.comm.params_uploader import ParamsUploader
@@ -359,7 +361,7 @@ class TestRecoverySequence:
         assert len(results) == 1
         success, msg = results[0]
         assert success is True
-        assert "Recovery successful" in msg
+        assert "Connection recovered" in msg
         assert FRAME_RECOVERY in port.writes
         assert FRAME_HOST_OFF in port.writes
 
@@ -381,7 +383,7 @@ class TestRecoverySequence:
         assert sm.verbose_confirmed is True
         success, msg = results[0]
         assert success is True
-        assert "Recovery successful" in msg
+        assert "Connection recovered" in msg
         assert _HPOLL_QUERY in port.writes
 
     def test_silence_throughout_reports_failure_and_power_cycle_hint(self):
@@ -395,3 +397,165 @@ class TestRecoverySequence:
         assert success is False
         assert "power-cycle" in msg.lower()
         assert FRAME_RECOVERY in port.writes
+
+
+class _StubReader:
+    """Records stop()/join() without any real thread - lets a test assert
+    ordering (was the reader stopped BEFORE a given write?) without racing
+    a genuine background thread (P46.A.1)."""
+
+    def __init__(self):
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def join(self, timeout=None) -> None:
+        pass
+
+
+class TestRecoveryTakesOverTheReadPath:
+    """P46.A.1/A.2 - reproduces the 25.09.2026 screenshot bug
+    ("_OGG__OHONO[SYS] Recovery did not reach the TNC.") at the unit
+    level: _recovery_thread() used to write its own FRAME_RECOVERY/
+    FRAME_HOST_OFF preamble via _write_raw() while a ReaderThread was
+    still running, so the TNC's response was consumed there (dumped into
+    the RX window as raw framed bytes) instead of being visible to the
+    chain's own direct reads. The fix (_take_over_read_path(), shared by
+    _init_tnc_thread() and _recovery_thread()) must stop the reader
+    BEFORE the very first byte goes out - not just before the chain's own
+    steps."""
+
+    def test_no_write_happens_while_the_reader_is_still_running(self):
+        def responder(data):
+            if data == b"*":
+                return b"cmd:"
+            return b""
+
+        sm = SerialManager()
+        port = _FakePort(responder)
+        sm._serial = port
+        stub = _StubReader()
+        sm._reader = stub
+
+        write_log: list[tuple[bytes, bool]] = []
+        orig_write = port.write
+
+        def spy_write(data):
+            write_log.append((bytes(data), stub.stopped))
+            return orig_write(data)
+
+        port.write = spy_write
+
+        results: list[tuple[bool, str]] = []
+        sm.recovery_finished.connect(lambda ok, msg: results.append((ok, msg)))
+        try:
+            sm._recovery_thread()
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+        assert write_log, "expected at least one write during recovery"
+        assert all(stopped for _data, stopped in write_log), (
+            "a write happened before the ReaderThread was stopped - "
+            "exactly the ordering bug the screenshot showed"
+        )
+        assert stub.stopped is True
+        assert results and results[0][0] is True
+
+    def test_raw_data_received_never_fires_during_recovery(self):
+        # P46.A.2 - with a REAL ReaderThread running at the start (the
+        # ordinary case), no recovery-phase byte may ever reach the RX
+        # window via raw_data_received - it must all go through the
+        # chain's own direct reads instead.
+        from pk232py.comm.serial_manager import _ReaderThread
+
+        def responder(data):
+            if data == b"*":
+                return b"cmd:"
+            return b""
+
+        sm = SerialManager()
+        port = _FakePort(responder)
+        sm._serial = port
+        raw_events: list[bytes] = []
+        # DirectConnection: raw_data_received is emitted from the
+        # ReaderThread's own background thread, and this process has no
+        # running Qt event loop to ever deliver a queued connection -
+        # without this, the assertion below would pass trivially (an
+        # undelivered signal looks identical to "never emitted").
+        sm.raw_data_received.connect(raw_events.append, Qt.ConnectionType.DirectConnection)
+
+        sm._reader = _ReaderThread(
+            port, sm._on_frame_received, raw_callback=sm._on_raw_data,
+            host_mode_flag=lambda: sm._in_host_mode,
+        )
+        sm._reader.start()
+        try:
+            sm._recovery_thread()
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+        assert sm.verbose_confirmed is True
+        assert raw_events == []
+
+
+class TestRecoveryEmergencyReconnect:
+    """P46.B - Recovery is the emergency reconnect: it must work with NO
+    connection at all, opening the port itself from the caller's saved
+    config (port_name/baudrate) before running the same chain."""
+
+    def test_opens_the_port_when_not_connected(self):
+        def responder(data):
+            if data == b"*":
+                return b"cmd:"
+            return b""
+
+        opened: dict = {}
+
+        def factory(**kwargs):
+            opened.update(kwargs)
+            return _FakePort(responder)
+
+        sm = SerialManager()
+        sm.set_port_factory(factory)
+        assert sm.is_connected is False
+
+        results: list[tuple[bool, str]] = []
+        # DirectConnection: recovery() runs its detection chain on a real
+        # background thread here (unlike _run_recovery()'s synchronous
+        # call elsewhere in this file) - without this, the signal would
+        # be silently queued forever, since nothing in this test process
+        # runs a Qt event loop to deliver it.
+        sm.recovery_finished.connect(
+            lambda ok, msg: results.append((ok, msg)),
+            Qt.ConnectionType.DirectConnection,
+        )
+        try:
+            ok = sm.recovery(port_name="COM_TEST", baudrate=9600)
+            assert ok is True
+            assert sm.is_connected is True
+            assert opened.get("port") == "COM_TEST"
+            assert opened.get("baudrate") == 9600
+
+            deadline = time.monotonic() + 2.0
+            while not results and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+            assert results, "recovery_finished never fired"
+            success, msg = results[0]
+            assert success is True
+            assert "Connection recovered" in msg
+            assert sm.verbose_confirmed is True
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+    def test_no_port_and_nothing_configured_does_nothing(self):
+        sm = SerialManager()
+        assert sm.is_connected is False
+        assert sm.recovery() is False
