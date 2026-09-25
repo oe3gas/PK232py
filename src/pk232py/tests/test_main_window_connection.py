@@ -129,13 +129,12 @@ class TestInitFailedDoesNotLookConnected:
 
         assert w._mode_indicator.text().strip() == "ERROR"
 
-    def test_host_mode_entry_and_mode_combo_are_disabled(self, wired_window):
+    def test_mode_combo_is_disabled(self, wired_window):
         w, _serial = wired_window
         w._update_connection_ui(True)
 
         w._on_init_failed()
 
-        assert not w._tb_host_on.isEnabled()
         assert not w._mode_combo.isEnabled()
 
     def test_connect_actions_stay_enabled(self, wired_window):
@@ -146,7 +145,6 @@ class TestInitFailedDoesNotLookConnected:
 
         assert w._act_connect_verbose.isEnabled()
         assert w._act_connect_host.isEnabled()
-        assert w._tb_connect.isEnabled()
 
     def test_recovery_stays_enabled(self, wired_window):
         w, _serial = wired_window
@@ -155,7 +153,6 @@ class TestInitFailedDoesNotLookConnected:
         w._on_init_failed()
 
         assert w._act_recovery.isEnabled()
-        assert w._tb_recovery.isEnabled()
 
     def test_connect_again_retries_on_the_still_open_port(self, wired_window):
         # P45.2 - connect_port()'s own "already open" guard used to make
@@ -185,7 +182,6 @@ class TestRecoveryFeedback:
 
         assert serial.recovery_called is True
         assert not w._act_recovery.isEnabled()
-        assert not w._tb_recovery.isEnabled()
         assert "running" in w._act_recovery.text().lower()
 
     def test_on_recovery_works_even_when_not_connected(self, wired_window):
@@ -220,8 +216,7 @@ class TestRecoveryFeedback:
         w._on_recovery_finished(True, "Recovery successful - test")
 
         assert w._act_recovery.isEnabled()
-        assert w._tb_recovery.isEnabled()
-        assert "Recovery" in w._act_recovery.text()
+        assert "Reconnect" in w._act_recovery.text()
         assert "Recovery successful - test" in w._vt_display.toPlainText()
 
     def test_recovery_finished_failure_reenables_and_shows_message(self, wired_window):
@@ -231,5 +226,51 @@ class TestRecoveryFeedback:
         w._on_recovery_finished(False, "Recovery did not reach the TNC.")
 
         assert w._act_recovery.isEnabled()
-        assert w._tb_recovery.isEnabled()
         assert "Recovery did not reach the TNC." in w._vt_display.toPlainText()
+
+
+class TestMenuOnlyTncActions:
+    """P46.C - Connect/Disconnect/Host Mode/Recovery live in the TNC menu
+    only; the toolbar keeps just the mode selector, firmware label and
+    mode indicator. "Connect" used to be ambiguous (TNC serial connection
+    here vs. AX.25/PACTOR/AMTOR station connection on the opmode screens)
+    - removing it from the toolbar removes that collision from view."""
+
+    def test_toolbar_has_no_tnc_action_buttons(self, wired_window):
+        from PyQt6.QtWidgets import QToolBar
+
+        w, _serial = wired_window
+        toolbars = w.findChildren(QToolBar)
+        assert toolbars, "expected at least one toolbar"
+        banned = {"connect", "disconnect", "host mode", "recovery"}
+        for tb in toolbars:
+            for act in tb.actions():
+                text = act.text().strip().lower()
+                assert text not in banned, f"toolbar still has a {text!r} action"
+
+    def test_tnc_menu_has_the_emergency_reconnect_entry(self, wired_window):
+        w, _serial = wired_window
+        assert w._act_recovery.shortcut().toString() == "Ctrl+R"
+        assert "Emergency" in w._act_recovery.text()
+        assert "Reconnect" in w._act_recovery.text()
+
+    def test_tnc_menu_shortcuts_are_all_distinct(self, wired_window):
+        w, _serial = wired_window
+        tnc_actions = [
+            w._act_connect_verbose, w._act_connect_host, w._act_host_off,
+            w._act_disconnect, w._act_recovery,
+        ]
+        shortcuts = [a.shortcut().toString() for a in tnc_actions if a.shortcut().toString()]
+        assert len(shortcuts) == len(set(shortcuts)), (
+            f"duplicate shortcut among TNC menu actions: {shortcuts}"
+        )
+
+    def test_tnc_menu_disconnect_shortcut_does_not_collide_with_packet_channel_disconnect(
+        self, wired_window
+    ):
+        # P46.C.2 - the TNC menu's Ctrl+D ("Disconnect + Close Serial
+        # Port") must not be the same key as the Packet screen's own
+        # channel-disconnect shortcut (moved to Ctrl+K - see
+        # packet_screen.py's eventFilter()).
+        w, _serial = wired_window
+        assert w._act_disconnect.shortcut().toString() == "Ctrl+D"
