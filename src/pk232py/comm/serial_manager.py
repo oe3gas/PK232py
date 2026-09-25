@@ -153,6 +153,30 @@ def _classify_maildrop_response(text: str) -> Optional[bool]:
     return None
 
 
+def _parse_verbose_query_value(name: str, text: str) -> Optional[str]:
+    """Extract the value from a verbose-mode query response for *name*
+    (P40.3). Format confirmed against real hardware (P15):
+    '<echo>\\r\\n<Name mixed-case>   <value>[ (<explanation>)]\\r\\ncmd:'
+    - the TNC answers in its own mixed-case abbreviated form ('MYcall',
+    'PAclen', ...), never in the exact uppercase *name* we sent, so the
+    echoed command line is skipped the same way
+    _classify_maildrop_response() already does for MAILDROP. Returns None
+    on an error line ('?What?', ...) or when no matching line is found at
+    all (e.g. no response, or a garbled one).
+    """
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("?"):
+            return None
+        tokens = line.split()
+        token = tokens[0]
+        if token.upper() == name.upper() and token != name.upper():
+            return tokens[1] if len(tokens) > 1 else None
+    return None
+
+
 def _wakeup_log_message(resp: bytes) -> tuple[int, str]:
     """P35.4: what to log after the wakeup read, and at what level.
 
@@ -437,6 +461,33 @@ class SerialManager(QObject):
         text = bytes(raw).decode("ascii", errors="replace")
         self._has_maildrop = _classify_maildrop_response(text)
         return self._has_maildrop
+
+    def query_verbose_value(self, name: str, timeout: float = 3.0) -> Optional[str]:
+        """Query one parameter's current value in verbose mode (P40.3 -
+        used by ParamsUploader to spot-check that an upload actually
+        reached the TNC, since write_verbose_wait() alone only confirms a
+        cmd: prompt came back, not that the TNC accepted or even parsed
+        the command). Must be called while already in verbose mode - same
+        caller discipline as detect_maildrop(), which this mirrors.
+
+        Returns:
+            The value string as answered by the TNC, or None if there was
+            no clear answer (error line, no response, or not connected).
+        """
+        if not self.is_connected:
+            return None
+        raw = bytearray()
+
+        def _capture(data: bytes) -> None:
+            raw.extend(data)
+
+        self.raw_data_received.connect(_capture)
+        try:
+            self.write_verbose_wait(f"{name}\r\n".encode("ascii"), timeout=timeout)
+        finally:
+            self.raw_data_received.disconnect(_capture)
+        text = bytes(raw).decode("ascii", errors="replace")
+        return _parse_verbose_query_value(name, text)
 
     # ------------------------------------------------------------------
     # Port factory seam (generic; default = real serial.Serial)
