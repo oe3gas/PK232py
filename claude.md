@@ -1504,6 +1504,29 @@ Grows over time.
   `_on_chip_connect_requested`/`_on_chip_disconnect_requested`/`_on_packet_tx_enter`
   (P42, 2026-09-24, renamed from `_on_packet_connect`/`_on_packet_disconnect`
   — see the "connect in the chip" bullet below).
+- **Every `$5x` link message carries its own channel number in the CTL
+  nibble — three consumers now use it, not two (P47, 2026-09-25).**
+  `HFPacketMode._handle_link_msg()` reads `frame.channel` and calls
+  `on_link_message(ch, text)`. Two consumers were already channel-aware:
+  `_make_channel_state_handler()` (chips/MHEARD) and the Unproto-gating
+  logic inside `_make_link_handler()` (T102). A third consumer,
+  `_on_mode_link_message()`'s RX-window display, used to ignore the
+  channel entirely and always write into whichever screen/channel the
+  operator happened to have open — reproduced 25.09.2026 (screenshot): a
+  channel-1 "Retry count exceeded ... DISCONNECTED: OE3XTC" appeared on
+  the UI chip (channel 0). Fixed: `_make_link_handler()` now routes a
+  channel-bearing call through `MainWindow._route_packet_link_message()`
+  → `screen.append_channel_data(channel, text)` (reusing the existing
+  ALL/CH filter and `[CHn]` tag, T100, rather than reimplementing it);
+  channel 15 (`$5F`, not channel-scoped — e.g. the generic data ack) and
+  AMTOR/PACTOR's single-argument calls (channel is `None`, no channel
+  concept at all) are unaffected. **Never attribute a link message by
+  callsign** — "Retry count exceeded" carries none, and the same station
+  can be connected on two different channels at once; the CTL-nibble
+  channel number is the only reliable source. Optional mirror into the
+  UI channel: `HFPacketConfig.show_link_messages_in_ui_channel` (default
+  off) — see the "PC-side display settings" gotcha under Parameter
+  dialogs.
 - **Channel 0 is the UI/unproto/monitor channel, not a QSO channel (P10,
   2026-09-20).** AEA Host Mode only has `$2x` for outgoing data with
   `x` = 0–9 — there is no `$2F`. So Unproto is not its own channel; it is the
@@ -1868,6 +1891,19 @@ Grows over time.
   through any `&Parameters` dialog reaches the TNC on the *next*
   initialisation, not immediately. All six now log "parameters saved — sent
   to TNC on next initialisation" instead.
+- **PC-side display settings live in the same config dataclasses as real
+  TNC parameters, wired the same way, just exempted at the upload step
+  (P47, 2026-09-25).** `HFPacketConfig.show_link_messages_in_ui_channel`
+  (HF Packet Parameters → Display tab) has no TNC command at all — it
+  only controls whether `MainWindow._route_packet_link_message()` mirrors
+  a link message into the UI channel. It still goes through the full P12
+  wiring chain (widget ↔ config field ↔ INI) like any other field, and is
+  listed in `test_param_dialogs_roundtrip.py`'s `UPLOAD_EXEMPT` with the
+  reason "display setting, not a TNC parameter" so Test D does not expect
+  it to change `ParamsUploader._build_commands()`'s output. *Rule:* a
+  display-only setting is not a special case requiring its own storage
+  mechanism — it is a normal config field that happens to be exempt from
+  exactly one of the four wiring-chain tests.
 
 ### Repo / tooling
 
