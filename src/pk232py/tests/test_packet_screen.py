@@ -28,10 +28,14 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QAbstractAnimation
 from PyQt6.QtWidgets import QApplication
 
-from pk232py.ui.screens.packet_screen import HFPacketScreen, UI_CHANNEL
+from pk232py.ui.screens.packet_screen import (
+    HFPacketScreen, UI_CHANNEL,
+    CH_FREE, CH_CALLING, CH_CONNECTED, CH_FAILED,
+    _CHIP_FILL,
+)
 
 _app = QApplication.instance() or QApplication([])
 
@@ -350,3 +354,173 @@ class TestChipConnectFlow:
         screen.eventFilter(screen.tx_input, ev)
 
         assert received == []
+
+
+class TestChipCallingFailedStates(object):
+    """P44 Teil A - a calling chip shows an ellipsis, and a failed
+    connect attempt flashes CH_FAILED (red) before reverting to CH_FREE,
+    rather than snapping straight back to a plain free chip."""
+
+    def test_calling_chip_shows_ellipsis_suffix(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+
+        chip = screen.channel_bar._chips[3]
+        assert chip._lbl_call.text() == "OE3TEC …"
+
+    def test_connected_chip_shows_plain_callsign_no_ellipsis(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CONNECTED, "OE3TEC")
+
+        chip = screen.channel_bar._chips[3]
+        assert chip._lbl_call.text() == "OE3TEC"
+
+    def test_retry_count_exceeded_goes_through_failed_then_free(self):
+        # HFPacketMode._handle_link_msg maps "Retry count exceeded" to
+        # on_channel_state(ch, "free", "") - simulated directly here at
+        # the ChannelBar level, which is what actually owns the
+        # calling->failed->free transition (P44).
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+
+        screen.channel_bar.set_channel_state(3, CH_FREE, "")
+
+        assert screen.channel_bar.state(3) == CH_FAILED
+        # The timer hasn't fired yet - directly exercise what it does,
+        # without a real 1.5s wait in the test suite.
+        screen.channel_bar._clear_failed(3)
+        assert screen.channel_bar.state(3) == CH_FREE
+        assert screen.channel_bar.partner(3) == ""
+
+    def test_busy_goes_through_failed_then_free(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+
+        screen.channel_bar.set_channel_state(3, CH_FREE, "")  # "<call> busy"
+
+        assert screen.channel_bar.state(3) == CH_FAILED
+
+    def test_disconnected_while_calling_goes_through_failed_then_free(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+
+        screen.channel_bar.set_channel_state(3, CH_FREE, "")  # DISCONNECTED
+
+        assert screen.channel_bar.state(3) == CH_FAILED
+
+    def test_disconnect_from_connected_skips_failed_goes_straight_to_free(self):
+        # A normal, successful hangup is not a failure - nothing to flash.
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CONNECTED, "OE3TEC")
+
+        screen.channel_bar.set_channel_state(3, CH_FREE, "")
+
+        assert screen.channel_bar.state(3) == CH_FREE
+
+    def test_clear_failed_is_a_noop_if_state_already_moved_on(self):
+        # A fresh connect attempt (or any other state change) in the
+        # 1.5s window must not be undone by the stale timer firing late.
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+        screen.channel_bar.set_channel_state(3, CH_FREE, "")
+        assert screen.channel_bar.state(3) == CH_FAILED
+
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE1XYZ")
+        screen.channel_bar._clear_failed(3)  # the old timer, firing late
+
+        assert screen.channel_bar.state(3) == CH_CALLING
+        assert screen.channel_bar.partner(3) == "OE1XYZ"
+
+    def test_failed_chip_is_still_interactive_like_free(self):
+        # A chip that just failed is exactly where a retry is most
+        # likely - it must not be locked out for the flash's duration.
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+        screen.channel_bar.set_channel_state(3, CH_FREE, "")
+        assert screen.channel_bar.state(3) == CH_FAILED
+
+        screen.channel_bar.start_edit(3, "OE1XYZ")
+
+        assert screen.channel_bar._chips[3].is_editing()
+
+
+class TestPulseAnimation(object):
+    """P44 Teil A - one shared QVariantAnimation pulses every CALLING
+    chip in sync; it runs only while at least one channel is calling."""
+
+    def test_pulse_starts_when_a_channel_starts_calling(self):
+        screen = _make_screen()
+        assert screen.channel_bar._pulse.state() != QAbstractAnimation.State.Running
+
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+
+        assert screen.channel_bar._pulse.state() == QAbstractAnimation.State.Running
+
+    def test_pulse_stops_when_no_channel_is_calling_any_more(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+        assert screen.channel_bar._pulse.state() == QAbstractAnimation.State.Running
+
+        screen.channel_bar.set_channel_state(3, CH_CONNECTED, "OE3TEC")
+
+        assert screen.channel_bar._pulse.state() != QAbstractAnimation.State.Running
+
+    def test_pulse_keeps_running_while_at_least_one_channel_still_calls(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+        screen.channel_bar.set_channel_state(4, CH_CALLING, "DL1ABC")
+
+        screen.channel_bar.set_channel_state(3, CH_CONNECTED, "OE3TEC")
+
+        assert screen.channel_bar._pulse.state() == QAbstractAnimation.State.Running
+
+    def test_pulse_tick_only_updates_calling_chips(self):
+        from PyQt6.QtGui import QColor
+
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+        screen.channel_bar.set_channel_state(4, CH_CONNECTED, "DL1ABC")
+
+        before = screen.channel_bar._chips[4].button.styleSheet()
+        screen.channel_bar._on_pulse_value(QColor("#a07020"))
+
+        assert "#a07020" in screen.channel_bar._chips[3].button.styleSheet()
+        assert screen.channel_bar._chips[4].button.styleSheet() == before
+
+    def test_reset_stops_the_pulse(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(3, CH_CALLING, "OE3TEC")
+        assert screen.channel_bar._pulse.state() == QAbstractAnimation.State.Running
+
+        screen.channel_bar.reset()
+
+        assert screen.channel_bar._pulse.state() != QAbstractAnimation.State.Running
+
+
+class TestMheardColourSemantics(object):
+    """P44 Teil A.3 - one colour logic for the whole window: connected
+    means CH_CONNECTED's green everywhere, not amber on MHEARD and green
+    on the chip."""
+
+    def test_mheard_connected_colour_matches_chip_connected_fill(self):
+        from PyQt6.QtWidgets import QLabel
+        from pk232py.ui.screens.packet_screen import _MheardRowWidget
+
+        row = _MheardRowWidget("OE3TEC", "14:05", direct=False, channel=3)
+        lbl = row.findChild(QLabel)
+
+        assert lbl is not None
+        assert _CHIP_FILL[CH_CONNECTED] in lbl.styleSheet()
+
+    def test_mheard_legend_says_green_not_amber(self):
+        from PyQt6.QtWidgets import QLabel
+
+        screen = _make_screen()
+        legend_texts = [
+            lbl.text() for lbl in screen.mheard_panel.findChildren(QLabel)
+            if "direct (no digi)" in lbl.text()
+        ]
+
+        assert legend_texts, "legend label not found"
+        assert "green = connected" in legend_texts[0]
+        assert "amber" not in legend_texts[0]
