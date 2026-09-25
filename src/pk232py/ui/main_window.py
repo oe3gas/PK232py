@@ -1384,14 +1384,21 @@ class MainWindow(QMainWindow):
         if n > 0:
             matched, applicable = uploader.verify()
             if applicable and matched == applicable:
-                self._log_monitor(
-                    f"[SYS] parameter upload verified ({matched}/{applicable})"
-                )
+                msg = f"[SYS] parameter upload verified ({matched}/{applicable})"
+                self._log_monitor(msg)
+                # P52.3: verify()'s own per-parameter failures already
+                # reach the verbose terminal directly (echo_callback) -
+                # this summary line belongs there too, not just the
+                # Monitor panel, so the whole verification result is
+                # visible in one place regardless of outcome.
+                self._vt_append(f"{msg}\n", color="#3a9e3a")
             elif applicable:
-                self._log_monitor(
+                msg = (
                     f"[SYS] parameter upload verification: only "
-                    f"{matched}/{applicable} matched - see log for details"
+                    f"{matched}/{applicable} matched - see above for details"
                 )
+                self._log_monitor(msg)
+                self._vt_append(f"{msg}\n", color="#f44747")
         self._update_maildrop_gate_ui()
         if getattr(self._serial, 'has_maildrop', None) is False:
             self._log_monitor(
