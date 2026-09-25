@@ -2,9 +2,10 @@
 # Copyright (C) 2026  OE3GAS  —  GPL v2
 """HF Packet Parameter dialog — matches PCPackRatt 'HF Packet Parameters'.
 
-Two tabs:
+Three tabs:
   Tab 1: Main parameters (numeric spinboxes + flag checkboxes)
   Tab 2: Message parameters (BTEXT, CTEXT, UNPROTO, CFROM, etc.)
+  Tab 3: Display (P47/P50) — PC-side only, never uploaded to the TNC
 """
 
 from __future__ import annotations
@@ -223,6 +224,30 @@ class HFPacketParamsDialog(QDialog):
         )
         form.addRow(self._chk_show_link_ui)
 
+        # P50 Teil C - optional timestamps in the RX view.
+        self._chk_show_timestamps = QCheckBox("Show timestamps in the RX view")
+        self._chk_show_timestamps.setToolTip(
+            "Prepend \"[HH:MM:SS]\" (muted colour) to every RX line. Off "
+            "by default - the CH view already names the channel via the "
+            "chip, and the ALL view's own compact \"n|\" tag costs less "
+            "width than a repeated timestamp on every line.\n"
+            "This is a display setting only; it is never sent to the TNC."
+        )
+        form.addRow(self._chk_show_timestamps)
+
+        # P50 Teil B - per-channel RX document size cap.
+        self._sb_rx_max_lines = QSpinBox()
+        self._sb_rx_max_lines.setRange(100, 100000)
+        self._sb_rx_max_lines.setSingleStep(500)
+        self._sb_rx_max_lines.setToolTip(
+            "Maximum number of lines kept per RX document (each channel's "
+            "own history, and the merged ALL view) before the oldest "
+            "lines are dropped - keeps a long operating day from growing "
+            "memory without bound.\n"
+            "This is a display setting only; it is never sent to the TNC."
+        )
+        form.addRow("Max. RX lines per channel:", self._sb_rx_max_lines)
+
         return w
 
     # ------------------------------------------------------------------
@@ -279,6 +304,8 @@ class HFPacketParamsDialog(QDialog):
         self._chk_mbell.setChecked(c.mbell)
 
         self._chk_show_link_ui.setChecked(c.show_link_messages_in_ui_channel)
+        self._chk_show_timestamps.setChecked(c.show_timestamps)
+        self._sb_rx_max_lines.setValue(c.rx_max_lines_per_channel)
 
     def apply_to(self, config: HFPacketConfig) -> None:
         """Write dialog values back into config."""
@@ -327,6 +354,8 @@ class HFPacketParamsDialog(QDialog):
 
         config.show_link_messages_in_ui_channel = \
             self._chk_show_link_ui.isChecked()
+        config.show_timestamps = self._chk_show_timestamps.isChecked()
+        config.rx_max_lines_per_channel = self._sb_rx_max_lines.value()
 
     def _on_accept(self) -> None:
         # Validate the four access-filter callsign lists before writing
