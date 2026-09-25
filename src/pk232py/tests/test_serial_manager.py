@@ -319,3 +319,79 @@ class TestTncStateDetectionChain:
 
         assert sm.verbose_confirmed is False
         assert any("COM_TEST" in m and "9600" in m for m in messages)
+
+
+def _run_recovery(responder) -> "tuple[SerialManager, _FakePort, list[tuple[bool, str]]]":
+    """Build a SerialManager wired to a _FakePort(responder) and run
+    recovery() synchronously (_recovery_thread() directly, never via the
+    real background-thread spawn recovery() itself uses) - deterministic
+    for a test, same pattern as _run_detection() above."""
+    sm = SerialManager()
+    port = _FakePort(responder)
+    sm._serial = port
+    results: list[tuple[bool, str]] = []
+    sm.recovery_finished.connect(lambda ok, msg: results.append((ok, msg)))
+    try:
+        sm._recovery_thread()
+    finally:
+        if sm._reader:
+            sm._reader.stop()
+            sm._reader.join(timeout=1.0)
+    return sm, port, results
+
+
+class TestRecoverySequence:
+    """P45.1/P45.3 - recovery() sends the documented sequence, then
+    determines and reports the resulting state via the EXISTING P43/P44
+    detection chain (no second version of it)."""
+
+    def test_cmd_confirmed_reports_success(self):
+        # The recovery bytes themselves get no direct reply, but the
+        # chain's own step 1 ('*') sees cmd: right away afterwards.
+        def responder(data):
+            if data == b"*":
+                return b"cmd:"
+            return b""
+
+        sm, port, results = _run_recovery(responder)
+
+        assert sm.verbose_confirmed is True
+        assert len(results) == 1
+        success, msg = results[0]
+        assert success is True
+        assert "Recovery successful" in msg
+        assert FRAME_RECOVERY in port.writes
+        assert FRAME_HOST_OFF in port.writes
+
+    def test_only_hpoll_answers_still_reports_success_after_exit(self):
+        cr_count = {"n": 0}
+
+        def responder(data):
+            if data == _HPOLL_QUERY:
+                return _HPOLL_ANSWER
+            if data == b"\r":
+                cr_count["n"] += 1
+                if cr_count["n"] >= 2:  # only the retry after the exit answers
+                    return b"\r\ncmd:"
+                return b""
+            return b""  # '*' and both HOST_OFF writes get no direct reply
+
+        sm, port, results = _run_recovery(responder)
+
+        assert sm.verbose_confirmed is True
+        success, msg = results[0]
+        assert success is True
+        assert "Recovery successful" in msg
+        assert _HPOLL_QUERY in port.writes
+
+    def test_silence_throughout_reports_failure_and_power_cycle_hint(self):
+        def responder(_data):
+            return b""
+
+        sm, port, results = _run_recovery(responder)
+
+        assert sm.verbose_confirmed is False
+        success, msg = results[0]
+        assert success is False
+        assert "power-cycle" in msg.lower()
+        assert FRAME_RECOVERY in port.writes
