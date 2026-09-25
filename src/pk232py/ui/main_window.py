@@ -1350,18 +1350,23 @@ class MainWindow(QMainWindow):
             self._serial.exit_host_mode()
 
     def _on_recovery(self) -> None:
-        """Kick off the async recovery sequence (P45.1) and lock the
-        button while it runs - the old behaviour gave no visible
-        reaction at all, so pressing it a second time (or giving up on
-        it) looked exactly the same as it working (found 25.09.2026)."""
-        if not self._serial.is_connected:
-            return
+        """Emergency Reconnect (P45.1 / P46.B) - kick off the async
+        recovery sequence and lock the menu entry while it runs, so
+        pressing it a second time (or giving up on it) does not look
+        exactly like it working (found 25.09.2026). This is the way out
+        of ANY state - no connection, mid-error, stuck in Host Mode - so
+        it is never gated on is_connected; SerialManager.recovery() opens
+        the port itself (from the saved config below) if it is not open
+        already."""
         self._act_recovery.setEnabled(False)
         self._act_recovery.setText("Recovery running...")
         self._tb_recovery.setEnabled(False)
         self._tb_recovery.setText("Recovery running...")
-        self._log_monitor("[SYS] Recovery: sending recovery sequence...")
-        self._serial.recovery()
+        self._log_monitor("[SYS] Recovery: sending recovery frames...")
+        self._serial.recovery(
+            port_name=self._app_config.tnc.port,
+            baudrate=self._app_config.tnc.tbaud,
+        )
 
     def _on_recovery_finished(self, success: bool, message: str) -> None:
         """P45.1 - report Recovery's outcome visibly: status bar AND the
@@ -4507,10 +4512,11 @@ class MainWindow(QMainWindow):
         self._act_connect_host.setEnabled(not connected)
         self._act_disconnect.setEnabled(connected)
         self._act_host_off.setEnabled(connected)
-        self._act_recovery.setEnabled(connected)
+        # P46.B: Emergency Reconnect is the way out of ANY state - no
+        # connection, mid-error, stuck in Host Mode - so unlike every
+        # other TNC action here, it is never gated on `connected`.
         self._tb_connect.setEnabled(not connected)
         self._tb_disconnect.setEnabled(connected)
-        self._tb_recovery.setEnabled(connected)
         # "Enter Host Mode" only makes sense when connected and still in
         # verbose mode (is_host_mode False right after connecting).
         self._tb_host_on.setEnabled(connected and not self._serial.is_host_mode)
