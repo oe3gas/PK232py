@@ -2362,6 +2362,53 @@ the Definition of Done.
 
 ---
 
+### T133 — Disconnect and immediately reconnect; no false "No PK-232 responding" (P52)
+
+A console capture (25.09.2026, 23:30) showed a fresh reconnect fail with
+`Init: Host Mode exit did not reach cmd:` even though the TNC was
+reachable the whole time — two root causes, both fixed under P52: step
+3's HPOLL query mistook its own verbose-mode echo for a genuine Host
+Mode answer (Fehler 1), and the detection chain's reads could be cut
+short before a multi-chunk `cmd:` response finished arriving (Fehler 2).
+
+**Live sequence to run:**
+1. Connect normally (Connect + Enter Terminal Mode, or + Enter Host
+   Mode) and confirm the TNC responds.
+2. Disconnect, then immediately reconnect (same session, no app
+   restart, no power-cycle).
+3. **Expected:** the reconnect succeeds — TNC reaches verbose mode
+   (or Host Mode, if that path was chosen) — with no "No PK-232
+   responding" error, and no misleading "TNC responds in Host Mode"
+   status message when the TNC was in fact still in verbose mode the
+   whole time.
+4. Repeat starting from Host Mode (Connect + Enter Host Mode, then
+   disconnect and reconnect) — same expectation.
+
+**Unit-verified:** `test_serial_manager.py::TestReadUntilPrompt` (4
+cases, `_read_until_prompt()` in isolation with the real byte sequences
+from the 25.09.2026 capture — a chunked `cmd:` response is still found,
+a missing one exhausts the full timeout, a pause after partial data does
+not shrink the timeout budget, and the stricter predicate-marker form
+used by `write_verbose_wait()` rejects an echoed "cmd:" substring with
+no newline in front of it); `TestStep3EchoDetection` (2 cases — a
+byte-identical 5-byte echo of the HPOLL query is not mistaken for Host
+Mode and the chain correctly falls through to step 3b instead of
+aborting at step 4; a genuine 6-byte answer with a value byte is still
+detected as Host Mode); `TestWriteVerboseWaitTiming` (2 cases —
+`write_verbose_wait()` against a real `_ReaderThread` finds a `cmd:`
+delayed ~400ms within its timeout, and correctly times out when no
+answer ever comes); `TestParamsUploaderVerifyEcho` (2 cases — `verify()`'s
+no-answer and mismatch cases reach the verbose terminal, not just the
+log). Both fixes cross-checked red-without-the-fix during implementation
+(manually reverting each one in turn made its own new test fail, then
+restored).
+
+**Status:** ✅ PASS (2026-09-25, unit-verified — full suite green,
+39/39 in `test_serial_manager.py`). Live hardware re-test (steps 1-4
+above) still open.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
