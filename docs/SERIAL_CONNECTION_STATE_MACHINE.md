@@ -179,6 +179,41 @@ either.
 On failure (step 4), the connection sequence aborts entirely — no
 parameter upload is attempted from this connect cycle at all.
 
+**P52 correction (2026-09-25) — two bugs in this chain, both proven by a
+real console capture (25.09.2026, 23:30:43):**
+
+- **Step 3's "any `$4F`-CTL frame" test above was too loose — it must
+  reject a byte-identical echo of the query itself.** In verbose
+  command mode the PK-232 echoes every byte sent, including binary
+  frame bytes, so a TNC that is genuinely still in verbose mode answers
+  the HPOLL query with its own bytes reflected right back
+  (`01 4f 48 50 17`, 5 B, no value byte — identical to the query) and
+  the old check happily parsed that as a well-formed-looking `$4F`
+  frame, wrongly concluding Host Mode and sending a needless
+  `FRAME_HOST_OFF` (also just echoed). A genuine answer is 6 bytes and
+  carries a value byte the query never has (same capture, 23:30:09:
+  query `01 4f 48 50 4e 17`, answer `01 4f 48 50 00 17`). Step 3 now
+  checks length AND the value byte (`is_hpoll_echo()`), not just that
+  something frame-shaped came back.
+- **Every read in this chain used to re-arm its own deadline on every
+  chunk of new data, which can only shrink the remaining timeout, never
+  extend it.** At 9600 Bd a response can (and does) arrive in more than
+  one chunk — the same capture's step 1 returned after 184ms with only
+  `2a 5c 0d 0a` (4 of the expected 8 bytes; a working run at the same
+  point saw the full `2a 5c 0d 0a 63 6d 64 3a`, `cmd:` included) because
+  the re-armed ~150ms deadline expired while `cmd:` was still in
+  transit. Steps 1, 2, 3's post-exit retry and 3b's post-recovery retry
+  all share one fix: `_read_until_prompt()` (`serial_manager.py`)
+  always honours the caller's FULL `_TNC_STATE_STEP_TIMEOUT` budget
+  regardless of how the response is chunked, and is shared with
+  `write_verbose_wait()` (Phase 2's own read, already correct before
+  P52 — this consolidated it into one implementation instead of two).
+  This is also what made Phase 2's own upload verification (below) look
+  broken when the TNC was in fact answering the whole time.
+
+See CLAUDE.md's "echoes everything" and "don't read until the first
+pause" gotchas (TNC / firmware v7.1) for the full writeup.
+
 ### Phase 2: Parameter Upload (in `ParamsUploader.upload`)
 
 ```
