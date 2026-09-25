@@ -110,6 +110,7 @@ class TestRefusesUploadInHostMode:
     def test_upload_proceeds_normally_when_not_in_host_mode(self):
         class _VerboseStubSerial(_HostModeStubSerial):
             is_host_mode = False
+            verbose_confirmed = True
 
             def write_verbose_wait(self, *args, **kwargs):
                 return True
@@ -119,6 +120,70 @@ class TestRefusesUploadInHostMode:
 
         config = AppConfig()
         uploader = ParamsUploader(serial=_VerboseStubSerial(), config=config)
+        sent = uploader.upload()
+        assert sent > 0
+
+
+class TestRequiresConfirmedVerbosePrompt:
+    """P43.2 - is_host_mode=False alone is not enough: is_host_mode is
+    the software's own belief, and a fresh connection cycle starts it
+    False regardless of what the physical TNC is actually doing (a TNC
+    left in Host Mode from a previous session is not noticed by
+    is_host_mode at all - see P43's finding). upload() also requires
+    verbose_confirmed, set only by SerialManager's active P43.1
+    detection chain once it has positive evidence of a verbose prompt."""
+
+    class _NotConfirmedStubSerial:
+        is_host_mode = False
+        has_pactor = True
+        verbose_confirmed = False
+
+        def write_verbose_wait(self, *args, **kwargs):
+            raise AssertionError(
+                "write_verbose_wait() must not be called without a "
+                "confirmed prompt"
+            )
+
+        def detect_maildrop(self):
+            raise AssertionError(
+                "detect_maildrop() must not be called without a "
+                "confirmed prompt"
+            )
+
+    def test_upload_refused_without_verbose_confirmed(self):
+        config = AppConfig()
+        uploader = ParamsUploader(
+            serial=self._NotConfirmedStubSerial(), config=config
+        )
+        sent = uploader.upload()
+        assert sent == 0
+
+    def test_upload_logs_an_error_naming_the_reason(self, caplog):
+        import logging
+        config = AppConfig()
+        uploader = ParamsUploader(
+            serial=self._NotConfirmedStubSerial(), config=config
+        )
+        with caplog.at_level(logging.ERROR, logger="pk232py.comm.params_uploader"):
+            uploader.upload()
+        assert any("verbose prompt" in r.message for r in caplog.records)
+
+    def test_missing_attribute_defaults_to_confirmed(self):
+        # A duck-typed test double that predates P43 and never defines
+        # verbose_confirmed at all must not be penalised for it - only a
+        # real SerialManager, which always has the attribute, enforces
+        # this gate in practice.
+        class _LegacyStubSerial(_HostModeStubSerial):
+            is_host_mode = False
+
+            def write_verbose_wait(self, *args, **kwargs):
+                return True
+
+            def detect_maildrop(self):
+                return True
+
+        config = AppConfig()
+        uploader = ParamsUploader(serial=_LegacyStubSerial(), config=config)
         sent = uploader.upload()
         assert sent > 0
 
