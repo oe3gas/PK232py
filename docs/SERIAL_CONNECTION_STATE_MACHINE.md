@@ -8,7 +8,7 @@ Abschnitt 6 — Alle Qt Signals mit ihrer Wirkung auf MainWindow — das ist die
 Abschnitt 7 — UI-Zustandstabelle: welche Controls sind in welchem Zustand enabled/disabled. Das verhindert Fehler bei neuen Menüeinträgen oder Buttons.
 Abschnitt 10–11 — _connect_mode Erklärung und alle Timing-Konstanten an einem Ort.
 Abschnitt 14 — P40 (2026-09-25): Parameter-Upload verweigert sich im Host Mode statt 68x 5s stumm zu verstreichen, plus Stichprobenverifikation nach dem Upload.
-Abschnitt 4 (Phase 1) — P43 (2026-09-25): der Wakeup ist jetzt eine aktive Vier-Schritt-Kette statt eines passiven SOH-Byte-Checks, weil is_host_mode nach einem Neustart der Anwendung nichts über den tatsächlichen Gerätezustand aussagt.
+Abschnitt 4 (Phase 1) — P43 (2026-09-25): der Wakeup ist jetzt eine aktive Fünf-Schritt-Kette statt eines passiven SOH-Byte-Checks, weil is_host_mode nach einem Neustart der Anwendung nichts über den tatsächlichen Gerätezustand aussagt. P44 ergänzt Stufe 3b (Rückholsequenz) für einen TNC, der nach einem abgewürgten Prozess mitten im Frame hängt.
 
 
 **Scope:** `SerialManager` + `MainWindow` connection lifecycle.
@@ -19,7 +19,7 @@ Covers all states from port closed to Host Mode active.
 - `src/pk232py/comm/pk232_hostmode_sub.py` — subprocess for Host Mode entry
 - `src/pk232py/ui/main_window.py` — UI reactions via Qt Signals
 
-**Last updated:** 2026-09-25 (P43 — four-step active TNC-state detection, see §4 Phase 1; P40 — upload-before-Host-Mode guard, see §14)
+**Last updated:** 2026-09-25 (P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
 
 ---
 
@@ -51,8 +51,9 @@ Covers all states from port closed to Host Mode active.
 | `C1` | Port open OK | `init_tnc()` → background thread starts | `C2` |
 | `C1` | Port open failed | Error message; port remains closed | `C0` |
 | `C2` | Step 1/2 (`*` or CR) → `cmd:`/banner | `_verbose_ready = True`, `verbose_confirmed = True`; emit `verbose_mode_ready` | `C3` |
-| `C2` | Step 3 (HPOLL query) → `$4F` frame | TNC genuinely in Host Mode — write `FRAME_HOST_OFF` directly, repeat step 2 | `C3` (if step-2 repeat sees `cmd:`) or `C7` (if not) |
-| `C2` | All four steps exhausted, nothing usable answered (P43) | Raise/abort — no upload attempted; message names port, baud rate, both possible causes | `C7` |
+| `C2` | Step 3 (HPOLL query) → `$4F` frame | TNC genuinely in Host Mode — write `FRAME_HOST_OFF` directly, repeat step 2 | `C3` (if step-2 repeat sees `cmd:`) or step 3b (if not) |
+| `C2` | Step 3b (P44, only if step 3 got NOTHING) → recovery sequence, then repeat step 2 → `cmd:` | Verbose confirmed after recovery | `C3` |
+| `C2` | All five steps exhausted, nothing usable answered (P43/P44) | Raise/abort — no upload attempted; message names port, baud rate, both possible causes | `C7` |
 | `C3` | `verbose_mode_ready` emitted | `ParamsUploader.upload()` starts in thread | `C4` |
 | `C4` | Upload complete | `ParamsUploader.verify()` spot-checks MYCALL/PACLEN/MAXFRAME against `AppConfig`, still in `C4` (P40, informational only — never blocks the transition below) | `C4` |
 | `C4` | Verify complete, `_connect_mode == "verbose"` | Stay in verbose terminal | `C3` |
@@ -102,7 +103,7 @@ The sequence for C5 entry is:
 
 ## 4. Host Mode Entry — Detailed Sequence
 
-### Phase 1: Wakeup (in `_init_tnc_thread`) — P43 four-step active detection
+### Phase 1: Wakeup (in `_init_tnc_thread`) — P43/P44 active detection chain
 
 **Rewritten 2026-09-25 (P43):** the old single-step wakeup ("send `*`,
 hope for `cmd:` or a stray SOH byte") could not detect a TNC left in Host
@@ -113,15 +114,17 @@ a valid frame there, and it sends nothing unsolicited while HPOLL is ON).
 Reproduced on the device 24.09.2026: this is what let a full parameter
 upload run into 68 x 5s timeouts with nothing reaching the TNC (P40).
 
-Four steps now run in order, each capped at `_TNC_STATE_STEP_TIMEOUT`
-(1.5 s) — detection itself must never take longer than the failure mode
-it prevents (worst case, step 4, is under 5 s total):
+Five steps now run in order (four as of P43, plus P44's step 3b), each
+capped at `_TNC_STATE_STEP_TIMEOUT` (1.5 s) — detection itself must never
+take longer than the failure mode it prevents (worst case, step 4, is
+under 5 s total):
 
 | # | Stimulus | Expected answer | Conclusion |
 |---|---|---|---|
 | 1 | `*` | banner or `cmd:` | verbose, freshly booted → done |
 | 2 | bare `CR` | `cmd:` | verbose, was already awake → done |
 | 3 | HPOLL query frame (`build_command(b'HP')`, SOH `$4F` H P ETB — no argument) | any `$4F`-CTL frame | **Host Mode confirmed** → write `FRAME_HOST_OFF` directly (no `HostModeWorker` running yet at this point, so this reuses the byte sequence `exit_host_mode()` sends via the worker, not that method), then repeat step 2 |
+| 3b | (P44, only if step 3 got NOTHING at all) recovery sequence — `FRAME_RECOVERY` (double-SOH + GG, TRM 4.1.6), then `FRAME_HOST_OFF` — the same bytes the "Recovery" menu action sends | `cmd:` after a repeated step 2 | verbose confirmed after recovery |
 | 4 | — | none of the above answered anything | no PK-232 reachable — abort, message names port, baud rate, and both possible causes (wrong port/baud vs. a hung TNC) |
 
 Step 2 is tried **before** step 3 deliberately: the already-awake,
@@ -131,6 +134,23 @@ actively asks in frame language instead of waiting for an unsolicited
 answer that never comes. This is also what closes Backlog.md's P29
 (wakeup CR-fallback) — the app now has this built in, where before it
 only existed in `tools/hw_check.py`.
+
+**Step 3b (P44, 2026-09-25):** if step 3's HPOLL query itself got no
+response at all — not even a malformed frame — the TNC may be a genuine
+Host Mode TNC that simply cannot answer: an application killed abruptly
+while in Host Mode (`Ctrl-C` in the console, observed 25.09.2026) can
+leave the TNC's own frame parser mid-frame, waiting for an `ETB` that
+never comes and discarding everything further, including a fresh `SOH`.
+Step 3b sends the documented recovery sequence — the exact
+`FRAME_RECOVERY` bytes the "Recovery" menu action already sends,
+followed by `FRAME_HOST_OFF` — directly on the port (not via
+`recovery()`/`exit_host_mode()`, for the same reason step 3 writes
+`FRAME_HOST_OFF` directly: no `HostModeWorker` exists yet at this point
+in the connection sequence), then repeats step 2 once more. Harmless if
+no TNC is attached at all. Every step (1 through 3b) logs both the bytes
+it sent and whatever it received, in hex, at `DEBUG` level — costs
+nothing at 0 bytes and saves a repeat hardware run the next time this
+needs diagnosing.
 
 On success (any of steps 1, 2, or 3-then-2), `_finish_verbose_init()`
 sets **both** `_verbose_ready` (existing) and the new
