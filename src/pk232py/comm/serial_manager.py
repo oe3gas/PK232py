@@ -67,6 +67,11 @@ _HOSTMODE_DELAY  = 0.8   # wait after HOST Y before GG poll
 _GG_MAX_RETRIES  = 5     # max GG poll retries
 _GG_RETRY_DELAY  = 0.5   # delay between retries
 _POLL_TIMEOUT    = 3.0   # wait for GG poll ACK
+# P43: each step of the active TNC-state detection chain in
+# _init_tnc_thread() gets this short a timeout - the detection itself
+# must not take longer than the failure mode it prevents (24.09.2026:
+# 68 x 5s = ~6 minutes of silent, unexecuted parameter uploads).
+_TNC_STATE_STEP_TIMEOUT = 1.5
 
 # Byte sequences
 _WAKEUP       = b"*"                               # no CR — autobaud trigger
@@ -372,6 +377,15 @@ class SerialManager(QObject):
         self._reader:          Optional[_ReaderThread]   = None
         self._in_host_mode     = False
         self._verbose_ready    = False
+        # P43: True only once the TNC-state detection chain in
+        # _init_tnc_thread() has ACTIVELY confirmed a verbose prompt this
+        # session - is_host_mode/is_verbose_mode are the software's own
+        # belief and can be wrong on a fresh instance (e.g. the app quit
+        # while the physical TNC stayed in Host Mode); this flag is never
+        # set without positive evidence. Reset at the start of every
+        # _init_tnc_thread() run, cleared again on successful Host Mode
+        # entry (enter_host_mode()).
+        self._verbose_confirmed = False
         self._poll_active      = False
         self._poll_thread      = None
         self._worker           = None  # _HostModeWorker in Host Mode
@@ -553,6 +567,20 @@ class SerialManager(QObject):
             return False
 
     def disconnect_port(self) -> None:
+        # P43.3: this is the intended, and already-correct, "what state
+        # does the TNC end up in on exit" answer — confirmed unchanged
+        # since commit ff17aa0. MainWindow.closeEvent() calls
+        # disconnect_port() (via a confirmation dialog) whenever the app
+        # is connected, so a CLEAN shutdown always sends HOST OFF first,
+        # leaving the physical TNC in verbose mode, not Host Mode. The
+        # 24.09.2026 reproduction ("TNC im Host Mode nach dem Beenden")
+        # is best explained by an exit that never reached this method at
+        # all (a force-kill, a crash, or the process ending before the
+        # close/confirm flow completed) — no code path can run cleanup
+        # after that. This is deliberately not "fixed" by adding a second
+        # exit mechanism: the P43.1 detection chain in _init_tnc_thread()
+        # already covers the resulting state on the NEXT connect,
+        # regardless of why the TNC ended up there.
         # Step 1: leave host mode cleanly (sends HOST OFF, stops ReaderThread)
         if self._in_host_mode:
             try:
@@ -616,6 +644,14 @@ class SerialManager(QObject):
         """True if connected and in verbose mode (not Host Mode)."""
         return self.is_connected and self._verbose_ready and not self._in_host_mode
 
+    @property
+    def verbose_confirmed(self) -> bool:
+        """True once the P43 detection chain has ACTIVELY confirmed a
+        verbose prompt this session - see the attribute's own docstring
+        in __init__ for why this differs from is_verbose_mode (which is
+        the software's unverified belief, not evidence)."""
+        return self._verbose_confirmed
+
     # ------------------------------------------------------------------
     # Phase 1 — TNC initialisation → verbose mode
     # ------------------------------------------------------------------
@@ -640,7 +676,47 @@ class SerialManager(QObject):
         return True
 
     def _init_tnc_thread(self) -> None:
-        """Background init — direct serial like pk232_hostmode.py script."""
+        """Background init — active TNC-state detection (P43).
+
+        is_host_mode is the SOFTWARE's own belief, not the device's real
+        state — a fresh SerialManager instance always starts with
+        _in_host_mode=False, regardless of what the physical TNC is
+        actually doing (e.g. left in Host Mode when the app last quit,
+        operator reproduced 24.09.2026: a fresh connect's parameter
+        upload ran into 68 x 5s timeouts with nothing reaching the TNC,
+        because it was genuinely in Host Mode and the old passive check —
+        "does a stray SOH byte happen to show up in the wakeup response"—
+        never actually saw one). This method instead ACTIVELY confirms
+        which state the TNC is in, via a four-step chain, each step short
+        (_TNC_STATE_STEP_TIMEOUT) so detection itself can never take
+        longer than the failure mode it exists to prevent:
+
+          1. '*'  -> banner or 'cmd:'  -> verbose, freshly booted -> done.
+          2. CR   -> 'cmd:'            -> verbose, already awake -> done.
+             (tried before step 3: the already-awake, verbose TNC is the
+             more common case and is settled by a single CR)
+          3. An HPOLL query frame (build_command(b'HP'), no argument) ->
+             any $4F-CTL frame back -> Host Mode confirmed. Step 3 must
+             ACTIVELY ask: in Host Mode the TNC sends nothing on its own
+             while HPOLL is ON (factory default), and '*' is not a valid
+             frame there either — it simply does not answer a passive
+             wakeup at all. Runs the documented exit (writing
+             FRAME_HOST_OFF directly, same bytes exit_host_mode() sends
+             via the worker — there is no worker yet at this point in the
+             connection sequence, so this reuses the byte sequence, not
+             that method), then repeats step 2: if THAT sees 'cmd:', the
+             TNC is confirmed back in verbose mode.
+          4. None of the above answered anything usable -> no PK-232
+             reachable at all. A wrong port/baud rate and a hung TNC look
+             identical from here (see CLAUDE.md's "PK-232 can hang"
+             gotcha) - the abort message names both.
+
+        On success, sets both _verbose_ready (existing) and
+        _verbose_confirmed (P43 — see its own docstring in __init__) and
+        emits verbose_mode_ready exactly as before. On failure, raises
+        (caught by the except block below, same fallback as ever) — no
+        upload is attempted from this connection cycle.
+        """
         try:
             port = self._serial
 
@@ -651,9 +727,10 @@ class SerialManager(QObject):
                 self._reader = None
 
             port.reset_input_buffer()
+            self._verbose_confirmed = False
 
             # ── Read until marker ──────────────────────────────────────
-            def read_until(marker, timeout=3.0):
+            def read_until(marker, timeout=_TNC_STATE_STEP_TIMEOUT):
                 buf = bytearray()
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
@@ -670,53 +747,92 @@ class SerialManager(QObject):
                         time.sleep(0.02)
                 return bytes(buf)
 
-            # ── STEP 1: Wakeup ─────────────────────────────────────────
+            # ── STEP 1: Wakeup '*' — banner or cmd: means "already verbose,
+            # freshly booted" (the common case right after power-on). ──
             self.status_message.emit("TNC: wakeup...")
-            logger.info("Init: sending wakeup '*'")
+            logger.info("Init: step 1 - wakeup '*'")
             port.write(_WAKEUP)
             port.flush()
-            resp = read_until(b"cmd:", timeout=_WAKEUP_TIMEOUT)
-            logger.debug("Wakeup response (%d B): %s", len(resp), resp.hex(' '))
-
-            if not resp:
-                raise RuntimeError("TNC did not respond — check port and baud")
-
-            # Store banner for capability detection (has_pactor property).
-            # Only store when known banner markers are present.
-            if any(m in resp for m in _BANNER_MARKERS):
-                self._tnc_banner = resp
-                logger.info(
-                    "TNC banner captured: PACTOR=%s (%d bytes)",
-                    b"PACTOR" in resp,
-                    len(resp),
-                )
-
-            if _SOH_BYTE in resp:
-                logger.info("TNC already in Host Mode")
-                self._in_host_mode = True
-                self._reader = _ReaderThread(
-                    port, self._on_frame_received,
-                    raw_callback=self._on_raw_data,
-                    host_mode_flag=lambda: self._in_host_mode,
-                )
-                self._reader.start()
-                self.host_mode_changed.emit(True)
+            step1_markers = (b"cmd:",) + _BANNER_MARKERS
+            resp = read_until(step1_markers, timeout=_TNC_STATE_STEP_TIMEOUT)
+            logger.debug("Init: step 1 response (%d B): %s", len(resp), resp.hex(' '))
+            if resp and any(m in resp for m in step1_markers):
+                logger.info("Init: step 1 confirmed verbose (banner/cmd:)")
+                self._finish_verbose_init(resp)
                 return
 
-            level, message = _wakeup_log_message(resp)
-            logger.log(level, message)
-            self._verbose_ready = True
-            self.status_message.emit("TNC ready (verbose)")
-            logger.info("Init complete — TNC in verbose mode")
+            # ── STEP 2: bare CR — the TNC may already be awake and simply
+            # did not answer '*' the way step 1 expected. ──────────────
+            logger.info("Init: step 2 - CR (already awake?)")
+            port.write(b"\r")
+            port.flush()
+            resp2 = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
+            logger.debug("Init: step 2 response (%d B): %s", len(resp2), resp2.hex(' '))
+            if b"cmd:" in resp2:
+                logger.info("Init: step 2 confirmed verbose (cmd: after CR)")
+                self._finish_verbose_init(resp2)
+                return
 
-            # Restart ReaderThread for verbose mode
-            self._reader = _ReaderThread(
-                port, self._on_frame_received,
-                raw_callback=self._on_raw_data,
-                host_mode_flag=lambda: self._in_host_mode,
+            # ── STEP 3: HPOLL query frame — the only way to reach a TNC
+            # that is genuinely in Host Mode with HPOLL ON, since it does
+            # not answer anything unsolicited there. ───────────────────
+            logger.info("Init: step 3 - HPOLL query frame")
+            port.write(build_command(b'HP'))
+            port.flush()
+            raw = bytearray()
+            frames: list = []
+            deadline = time.monotonic() + _TNC_STATE_STEP_TIMEOUT
+            while time.monotonic() < deadline:
+                n = port.in_waiting
+                if n:
+                    raw.extend(port.read(n))
+                    frames, _remaining = _extract_frames(bytearray(raw))
+                    if any(ctl == _CTL_BYTE for ctl, _payload in frames):
+                        break  # got our answer - no need to wait out the timeout
+                else:
+                    time.sleep(0.02)
+            logger.debug(
+                "Init: step 3 raw (%d B): %s -- %d frame(s)",
+                len(raw), bytes(raw).hex(' '), len(frames),
             )
-            self._reader.start()
-            self.verbose_mode_ready.emit()
+            if any(ctl == _CTL_BYTE for ctl, _payload in frames):
+                logger.info(
+                    "Init: step 3 confirmed Host Mode (0x4F frame) - "
+                    "exiting to verbose"
+                )
+                self._in_host_mode = True
+                port.write(FRAME_HOST_OFF)
+                port.flush()
+                time.sleep(0.2)
+                self._in_host_mode = False
+                logger.info("Init: repeating step 2 after Host Mode exit")
+                port.write(b"\r")
+                port.flush()
+                resp3 = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
+                logger.debug(
+                    "Init: post-exit response (%d B): %s",
+                    len(resp3), resp3.hex(' '),
+                )
+                if b"cmd:" in resp3:
+                    logger.info("Init: verbose confirmed after Host Mode exit")
+                    self._finish_verbose_init(resp3)
+                    return
+                logger.error(
+                    "Init: Host Mode exit did not reach cmd: - falling "
+                    "through to step 4"
+                )
+            else:
+                logger.info("Init: step 3 saw no 0x4F frame either")
+
+            # ── STEP 4: nothing answered at all. ────────────────────────
+            port_name = getattr(port, 'port', '?')
+            baudrate  = getattr(port, 'baudrate', '?')
+            raise RuntimeError(
+                f"No PK-232 responding on {port_name} at {baudrate}: no "
+                f"banner, no cmd: prompt and no Host Mode frame. Check "
+                f"port and baud rate, or power-cycle the TNC - it may be "
+                f"stuck (see the troubleshooting note in CLAUDE.md)."
+            )
 
         except Exception as exc:
             logger.error("init_tnc failed: %s", exc)
@@ -729,6 +845,32 @@ class SerialManager(QObject):
                 )
                 self._reader.start()
 
+    def _finish_verbose_init(self, resp: bytes) -> None:
+        """Common tail once _init_tnc_thread() has actively confirmed a
+        verbose prompt (P43, any of steps 1/2/3-then-2) - banner capture,
+        flags, reader thread, signal. *resp* is whatever was captured on
+        the step that succeeded; banner markers are looked for in it
+        regardless of which step matched, same as the original single-step
+        wakeup did."""
+        if any(m in resp for m in _BANNER_MARKERS):
+            self._tnc_banner = resp
+            logger.info(
+                "TNC banner captured: PACTOR=%s (%d bytes)",
+                b"PACTOR" in resp, len(resp),
+            )
+        level, message = _wakeup_log_message(resp)
+        logger.log(level, message)
+        self._verbose_ready     = True
+        self._verbose_confirmed = True
+        self.status_message.emit("TNC ready (verbose)")
+        logger.info("Init complete — TNC in verbose mode")
+        self._reader = _ReaderThread(
+            self._serial, self._on_frame_received,
+            raw_callback=self._on_raw_data,
+            host_mode_flag=lambda: self._in_host_mode,
+        )
+        self._reader.start()
+        self.verbose_mode_ready.emit()
 
     def _full_init(self) -> None:
         """No-op: PCPackRatt sends nothing before HOST 3 after wakeup.
@@ -866,6 +1008,10 @@ class SerialManager(QObject):
 
             self._in_host_mode  = True
             self._verbose_ready = False
+            # P43: verbose_confirmed only ever attests to the CURRENT
+            # verbose session - it says nothing about the Host Mode
+            # session that is about to start.
+            self._verbose_confirmed = False
 
             # Frame adapter: (ctl, payload) → HostFrame → Qt Signal
             def _frame_adapter(ctl, payload):
