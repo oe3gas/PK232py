@@ -995,6 +995,23 @@ rewritten 2026-09-24 for P42, see also
 `test_packet_screen.py`: `append_monitor_data()` now shares
 `append_channel_data()`'s ALL/CH filter, gated on `UI_CHANNEL`).
 
+**Rewritten P50 (2026-09-25) — filtering became a document switch, not
+an append-time decision:** the mechanism changed (one `QTextDocument`
+per channel plus a merged ALL document, `_sync_rx_document()` re-attaches
+`rx_display` to the right one instead of `append_channel_data()`/
+`append_monitor_data()` deciding whether to write a line at all), but
+the three steps above and their expected result are unchanged — "does
+not appear" now means "not in the currently-attached document", not
+"was never written anywhere". Also now true, which the old append-time
+filter could not offer: switching to chip 3 in CH view shows chip 3's
+**complete** history, not just monitor/data that arrives from the
+switch onward — see T130a below.
+
+**Status (P50):** ✅ PASS (2026-09-25, headless — `TestUiChannelZero`
+still passes unchanged against the new document-switch mechanism;
+`TestPerChannelRxDocuments` in `test_packet_screen.py` covers the new
+full-history behaviour).
+
 ### T101 — Hardware check: UI frame on an unconnected channel
 To confirm: does v7.1 actually transmit text that comes in over `$20` on
 the unconnected channel 0 as a UI frame along the configured UNPROTO path?
@@ -2255,6 +2272,93 @@ The word "using" torn apart by the app's own `[SYS]` lines, plus boxes
 
 **Status:** ✅ PASS (2026-09-25, unit-verified — full suite green). Live
 hardware re-test open (steps 1-5 above).
+
+---
+
+### T132 — Per-channel RX documents, compact prefixes, resizable TX, MHEARD auto-population (P50)
+
+Four independent findings from one operator session, 25.09.2026.
+
+**Finding A (channel offset, unresolved):** screenshot 19:07 — chip 1
+green with `OE3TEC` ("Ch 1 Partner: OE3TEC"), but every received line
+and the eventual `*** DISCONNECTED: OE3TEC-1 ***` tagged channel 2 (the
+old `[CH2]` format). Audited the full channel path in code
+(`build_ch_cmd()`/`ctl_channel()`/`_make_host_frame()`/`ChannelBar`'s
+dict-keyed state) — **no code-level offset found**; this does not rule
+out a genuine TNC-side behaviour. `SerialManager.send_channel_command()`
+now logs the requested channel next to the actual CTL byte for every
+CONNECT/DISCONNECT frame (DEBUG); combined with the existing RX-side
+`ch=%d`/`ch%d` logging (`HFPacketMode._handle_rx_data()`/
+`_handle_link_msg()`), a hardware capture of a repeat can now directly
+compare both without cross-referencing a separate hex dump.
+
+**Live sequence to run (to settle Finding A):**
+1. Connect to a real station on channel 1.
+2. Capture the DEBUG log for the whole session (both the `TX channel
+   cmd: channel=1 ctl=0x41 ...` line and every subsequent `ch=1`/`ch1`
+   RX line).
+3. **Expected, if the report reproduces:** the TX line shows `channel=1
+   ctl=0x41` (confirming the CO frame itself was correct) while later RX
+   lines show a DIFFERENT channel — settling that the TNC itself, not
+   pk232py, changed the channel. **If the RX lines also say channel=1
+   throughout** and only the CHIP/RX-window display disagreed, that
+   would point back at a display bug worth re-opening with the log
+   attached.
+
+**Findings B-E, live sequence to run:**
+4. Connect on channel 1, type text, switch to channel 3, switch back to
+   channel 1.
+   **Expected:** channel 1's full conversation history is still there —
+   not just what arrived after switching back (T100's own steps confirm
+   the ALL/CH document switch itself).
+5. Switch to `ALL` view.
+   **Expected:** both channels' data appear in arrival order, each RX
+   line from a QSO channel tagged with a compact `n│` (e.g. `1│`), no
+   prefix at all in `CH` view.
+6. Open **HF/VHF Packet Parameters → Display → "Show timestamps in the
+   RX view"**, turn it on.
+   **Expected:** every RX line now also shows `[HH:MM:SS]` in a muted
+   colour, ahead of the channel tag (ALL view) or the text (CH view).
+7. Drag the handle between the RX and TX windows.
+   **Expected:** RX/TX heights change accordingly; RX also grows when
+   the whole application window is made taller. Restart the app.
+   **Expected:** the dragged split is still there.
+8. Connect to a station on an unconnected channel, without pressing
+   MHEARD's Refresh button.
+   **Expected:** the station appears in MHEARD immediately, with its
+   channel number and in green. Disconnect.
+   **Expected:** the station stays in the MHEARD list, but loses the
+   channel number and the green colour (it was still heard).
+
+**Unit-verified:**
+- `test_packet_screen.py::TestPerChannelRxDocuments` (9 cases) —
+  channel 1's history survives switching away and back; ALL contains
+  both channels in arrival order; CH view has no prefix, ALL view has
+  the compact tag; timestamps off by default and on when enabled; scroll
+  position is remembered per channel; `reset_channels()` clears every
+  document; a system message's colour override is applied in the
+  document.
+- `test_packet_screen.py::TestMheardAutoPopulation` (3 cases) —
+  CONNECTED adds the partner with its channel; `add_entry_if_new()`
+  never duplicates; a disconnected station stays in the list but loses
+  its channel/colour.
+- `test_main_window_packet.py::TestPacketRxTxSplitterPersistence` (1
+  case) — the RX/TX splitter's sizes are saved to (and read back from)
+  `QSettings` under the right per-screen key, redirected to a fake store
+  so the test never touches the operator's real settings (same isolation
+  principle as P48's config-path fixture, applied to the registry-backed
+  `QSettings` store instead of the INI file).
+- `test_main_window_packet.py::TestLinkMessageAppearsInItsOwnChannel` —
+  updated for the new `n│` ALL-view tag format (was `[CHn]`).
+- `test_packet_hf.py::TestOnChannelState` — `DISCONNECTED`/busy now pass
+  the extracted partner through (needed for the MHEARD hook); `Retry
+  count exceeded` still passes `""` (P47's own rule: it carries no
+  callsign, and the extraction fallback would otherwise misread the
+  message text itself as one).
+
+**Status:** ✅ PASS (2026-09-25, unit-verified — full suite green).
+Finding A remains open; live hardware re-test for steps 1-8 above per
+the Definition of Done.
 
 ---
 
