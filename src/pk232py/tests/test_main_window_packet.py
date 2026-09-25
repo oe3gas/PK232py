@@ -310,7 +310,8 @@ class TestLinkMessageAppearsInItsOwnChannel:
         mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
 
         text = screen.rx_display.toPlainText()
-        assert "[CH1]" in text
+        # P50 Teil C: the compact ALL-view tag is "1|", not the old "[CH1]".
+        assert "1│" in text
         assert "*** DISCONNECTED: OE3XTC ***" in text
 
     def test_channel_15_always_appears_in_the_ui_channel(self, wired_vhf):
@@ -391,6 +392,58 @@ class TestLinkMessageAppearsInItsOwnChannel:
         mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE1XYZ"))
 
         assert "DISCONNECTED" in screen.lbl_status.text()
+
+
+class TestPacketRxTxSplitterPersistence:
+    """P50 Teil D - the Packet screen's own RX/TX splitter size is saved
+    and restored alongside the window geometry.
+
+    Uses a REDIRECTED QSettings (never the real one) - QSettings("OE3GAS",
+    APP_TITLE) writes to the OS-native persistent store (Windows registry
+    equivalent), the same class of risk P48 closed for ConfigManager's
+    INI file, just for a different persistence mechanism.
+    """
+
+    def test_splitter_sizes_round_trip_through_settings(self, wired_vhf, monkeypatch):
+        # Checks the SAVE/RESTORE WIRING (right QSettings key written, the
+        # SAME values read back and handed to setSizes()) rather than the
+        # splitter's own final .sizes() - QSplitter renormalizes requested
+        # sizes against the widget's actual on-screen width, which is not
+        # meaningful under the offscreen QPA platform with no real
+        # show()/resize(), so pixel-exact round-tripping is not something
+        # this test can (or needs to) assert.
+        w, screen = wired_vhf
+        store: dict = {}
+
+        class _FakeQSettings:
+            def __init__(self, *_a, **_k):
+                pass
+
+            def setValue(self, key, value):
+                store[key] = value
+
+            def value(self, key, default=None):
+                return store.get(key, default)
+
+        import pk232py.ui.main_window as mw
+        monkeypatch.setattr(mw, "QSettings", _FakeQSettings)
+
+        screen._rxtx_splitter.setSizes([300, 120])
+        w._save_window_geometry()
+
+        saved = list(store["vhfPacketRxTxSplitterSizes"])
+        assert saved == list(screen._rxtx_splitter.sizes())
+
+        restore_calls: list[list[int]] = []
+        orig_set_sizes = screen._rxtx_splitter.setSizes
+        monkeypatch.setattr(
+            screen._rxtx_splitter, "setSizes",
+            lambda sizes: (restore_calls.append(list(sizes)), orig_set_sizes(sizes))[1],
+        )
+
+        w._restore_window_geometry()
+
+        assert restore_calls and [int(x) for x in restore_calls[0]] == saved
 
 
 class TestPassallMnemonic:
