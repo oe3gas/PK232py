@@ -1831,6 +1831,48 @@ Definition of Done in `docs/P42_Connect_In_Chip_Spec.md`).
 
 ---
 
+### T125 — Upload-before-Host-Mode guard and verification (P40)
+
+Bugfix (24.09.2026, 21:27): 68 parameter-upload commands each hit
+`write_verbose_wait()`'s 5 s timeout (~6 minutes total) because the TNC
+was in Host Mode the entire time — there is no `cmd:` prompt there, so
+none of the 68 commands actually reached it.
+
+**Unit-verified (`test_params_uploader.py`, `test_serial_manager.py`):**
+1. `ParamsUploader.upload()` with a stub serial reporting
+   `is_host_mode = True` → sends nothing (`0` returned), logs an `ERROR`
+   naming Host Mode as the reason.
+2. Same, but `is_host_mode = False` → uploads normally (sample-tested
+   against `TestRefusesUploadInHostMode::
+   test_upload_proceeds_normally_when_not_in_host_mode`).
+3. A stub that answers `cmd:` for the first 5 commands then goes silent
+   → upload aborts after `_MAX_CONSECUTIVE_SILENT` (3) consecutive
+   silent commands (5 + 3 + 1 = 9 sent, not the full command list),
+   logs an `ERROR` naming "aborting upload". An isolated single miss
+   (every other command silent) does **not** abort — only consecutive
+   silence counts.
+4. `ParamsUploader.verify()` with a stub answering MYCALL/PACLEN/
+   MAXFRAME correctly → `(3, 3)`, logs `INFO "parameter upload verified
+   (3/3)"`. A mismatch or a missing answer logs a `WARNING` naming the
+   parameter and is not counted; MYCALL left as the `NOCALL` placeholder
+   (never uploaded in the first place) is skipped, not treated as a
+   mismatch.
+5. `SerialManager._parse_verbose_query_value()` (pure function) correctly
+   extracts the value from a real verbose-mode response shape (confirmed
+   P15) and skips the command's own echoed line, the same technique
+   `_classify_maildrop_response()` already uses for MAILDROP.
+
+**Still open (needs real hardware):** a live connection showing the
+`"parameter upload verified (3/3)"` line in the log and no `no cmd:`
+warning at all, with the whole connect sequence completing in under a
+minute as before (not the ~6 minutes the bug produced).
+
+**Status:** ✅ PASS (2026-09-25, unit-verified — 15 new/updated tests in
+`test_params_uploader.py`, 5 new tests in `test_serial_manager.py`, full
+suite 524 passed). Live hardware re-test open.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
