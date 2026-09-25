@@ -105,6 +105,27 @@ def _recolor_existing_text(widget: QTextEdit, color_map: dict) -> None:
         block = block.next()
 
 
+_ALLOWED_CONTROL_CHARS = ('\r', '\n', '\t')
+
+
+def _filter_control_chars(text: str) -> str:
+    """Strip C0 control characters ($00-$1F) and DEL ($7F) before TNC
+    text reaches the verbose terminal display (P49.B.2) - CR/LF/TAB are
+    the only ones a human reader needs; anything else (a stray SOH from
+    a leftover Host Mode frame, etc.) used to render as a visible box
+    glyph at the start of a line. The raw bytes still reach the DEBUG hex
+    log completely unfiltered (SerialManager's own TX/RX logging,
+    unaffected by this) - this only changes what is DISPLAYED. The one
+    filter function for verbose-terminal output - _on_vt_rx_data() is the
+    single place raw TNC bytes become displayed text, so this is called
+    from there and nowhere else needs its own copy.
+    """
+    return ''.join(
+        ch for ch in text
+        if ch in _ALLOWED_CONTROL_CHARS or ord(ch) >= 0x20 and ch != '\x7f'
+    )
+
+
 class MainWindow(QMainWindow):
     """Main application window.
 
@@ -127,6 +148,18 @@ class MainWindow(QMainWindow):
         self._app_config = self._config_mgr.app
         self._misc_params:   dict = {}
         self._connect_mode:  str  = "verbose"
+        # P49.A.2: whether _run_param_upload() has actually uploaded (not
+        # skipped via Fast Init) since the current connection was opened -
+        # the ONE source _on_enter_host_mode() and _run_param_upload()
+        # itself both read/write, reset whenever a new connection starts
+        # (_update_connection_ui(True)). There is no cmd: prompt in Host
+        # Mode at all (P40/P43) - once inside it, uploading is no longer
+        # possible, so this is what lets "Enter Host Mode" tell "already
+        # done this session" apart from "still outstanding".
+        self._params_uploaded_this_session: bool = False
+        # P49.B: banner-collection state - see _start_banner_collection().
+        self._banner_buffer: bytearray = bytearray()
+        self._banner_collecting: bool = False
         # TX state flag — independent of Qt button states.
         self._send_active: bool = False
         # FAX reception gate — applies to BOTH auto-sync and LOCK. Set False by
@@ -261,7 +294,24 @@ class MainWindow(QMainWindow):
         self._act_connect_host.triggered.connect(self._on_connect_host)
         tnc_menu.addAction(self._act_connect_host)
 
-        # 3) Leave Host Mode + Return to Terminal (Ctrl+L)
+        tnc_menu.addSeparator()
+
+        # 3) Enter Host Mode from an existing verbose connection (Ctrl+H,
+        # P49) - the gap this closes: "Connect + Enter Host Mode..." above
+        # only reaches Host Mode from a FRESH connect; an operator who
+        # connected via "Connect + Enter Terminal Mode..." had no way back
+        # into Host Mode at all ("Connect + Enter Host Mode..." is greyed
+        # out once connected). Checked: Ctrl+H is not bound to anything
+        # else anywhere in the app.
+        self._act_enter_host_mode = QAction("&Enter Host Mode", self)
+        self._act_enter_host_mode.setShortcut("Ctrl+H")
+        self._act_enter_host_mode.setStatusTip(
+            "Switch the current verbose connection to Host Mode"
+        )
+        self._act_enter_host_mode.triggered.connect(self._on_enter_host_mode)
+        tnc_menu.addAction(self._act_enter_host_mode)
+
+        # 4) Leave Host Mode + Return to Terminal (Ctrl+L)
         self._act_host_off = QAction("&Leave Host Mode + Return to Terminal", self)
         self._act_host_off.setShortcut("Ctrl+L")
         self._act_host_off.setStatusTip(
@@ -270,7 +320,9 @@ class MainWindow(QMainWindow):
         self._act_host_off.triggered.connect(self._on_host_mode_exit)
         tnc_menu.addAction(self._act_host_off)
 
-        # 4) Disconnect + Close Serial Port (Ctrl+D)
+        tnc_menu.addSeparator()
+
+        # 5) Disconnect + Close Serial Port (Ctrl+D)
         self._act_disconnect = QAction("&Disconnect + Close Serial Port", self)
         self._act_disconnect.setShortcut("Ctrl+D")
         self._act_disconnect.setStatusTip(
@@ -278,8 +330,6 @@ class MainWindow(QMainWindow):
         )
         self._act_disconnect.triggered.connect(self._on_disconnect)
         tnc_menu.addAction(self._act_disconnect)
-
-        tnc_menu.addSeparator()
 
         # P46.B: the way out of ANY state - no connection, mid-error,
         # stuck in Host Mode. Opens the port itself if needed (from the
@@ -1030,6 +1080,14 @@ class MainWindow(QMainWindow):
         self._opmode_timer.setInterval(5000)
         self._opmode_timer.timeout.connect(self._poll_opmode)
 
+        # P49.B: single-shot quiet-window timer for banner collection - see
+        # _start_banner_collection()'s docstring. Reset (restarted) on
+        # every byte that arrives while collecting; fires once nothing
+        # new has arrived for _BANNER_QUIET_MS.
+        self._banner_timer = QTimer(self)
+        self._banner_timer.setSingleShot(True)
+        self._banner_timer.timeout.connect(self._finish_banner_collection)
+
     # ------------------------------------------------------------------
     # Signal wiring
     # ------------------------------------------------------------------
@@ -1150,6 +1208,10 @@ class MainWindow(QMainWindow):
         self._log_monitor("[SYS] TNC in verbose mode")
         self._sb_mode.setText("Mode: VERBOSE")
         self._set_mode_indicator("verbose")
+        # P49.A.1: is_verbose_mode flips True right here - the one
+        # transition _update_connection_ui()/_update_host_mode_ui() alone
+        # cannot see (they already ran, showing "connecting").
+        self._update_tnc_menu_gating()
 
         # Parse firmware version from TNC banner and show in toolbar.
         # Banner example: "AEA PK-232M ...\nRelease 01.AUG.91"
@@ -1166,19 +1228,6 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(1)
         self._vt_input.setFocus()
         self._vt_display.clear()
-        # P44.B2: mirror what the device actually sent during init (banner
-        # + cmd:, or just cmd: if the TNC was already awake) - that prompt
-        # was already consumed inside the P43 detection chain to confirm
-        # verbose mode and would otherwise never reach the terminal at
-        # all, leaving the operator looking at an empty RX window with no
-        # visible cmd: prompt after a successful connect. Reuses
-        # _on_vt_rx_data() (same formatting as any other TNC response)
-        # rather than sending a fresh CR for the sole purpose of getting
-        # something to show - nothing extra goes out to the TNC for this.
-        _init_resp = getattr(self._serial, 'last_verbose_init_response', b"")
-        if _init_resp:
-            self._on_vt_rx_data(_init_resp)
-        self._vt_append("[SYS] TNC ready in verbose mode\n")
         # Enable mode selector
         self._mode_combo.setEnabled(True)
 
@@ -1217,68 +1266,134 @@ class MainWindow(QMainWindow):
             else:
                 self._act_params_pactor.setToolTip("")
 
-        # Upload parameters unless Fast Initialization is selected.
-        # Fast Init skips the parameter upload and goes directly to
-        # Host Mode (or verbose terminal), trusting the TNC's stored
-        # values from battery-backed RAM.
+        # P49.B: collect the mirrored init banner as ONE block before any
+        # [SYS] message follows - _finish_banner_collection() (fired once
+        # nothing new has arrived for a short quiet window) is what
+        # actually inserts it and then starts the parameter upload (or
+        # Fast Init skip) - see its own docstring for the interleaving/
+        # torn-banner bug this replaces.
+        self._start_banner_collection()
+
+    # P49.B: how long to wait, after the LAST byte arrives, before
+    # assuming the TNC's boot banner has fully arrived. SerialManager's
+    # own detection chain already waits out a 150ms quiet window inside
+    # read_until() before it hands back last_verbose_init_response - this
+    # is deliberately a bit MORE generous than that, since it exists
+    # specifically to catch banner bytes that straggled in even later
+    # (arriving via the freshly (re)started ReaderThread, after the
+    # chain's own read_until() had already returned) - the exact
+    # 25.09.2026 screenshot bug ("PK-232M is u[SYS] ...\nsing default
+    # values.").
+    _BANNER_QUIET_MS = 300
+
+    def _start_banner_collection(self) -> None:
+        """Begin collecting the mirrored init banner into one buffer
+        instead of displaying it immediately (P49.B.1).
+
+        Seeds the buffer with whatever the P43/P44 detection chain
+        already captured (last_verbose_init_response), then arms
+        _banner_timer for a quiet window; _on_raw_data_received()
+        re-arms it on every further byte that arrives while collecting
+        (the trailing banner fragment this whole mechanism exists to
+        catch). Once nothing new arrives for _BANNER_QUIET_MS,
+        _finish_banner_collection() fires and inserts everything
+        collected as ONE block, before any [SYS] message or the
+        parameter upload follows - never interleaved with either.
+        """
+        self._banner_buffer = bytearray(
+            getattr(self._serial, 'last_verbose_init_response', b"")
+        )
+        self._banner_collecting = True
+        self._banner_timer.start(self._BANNER_QUIET_MS)
+
+    def _finish_banner_collection(self) -> None:
+        """Insert the fully-collected banner as one block, then proceed
+        with the [SYS] messages and the parameter upload (P49.B.1) -
+        the tail _on_verbose_mode_ready() used to run immediately after
+        a single, possibly-incomplete _on_vt_rx_data() call."""
+        self._banner_collecting = False
+        if self._banner_buffer:
+            self._on_vt_rx_data(bytes(self._banner_buffer))
+        self._banner_buffer = bytearray()
+        self._vt_append("[SYS] TNC ready in verbose mode\n")
+        self._start_param_upload_thread()
+
+    def _start_param_upload_thread(self) -> None:
+        """Run _run_param_upload() on a background thread (P49 - extracted
+        from _on_verbose_mode_ready() so _on_enter_host_mode() can reuse
+        the exact same upload-or-skip logic, never a second version)."""
         import threading
+        threading.Thread(
+            target=self._run_param_upload, daemon=True, name="PK232-ParamUpload"
+        ).start()
+
+    def _run_param_upload(self) -> None:
+        """Upload parameters (or skip via Fast Init), then act on
+        self._connect_mode ("host" -> enter Host Mode; else -> stay in
+        the verbose terminal). Reads self._connect_mode/self._config.
+        fast_init directly - both are already instance state, set before
+        this is ever started, never passed as closure arguments.
+
+        Sets self._params_uploaded_this_session = True the moment a REAL
+        upload (not skipped by Fast Init) completes - the one place that
+        happens (P49.A.2) - so _on_enter_host_mode() can tell "already
+        uploaded this session" apart from "still outstanding" without a
+        second, independent tracker.
+        """
         connect_mode = self._connect_mode
         fast_init    = self._config.fast_init
 
-        def _upload():
-            if fast_init:
-                self._vt_append("[SYS] Fast Init — parameter upload skipped\n")
-                self._log_monitor("[SYS] Fast Init active — no parameter upload")
-                if connect_mode == "host":
-                    self._vt_append("[SYS] Entering Host Mode...\n")
-                    self._serial.enter_host_mode()
-                else:
-                    self._vt_append("[SYS] Verbose terminal ready (fast init)\n")
-                    self._vt_input.setFocus()
-                return
-            self._vt_append("[SYS] Uploading parameters...\n")
-            uploader = ParamsUploader(
-                self._serial,
-                self._app_config,
-                echo_callback=self._vt_append,
-            )
-            n = uploader.upload()
-            self._log_monitor(f"[SYS] {n} parameters uploaded")
-            # P40.3: spot-check MYCALL/PACLEN/MAXFRAME against AppConfig,
-            # still in verbose mode, before Host Mode entry - cheap
-            # (under a second) and would have caught the 24.09.2026
-            # Host Mode upload failure immediately instead of on the
-            # next QSO attempt. Purely informational: never aborts.
-            if n > 0:
-                matched, applicable = uploader.verify()
-                if applicable and matched == applicable:
-                    self._log_monitor(
-                        f"[SYS] parameter upload verified ({matched}/{applicable})"
-                    )
-                elif applicable:
-                    self._log_monitor(
-                        f"[SYS] parameter upload verification: only "
-                        f"{matched}/{applicable} matched - see log for details"
-                    )
-            self._update_maildrop_gate_ui()
-            if getattr(self._serial, 'has_maildrop', None) is False:
-                self._log_monitor(
-                    "[SYS] TNC has no MailDrop — "
-                    "MailDrop commands skipped, button stays disabled"
-                )
+        if fast_init:
+            self._vt_append("[SYS] Fast Init — parameter upload skipped\n")
+            self._log_monitor("[SYS] Fast Init active — no parameter upload")
             if connect_mode == "host":
-                self._vt_append(
-                    f"[SYS] {n} parameters uploaded -- entering Host Mode...\n"
-                )
+                self._vt_append("[SYS] Entering Host Mode...\n")
                 self._serial.enter_host_mode()
             else:
-                self._vt_append(
-                    f"[SYS] {n} parameters uploaded -- verbose terminal ready\n"
-                )
+                self._vt_append("[SYS] Verbose terminal ready (fast init)\n")
                 self._vt_input.setFocus()
-        threading.Thread(
-            target=_upload, daemon=True, name="PK232-ParamUpload"
-        ).start()
+            return
+        self._vt_append("[SYS] Uploading parameters...\n")
+        uploader = ParamsUploader(
+            self._serial,
+            self._app_config,
+            echo_callback=self._vt_append,
+        )
+        n = uploader.upload()
+        self._params_uploaded_this_session = True
+        self._log_monitor(f"[SYS] {n} parameters uploaded")
+        # P40.3: spot-check MYCALL/PACLEN/MAXFRAME against AppConfig,
+        # still in verbose mode, before Host Mode entry - cheap
+        # (under a second) and would have caught the 24.09.2026
+        # Host Mode upload failure immediately instead of on the
+        # next QSO attempt. Purely informational: never aborts.
+        if n > 0:
+            matched, applicable = uploader.verify()
+            if applicable and matched == applicable:
+                self._log_monitor(
+                    f"[SYS] parameter upload verified ({matched}/{applicable})"
+                )
+            elif applicable:
+                self._log_monitor(
+                    f"[SYS] parameter upload verification: only "
+                    f"{matched}/{applicable} matched - see log for details"
+                )
+        self._update_maildrop_gate_ui()
+        if getattr(self._serial, 'has_maildrop', None) is False:
+            self._log_monitor(
+                "[SYS] TNC has no MailDrop — "
+                "MailDrop commands skipped, button stays disabled"
+            )
+        if connect_mode == "host":
+            self._vt_append(
+                f"[SYS] {n} parameters uploaded -- entering Host Mode...\n"
+            )
+            self._serial.enter_host_mode()
+        else:
+            self._vt_append(
+                f"[SYS] {n} parameters uploaded -- verbose terminal ready\n"
+            )
+            self._vt_input.setFocus()
 
     def _on_params_upload_required(self) -> None:
         """Called when TNC rebooted same as verbose_mode_ready but with log message."""
@@ -1305,9 +1420,92 @@ class MainWindow(QMainWindow):
         self._set_mode_indicator("error")
         self._sb_mode.setText("Mode: ERROR")
         self._mode_combo.setEnabled(False)
+        # _update_tnc_menu_gating() reads the raw is_connected (still True
+        # here - the port stays open) and would disable Connect on that
+        # basis; Enter/Leave Host Mode end up correctly disabled from it
+        # (neither is_verbose_mode nor is_host_mode is true after a failed
+        # chain) - only the Connect pair needs the explicit override below,
+        # since "connected" for THEM here really means "connected AND
+        # confirmed", not the raw port-open boolean.
+        self._update_tnc_menu_gating()
         self._act_connect_verbose.setEnabled(True)
         self._act_connect_host.setEnabled(True)
         self._act_recovery.setEnabled(True)
+
+    def _on_enter_host_mode(self) -> None:
+        """TNC menu 'Enter Host Mode' (Ctrl+H, P49.A) - switch to Host
+        Mode from an EXISTING verbose connection. "Connect + Enter Host
+        Mode..." only ever reaches Host Mode from a fresh connect
+        (_connect_mode set to "host" before init_tnc() even runs); an
+        operator who connected via "Connect + Enter Terminal Mode..."
+        had no way back into Host Mode at all before this action existed
+        - "Connect + Enter Host Mode..." is greyed out once connected.
+
+        This is also the LAST chance to upload parameters (P40/P43 -
+        there is no cmd: prompt in Host Mode at all, so nothing can be
+        uploaded once inside it):
+          - already uploaded this session -> straight to Host Mode
+          - upload outstanding, Fast Init off -> upload runs first
+          - upload outstanding, Fast Init on -> ask, since Fast Init
+            already deliberately skipped it once; switching without
+            asking would silently commit to the TNC's stored values
+            (factory defaults on a TNC with no RAM buffer battery -
+            CLAUDE.md's "no RAM buffer battery" gotcha) with no way back.
+        """
+        if not (self._serial.is_connected
+                and getattr(self._serial, 'is_verbose_mode', False)):
+            return
+        if self._params_uploaded_this_session:
+            self._log_monitor("[SYS] parameters already uploaded")
+            self._enter_host_mode_now()
+            return
+        if not self._config.fast_init:
+            self._connect_mode = "host"
+            self._start_param_upload_thread()
+            return
+        choice = self._ask_fast_init_upload_choice()
+        if choice == "upload":
+            self._connect_mode = "host"
+            self._start_param_upload_thread()
+        elif choice == "skip":
+            self._enter_host_mode_now()
+        # else "cancel" (or the box was dismissed) - do nothing.
+
+    def _ask_fast_init_upload_choice(self) -> str:
+        """Ask what to do about the still-outstanding parameter upload
+        before switching to Host Mode (P49.A.2) - split out from
+        _on_enter_host_mode() so a test can stub this ONE method instead
+        of the real QMessageBox, which would otherwise block forever
+        under the offscreen QPA platform waiting for a click that never
+        comes. Returns "upload", "skip", or "cancel"."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Enter Host Mode")
+        box.setText(
+            "Fast Init skipped the parameter upload. The TNC is running "
+            "on its stored values and cannot be configured once Host "
+            "Mode is active. Upload parameters now?"
+        )
+        btn_upload = box.addButton("Upload and switch", QMessageBox.ButtonRole.AcceptRole)
+        btn_skip   = box.addButton("Switch without upload", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(btn_upload)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_upload:
+            return "upload"
+        if clicked is btn_skip:
+            return "skip"
+        return "cancel"
+
+    def _enter_host_mode_now(self) -> None:
+        """Switch to Host Mode immediately - no upload decision left to
+        make (already uploaded this session, or the operator explicitly
+        chose to skip it)."""
+        self._vt_append("[SYS] Entering Host Mode...\n")
+        self._set_mode_indicator("switching")
+        self._sb_mode.setText("Mode: Switching to Host Mode...")
+        self._serial.enter_host_mode()
 
     def _on_host_mode_exit(self) -> None:
         if self._serial.is_connected:
@@ -4531,14 +4729,67 @@ class MainWindow(QMainWindow):
     # UI state updates
     # ------------------------------------------------------------------
 
-    def _update_connection_ui(self, connected: bool) -> None:
+    def _update_tnc_menu_gating(self) -> None:
+        """P49.A.1: strict enable/disable for the TNC menu's Connect/
+        Enter-Host-Mode/Leave-Host-Mode cluster, by the ACTUAL live
+        SerialManager sub-state (is_connected/is_verbose_mode/
+        is_host_mode) - never a separately tracked flag that could drift
+        from it. Called from every transition that can change this:
+        _update_connection_ui() (connect/disconnect),
+        _update_host_mode_ui() (Host Mode on/off, including a PACTOR
+        Path-B temporary exit - see OPMODE_SWITCH_STATE_MACHINE.md), and
+        _on_verbose_mode_ready() (the one transition neither of those two
+        sees on its own: is_verbose_mode flips True there, while
+        _update_connection_ui(True) already ran earlier showing
+        "connecting", not yet verbose).
+
+        Before this fix, "Leave Host Mode + Return to Terminal" was only
+        ever gated on `connected` - enabled in verbose mode too, where
+        exit_host_mode() is a harmless no-op, but exactly the kind of
+        "enabled but pointless" control this project has hit before
+        (e.g. the pre-P46 toolbar).
+        """
+        connected = self._serial.is_connected
+        # getattr with a permissive default: is_verbose_mode was never
+        # read anywhere in main_window.py before P49, so pre-existing
+        # duck-typed test doubles across the suite do not define it -
+        # same convention as has_pactor/verbose_confirmed elsewhere.
+        verbose   = getattr(self._serial, 'is_verbose_mode', False)
+        host      = self._serial.is_host_mode
         self._act_connect_verbose.setEnabled(not connected)
         self._act_connect_host.setEnabled(not connected)
+
+        can_enter = connected and verbose and not host
+        self._act_enter_host_mode.setEnabled(can_enter)
+        if can_enter:
+            self._act_enter_host_mode.setToolTip("")
+        elif host:
+            self._act_enter_host_mode.setToolTip("Already in Host Mode")
+        elif not connected:
+            self._act_enter_host_mode.setToolTip("Connect to the TNC first")
+        else:
+            self._act_enter_host_mode.setToolTip("Not yet in verbose mode")
+
+        can_leave = connected and host
+        self._act_host_off.setEnabled(can_leave)
+        if can_leave:
+            self._act_host_off.setToolTip("")
+        elif not connected:
+            self._act_host_off.setToolTip("Connect to the TNC first")
+        else:
+            self._act_host_off.setToolTip("Not in Host Mode")
+
+    def _update_connection_ui(self, connected: bool) -> None:
         self._act_disconnect.setEnabled(connected)
-        self._act_host_off.setEnabled(connected)
         # P46.B: Emergency Reconnect is the way out of ANY state - no
         # connection, mid-error, stuck in Host Mode - so unlike every
         # other TNC action here, it is never gated on `connected`.
+        if connected:
+            # P49.A.2: a new connection starts with a clean slate - the
+            # upload decision belongs to THIS connection, never carried
+            # over from a previous one.
+            self._params_uploaded_this_session = False
+        self._update_tnc_menu_gating()
         self._update_serial_signals()
         if self._act_serial_status.isChecked():
             if connected:
@@ -4570,6 +4821,7 @@ class MainWindow(QMainWindow):
     def _update_host_mode_ui(self, active: bool) -> None:
         """Switch view and enable mode selector when Host Mode is active."""
         self._mode_combo.setEnabled(active or self._serial.is_connected)
+        self._update_tnc_menu_gating()
         # CTRL+D is used as EOT marker in TX window during Host Mode.
         # Disable the Disconnect shortcut to prevent conflict.
         self._act_disconnect.setShortcut(
@@ -4908,12 +5160,27 @@ class MainWindow(QMainWindow):
             text = data.decode('ascii', errors='replace')
         except Exception:
             text = repr(data)
+        # P49.B.2: strip stray control bytes (a leftover SOH, etc.) before
+        # anything else - they used to render as boxes at the start of a
+        # line. Raw bytes are unaffected - still logged in hex at DEBUG
+        # by SerialManager itself.
+        text = _filter_control_chars(text)
         # Insert blank line before cmd: to separate response blocks
         text = text.replace('cmd:', '\ncmd:')
         self._vt_append(text, color="#cccccc")
 
     def _on_raw_data_received(self, data: bytes) -> None:
-        """Display raw serial data in verbose terminal (only when in verbose mode)."""
+        """Display raw serial data in verbose terminal (only when in verbose mode).
+
+        P49.B.1: while a banner collection is in progress, bytes go into
+        that buffer instead of straight to the display - re-arming the
+        quiet-window timer - so a straggling banner fragment can never
+        land in between the app's own [SYS] messages again.
+        """
+        if self._banner_collecting:
+            self._banner_buffer.extend(data)
+            self._banner_timer.start(self._BANNER_QUIET_MS)
+            return
         if self._stack.currentIndex() == 1:
             self._on_vt_rx_data(data)
 
