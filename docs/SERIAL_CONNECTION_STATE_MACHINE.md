@@ -8,7 +8,8 @@ Abschnitt 6 — Alle Qt Signals mit ihrer Wirkung auf MainWindow — das ist die
 Abschnitt 7 — UI-Zustandstabelle: welche Controls sind in welchem Zustand enabled/disabled. Das verhindert Fehler bei neuen Menüeinträgen oder Buttons.
 Abschnitt 10–11 — _connect_mode Erklärung und alle Timing-Konstanten an einem Ort.
 Abschnitt 14 — P40 (2026-09-25): Parameter-Upload verweigert sich im Host Mode statt 68x 5s stumm zu verstreichen, plus Stichprobenverifikation nach dem Upload.
-Abschnitt 4 (Phase 1) — P43 (2026-09-25): der Wakeup ist jetzt eine aktive Fünf-Schritt-Kette statt eines passiven SOH-Byte-Checks, weil is_host_mode nach einem Neustart der Anwendung nichts über den tatsächlichen Gerätezustand aussagt. P44 ergänzt Stufe 3b (Rückholsequenz) für einen TNC, der nach einem abgewürgten Prozess mitten im Frame hängt.
+Abschnitt 4 (Phase 1) — P43 (2026-09-25): der Wakeup ist jetzt eine aktive Fünf-Schritt-Kette statt eines passiven SOH-Byte-Checks, weil is_host_mode nach einem Neustart der Anwendung nichts über den tatsächlichen Gerätezustand aussagt. P44 ergänzt Stufe 3b (Rückholsequenz), deren Begründung P45 von einem Befund zu einer Vermutung korrigiert.
+Abschnitt 15 — P45 (2026-09-25): Recovery meldet jetzt, was sie getan hat, und endet in einem definierten Zustand (verbose, bestätigt, oder der bekannte Fehlerfall) statt stillschweigend nichts zu tun; ein gescheiterter Init zeigt sich nicht mehr als verbunden.
 
 
 **Scope:** `SerialManager` + `MainWindow` connection lifecycle.
@@ -19,7 +20,7 @@ Covers all states from port closed to Host Mode active.
 - `src/pk232py/comm/pk232_hostmode_sub.py` — subprocess for Host Mode entry
 - `src/pk232py/ui/main_window.py` — UI reactions via Qt Signals
 
-**Last updated:** 2026-09-25 (P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
+**Last updated:** 2026-09-25 (P45 — Recovery reports its outcome and ends in a defined state, honest connection state after a failed init, see §15; P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
 
 ---
 
@@ -135,13 +136,19 @@ answer that never comes. This is also what closes Backlog.md's P29
 (wakeup CR-fallback) — the app now has this built in, where before it
 only existed in `tools/hw_check.py`.
 
-**Step 3b (P44, 2026-09-25):** if step 3's HPOLL query itself got no
-response at all — not even a malformed frame — the TNC may be a genuine
-Host Mode TNC that simply cannot answer: an application killed abruptly
-while in Host Mode (`Ctrl-C` in the console, observed 25.09.2026) can
-leave the TNC's own frame parser mid-frame, waiting for an `ETB` that
-never comes and discarding everything further, including a fresh `SOH`.
-Step 3b sends the documented recovery sequence — the exact
+**Step 3b (P44, 2026-09-25; the "why" corrected P45, 2026-09-25):** if
+step 3's HPOLL query itself got no response at all — not even a
+malformed frame — the TNC may be a genuine Host Mode TNC that simply
+cannot answer. P44 suspected an application killed abruptly while in
+Host Mode (`Ctrl-C` in the console, observed 25.09.2026) leaving the
+TNC's own frame parser mid-frame, waiting for an `ETB` that never comes
+and discarding everything further, including a fresh `SOH`. **P45
+corrected this to a suspicion, not a measured finding** — a healthy TNC
+in Host Mode also answers nothing to a plain terminal program (it only
+processes framed Host Mode data there), so observed silence cannot by
+itself distinguish "stuck mid-frame" from "working normally" — see
+CLAUDE.md's "P44's half-frame theory" gotcha. The step itself is
+unaffected either way: step 3b sends the documented recovery sequence — the exact
 `FRAME_RECOVERY` bytes the "Recovery" menu action already sends,
 followed by `FRAME_HOST_OFF` — directly on the port (not via
 `recovery()`/`exit_host_mode()`, for the same reason step 3 writes
@@ -239,14 +246,19 @@ SerialManager                    TNC
      │── emit host_mode_changed(False)│
 ```
 
-### Recovery (stuck Host Mode)
+### Recovery (stuck Host Mode) — rewritten P45, see §15 for the full picture
 
 ```
 SerialManager                    TNC
      │                                │
      │── write FRAME_RECOVERY ───────>│  SOH SOH $4F G G ETB
      │   sleep(0.2)                   │  (double-SOH resync)
-     │── exit_host_mode() ────────────│  → normal exit sequence
+     │── write FRAME_HOST_OFF ───────>│  SOH $4F H O N ETB, direct write
+     │   sleep(0.2)                   │  (not via exit_host_mode() - see §15,
+     │                                │   same reasoning as step 3/3b in §4)
+     │── _init_tnc_thread() ─────────>│  the EXISTING P43/P44 chain,
+     │                                │  reused outright to determine
+     │                                │  and report the result (§15)
 ```
 
 > **Critical:** `HOST OFF` in verbose mode as text (`HOST OFF\r`) does NOT
@@ -259,11 +271,13 @@ SerialManager                    TNC
 
 | Signal | When emitted | Payload | MainWindow reaction |
 |---|---|---|---|
-| `connection_changed` | Port open/close | `bool` | Enable/disable Connect/Disconnect menu |
-| `verbose_mode_ready` | C2 → C3 | — | Show verbose terminal; start param upload |
+| `connection_changed` | Port open/close | `bool` | Enable/disable Connect/Disconnect menu; `True` → indicator "connecting" (P45.2, NOT "verbose" — see §15) |
+| `verbose_mode_ready` | C2 → C3 | — | Show verbose terminal; start param upload; indicator "verbose" |
 | `params_upload_required` | TNC rebooted during init | — | Re-run `_on_verbose_mode_ready()` |
 | `host_mode_changed` | C5 → C6 or C6 → C3 | `bool` | Switch stack to opmode screens; update indicator |
-| `status_message` | Any state change | `str` | Show in status bar |
+| `status_message` | Any state change | `str` | Show in status bar AND (if it matches an error keyword) a dialog (P45.2 — used to be either/or) |
+| `init_failed` (P45.2) | C2 → C7, detection chain found nothing | — | Indicator → "error"; disable mode combo/"Enter Host Mode"; keep Connect/Recovery enabled (§15) |
+| `recovery_finished` (P45.1) | `recovery()`'s background thread finishes | `bool, str` | Re-enable/relabel the Recovery button; show the message in the status bar + verbose terminal, dialog on failure (§15) |
 | `frame_received` | C6, per frame | `HostFrame` | Dispatch to `ModeManager.on_frame()` |
 | `raw_data_received` | C3/C4, per chunk | `bytes` | Show in verbose terminal |
 
@@ -274,13 +288,13 @@ SerialManager                    TNC
 | State | Mode Indicator | Mode Combo | SEND/RECEIVE | Opmode Screen |
 |---|---|---|---|---|
 | `C0` OFFLINE | grey "OFFLINE" | disabled | disabled | — |
-| `C1` PORT OPEN | grey "OFFLINE" | disabled | disabled | — |
-| `C2` INITIALISING | orange "INIT…" | disabled | disabled | verbose terminal |
-| `C3` VERBOSE | green "VERBOSE" | enabled | disabled | verbose terminal |
-| `C4` UPLOADING | green "VERBOSE" | disabled | disabled | verbose terminal |
-| `C5` SWITCHING | orange "SWITCHING" | disabled | disabled | verbose terminal |
-| `C6` HOST MODE | blue "HOST MODE" | enabled | enabled | opmode screen |
-| `C7` ERROR | red "ERROR" | disabled | disabled | verbose terminal |
+| `C1` PORT OPEN | blue "CONNECTING..." (P45.2) | disabled | disabled | — |
+| `C2` INITIALISING | blue "CONNECTING..." (unchanged from C1 - nothing about the indicator changes until the chain resolves) | disabled | disabled | verbose terminal |
+| `C3` VERBOSE | amber "VERBOSE MODE" | enabled | disabled | verbose terminal |
+| `C4` UPLOADING | amber "VERBOSE MODE" | disabled | disabled | verbose terminal |
+| `C5` SWITCHING | blue "SWITCHING..." | disabled | disabled | verbose terminal |
+| `C6` HOST MODE | green "HOST MODE" | enabled | enabled | opmode screen |
+| `C7` ERROR | red "ERROR" (P45.2) | disabled | Connect + Recovery enabled ("Enter Host Mode" disabled) | verbose terminal |
 
 ---
 
@@ -324,10 +338,10 @@ The boolean properties map to states as follows:
 | Error condition | Recovery action |
 |---|---|
 | Port open failed | Show error dialog; stay in C0 |
-| TNC no response on wakeup | Emit error; start ReaderThread; → C7 |
+| Detection chain exhausted (§4 Phase 1 step 4) | Emit `init_failed` + `status_message`; → C7; port stays OPEN (Connect/Recovery need it) — see §15 |
 | Subprocess timeout | Reopen port; start ReaderThread; → C7 |
 | Serial exception in Worker | Worker thread exits; `disconnect_port()`; → C0 |
-| Stuck in Host Mode (no response) | User: TNC → Recovery; sends double-SOH |
+| Stuck in Host Mode (no response) | User: TNC → Recovery; runs the full sequence + detection chain, reports the result (§15, P45 — used to send the sequence and nothing else) |
 | `params_upload_required` | Automatic: re-call `_on_verbose_mode_ready()` |
 
 ---
@@ -482,3 +496,97 @@ never blocks the `C4 → C3`/`C4 → C5` transition.
 See CLAUDE.md's "There is no `cmd:` prompt in Host Mode" gotcha (TNC /
 firmware v7.1) for the full writeup, and Testplan.md for the
 verification test case.
+
+---
+
+## 15. Recovery — report what happened, end in a defined state (P45, 2026-09-25)
+
+**Finding (25.09.2026, operator at the device):** TNC in Host Mode → app
+started → Connect → the detection chain's own error → **the app still
+showed itself as connected** (Host Mode button enabled/green-looking,
+firmware still "unknown") → Recovery pressed → **no visible reaction at
+all** → "Host Mode" pressed → "SWITCHING" → Baudot screen → the TNC was
+in fact reachable again. Two gaps: the connection state lied after a
+failed init, and Recovery gave no feedback at all about whether it had
+worked — that only became apparent by accident, via a completely
+different button.
+
+`SerialManager.recovery()` now runs in a background thread, in three
+parts, each one reported:
+
+1. **Send the recovery sequence** — `FRAME_RECOVERY` (double-SOH + GG,
+   TRM 4.1.6) then `FRAME_HOST_OFF`, both via `_write_raw()` directly (it
+   already hex-logs every TX at `DEBUG`) — not via `exit_host_mode()`,
+   which assumes a running `HostModeWorker` that does not exist yet here
+   (same reasoning as §4 Phase 1's steps 3/3b).
+2. **Determine the state** — calls `_init_tnc_thread()` itself, the
+   EXACT SAME P43/P44 detection chain a normal connect uses (§4 Phase 1)
+   — no second version of it is built for Recovery. That chain already
+   implements "CR → `cmd:`; else HPOLL frame; else the recovery sequence
+   again" as its own steps 2/3/3b, plus a step 1 (`*`) that is harmless
+   to try again here.
+3. **Report the result** — emits `recovery_finished(success: bool,
+   message: str)`:
+
+   | Result | Message |
+   |---|---|
+   | `cmd:` confirmed | `"Recovery successful - TNC is at the command prompt (verbose mode)."` |
+   | only HPOLL answers (step 3 of the chain) | intermediate: `"TNC responds in Host Mode - leaving Host Mode..."` (via `status_message`, from inside the chain itself), then step 3's own exit-and-recheck decides the FINAL outcome, one of the two rows above/below |
+   | nothing answers | `"Recovery did not reach the TNC. Power-cycle it and reconnect."` |
+
+   `MainWindow._on_recovery_finished()` shows the message in the status
+   bar AND the verbose terminal's RX window (`[SYS] ...`, so it is still
+   there in a later capture, not just a transient status-bar line), plus
+   a warning dialog on failure. `_on_recovery()` disables and relabels
+   the Recovery button/menu action ("Recovery running...") for the whole
+   duration, restored by `_on_recovery_finished()` either way.
+
+**End state on success:** `C3` VERBOSE, `verbose_confirmed` set. From
+there the operator continues normally — parameter upload and Host Mode
+entry run over the existing paths (`verbose_mode_ready` fires exactly as
+after any other successful connect; no Recovery-specific handling).
+
+**End state on failure:** whatever `_init_tnc_thread()`'s own step 4
+already leaves behind (§2's "All five steps exhausted" row → `C7`) —
+`verbose_confirmed` stays `False`, the port stays open.
+
+### The connection-state half of the same finding (P45.2)
+
+`connection_changed(True)` fires the instant `connect_port()` opens the
+port — in `C1`, well before `init_tnc()` (`C2`) has confirmed anything.
+`_update_connection_ui(True)` used to jump straight to the `"verbose"`
+mode-indicator state on port-open alone; if `init_tnc()` then failed,
+nothing ever corrected that, leaving the indicator reading VERBOSE (and
+the "Enter Host Mode" button enabled) indefinitely. Fixed:
+
+- `_update_connection_ui(True)` now sets a new, honest `"connecting"`
+  indicator state instead — it only ever resolves forward, via
+  `verbose_mode_ready` (success, → `"verbose"`) or the new
+  `SerialManager.init_failed` signal (failure, → `"error"`,
+  `MainWindow._on_init_failed()`).
+- The serial port is deliberately left open on the failure path (no
+  `disconnect_port()` call) — Recovery needs a real port object, and
+  both Recovery and Connect must stay usable as the way out.
+  `_on_init_failed()` disables the mode combo and "Enter Host Mode"
+  (nothing there is actually usable without a confirmed device) but
+  explicitly re-enables Connect and Recovery.
+- `_on_connect_verbose()`/`_on_connect_host()` now check `is_connected`
+  first and retry `init_tnc()` directly on the already-open port when
+  it is already `True`, instead of going through `connect_port()` again
+  — that method's own "port already open" guard used to make a second
+  Connect press after a failed init silently do nothing at all.
+- `_on_status_message()`'s error path used to be an if/else (dialog OR
+  status bar, never both) — an error now always reaches the status bar
+  as well as the dialog.
+
+### A note on the step 3b "why" (P44 → corrected P45)
+
+Step 3b (§4 Phase 1) was motivated by a suspicion — a process killed
+abruptly mid-frame leaves the TNC's parser stuck waiting for an `ETB` —
+that P45 downgraded from a stated finding to a labelled suspicion: **a
+healthy TNC in Host Mode is silent in a plain terminal program too**
+(it only processes framed binary data there), so observed silence alone
+cannot distinguish "stuck" from "working normally". See CLAUDE.md's
+"P44's half-frame theory" gotcha. Step 3b itself is unaffected — it
+remains cheap and harmless to try regardless of which explanation (if
+either) is eventually confirmed by a real measurement.
