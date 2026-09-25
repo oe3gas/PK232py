@@ -30,10 +30,12 @@ Layout (left panel via QSplitter, right panel = MHEARD):
     ├──────────────────────────────────────────┤              │
     │ [0][1][2][3][4][5][6][7][8][9]  ← ChannelBar             │
     ├──────────────────────────────────────────┤              │
-    │  RX window  (expands)                     │              │
-    ├──────────────────────────────────────────┤              │
-    │  TX window (5 lines)      [Hold TX]       │              │
-    │                            [Clear TX]     │              │
+    │  RX window  (grows with the window,       │              │
+    │   one QTextDocument per channel + ALL,    │              │
+    │   P50)                                    │              │
+    │ ══════════════ (drag handle, QSplitter) ══│              │
+    │  TX window (~5 lines,     [Hold TX]       │              │
+    │   height adjustable/saved) [Clear TX]     │              │
     │                            [Clear RX]     │              │
     ├──────────────────────────────────────────┤              │
     │  [M1][M2][M3][M4][M5][M6]  [Edit Macros]  │              │
@@ -69,7 +71,7 @@ from PyQt6.QtCore import (
     Qt, QTimer, QEvent, pyqtSignal, QStringListModel,
     QVariantAnimation, QEasingCurve, QAbstractAnimation,
 )
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont, QColor, QTextDocument, QTextCursor, QTextCharFormat
 from PyQt6.QtWidgets import (
     QApplication, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel,
@@ -987,6 +989,19 @@ class MheardPanel(QWidget):
         self._entries.insert(0, (callsign, time_str, direct))
         self._render()
 
+    def add_entry_if_new(self, callsign: str, time_str: str, direct: bool = False) -> None:
+        """Add *callsign* only if it is not already in the list (P50
+        Teil E) - called from a live link message (CONNECTED/
+        DISCONNECTED/busy/Connect request) so a connection partner
+        appears in MHEARD immediately, without waiting for a manual
+        Refresh. Unlike add_entry(), never duplicates or updates an
+        existing row - a station repeatedly mentioned in link messages
+        (e.g. several DATA exchanges on one QSO) must not accumulate
+        the same callsign over and over."""
+        if any(c == callsign for c, _t, _d in self._entries):
+            return
+        self.add_entry(callsign, time_str, direct)
+
     def set_channel_map(self, mapping: dict[str, int]) -> None:
         """Update which callsigns are currently connected on which channel.
 
@@ -1115,6 +1130,11 @@ class PacketBaseScreen(QWidget):
     HBAUD_DEFAULT   = "300"
     MONITOR_DEFAULT = "4"
 
+    # P50 Teil B: sentinel key for the merged ALL RX document in
+    # _rx_scroll/_rx_current_key - distinct from any real channel number
+    # (0-9) so the two can share one dict without collision.
+    _ALL_DOC_KEY = "ALL"
+
     # Signals connected automatically by MainWindow._wire_mode_callbacks().
     # Declared on the base class → HF and VHF Packet inherit them.
     clear_tx_req = pyqtSignal()
@@ -1123,7 +1143,29 @@ class PacketBaseScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self._view_all = True   # ALL vs CH RX filter (P1.4)
+        self._view_all = True   # ALL vs CH RX filter (P1.4; P50: now a
+                                 # DOCUMENT switch, not an append-time
+                                 # filter - see _sync_rx_document())
+
+        # Per-channel RX document buffer (P50 Teil B) - one QTextDocument
+        # per channel (0-9) plus a merged ALL document that receives
+        # every line too, in arrival order. Switching the visible channel
+        # or the ALL/CH view just re-attaches rx_display to the right
+        # document (_sync_rx_document()) - no more append-time filtering,
+        # so a channel's FULL history is there the moment you switch to
+        # it, not just what arrives from then on. _rx_scroll remembers
+        # each document's own scroll position across switches.
+        self._rx_docs: dict[int, QTextDocument] = {
+            ch: QTextDocument(self) for ch in range(CHANNEL_COUNT)
+        }
+        self._rx_doc_all = QTextDocument(self)
+        for _doc in list(self._rx_docs.values()) + [self._rx_doc_all]:
+            _doc.setMaximumBlockCount(5000)   # overwritten by
+                                               # apply_display_settings()
+        self._rx_scroll: dict[object, int] = {}
+        self._rx_current_key: object = self._ALL_DOC_KEY
+        self._show_timestamps = False   # P50 Teil C - set via
+                                         # apply_display_settings()
 
         # Per-channel TX draft buffer (P9). ch -> (text, cursor_pos).
         # _tx_channel is populated once self.channel_bar exists (see
@@ -1325,11 +1367,13 @@ class PacketBaseScreen(QWidget):
 
     def reset_channels(self) -> None:
         """Clear all channel state — every chip back to free, MHEARD channel
-        column cleared, every per-channel TX draft discarded (P9.3). Called
-        by MainWindow when the mode is (re)activated and when leaving Host
-        Mode (see _switch_opmode()/_update_host_mode_ui() in main_window.py)
-        — without this, a CONNECTED/CALLING chip or a stale TX draft from a
-        previous session would linger with no frame ever left to clear it.
+        column cleared, every per-channel TX draft discarded (P9.3), every
+        RX document emptied (P50 Teil B). Called by MainWindow when the
+        mode is (re)activated and when leaving Host Mode (see
+        _switch_opmode()/_update_host_mode_ui() in main_window.py) —
+        without this, a CONNECTED/CALLING chip, a stale TX draft, or a
+        previous session's RX history would linger with no frame ever
+        left to clear it.
         """
         self.channel_bar.reset()
         self.mheard_panel.set_channel_map({})
@@ -1337,6 +1381,11 @@ class PacketBaseScreen(QWidget):
         self.tx_input.blockSignals(True)
         self.tx_input.clear()
         self.tx_input.blockSignals(False)
+        for doc in self._rx_docs.values():
+            doc.clear()
+        self._rx_doc_all.clear()
+        self._rx_scroll.clear()
+        self._sync_rx_document()
 
     # ------------------------------------------------------------------
     # Per-channel TX draft buffer (P9) — text typed on one channel must
@@ -1386,49 +1435,151 @@ class PacketBaseScreen(QWidget):
         self.tx_input.setTextCursor(new_cursor)
         self.tx_input.blockSignals(False)
 
+    # Muted colour for the optional timestamp and the ALL-view "n|" tag
+    # (P50 Teil C) - never the line's own content colour, so a system
+    # message's eye-catching colour (link messages, etc.) still stands
+    # out against it.
+    _MUTED_RX_COLOR = "#6a6a6a"
+
+    def apply_display_settings(self, show_timestamps: bool, rx_max_lines: int) -> None:
+        """Apply PC-side RX display settings (P50 Teil C) - called once on
+        mode activation and again immediately whenever the HF Packet
+        Parameters dialog is accepted (HF and VHF Packet share
+        HFPacketConfig, so MainWindow calls this on both screens)."""
+        self._show_timestamps = show_timestamps
+        for doc in list(self._rx_docs.values()) + [self._rx_doc_all]:
+            doc.setMaximumBlockCount(rx_max_lines)
+
+    def _all_view_tag(self, channel: int) -> str:
+        """Compact ALL-view channel tag (P50 Teil C): "UI" for the UI
+        channel (matching the chip's own "UI" label, P10), the plain
+        digit for a QSO channel."""
+        return "UI" if channel == UI_CHANNEL else str(channel)
+
+    def _sync_rx_document(self) -> None:
+        """Attach rx_display to whichever document the current ALL/CH +
+        channel selection implies (P50 Teil B) - ALL always shows
+        _rx_doc_all; CH shows the current channel's own document. Saves
+        the OUTGOING document's scroll position and restores the
+        INCOMING one's (defaulting to the bottom for a document that has
+        never been scrolled), so switching back and forth does not reset
+        your reading position each time."""
+        self._rx_scroll[self._rx_current_key] = self.rx_display.verticalScrollBar().value()
+        new_key = self._ALL_DOC_KEY if self._view_all else self.current_channel()
+        new_doc = (
+            self._rx_doc_all if new_key == self._ALL_DOC_KEY
+            else self._rx_docs[new_key]
+        )
+        self._rx_current_key = new_key
+        if self.rx_display.document() is not new_doc:
+            self.rx_display.setDocument(new_doc)
+        self.rx_display.verticalScrollBar().setValue(
+            self._rx_scroll.get(new_key, self.rx_display.verticalScrollBar().maximum())
+        )
+
+    def _on_rx_channel_switch(self, _new_ch: int) -> None:
+        """ChannelBar.channel_changed - re-sync the visible RX document
+        (P50 Teil B). ChannelBar itself updates current() BEFORE emitting
+        this signal, so _sync_rx_document() reading current_channel()
+        fresh already sees the new channel; _new_ch is not needed."""
+        self._sync_rx_document()
+
     def set_view_all(self, show_all: bool) -> None:
         self._view_all = show_all
+        self._sync_rx_document()
 
-    def append_channel_data(self, channel: int, text: str) -> None:
-        """Append received connected-channel data, honouring the ALL/CH filter."""
-        if not (self._view_all or channel == self.current_channel()):
-            return
-        prefix = f"[CH{channel}] " if self._view_all else ""
-        self._rx_append(prefix + text, is_html=False, color="#66ccff")
+    def append_channel_data(self, channel: int, text: str, color: str = "#66ccff") -> None:
+        """Append received connected-channel data - or, via an explicit
+        *color* override, a channel-scoped system/link message (P47) -
+        to *channel*'s own RX document AND the merged ALL document (P50
+        Teil B). Every line lives in both, so switching to a channel
+        later shows its FULL history, not just what arrives from then
+        on; the ALL/CH filter (T100) is now a matter of which document
+        rx_display is showing (_sync_rx_document()), not whether a line
+        gets written at all.
+        """
+        self._rx_append(channel, text, is_html=False, color=color)
 
     def append_monitor_data(self, text: str, is_html: bool = False,
                              ts: str = "") -> None:
-        """Append a monitored/unproto frame, honouring the same ALL/CH filter
-        as append_channel_data() (P10): ALL always shows it; CH shows it only
-        when channel 0 (UI_CHANNEL) is the current channel. Monitor frames
-        carry no channel of their own ($3F, TRM 4.3) — they are attributed to
-        channel 0 by convention, matching how outgoing UNPROTO traffic is
-        also sent on channel 0 (see _on_packet_unproto()). This gives the
-        CH view one consistent meaning: chip 0 selected = monitor traffic,
-        chip N selected = only that QSO.
+        """Append a monitored/unproto frame to the UI channel's own RX
+        document AND the merged ALL document (P50 Teil B). Monitor frames
+        carry no channel of their own ($3F, TRM 4.3) — they are
+        attributed to channel 0 by convention, matching how outgoing
+        UNPROTO traffic is also sent on channel 0 (see
+        _on_packet_unproto()).
 
-        `ts` is optional and only used by MainWindow._packet_rx_redraw() to
-        replay a HISTORICAL timestamp when the user toggles APRS decode
-        on/off (T59/T60 — that redraw re-renders the whole buffer and must
-        not relabel every old frame with "now"). Live callers omit it and
-        get the current UTC time, same as append_channel_data(). Because the
-        filter now applies here too, that redraw will also honour whichever
-        channel is current at the time of the toggle — consistent with the
-        v0.1 "no buffer rebuild on channel switch" rule (P1.4): the redraw is
-        already a full re-render for a different reason (APRS decode), so it
-        is not a new exception, just this filter applying like anywhere else.
+        `ts` is optional and only used by
+        MainWindow._packet_rx_redraw()/append_monitor_data_local_only()
+        to replay a HISTORICAL timestamp when the user toggles APRS
+        decode on/off (T59/T60). Live callers omit it and get the
+        current UTC time, same as append_channel_data().
         """
-        if not (self._view_all or self.current_channel() == UI_CHANNEL):
-            return
-        self._rx_append(text, is_html=is_html, color="#aaaaaa", ts=ts)
+        self._rx_append(UI_CHANNEL, text, is_html=is_html, color="#aaaaaa", ts=ts)
 
-    def _rx_append(self, text: str, is_html: bool, color: str,
-                    ts: str = "") -> None:
+    def append_monitor_data_local_only(self, text: str, is_html: bool = False,
+                                        ts: str = "") -> None:
+        """Same rendering as append_monitor_data(), but writes ONLY into
+        the UI channel's own document, never ALL (P50 Teil B/APRS
+        interplay) - used exclusively by
+        MainWindow._packet_rx_redraw()/clear_monitor_channel() when the
+        APRS decode toggle changes. See clear_monitor_channel()'s own
+        docstring for why ALL is deliberately left untouched by that
+        redraw."""
         if not ts:
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat
-        cursor = self.rx_display.textCursor()
+        self._rx_write_line(self._rx_docs[UI_CHANNEL], None, text, is_html, "#aaaaaa", ts)
+        if self.rx_display.document() is self._rx_docs[UI_CHANNEL]:
+            self.rx_display.moveCursor(QTextCursor.MoveOperation.End)
+            self.rx_display.ensureCursorVisible()
+
+    def clear_monitor_channel(self) -> None:
+        """Clear ONLY the UI channel's own RX document - called by
+        MainWindow._packet_rx_redraw() right before replaying
+        _packet_raw_frames through append_monitor_data_local_only(),
+        when the APRS decode toggle changes (T59/T60).
+
+        Deliberately does NOT touch the merged ALL document (P50 Teil B):
+        ALL is a chronological log of everything that has already
+        arrived, from every channel. Rebuilding it here would either
+        duplicate every historical monitor line (replayed through the
+        normal dual-write append_monitor_data()) or silently drop every
+        QSO-channel line recorded since (if cleared outright) - neither
+        of which an APRS raw<->decoded toggle should do. Only the CH view
+        of the UI channel (which, by construction, ever receives monitor
+        frames and nothing else) reflects the new decode mode; ALL keeps
+        its already-rendered history exactly as it was.
+        """
+        self._rx_docs[UI_CHANNEL].clear()
+
+    def _rx_write_line(self, doc, tag: str | None, text: str, is_html: bool,
+                        color: str, ts: str) -> None:
+        """Write ONE formatted line into *doc* - the shared primitive
+        both _rx_append() (writes to a channel's own doc + ALL) and
+        append_monitor_data_local_only() (writes to the UI channel's own
+        doc only) use.
+
+        *tag* is the compact ALL-view channel tag (P50 Teil C, e.g.
+        "2|"); pass None for a channel's own document, where the channel
+        is already implied by which chip/view is selected, not repeated
+        on every line. The optional timestamp (self._show_timestamps)
+        and the tag are always rendered in the muted colour, never the
+        line's own *color* - a system message's eye-catching colour (an
+        explicit non-default *color* from a link/status message, P47)
+        still stands out against them.
+        """
+        cursor = QTextCursor(doc)
         cursor.movePosition(QTextCursor.MoveOperation.End)
+        if self._show_timestamps:
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(self._MUTED_RX_COLOR))
+            cursor.setCharFormat(fmt)
+            cursor.insertText(f"[{ts}] ")
+        if tag is not None:
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(self._MUTED_RX_COLOR))
+            cursor.setCharFormat(fmt)
+            cursor.insertText(f"{tag}│")
         if is_html:
             cursor.insertHtml(text)
             fmt = QTextCharFormat()
@@ -1440,12 +1591,25 @@ class PacketBaseScreen(QWidget):
             fmt.setForeground(QColor(color))
             cursor.setCharFormat(fmt)
             lines = text.splitlines() or [""]
-            cursor.insertText(f"[{ts}] {lines[0]}\n")
+            cursor.insertText(f"{lines[0]}\n")
             for line in lines[1:]:
                 cursor.insertText(f"         {line}\n")
             cursor.insertText("\n")
-        self.rx_display.setTextCursor(cursor)
-        self.rx_display.ensureCursorVisible()
+
+    def _rx_append(self, channel: int, text: str, is_html: bool, color: str,
+                    ts: str = "") -> None:
+        """Write one line into *channel*'s own document (no prefix - the
+        channel is already named by which chip/view is selected) and the
+        merged ALL document (compact "n|" tag, P50 Teil B/C)."""
+        if not ts:
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        self._rx_write_line(self._rx_docs[channel], None, text, is_html, color, ts)
+        self._rx_write_line(
+            self._rx_doc_all, self._all_view_tag(channel), text, is_html, color, ts
+        )
+        if self.rx_display.document() in (self._rx_docs[channel], self._rx_doc_all):
+            self.rx_display.moveCursor(QTextCursor.MoveOperation.End)
+            self.rx_display.ensureCursorVisible()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -1759,10 +1923,19 @@ class PacketBaseScreen(QWidget):
         # channel_changed signal touches tx_input.
         self._tx_channel = self.channel_bar.current()
         self.channel_bar.channel_changed.connect(self._on_tx_channel_switch)
+        # P50 Teil B: RX document swap, same "connect here first" reasoning
+        # as the TX buffer swap above.
+        self.channel_bar.channel_changed.connect(self._on_rx_channel_switch)
 
         add_hline(root)
 
-        # 8. RX window ─────────────────────────────────────────────────
+        # 8+9. RX/TX as a vertical splitter (P50 Teil D) — RX grows with
+        # the window; TX height is adjustable by dragging the splitter
+        # handle instead of a fixed five-line height (which stays only as
+        # the STARTING size, not a hard constraint). The handle itself
+        # replaces the hline that used to sit between them.
+        self._rxtx_splitter = QSplitter(Qt.Orientation.Vertical)
+
         self.rx_display = QTextEdit()
         self.rx_display.setReadOnly(True)
         self.rx_display.setFont(QFont("Courier New", 10))
@@ -1774,23 +1947,26 @@ class PacketBaseScreen(QWidget):
         self.rx_display.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
+        self.rx_display.setMinimumHeight(80)   # never fully squeezed away
         style_rx_widget(self.rx_display)
-        root.addWidget(self.rx_display, stretch=1)
+        self.rx_display.setDocument(self._rx_doc_all)   # _view_all defaults True
+        self._rxtx_splitter.addWidget(self.rx_display)
 
-        add_hline(root)
-
-        # 9. TX window — 5 lines, block cursor + side button column ─────
-        tx_row = QHBoxLayout()
+        tx_container = QWidget()
+        tx_container.setMinimumHeight(60)   # never fully squeezed away
+        tx_row = QHBoxLayout(tx_container)
+        tx_row.setContentsMargins(0, 0, 0, 0)
         tx_row.setSpacing(SPACING)
 
         self.tx_input = QTextEdit()
         self.tx_input.setFont(QFont("Courier New", 10))
         self.tx_input.setPlaceholderText("TX — type here …")
+        self.tx_input.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         fm = self.tx_input.fontMetrics()
         mc = self.tx_input.contentsMargins()
-        self.tx_input.setFixedHeight(
-            fm.lineSpacing() * 5 + mc.top() + mc.bottom() + 8
-        )
+        _tx_start_height = fm.lineSpacing() * 5 + mc.top() + mc.bottom() + 8
         style_tx_widget(self.tx_input)
         self.tx_input.setCursorWidth(
             self.tx_input.fontMetrics().averageCharWidth()
@@ -1818,9 +1994,17 @@ class PacketBaseScreen(QWidget):
         self.btn_clear_rx.clicked.connect(self.clear_rx_req.emit)
         tx_btn_col.addWidget(self.btn_clear_rx)
 
+        # addStretch() keeps the button column top-anchored at its
+        # natural size — it must NOT grow when the splitter handle is
+        # dragged to give the TX pane more height (P50 Teil D).
         tx_btn_col.addStretch()
         tx_row.addLayout(tx_btn_col)
-        root.addLayout(tx_row)
+
+        self._rxtx_splitter.addWidget(tx_container)
+        self._rxtx_splitter.setStretchFactor(0, 1)   # RX takes any extra space
+        self._rxtx_splitter.setStretchFactor(1, 0)   # TX stays put unless dragged
+        self._rxtx_splitter.setSizes([400, _tx_start_height])
+        root.addWidget(self._rxtx_splitter, stretch=1)
 
         add_hline(root)
 
