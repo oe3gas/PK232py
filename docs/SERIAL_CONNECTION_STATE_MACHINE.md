@@ -11,6 +11,7 @@ Abschnitt 14 — P40 (2026-09-25): Parameter-Upload verweigert sich im Host Mode
 Abschnitt 4 (Phase 1) — P43 (2026-09-25): der Wakeup ist jetzt eine aktive Fünf-Schritt-Kette statt eines passiven SOH-Byte-Checks, weil is_host_mode nach einem Neustart der Anwendung nichts über den tatsächlichen Gerätezustand aussagt. P44 ergänzt Stufe 3b (Rückholsequenz), deren Begründung P45 von einem Befund zu einer Vermutung korrigiert.
 Abschnitt 15 — P45 (2026-09-25): Recovery meldet jetzt, was sie getan hat, und endet in einem definierten Zustand (verbose, bestätigt, oder der bekannte Fehlerfall) statt stillschweigend nichts zu tun; ein gescheiterter Init zeigt sich nicht mehr als verbunden.
 Abschnitt 16 — P46 (2026-09-25): Recovery übernimmt jetzt den Lesepfad VOR dem eigenen Sendevorgang (nicht erst vor der Kette) und wird zur "Emergency Reconnect" — sie funktioniert aus jedem Zustand, öffnet den Port selbst und ist nie gesperrt. TNC-Aktionen (Connect/Disconnect/Host Mode/Recovery) leben jetzt nur noch im TNC-Menü, nicht mehr in der Werkzeugleiste.
+Abschnitt 17 — P49 (2026-09-25): Neuer, vom Verbindungsaufbau getrennter Weg in den Host Mode aus einer bestehenden verbose-Verbindung heraus (Menüpunkt "Enter Host Mode", Ctrl+H) — schließt eine echte Lücke (kein Weg zurück nach "Connect + Enter Terminal Mode…") und ist zugleich die letzte Gelegenheit für den Parameter-Upload. Separat: das gespiegelte Banner wird jetzt als ein Block eingefügt statt von den eigenen [SYS]-Meldungen zerrissen zu werden.
 
 
 **Scope:** `SerialManager` + `MainWindow` connection lifecycle.
@@ -21,7 +22,7 @@ Covers all states from port closed to Host Mode active.
 - `src/pk232py/comm/pk232_hostmode_sub.py` — subprocess for Host Mode entry
 - `src/pk232py/ui/main_window.py` — UI reactions via Qt Signals
 
-**Last updated:** 2026-09-25 (P46 — Recovery is the emergency reconnect: owns the read path before its own preamble, works from any state, opens the port itself; TNC actions moved from the toolbar into the TNC menu only, see §16; P45 — Recovery reports its outcome and ends in a defined state, honest connection state after a failed init, see §15; P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
+**Last updated:** 2026-09-25 (P49 — Enter Host Mode from an existing verbose connection, the last chance to upload parameters, see §17; banner rendered as one block, control characters filtered; P46 — Recovery is the emergency reconnect: owns the read path before its own preamble, works from any state, opens the port itself; TNC actions moved from the toolbar into the TNC menu only, see §16; P45 — Recovery reports its outcome and ends in a defined state, honest connection state after a failed init, see §15; P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
 
 ---
 
@@ -363,6 +364,7 @@ This flag controls what happens after parameter upload completes.
 |---|---|---|
 | `"verbose"` | `_on_connect_verbose()` (Ctrl+T) | Stay in C3 (verbose terminal) |
 | `"host"` | `_on_connect_host()` | Proceed to C5 → C6 (Host Mode) |
+| `"host"` | `_on_enter_host_mode()` (Ctrl+H, P49 — see §17) | Same as above, but from an ALREADY-open C3 connection, never via `init_tnc()` again |
 
 ---
 
@@ -672,6 +674,20 @@ upload + `enter_host_mode()` flow runs exactly as it always has via
 `_on_verbose_mode_ready()` — more robust than the old direct shortcut,
 since it re-confirms the TNC is actually still there first.
 
+**Correction (P49, 2026-09-25):** the above was wrong for the NORMAL
+case. `_on_connect_host()`'s `is_connected` retry branch only matters
+while the action is actually enabled — and "Connect + Enter Host
+Mode..." is disabled the instant a connection succeeds (§17's gating
+table), only re-enabled again by `_on_init_failed()` as part of the
+ERROR-state recovery path (§9). So the retry branch does cover "Connect
+failed, try again" - but an operator who connected NORMALLY via
+"Connect + Enter Terminal Mode..." and only later decided to switch had
+NO way back into Host Mode at all - reproduced 25.09.2026. P49 adds a
+new, distinct `Enter Host Mode` action (Ctrl+H) for exactly this gap;
+see §17 for the full picture, including why it is not simply a rebuild
+of the retired `_on_host_mode_enter()` (it also owns the upload
+decision, which the old toolbar shortcut never did).
+
 **Shortcut collision resolved:** the TNC menu's `Ctrl+D` ("Disconnect +
 Close Serial Port") collided with the Packet screen's own channel-
 disconnect shortcut (`Ctrl+D`, P42) — two different "disconnect"
@@ -692,3 +708,101 @@ cannot distinguish "stuck" from "working normally". See CLAUDE.md's
 "P44's half-frame theory" gotcha. Step 3b itself is unaffected — it
 remains cheap and harmless to try regardless of which explanation (if
 either) is eventually confirmed by a real measurement.
+
+## 17. Entering Host Mode from an existing verbose connection (P49, 2026-09-25)
+
+**This is a SEPARATE path from the connect flow (§4), not a variant of
+it.** §4 Phase 1 (`init_tnc()`) → Phase 2 (upload) → Phase 3
+(`enter_host_mode()`) all happen back to back, driven by
+`_connect_mode` set BEFORE `init_tnc()` even starts. The path this
+section describes starts from an ALREADY-open C3 (VERBOSE) connection —
+Phase 1 already happened, possibly a long time ago, and Phase 2 may or
+may not have run yet. `MainWindow._on_enter_host_mode()` (TNC menu
+"Enter Host Mode", Ctrl+H) is the sole entry point; it never calls
+`init_tnc()` again.
+
+**Why this exists:** "Connect + Enter Host Mode..." (`_on_connect_host()`)
+only reaches Host Mode from a fresh connect, or (via its own
+`is_connected` retry branch) while recovering from a failed connect —
+see §16's correction note. An operator who connected normally via
+"Connect + Enter Terminal Mode..." and only later decided to switch had
+no way back into Host Mode at all before this.
+
+### 17.1 Gating
+
+`MainWindow._update_tnc_menu_gating()` computes all four Connect/Enter/
+Leave actions from the LIVE `SerialManager` state — never a separately
+tracked flag — and is called from every transition that can change it:
+`_update_connection_ui()`, `_update_host_mode_ui()`, and
+`_on_verbose_mode_ready()` (the one transition the other two cannot see
+on their own: `is_verbose_mode` flips `True` there, while
+`_update_connection_ui(True)` already ran earlier showing
+"CONNECTING...").
+
+| State | Connect x2 | Enter Host Mode | Leave Host Mode |
+|---|---|---|---|
+| `C0` OFFLINE | enabled | disabled ("Connect to the TNC first") | disabled ("Connect to the TNC first") |
+| `C3` VERBOSE | disabled | **enabled** | disabled ("Not in Host Mode") |
+| `C5`/`C6` SWITCHING/HOST MODE | disabled | disabled ("Already in Host Mode") | **enabled** |
+| `C7` ERROR | enabled (explicit override — see §9) | disabled | disabled |
+
+### 17.2 The upload decision
+
+There is no `cmd:` prompt in Host Mode at all (§14/CLAUDE.md's own
+gotcha) — once inside it, uploading is no longer possible. Whether
+Phase 2 already ran THIS connection is tracked by exactly one flag,
+`MainWindow._params_uploaded_this_session`: set `True` inside
+`_run_param_upload()` the moment a REAL upload (not skipped by Fast
+Init) completes, reset to `False` whenever a new connection starts
+(`_update_connection_ui(True)`).
+
+```
+_on_enter_host_mode()
+  not (connected and verbose) -> return (menu item was disabled anyway)
+  already uploaded this session -> _enter_host_mode_now()
+  Fast Init OFF -> _connect_mode = "host"; _start_param_upload_thread()
+  Fast Init ON  -> _ask_fast_init_upload_choice():
+                     "upload" -> _connect_mode = "host"; _start_param_upload_thread()
+                     "skip"   -> _enter_host_mode_now()
+                     "cancel" -> nothing
+```
+
+`_run_param_upload()` (extracted from `_on_verbose_mode_ready()`'s old
+inline closure — the ONE upload implementation, used by both the normal
+connect flow and this path) reads `_connect_mode`/`_config.fast_init`
+directly and, on `_connect_mode == "host"`, calls
+`self._serial.enter_host_mode()` itself at the end — `_start_param_
+upload_thread()` just runs it on a background thread.
+`_enter_host_mode_now()` is the direct, no-decision-left path (already
+uploaded, or the operator explicitly chose to skip it): sets the
+"switching" indicator and calls `enter_host_mode()` immediately.
+
+**Fast Init consequence, unchanged from CLAUDE.md's own wording:** Fast
+Init skips the upload — the TNC then runs on its stored values, which
+on a TNC with no RAM buffer battery (this doc / CLAUDE.md's own gotcha)
+means whatever it had at power-on, i.e. its factory defaults, not
+necessarily anything the operator configured. This is exactly why
+switching with Fast Init on and an outstanding upload asks first,
+instead of silently committing to that.
+
+### 17.3 Banner-as-one-block (P49 Teil B) — a display-layer fix, not a new state
+
+Unrelated to the state machine itself, but triggered by the same
+`_on_verbose_mode_ready()` call site: the mirrored init banner
+(`SerialManager.last_verbose_init_response`) used to be inserted with a
+single synchronous `_on_vt_rx_data()` call, immediately followed by the
+app's own `[SYS] ...` lines. A boot banner that arrives in more than one
+chunk — wider apart than the ~150ms trailing-quiet window
+`_init_tnc_thread()`'s own `read_until()` (§4) already waits out — has
+its remaining fragment arrive LATER, via the freshly-(re)started
+`ReaderThread`, landing in between those `[SYS]` lines (25.09.2026
+screenshot: the word "using" torn in half). `_start_banner_collection()`/
+`_finish_banner_collection()` now buffer everything for a further
+300ms quiet window (`_banner_timer`, deliberately more generous than
+the serial layer's own 150ms) before inserting it as ONE block and only
+then starting the `[SYS]` messages / parameter upload — see CLAUDE.md's
+"a raw-bytes mirror... can be torn apart" gotcha for the full writeup.
+`_filter_control_chars()` additionally strips stray control bytes
+(`$00`-`$1F` except CR/LF/TAB, and `$7F`) from what is displayed —
+the raw bytes are unaffected, still logged in hex at `DEBUG` by
+`SerialManager` itself.
