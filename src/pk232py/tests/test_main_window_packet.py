@@ -264,11 +264,25 @@ class TestLinkMessageAppearsInItsOwnChannel:
     pointed. Reproduced 25.09.2026 (screenshot): a channel-1 "Retry count
     exceeded ... DISCONNECTED: OE3XTC" appeared on the UI chip (channel 0)
     because that was the visible channel at the time the message arrived.
-    Never attributed by callsign — "Retry count exceeded" carries none."""
+    Never attributed by callsign — "Retry count exceeded" carries none.
+
+    wired_vhf builds a REAL MainWindow(), whose ConfigManager reads/writes
+    the operator's actual ~/.pk232py/pk232py.ini (MainWindow.closeEvent()
+    auto-saves it on close, and the fixture's teardown calls w.close()) -
+    there is no test-isolated config here. Every test below therefore sets
+    show_link_messages_in_ui_channel EXPLICITLY at the start (never assumes
+    it is already at some default) and restores it to False in a finally
+    block before returning if it changed it — found the hard way
+    (25.09.2026): an earlier version of this class set it True with no
+    reset, and the fixture's own close()-triggered save wrote
+    "show_link_messages_in_ui_channel = true" into the real INI file,
+    which then leaked into every later MainWindow() in the SAME pytest
+    run (including other test files) reading that same real path."""
 
     def test_message_for_channel_1_appears_while_viewing_channel_1(self, wired_vhf):
         w, screen = wired_vhf
         mode = w._modes.current_mode
+        w._app_config.hf_packet.show_link_messages_in_ui_channel = False
         screen.channel_bar.set_current(1)
 
         mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
@@ -278,6 +292,7 @@ class TestLinkMessageAppearsInItsOwnChannel:
     def test_same_message_does_not_appear_on_ui_channel_in_ch_view(self, wired_vhf):
         w, screen = wired_vhf
         mode = w._modes.current_mode
+        w._app_config.hf_packet.show_link_messages_in_ui_channel = False
         screen.channel_bar.set_current(0)
         screen.set_view_all(False)
 
@@ -288,6 +303,7 @@ class TestLinkMessageAppearsInItsOwnChannel:
     def test_all_view_shows_the_message_with_its_channel_tag(self, wired_vhf):
         w, screen = wired_vhf
         mode = w._modes.current_mode
+        w._app_config.hf_packet.show_link_messages_in_ui_channel = False
         screen.channel_bar.set_current(0)
         screen.set_view_all(True)
 
@@ -300,20 +316,21 @@ class TestLinkMessageAppearsInItsOwnChannel:
     def test_channel_15_always_appears_in_the_ui_channel(self, wired_vhf):
         # $5F is not channel-scoped at all (e.g. the generic data ack) -
         # there is nowhere else for it to belong, regardless of the
-        # mirror setting (off by default here).
+        # mirror setting (explicitly off here).
         w, screen = wired_vhf
         mode = w._modes.current_mode
+        w._app_config.hf_packet.show_link_messages_in_ui_channel = False
         screen.channel_bar.set_current(0)
         screen.set_view_all(False)
-        assert w._app_config.hf_packet.show_link_messages_in_ui_channel is False
 
         mode.on_link_message(15, "some generic status")
 
         assert "some generic status" in screen.rx_display.toPlainText()
 
-    def test_mirror_setting_off_by_default_does_not_leak_into_ui_channel(self, wired_vhf):
+    def test_mirror_setting_off_does_not_leak_into_ui_channel(self, wired_vhf):
         w, screen = wired_vhf
         mode = w._modes.current_mode
+        w._app_config.hf_packet.show_link_messages_in_ui_channel = False
         screen.channel_bar.set_current(0)
         screen.set_view_all(False)
 
@@ -325,12 +342,17 @@ class TestLinkMessageAppearsInItsOwnChannel:
         w, screen = wired_vhf
         mode = w._modes.current_mode
         w._app_config.hf_packet.show_link_messages_in_ui_channel = True
-        screen.channel_bar.set_current(0)
-        screen.set_view_all(False)
+        try:
+            screen.channel_bar.set_current(0)
+            screen.set_view_all(False)
 
-        mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
+            mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
 
-        assert "[ch1] *** DISCONNECTED: OE3XTC ***" in screen.rx_display.toPlainText()
+            assert "[ch1] *** DISCONNECTED: OE3XTC ***" in screen.rx_display.toPlainText()
+        finally:
+            # See the class docstring — must not leak into the real INI
+            # file via the fixture's close()-triggered auto-save.
+            w._app_config.hf_packet.show_link_messages_in_ui_channel = False
 
     def test_mirror_setting_does_not_duplicate_a_ui_channel_message(self, wired_vhf):
         # channel == UI_CHANNEL already means "this IS the UI channel" -
@@ -338,13 +360,16 @@ class TestLinkMessageAppearsInItsOwnChannel:
         w, screen = wired_vhf
         mode = w._modes.current_mode
         w._app_config.hf_packet.show_link_messages_in_ui_channel = True
-        screen.channel_bar.set_current(0)
-        screen.set_view_all(False)
+        try:
+            screen.channel_bar.set_current(0)
+            screen.set_view_all(False)
 
-        mode.on_link_message(15, "some generic status")
+            mode.on_link_message(15, "some generic status")
 
-        text = screen.rx_display.toPlainText()
-        assert text.count("some generic status") == 1
+            text = screen.rx_display.toPlainText()
+            assert text.count("some generic status") == 1
+        finally:
+            w._app_config.hf_packet.show_link_messages_in_ui_channel = False
 
     def test_single_arg_call_channel_none_is_unaffected_by_p47(self, wired_vhf):
         # AMTOR/PACTOR call on_link_message(msg) with no channel argument -
