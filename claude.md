@@ -145,6 +145,27 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   must not leave the app looking connected" and "Recovery reports what
   it did" gotchas under Known Gotchas / TNC-firmware for the full
   writeup.
+- **Recovery becomes Emergency Reconnect; TNC actions move into the menu
+  (P46, 2026-09-25, unit-verified):** a screenshot showed the RX window
+  displaying `SerialManager.recovery()`'s own frame bytes as garbled text
+  right before "did not reach the TNC" — `_recovery_thread()` was
+  writing its preamble while `ReaderThread` was still running, so the
+  TNC's response was consumed there instead of by the detection chain.
+  Fixed with a new shared `_take_over_read_path()` helper both
+  `_init_tnc_thread()` and `_recovery_thread()` call before any write.
+  `recovery()` also lost its `is_connected` requirement — it opens the
+  port itself (from the caller's saved config) and is never gated on
+  connection state, since it is the one action that must work from ANY
+  state ("Emergency Reconnect (Host Mode Recovery)", Ctrl+R). Separately,
+  Connect/Disconnect/Host Mode/Recovery were removed from the toolbar
+  entirely (the toolbar now only shows the mode selector, firmware label
+  and mode indicator) — "Connect" was ambiguous there, duplicating the
+  opmode screens' own station-connect concept. The Packet screen's
+  channel-disconnect shortcut moved from Ctrl+D to Ctrl+K to stop
+  colliding with the TNC menu's own Ctrl+D. See the "Every detection
+  needs the read path exclusively" gotcha under Known Gotchas / Serial-
+  Host Mode and "'Connect' is ambiguous" under UI/PyQt6 for the full
+  writeup.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -582,6 +603,27 @@ Grows over time.
 
 - **Direct serial I/O only — never a queue/worker for Host Mode frames.** The
   single most important constraint in the project. See §3.
+- **Every detection needs the read path exclusively (P46, 25.09.2026).**
+  If `ReaderThread` keeps running while something else tries a direct,
+  synchronous read of the same port, the answers land in `ReaderThread`
+  (and whatever it feeds — the verbose terminal's RX window, via
+  `raw_data_received`) and the direct-read side sees nothing at all.
+  Found via Recovery (`SerialManager._recovery_thread()`): it wrote its
+  own `FRAME_RECOVERY`/`FRAME_HOST_OFF` preamble via `_write_raw()`
+  while `ReaderThread` was still running, so the TNC's response was
+  consumed there — dumped into the RX window as raw framed bytes
+  (`␁␁OGG␁␁␁OHONO[SYS] Recovery did not reach the TNC.`, `$4F` = `'O'`)
+  — instead of being visible to the detection chain's own reads
+  afterward, so Recovery reported failure even when the TNC had
+  actually answered. `_init_tnc_thread()` always got this right (stops
+  `ReaderThread`, joins, clears the input buffer, *then* reads); the fix
+  was `_take_over_read_path()`, a small shared helper both
+  `_init_tnc_thread()` and `_recovery_thread()` now call — **before any
+  write**, not just before the chain's own steps. *Rule:* any code about
+  to do its own synchronous port reads must take over the read path
+  first (stop the background reader, clear the buffer) — never assume
+  "I'll read after this write" is safe just because nothing else is
+  *supposed* to be listening.
 - **Fresh `serial.Serial()` after the Host Mode subprocess exits.** Reusing the
   old object → 20–35 s buffering delays. See §3.
 - **`write_verbose_wait()` race condition (fixed).** Lives in
@@ -1561,6 +1603,18 @@ Grows over time.
 
 ### UI / PyQt6
 
+- **"Connect" is ambiguous — TNC serial connection vs. station
+  connection (P46, 2026-09-25).** The toolbar used to have its own
+  `Connect`/`Disconnect` for the serial link to the TNC, sitting right
+  above opmode screens (Packet's chip-based connect, PACTOR/AMTOR's own
+  connect flows) that ALSO show a "Connect" — two different things, both
+  visible on screen at once. Fixed by removing Connect/Disconnect/Host
+  Mode/Recovery from the toolbar entirely — they live only in the TNC
+  menu now, never duplicated as a toolbar button. *Rule:* any future
+  control for "connect" must say what it connects (TNC serial port vs.
+  AX.25/PACTOR/AMTOR station) either in its own label or by construction
+  (e.g. it only ever appears on one screen) — never rely on position or
+  context alone to disambiguate two different "Connect" buttons.
 - **A free-floating `QTimer.singleShot(ms, callback)` can fire against
   widgets Qt has already destroyed — parent the timer to the widget it
   touches instead (P44, 2026-09-25, found via a real crash).** Chip's
