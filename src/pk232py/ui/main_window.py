@@ -1596,8 +1596,26 @@ class MainWindow(QMainWindow):
             # channel, no per-channel button gating needed).
             msg = args[-1] if args else ""
             channel = args[0] if len(args) >= 2 else None
-            # 1. General log / monitor
-            self._on_mode_link_message(msg)
+            # 1. General log / monitor + RX-window display.
+            #
+            # P47: a $5x link message carries its own channel in the CTL
+            # nibble (HFPacketMode._handle_link_msg() reads it and calls
+            # on_link_message(ch, text)) — but until this fix, the RX-window
+            # half of this handler ignored it and always wrote into
+            # _on_mode_link_message()'s target, the CURRENTLY VISIBLE
+            # screen/channel (_log_terminal -> self._terminal -> the
+            # currently visible screen's rx_display), regardless of which
+            # channel the message was actually about. Reproduced 25.09.2026
+            # (screenshot): a channel 1 "Retry count exceeded ... DISCONNECTED:
+            # OE3XTC" appeared on the UI chip (channel 0) because that
+            # happened to be the visible channel at the time. AMTOR/PACTOR
+            # (channel is None, no channel concept at all) keep the old,
+            # single-target behaviour unchanged.
+            if channel is None:
+                self._on_mode_link_message(msg)
+            else:
+                self._log_monitor(f"[LINK] {msg}")
+                self._route_packet_link_message(screen, channel, msg)
             # 2. Update screen status label
             m = msg.lower()
             if "connected" in m and "disconnect" not in m:
@@ -1663,6 +1681,49 @@ class MainWindow(QMainWindow):
                         screen.set_link_state("disconnected")
             screen._set_status(status)
         return handler
+
+    def _route_packet_link_message(self, screen, channel: int, msg: str) -> None:
+        """P47.1/P47.2 — write a Packet link message into the channel it
+        actually belongs to, never wherever the operator happens to be
+        looking.
+
+        Never attribute by callsign: "Retry count exceeded" carries none,
+        and the same station can be connected on two different channels
+        at once — the channel number from the frame's own CTL nibble
+        (already read by HFPacketMode._handle_link_msg()) is the only
+        reliable source.
+
+        Channel 15 ($5F) is not channel-scoped at all (e.g. the generic
+        data-ack XX\\x00) — there is nowhere else for it to belong, so it
+        always goes to the UI channel, regardless of the mirror setting
+        below. Every other channel (0-9) goes through
+        screen.append_channel_data(), which already implements the ALL/CH
+        filter (T100) and its own "[CHn]" tag in ALL view — reused as-is,
+        not reimplemented here.
+
+        P47.2: if HFPacketConfig.show_link_messages_in_ui_channel is on,
+        every message about a QSO channel (1-9) is ALSO mirrored into the
+        UI channel, tagged "[chN]" in the text itself (not relying on
+        append_channel_data()'s own ALL-view tag, which names the channel
+        being WRITTEN to — here that is always 0 — not the channel the
+        event is ABOUT). append_channel_data()'s own CH/ALL filter still
+        applies to this second write like any other UI-channel line: it
+        only shows while the UI channel itself is the visible one in CH
+        view, which is exactly the point — the mirror is for whoever is
+        watching the UI channel, not a way around the filter.
+        """
+        from .screens.packet_screen import UI_CHANNEL
+
+        text = f"*** {msg} ***"
+        if channel == 15:
+            screen.append_channel_data(UI_CHANNEL, text)
+            return
+
+        screen.append_channel_data(channel, text)
+
+        if (channel != UI_CHANNEL
+                and self._app_config.hf_packet.show_link_messages_in_ui_channel):
+            screen.append_channel_data(UI_CHANNEL, f"[ch{channel}] {text}")
 
     def _make_channel_state_handler(self, screen):
         """Return a callback for HFPacketMode.on_channel_state(ch, state, partner).
