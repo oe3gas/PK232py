@@ -351,19 +351,26 @@ class HFPacketMode(BaseMode):
                 # request that is not answered, so the chip can stay
                 # "calling" indefinitely — Disconnect always frees it.
                 self.on_channel_state(ch, "calling", _extract_partner(text))
-            elif _MSG_DISCONNECTED in lower or _MSG_BUSY in lower or _MSG_RETRY in lower:
-                # P44: "Retry count exceeded" used to fall through to
-                # nothing at all here (only logged, see the elif chain
-                # above) — a chip left CALLING with no TNC message ever
-                # freeing it again, observed on the device 25.09.2026
-                # (chip 1 stuck amber on OE3TEC while the status pill
-                # already read DISCONNECTED). ChannelBar.set_channel_state()
-                # turns a CALLING->FREE transition like this one into a
-                # brief CH_FAILED (red) flash before reverting to free on
-                # its own, not a silent snap back to grey — busy and a
+            elif _MSG_DISCONNECTED in lower or _MSG_BUSY in lower:
+                # P44: a chip left CALLING with no TNC message ever freeing
+                # it again, observed on the device 25.09.2026 (chip 1 stuck
+                # amber on OE3TEC while the status pill already read
+                # DISCONNECTED). ChannelBar.set_channel_state() turns a
+                # CALLING->FREE transition like this one into a brief
+                # CH_FAILED (red) flash before reverting to free on its
+                # own, not a silent snap back to grey — busy and a
                 # DISCONNECTED that arrives while still calling get the
-                # same treatment, since all three mean the same thing: the
-                # connect attempt did not succeed.
+                # same treatment, since both mean the connect attempt did
+                # not succeed. ChannelBar.set_channel_state() itself
+                # discards this partner when state is "free" (P44's own
+                # code) — it is passed through only for P50's MHEARD hook
+                # (MainWindow._make_channel_state_handler()), which needs
+                # the callsign a plain DISCONNECTED/busy message carries.
+                self.on_channel_state(ch, "free", _extract_partner(text))
+            elif _MSG_RETRY in lower:
+                # "Retry count exceeded" carries no callsign at all (P47) -
+                # never call _extract_partner() on it, or the first word
+                # ("Retry") would be misread as one.
                 self.on_channel_state(ch, "free", "")
 
     def _handle_status_err(self, frame: "HostFrame") -> None:
