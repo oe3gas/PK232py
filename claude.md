@@ -92,6 +92,33 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   Backlog.md's P29 (wakeup CR-fallback) — the app now has its own. See
   the "`is_host_mode` is the SOFTWARE's belief" gotcha under Known
   Gotchas / TNC-firmware for the full writeup.
+- **Chip states / verbose terminal / recovery stage sprint (P44,
+  2026-09-25, unit-verified):** three independent findings from the same
+  operator session. (1) A failed Packet connect (retry count exceeded,
+  busy, or a DISCONNECTED that arrives while still calling) used to leave
+  the channel chip stuck amber ("calling") forever — `ChannelBar.
+  set_channel_state()` now flashes a new `CH_FAILED` (red) state for 1.5s
+  before reverting to free, `CH_CALLING` gets a synchronized pulse
+  animation (one shared `QVariantAnimation`, not one per chip) and a
+  trailing ellipsis so the state reads even without colour, and MHEARD's
+  own connected-station colour was unified to the same green as the chip
+  (was amber, contradicting the chip's own amber-means-calling). (2) The
+  verbose terminal's Enter key did nothing at all on an empty field —
+  fixed to send a bare CR, the harmless way to fetch the prompt; the
+  prompt received during init is now also mirrored into the terminal
+  (it was silently consumed by the P43 detection chain and never
+  reached the UI otherwise). (3) `SerialManager._init_tnc_thread()`
+  gained a "step 3b" recovery stage (double-SOH + GG, then HOST OFF —
+  the same bytes the "Recovery" menu action sends) for a TNC left
+  mid-frame by an abruptly killed process, which otherwise answers
+  nothing at all, not even the HPOLL query step 3 already tries. See the
+  "Packet chip colour states" and the recovery-stage gotchas under Known
+  Gotchas for the full writeup. Also fixed a real cross-test crash found
+  finishing this sprint: a bare `QTimer.singleShot()` for the failed-flash
+  timer kept firing after its owning screen was garbage-collected,
+  corrupting unrelated later tests — the same class of collateral damage
+  as the P41 stale-event-filter finding; fixed by parenting the timer to
+  `ChannelBar` instead.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -625,10 +652,11 @@ Grows over time.
   all**, since it is not a valid frame and the TNC sends nothing
   unsolicited while HPOLL is ON (factory default). Result: 68 parameter
   commands, 5 s timeout each, none executed (the P40 finding above).
-  **Fix:** `SerialManager._init_tnc_thread()` now runs a four-step ACTIVE
-  detection chain, each step capped at `_TNC_STATE_STEP_TIMEOUT` (1.5 s,
-  so detection itself can never take longer than the failure mode it
-  prevents — worst case, nothing responds at all, is under 5 s):
+  **Fix:** `SerialManager._init_tnc_thread()` now runs a five-step ACTIVE
+  detection chain (four steps as of P43, plus P44's step 3b below), each
+  step capped at `_TNC_STATE_STEP_TIMEOUT` (1.5 s, so detection itself
+  can never take longer than the failure mode it prevents — worst case,
+  nothing responds at all, is under 5 s):
   1. `*` → banner or `cmd:` → verbose, freshly booted → done.
   2. bare `CR` → `cmd:` → verbose, already awake → done (tried before
      step 3 deliberately: the already-awake, verbose TNC is the more
@@ -644,6 +672,20 @@ Grows over time.
      sequence, so this reuses the same bytes `exit_host_mode()` sends via
      the worker, not that method itself) and repeats step 2 — if THAT
      sees `cmd:`, verbose is confirmed after all.
+  3b. **(P44, 2026-09-25)** If step 3's HPOLL query got NOTHING back at
+     all — not even a malformed frame — try the documented recovery
+     sequence (double-SOH + GG, TRM 4.1.6, then `HOST OFF`; the exact
+     `FRAME_RECOVERY` bytes the "Recovery" menu action already sends)
+     before giving up: an application killed abruptly while in Host Mode
+     (`Ctrl-C` in the console, observed 25.09.2026) can leave the TNC's
+     own frame parser mid-frame, waiting for an `ETB` that will never
+     come and discarding everything further — including a fresh `SOH`,
+     so even step 3's own HPOLL query gets no answer at all. Sends
+     `FRAME_RECOVERY` then `FRAME_HOST_OFF` directly (same reasoning as
+     step 3: no `HostModeWorker` exists yet, so `recovery()`/
+     `exit_host_mode()` cannot be called as-is), then repeats step 2 once
+     more. Harmless if no TNC is attached at all — a few bytes go
+     nowhere.
   4. None of the above answered anything usable → no PK-232 reachable at
      all. A wrong port/baud rate and a hung TNC (see the "PK-232 can
      hang" gotcha) look identical from software, so the abort message
@@ -1381,7 +1423,22 @@ Grows over time.
   (defense-in-depth was deliberately NOT added there; there is no code path
   left that could reach it with channel 0). `PacketConnectDialog` no longer
   has an editable channel field (it used to be a `QSpinBox`) — the channel
-  always comes from whichever chip's "Connect via…" entry opened it.
+  always comes from whichever chip's "Connect via..." entry opened it.
+- **Chip colour states, and the same semantics for MHEARD (P44,
+  2026-09-25).** Four states, one meaning everywhere in the Packet screen
+  (chip fill AND MHEARD's connected-station colour):
+
+  | State | Colour | Label | Notes |
+  |---|---|---|---|
+  | `CH_FREE` | grey | channel number | -- |
+  | `CH_CALLING` | pulsing amber | `<callsign> ...` (ellipsis) | pulse: one shared `QVariantAnimation` for the whole bar (not one per chip, so every calling chip pulses in sync), 1.2s cycle, `InOutSine`, low-high `#8a6a1e`/`#b08a2a` via a mid-cycle keyframe (not start/end alone -- that would sawtooth-snap at the loop point instead of oscillating); starts the instant any chip becomes calling, stops the instant none are; text colour stays fixed so the label reads steadily |
+  | `CH_CONNECTED` | green | callsign | MHEARD's own connected-station colour uses this exact value (`_CHIP_FILL[CH_CONNECTED]`) -- legend says "green = connected", not "amber", which is what it said before this fix (contradicting the chip's own amber-means-calling) |
+  | `CH_FAILED` | red, `_FAILED_FLASH_MS` (1.5s) | channel number | transient -- `ChannelBar` reverts it to `CH_FREE` on its own; a `set_channel_state(ch, CH_FREE, ...)` call while the channel was `CH_CALLING` becomes this instead of snapping straight to free (a calling-to-free transition is, by definition, a failed attempt: retry count exceeded, busy, or a DISCONNECTED that arrived before ever reaching CONNECTED -- `HFPacketMode._handle_link_msg()` already routes all three through `on_channel_state(ch, "free", "")`; "Retry count exceeded" only gained this in P44, it used to reach neither `on_link_message` nor `on_channel_state`'s free branch and left the chip calling forever); a channel that WAS `CH_CONNECTED` (a normal, successful hangup) skips this and goes straight to free -- there is nothing that failed there. Counts as free for interaction (its context menu, opening the inline editor) -- a chip that just failed is exactly where a retry is most likely, so it is never locked out for the flash's duration. |
+
+  Still entirely driven through `set_channel_state()` (P18/P16's existing
+  channel-state path) -- P44 added no new callback route, only new
+  behaviour inside that one method. See the QTimer-parenting gotcha under
+  UI/PyQt6 for a real bug this feature's own timer hit and how it was fixed.
 - **The channel bar always shows ten chips, but `USERS` decides how many
   actually work (P11, 2026-09-20).** `ChannelBar` can display channels 0–9
   regardless of hardware capability — but the PK-232 itself only accepts as
@@ -1412,6 +1469,34 @@ Grows over time.
 
 ### UI / PyQt6
 
+- **A free-floating `QTimer.singleShot(ms, callback)` can fire against
+  widgets Qt has already destroyed — parent the timer to the widget it
+  touches instead (P44, 2026-09-25, found via a real crash).** Chip's
+  failed-connect flash (`ChannelBar._schedule_failed_clear()`, see the
+  Packet chip-colour-states gotcha below) originally scheduled its
+  1.5s revert with the bare classmethod `QTimer.singleShot(ms, lambda:
+  self._clear_failed(ch))`. That timer belongs to the global Qt event
+  loop, not to any widget — so it keeps `self` (the `ChannelBar`) alive
+  as a *Python* object via the closure, but does nothing to keep its
+  *C++* object tree alive. Running a single test file, a short-lived
+  `HFPacketScreen` built by a test and then dropped was never around
+  long enough for the callback to matter before pytest moved on; running
+  the FULL suite, the screen's C++ objects got torn down while the
+  pending 1.5s Python-side timer was still ticking, and when it fired,
+  `self._lbl_num.setText(...)` raised `RuntimeError: wrapped C/C++
+  object of type QLabel has been deleted` — inside a completely
+  unrelated LATER test, corrupting its own pytest-qt exception capture
+  (the exact same collateral-damage shape as the P41 stale-event-filter
+  finding — a single test file never showed the failure, only the full
+  suite did). **Fix:** a real `QTimer(self)`, parented to the widget
+  whose state the callback touches and kept in an instance dict, reused
+  per channel rather than a fresh one each time. Qt destroys a parented
+  QTimer along with its parent's C++ object tree, so a dead `ChannelBar`
+  simply never fires the callback at all, instead of firing it against
+  freed memory. **Rule:** any `QTimer.singleShot()` whose callback
+  touches `self`'s own widgets needs to ask whether `self` might not
+  outlive the delay — if the answer isn't a clear no, use a parented
+  `QTimer` instance instead.
 - **Keyboard redirection to the TX window must exempt EVERY
   keyboard-input widget type, not just `QLineEdit`/`QTextEdit`
   (P41, 2026-09-24, hardware-confirmed).** Every opmode screen with a
