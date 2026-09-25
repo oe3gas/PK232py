@@ -703,6 +703,37 @@ class SerialManager(QObject):
         t.start()
         return True
 
+    def _take_over_read_path(self) -> None:
+        """Stop the ReaderThread and clear the input buffer so a direct,
+        synchronous read is guaranteed to see the TNC's next bytes itself
+        (P46.A.1) — the one place both _init_tnc_thread() and
+        _recovery_thread() hand the read path from the background reader
+        to a direct-read detection sequence, instead of two independently
+        written copies of the same handover (this project has drifted
+        that way more than once — see CLAUDE.md).
+
+        Root cause this fixes: _recovery_thread() used to write its own
+        FRAME_RECOVERY/FRAME_HOST_OFF bytes via _write_raw() while
+        ReaderThread was still running, so the TNC's response was consumed
+        there — dumped into the verbose terminal as raw framed bytes (the
+        25.09.2026 screenshot: "␁␁OGG␁␁␁OHONO[SYS] Recovery did not reach
+        the TNC.") — instead of being visible to the detection chain's own
+        direct reads, which is why Recovery reported failure even when the
+        TNC had actually answered. Calling this before ANY write —
+        recovery's own preamble included, not just the chain's steps —
+        closes that gap. Idempotent: calling it again with no reader
+        running (the chain's own call, right after _recovery_thread()'s)
+        just re-clears the buffer, which is exactly what is wanted —
+        acks/echoes of a preamble already served their purpose and must
+        not be mistaken for the chain's own step 1 response.
+        """
+        if self._reader:
+            self._reader.stop()
+            self._reader.join(timeout=2.0)
+            self._reader = None
+        self._serial.reset_input_buffer()
+        self._verbose_confirmed = False
+
     def _init_tnc_thread(self) -> None:
         """Background init — active TNC-state detection (P43).
 
@@ -765,15 +796,7 @@ class SerialManager(QObject):
         """
         try:
             port = self._serial
-
-            # Stop ReaderThread — we do everything directly
-            if self._reader:
-                self._reader.stop()
-                self._reader.join(timeout=2.0)
-                self._reader = None
-
-            port.reset_input_buffer()
-            self._verbose_confirmed = False
+            self._take_over_read_path()
 
             # ── Read until marker ──────────────────────────────────────
             def read_until(marker, timeout=_TNC_STATE_STEP_TIMEOUT):
@@ -1199,13 +1222,21 @@ class SerialManager(QObject):
         except Exception as exc:
             logger.error("exit_host_mode: %s", exc)
 
-    def recovery(self) -> bool:
-        """P45.1: send the documented recovery sequence (double-SOH + GG,
-        TRM 4.1.6, then HOST OFF — the same FRAME_RECOVERY/FRAME_HOST_OFF
-        bytes _init_tnc_thread()'s own step 3b already sends), then
-        determine and report the resulting TNC state via the EXISTING
-        P43/P44 detection chain (_init_tnc_thread() itself — no second
-        version of it is built here).
+    def recovery(self, port_name: str = None, baudrate: int = None) -> bool:
+        """P45.1 / P46.B: the emergency reconnect. Works from ANY state —
+        no connection, mid-error, stuck in Host Mode — because it is the
+        one action nothing may lock out (P46 Teil B). If the port is not
+        currently open, opens it first using *port_name*/*baudrate* (the
+        caller's saved config — MainWindow passes AppConfig.tnc.port/
+        tbaud); with no port open and none given, there is nothing to
+        recover, so this returns False without starting anything.
+
+        Once a port exists, sends the documented recovery sequence
+        (double-SOH + GG, TRM 4.1.6, then HOST OFF — the same
+        FRAME_RECOVERY/FRAME_HOST_OFF bytes _init_tnc_thread()'s own step
+        3b already sends), then determines and reports the resulting TNC
+        state via the EXISTING P43/P44 detection chain (_init_tnc_thread()
+        itself — no second version of it is built here).
 
         Runs in a background thread — the detection chain alone can take
         several seconds (up to five 1.5s steps), so never call this from
@@ -1218,7 +1249,11 @@ class SerialManager(QObject):
         reaction, only a later "Host Mode" button press revealed it had).
         """
         if not self.is_connected:
-            return False
+            if not port_name:
+                logger.error("Recovery: no open port and no port configured")
+                return False
+            if not self.connect_port(port_name, baudrate=baudrate or SerialDefaults.BAUDRATE):
+                return False
         t = threading.Thread(
             target=self._recovery_thread, daemon=True, name="PK232-Recovery"
         )
@@ -1227,8 +1262,15 @@ class SerialManager(QObject):
 
     def _recovery_thread(self) -> None:
         try:
+            # P46.A.1: take over the read path BEFORE sending anything —
+            # including this method's own preamble below, not just the
+            # chain's steps. See _take_over_read_path()'s own docstring
+            # for the exact bug this closes.
+            logger.info("Recovery: taking over the read path")
+            self._take_over_read_path()
+
             logger.info("Recovery: sending recovery sequence")
-            self.status_message.emit("Recovery: sending recovery sequence...")
+            self.status_message.emit("Recovery: sending recovery frames...")
             self._write_raw(FRAME_RECOVERY)
             time.sleep(0.2)
             self._write_raw(FRAME_HOST_OFF)
@@ -1239,12 +1281,16 @@ class SerialManager(QObject):
             # Reuses the existing chain outright - it already implements
             # "CR -> cmd:; else HPOLL frame; else the recovery sequence
             # again" as its own steps 2/3/3b, plus a step 1 ('*') that is
-            # harmless to try again here.
+            # harmless to try again here. It calls _take_over_read_path()
+            # itself too - a harmless no-op re-clear at this point (the
+            # reader is already stopped), which is exactly what is wanted:
+            # any ack/echo of THIS method's own preamble must not be
+            # mistaken for the chain's own step 1 response.
             self._init_tnc_thread()
 
             if self._verbose_confirmed:
                 msg = (
-                    "Recovery successful - TNC is at the command prompt "
+                    "Connection recovered - TNC is at the command prompt "
                     "(verbose mode)."
                 )
                 logger.info("Recovery: %s", msg)
