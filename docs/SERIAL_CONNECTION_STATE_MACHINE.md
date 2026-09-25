@@ -10,6 +10,7 @@ Abschnitt 10–11 — _connect_mode Erklärung und alle Timing-Konstanten an ein
 Abschnitt 14 — P40 (2026-09-25): Parameter-Upload verweigert sich im Host Mode statt 68x 5s stumm zu verstreichen, plus Stichprobenverifikation nach dem Upload.
 Abschnitt 4 (Phase 1) — P43 (2026-09-25): der Wakeup ist jetzt eine aktive Fünf-Schritt-Kette statt eines passiven SOH-Byte-Checks, weil is_host_mode nach einem Neustart der Anwendung nichts über den tatsächlichen Gerätezustand aussagt. P44 ergänzt Stufe 3b (Rückholsequenz), deren Begründung P45 von einem Befund zu einer Vermutung korrigiert.
 Abschnitt 15 — P45 (2026-09-25): Recovery meldet jetzt, was sie getan hat, und endet in einem definierten Zustand (verbose, bestätigt, oder der bekannte Fehlerfall) statt stillschweigend nichts zu tun; ein gescheiterter Init zeigt sich nicht mehr als verbunden.
+Abschnitt 16 — P46 (2026-09-25): Recovery übernimmt jetzt den Lesepfad VOR dem eigenen Sendevorgang (nicht erst vor der Kette) und wird zur "Emergency Reconnect" — sie funktioniert aus jedem Zustand, öffnet den Port selbst und ist nie gesperrt. TNC-Aktionen (Connect/Disconnect/Host Mode/Recovery) leben jetzt nur noch im TNC-Menü, nicht mehr in der Werkzeugleiste.
 
 
 **Scope:** `SerialManager` + `MainWindow` connection lifecycle.
@@ -20,7 +21,7 @@ Covers all states from port closed to Host Mode active.
 - `src/pk232py/comm/pk232_hostmode_sub.py` — subprocess for Host Mode entry
 - `src/pk232py/ui/main_window.py` — UI reactions via Qt Signals
 
-**Last updated:** 2026-09-25 (P45 — Recovery reports its outcome and ends in a defined state, honest connection state after a failed init, see §15; P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
+**Last updated:** 2026-09-25 (P46 — Recovery is the emergency reconnect: owns the read path before its own preamble, works from any state, opens the port itself; TNC actions moved from the toolbar into the TNC menu only, see §16; P45 — Recovery reports its outcome and ends in a defined state, honest connection state after a failed init, see §15; P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
 
 ---
 
@@ -65,10 +66,12 @@ Covers all states from port closed to Host Mode active.
 | `C5` | Subprocess returns `"FAIL:..."` | Reopen port; start ReaderThread; error msg | `C7` |
 | `C5` | Subprocess timeout (>15 s) | Exception caught; fallback to verbose | `C7` |
 | `C6` | User: Leave Host Mode | Send `HOST OFF` frame; stop Worker; start ReaderThread | `C3` |
-| `C6` | User: Recovery | Send double-SOH frame; call `exit_host_mode()` | `C3` |
+| `C6` | User: Emergency Reconnect | `_take_over_read_path()` (P46 — BEFORE writing anything, see §16); write `FRAME_RECOVERY`/`FRAME_HOST_OFF` directly; run the P43/P44 detection chain (`_init_tnc_thread()`, not `exit_host_mode()` — corrected P45/P46, this row used to describe pre-P45 code) | `C3` on success, `C7` on failure |
 | `C6` | User: Disconnect | Stop Worker; close port | `C0` |
 | `C3` | User: Disconnect | Stop ReaderThread; close port | `C0` |
 | `C7` | User: Disconnect | Close port if open | `C0` |
+| `C7` | User: Emergency Reconnect | Same as the `C6` row above — the port is already open (left open on the C7 failure path, §15) | `C3` on success, stays `C7` on failure |
+| `C0` | User: Emergency Reconnect (P46) | Opens the port itself (`connect_port()`, using the caller's saved port/baud), then same as the `C6` row above | `C3` on success, `C7` on failure |
 | Any | Serial exception / port lost | `disconnect_port()`; emit `connection_changed(False)` | `C0` |
 
 ---
@@ -246,11 +249,14 @@ SerialManager                    TNC
      │── emit host_mode_changed(False)│
 ```
 
-### Recovery (stuck Host Mode) — rewritten P45, see §15 for the full picture
+### Recovery (stuck Host Mode) — rewritten P45, read-path ordering fixed P46, see §15/§16 for the full picture
 
 ```
 SerialManager                    TNC
      │                                │
+     │── _take_over_read_path() ─────│  stop ReaderThread, join, clear
+     │                                │  input buffer (P46.A - BEFORE any
+     │                                │  write, not just before the chain)
      │── write FRAME_RECOVERY ───────>│  SOH SOH $4F G G ETB
      │   sleep(0.2)                   │  (double-SOH resync)
      │── write FRAME_HOST_OFF ───────>│  SOH $4F H O N ETB, direct write
@@ -258,7 +264,9 @@ SerialManager                    TNC
      │                                │   same reasoning as step 3/3b in §4)
      │── _init_tnc_thread() ─────────>│  the EXISTING P43/P44 chain,
      │                                │  reused outright to determine
-     │                                │  and report the result (§15)
+     │                                │  and report the result (§15) -
+     │                                │  calls _take_over_read_path() itself
+     │                                │  too, a harmless no-op re-clear
 ```
 
 > **Critical:** `HOST OFF` in verbose mode as text (`HOST OFF\r`) does NOT
@@ -271,13 +279,13 @@ SerialManager                    TNC
 
 | Signal | When emitted | Payload | MainWindow reaction |
 |---|---|---|---|
-| `connection_changed` | Port open/close | `bool` | Enable/disable Connect/Disconnect menu; `True` → indicator "connecting" (P45.2, NOT "verbose" — see §15) |
+| `connection_changed` | Port open/close | `bool` | Enable/disable Connect/Disconnect menu (TNC menu only, P46 — no toolbar equivalent anymore); `True` → indicator "connecting" (P45.2, NOT "verbose" — see §15) |
 | `verbose_mode_ready` | C2 → C3 | — | Show verbose terminal; start param upload; indicator "verbose" |
 | `params_upload_required` | TNC rebooted during init | — | Re-run `_on_verbose_mode_ready()` |
 | `host_mode_changed` | C5 → C6 or C6 → C3 | `bool` | Switch stack to opmode screens; update indicator |
 | `status_message` | Any state change | `str` | Show in status bar AND (if it matches an error keyword) a dialog (P45.2 — used to be either/or) |
-| `init_failed` (P45.2) | C2 → C7, detection chain found nothing | — | Indicator → "error"; disable mode combo/"Enter Host Mode"; keep Connect/Recovery enabled (§15) |
-| `recovery_finished` (P45.1) | `recovery()`'s background thread finishes | `bool, str` | Re-enable/relabel the Recovery button; show the message in the status bar + verbose terminal, dialog on failure (§15) |
+| `init_failed` (P45.2) | C2 → C7, detection chain found nothing | — | Indicator → "error"; disable mode combo; keep Connect/Recovery enabled (§15) |
+| `recovery_finished` (P45.1, P46) | `recovery()`'s background thread finishes | `bool, str` | Re-enable/relabel the "Emergency Reconnect" TNC menu entry; show the message in the status bar + verbose terminal, dialog on failure (§15/§16) |
 | `frame_received` | C6, per frame | `HostFrame` | Dispatch to `ModeManager.on_frame()` |
 | `raw_data_received` | C3/C4, per chunk | `bytes` | Show in verbose terminal |
 
@@ -294,7 +302,7 @@ SerialManager                    TNC
 | `C4` UPLOADING | amber "VERBOSE MODE" | disabled | disabled | verbose terminal |
 | `C5` SWITCHING | blue "SWITCHING..." | disabled | disabled | verbose terminal |
 | `C6` HOST MODE | green "HOST MODE" | enabled | enabled | opmode screen |
-| `C7` ERROR | red "ERROR" (P45.2) | disabled | Connect + Recovery enabled ("Enter Host Mode" disabled) | verbose terminal |
+| `C7` ERROR | red "ERROR" (P45.2) | disabled | Connect + Emergency Reconnect enabled in the TNC menu (P46 — no toolbar buttons to disable anymore) | verbose terminal |
 
 ---
 
@@ -341,7 +349,7 @@ The boolean properties map to states as follows:
 | Detection chain exhausted (§4 Phase 1 step 4) | Emit `init_failed` + `status_message`; → C7; port stays OPEN (Connect/Recovery need it) — see §15 |
 | Subprocess timeout | Reopen port; start ReaderThread; → C7 |
 | Serial exception in Worker | Worker thread exits; `disconnect_port()`; → C0 |
-| Stuck in Host Mode (no response) | User: TNC → Recovery; runs the full sequence + detection chain, reports the result (§15, P45 — used to send the sequence and nothing else) |
+| Any state at all — stuck in Host Mode, mid-error, or not connected yet | User: TNC → Emergency Reconnect (Host Mode Recovery), Ctrl+R; opens the port if needed, runs the full sequence + detection chain, reports the result (§15/§16, P46 — never gated on `is_connected`; P45 — used to send the sequence and nothing else) |
 | `params_upload_required` | Automatic: re-call `_on_verbose_mode_ready()` |
 
 ---
@@ -530,7 +538,7 @@ parts, each one reported:
 
    | Result | Message |
    |---|---|
-   | `cmd:` confirmed | `"Recovery successful - TNC is at the command prompt (verbose mode)."` |
+   | `cmd:` confirmed | `"Connection recovered - TNC is at the command prompt (verbose mode)."` (P46 — was "Recovery successful - ..." under P45; renamed with the "Emergency Reconnect" framing, see §16) |
    | only HPOLL answers (step 3 of the chain) | intermediate: `"TNC responds in Host Mode - leaving Host Mode..."` (via `status_message`, from inside the chain itself), then step 3's own exit-and-recheck decides the FINAL outcome, one of the two rows above/below |
    | nothing answers | `"Recovery did not reach the TNC. Power-cycle it and reconnect."` |
 
@@ -578,6 +586,100 @@ the "Enter Host Mode" button enabled) indefinitely. Fixed:
 - `_on_status_message()`'s error path used to be an if/else (dialog OR
   status bar, never both) — an error now always reaches the status bar
   as well as the dialog.
+
+## 16. Recovery becomes Emergency Reconnect; TNC actions move into the menu (P46, 2026-09-25)
+
+**Finding (25.09.2026, screenshot):** the RX window showed
+`␁␁OGG␁␁␁OHONO[SYS] Recovery did not reach the TNC.` before the error
+message — that garbled text IS `FRAME_RECOVERY`/`FRAME_HOST_OFF`'s own
+bytes as raw text (`$4F` = `'O'`). `_recovery_thread()` (P45) wrote its
+own preamble via `_write_raw()` while `ReaderThread` was STILL RUNNING —
+the same thread `_init_tnc_thread()` always stops before its own direct
+reads. The still-running reader consumed the TNC's response to the
+preamble and dumped it into the verbose terminal (`raw_data_received` is
+only ever emitted from `ReaderThread`), while the detection chain's own
+direct reads — which only start once `_init_tnc_thread()` itself runs,
+AFTER the preamble — saw nothing. Recovery reported failure even when
+the TNC had actually answered.
+
+### A. `_take_over_read_path()` — one shared handover, used before ANY write
+
+A new `SerialManager._take_over_read_path()` (stop `ReaderThread`, join,
+clear the input buffer, reset `_verbose_confirmed`) replaces the inline
+block `_init_tnc_thread()` used to open with. Both `_init_tnc_thread()`
+and `_recovery_thread()` call it — `_recovery_thread()` calls it FIRST,
+before writing `FRAME_RECOVERY`/`FRAME_HOST_OFF` itself, not just before
+calling `_init_tnc_thread()` afterward. `_init_tnc_thread()` still calls
+it too, right where its old inline block was — a harmless no-op re-clear
+in the Recovery case (the reader is already stopped), which is exactly
+what is wanted: any ack/echo of Recovery's own preamble must not be
+mistaken for the chain's own step 1 (`*`) response.
+
+Since `raw_data_received` is only ever emitted from `ReaderThread`,
+stopping it before every write automatically means no detection-phase
+byte can reach the RX window during Recovery — no separate terminal-side
+fix was needed for that half of the finding.
+
+### B. Recovery is the emergency reconnect — works from ANY state
+
+`SerialManager.recovery(port_name=None, baudrate=None)` no longer
+requires `is_connected` up front. If the port is not open, it opens it
+itself via `connect_port()`, using the port/baud the caller passes in
+(`MainWindow` passes `AppConfig.tnc.port`/`tbaud` — the same saved
+config `_open_connect_dialog()` already reads). With no port open and
+nothing configured, it does nothing (`return False`) — there is
+genuinely nothing to recover. Once a port exists, the rest is unchanged
+from P45 (§15): send the sequence, run the shared detection chain,
+report the result.
+
+`MainWindow._update_connection_ui()` no longer gates the Emergency
+Reconnect action on `connected` — every OTHER TNC action there
+legitimately depends on connection state, but Recovery is the way out
+of literally any state (no connection, mid-error, stuck in Host Mode)
+and must never be locked out. Its success message changed to
+`"Connection recovered - TNC is at the command prompt (verbose mode)."`
+(was `"Recovery successful - ..."` under P45) to match the new framing.
+
+### C. TNC actions live in the TNC menu only — "Connect" was ambiguous
+
+The toolbar used to duplicate `Connect`/`Disconnect`/`Host Mode`/
+`Recovery` from the TNC menu — and "Connect" there was genuinely
+ambiguous: the serial connection to the TNC (toolbar) vs. the AX.25/
+PACTOR/AMTOR station connection the opmode screens show their own
+Connect for (Packet's chip-based connect, PACTOR/AMTOR's own connect
+flows). Both meanings were visible on screen at once on the Packet/
+PACTOR/AMTOR screens. Fix: the toolbar now only ever shows the
+operating-mode selector, the TNC-Firmware label and the mode indicator.
+All TNC connection actions live exclusively in the TNC menu:
+
+```
+Connect + Enter Terminal Mode...        Ctrl+T
+Connect + Enter Host Mode...            Ctrl+M
+Leave Host Mode + Return to Terminal    Ctrl+L
+Disconnect + Close Serial Port          Ctrl+D
+---
+Emergency Reconnect (Host Mode Recovery)   Ctrl+R
+---
+MailDrop...
+```
+
+`_on_host_mode_enter()` (only ever reachable from the removed toolbar
+"Host Mode" button — no menu entry ever called it) is retired. "Connect
++ Enter Host Mode..." already covers the same case: its own
+`is_connected` retry branch re-runs the P43 detection chain on an
+already-verbose connection (near-instant) and then the existing
+upload + `enter_host_mode()` flow runs exactly as it always has via
+`_on_verbose_mode_ready()` — more robust than the old direct shortcut,
+since it re-confirms the TNC is actually still there first.
+
+**Shortcut collision resolved:** the TNC menu's `Ctrl+D` ("Disconnect +
+Close Serial Port") collided with the Packet screen's own channel-
+disconnect shortcut (`Ctrl+D`, P42) — two different "disconnect"
+actions (serial port vs. station link) sharing one key was exactly the
+kind of "Connect"/"Disconnect" ambiguity this package set out to
+remove. The Packet channel-disconnect shortcut moved to `Ctrl+K`
+(checked: not bound to anything else anywhere in the app) — still also
+reachable from the chip's own context menu regardless.
 
 ### A note on the step 3b "why" (P44 → corrected P45)
 
