@@ -2007,6 +2007,66 @@ hardware re-test open.
 
 ---
 
+### T128 — Recovery feedback, honest connection state after a failed init (P45)
+
+Bugfix (25.09.2026, operator at the device): TNC in Host Mode → app
+started → Connect → the detection chain's own error → the app still
+showed itself as connected (Host Mode button enabled, firmware still
+"unknown") → Recovery pressed → no visible reaction at all → "Host Mode"
+pressed → SWITCHING → Baudot screen (TNC was in fact reachable).
+
+**Live sequence to run:**
+1. Kill the app with `Ctrl-C` while it is in Host Mode (leaves the TNC
+   possibly stuck, per P44's step 3b — see the note below).
+2. Start the app again, `Connect`.
+   **Expected (if the chain cannot confirm anything):** the connect
+   sequence's own error appears as a dialog AND in the status bar; the
+   mode indicator reads "ERROR", not "VERBOSE MODE" or "HOST MODE"; the
+   mode combo and "Enter Host Mode" are disabled; `Connect` and
+   `Recovery` both stay enabled.
+3. Press `Recovery`.
+   **Expected:** the button locks and reads "Recovery running..."
+   immediately; when it finishes, a message appears in BOTH the status
+   bar and the verbose terminal's RX window, and the button returns to
+   normal. One of:
+   - `"Recovery successful - TNC is at the command prompt (verbose mode)."`
+     — proceed to connect normally (parameter upload runs automatically).
+   - `"Recovery did not reach the TNC. Power-cycle it and reconnect."`
+     — also shown as a dialog.
+4. If Recovery succeeded, connect normally (Host Mode entry, parameter
+   upload) and confirm it behaves exactly as any other successful
+   connect — no separate code path.
+
+**Note on step 1:** P44 suspected killing the app mid-frame leaves the
+TNC's parser stuck, explaining why the chain's HPOLL query (step 3) can
+get nothing back. P45 corrected this to a suspicion, not a measured
+finding — a healthy TNC in Host Mode is ALSO silent in a plain terminal
+program, so this step may or may not actually reproduce a stuck TNC;
+either way, steps 2-4 above are what this test case is really checking.
+
+**Unit-verified:**
+- `test_serial_manager.py::TestRecoverySequence` (3 cases) — `cmd:`
+  confirmed after the sequence reports success and sets
+  `verbose_confirmed`; only the HPOLL query answering still ends in
+  success after the chain's own exit-and-recheck; silence throughout
+  reports the power-cycle message and leaves `verbose_confirmed` False.
+- `test_main_window_connection.py` (new file, 11 cases) —
+  `_update_connection_ui(True)` sets "CONNECTING...", never "VERBOSE
+  MODE" outright; `_on_init_failed()` sets "ERROR", disables the mode
+  combo/"Enter Host Mode", and explicitly keeps Connect and Recovery
+  enabled; pressing Connect again after a failed init retries
+  `init_tnc()` on the still-open port instead of silently doing nothing;
+  `_on_recovery()` locks the button immediately; `_on_recovery_finished()`
+  always re-enables it and shows the message in the verbose terminal,
+  plus a dialog on failure.
+
+**Status:** ✅ PASS (2026-09-25, unit-verified — 14 new tests across a
+new `test_main_window_connection.py` and `test_serial_manager.py`'s
+`TestRecoverySequence`; full suite 566 passed). Live hardware re-test
+open (the full sequence above, once, per the Definition of Done).
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
