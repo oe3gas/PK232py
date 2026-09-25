@@ -1927,6 +1927,86 @@ passed). Live hardware re-test open.
 
 ---
 
+### T127 — Chip failed state, verbose terminal, recovery stage (P44)
+
+Three findings from the same 25.09.2026 operator session.
+
+**A — chip states (screenshot: chip 1 amber on OE3TEC, status pill
+already DISCONNECTED):**
+1. A channel that is CALLING and receives "Retry count exceeded",
+   "`<call>` busy", or a DISCONNECTED before ever reaching CONNECTED →
+   the chip shows CH_FAILED (red) for 1.5s, then reverts to CH_FREE on
+   its own — not a silent snap straight back to grey.
+2. A channel that IS CONNECTED and then DISCONNECTED (normal hangup) →
+   straight to CH_FREE, no red flash — nothing failed there.
+3. A CALLING chip shows a trailing ellipsis (`OE3TEC ...`) and pulses
+   amber (one shared animation for the whole bar, 1.2s cycle,
+   `InOutSine`, starts/stops with the first/last calling channel).
+4. MHEARD's connected-station colour is green (`_CHIP_FILL[CH_CONNECTED]`),
+   matching the chip; the legend says "green = connected", not "amber".
+
+**B — verbose terminal:**
+1. Enter on an empty verbose-terminal field sends a bare CR (previously
+   sent nothing at all).
+2. After a successful connect, the terminal shows what the TNC actually
+   sent during init (banner + `cmd:`, or just `cmd:`) — previously the
+   RX window stayed empty because the P43 detection chain consumed that
+   response internally and nothing mirrored it into the UI.
+
+**C — recovery stage in the detection chain (console: app killed with
+`Ctrl-C` while in Host Mode, next connect got 0 bytes back on all three
+of the original steps, including the HPOLL query):**
+1. A new step 3b sends the documented recovery sequence (double-SOH +
+   GG, then HOST OFF — the same bytes the "Recovery" menu action sends)
+   before giving up, for exactly this "TNC mid-frame after an abrupt
+   kill" case.
+
+**Unit-verified:**
+- `test_packet_screen.py::TestChipCallingFailedStates` (8 cases: ellipsis,
+  plain callsign when connected, retry/busy/disconnected-while-calling
+  all through CH_FAILED, a normal hangup skipping it, a stale timer not
+  undoing a fresh state change, a failed chip still being interactive).
+- `test_packet_screen.py::TestPulseAnimation` (5 cases: starts/stops with
+  the first/last calling channel, keeps running while any other channel
+  still calls, a pulse tick only touches calling chips' background,
+  `reset()` stops it).
+- `test_packet_screen.py::TestMheardColourSemantics` (2 cases: the
+  connected-station colour matches the chip's green, the legend text).
+- `test_packet_hf.py::TestOnChannelState::test_retry_count_exceeded_frees_channel`
+  — "Retry count exceeded" now reaches `on_channel_state(ch, "free", "")`,
+  where it used to reach neither `on_link_message` nor this channel path.
+- `test_main_window_verbose.py::TestVerboseTerminalBareEnter` (3 cases:
+  empty Enter sends exactly one bare CR, whitespace-only same, a real
+  command still sends `<text>\r\n` as before).
+- `test_serial_manager.py::TestTncStateDetectionChain::
+  test_step3b_recovery_sequence_confirms_verbose_after_half_frame_hang`
+  — HPOLL query silent → recovery sequence sent → repeated CR confirms
+  verbose; `test_all_three_silent_aborts_and_sends_nothing_to_the_uploader`
+  extended to confirm the recovery sequence is attempted even in the
+  full-abort case, not skipped straight to step 4.
+
+**Also found and fixed finishing this sprint:** a real cross-test crash
+(`RuntimeError: wrapped C/C++ object of type QLabel has been deleted`) —
+the failed-flash timer used a free-floating `QTimer.singleShot()`, which
+kept firing 1.5s later even after its owning screen had been garbage
+collected in an EARLIER test, corrupting an unrelated LATER test's own
+exception capture (only visible running the full suite, never a single
+test file — the same shape as the P41 stale-event-filter finding). Fixed
+by parenting the timer to `ChannelBar` instead (`_schedule_failed_clear()`).
+
+**Still open (needs real hardware):** kill the app with Ctrl-C while in
+Host Mode, restart, and connect again without power-cycling the TNC —
+expect the connect sequence to complete via the recovery stage. Also:
+attempt a Connect to an unreachable callsign and confirm the chip flashes
+red before reverting to free.
+
+**Status:** ✅ PASS (2026-09-25, unit-verified — 20 new tests across
+`test_packet_screen.py`, `test_packet_hf.py`, `test_main_window_verbose.py`
+(new file) and `test_serial_manager.py`; full suite 552 passed). Live
+hardware re-test open.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
