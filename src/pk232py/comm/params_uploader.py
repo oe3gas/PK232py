@@ -216,6 +216,18 @@ class ParamsUploader:
                     "ParamsUploader: no answer verifying %s (expected %r)",
                     name, want,
                 )
+                # P52.3: this used to be console/log-only - an operator
+                # watching the verbose terminal (not the log file) had no
+                # way to see it at all. Same echo_callback upload() itself
+                # already uses for sent commands (P40.3's own comment:
+                # "Purely informational: never aborts" - unchanged, this
+                # only adds where it is ALSO shown, not what it does).
+                if self._echo:
+                    self._echo(
+                        f"[SYS] no answer verifying {name} "
+                        f"(expected {want!r})\n",
+                        "#f44747",
+                    )
                 continue
             if got.upper() == want.upper():
                 matched += 1
@@ -225,6 +237,12 @@ class ParamsUploader:
                     "expected %r, TNC says %r",
                     name, want, got,
                 )
+                if self._echo:
+                    self._echo(
+                        f"[SYS] {name} mismatch after upload - "
+                        f"expected {want!r}, TNC says {got!r}\n",
+                        "#f44747",
+                    )
         if applicable and matched == len(applicable):
             logger.info(
                 "ParamsUploader: parameter upload verified (%d/%d)",
