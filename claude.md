@@ -2,7 +2,7 @@
 
 > This file is the single entry point for Claude Code to understand the
 > PK232PY project. Read it completely before touching any source file.
-> Last updated: 2026-09-24
+> Last updated: 2026-09-25
 
 ---
 
@@ -67,6 +67,19 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   chip" bullet under Known Gotchas / Packet for the full operation table,
   and the P41 fixture-teardown gotchas under Known Gotchas / Repo-tooling
   (found finishing this sprint's first full-suite run).
+- **Upload-before-Host-Mode sprint (P40, 2026-09-25, unit-verified):**
+  `ParamsUploader.upload()` now refuses outright (logs `ERROR`, returns
+  `0`, sends nothing) when `SerialManager.is_host_mode` is true instead
+  of silently timing out on every command (24.09.2026: 68 commands × 5 s
+  = ~6 minutes, none executed — there is no `cmd:` prompt in Host Mode at
+  all). Also aborts after 3 consecutive silent commands instead of
+  waiting out the rest, and `ParamsUploader.verify()` /
+  `SerialManager.query_verbose_value()` spot-check MYCALL/PACLEN/MAXFRAME
+  against `AppConfig` right after upload, logging "parameter upload
+  verified (N/N)". See the "There is no `cmd:` prompt in Host Mode"
+  gotcha under Known Gotchas / TNC-firmware for the full writeup —
+  including that the suspected order-reversal in `main_window.py` was
+  investigated and NOT found; the code there was already correct.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -543,6 +556,43 @@ Grows over time.
 - **PACTOR-only commands → `?What?` without the PACTOR option:** `MYPTCALL`,
   `ARQTOL`, `MOPT`, `EXPERT OFF`, `PTHUFF`, `PT200`, `PTOVER`. Gate them behind
   `SerialManager.has_pactor`. See §9.
+- **There is no `cmd:` prompt in Host Mode at all — plain verbose text
+  sent there is never executed as a command (P40, 2026-09-25).** Observed
+  24.09.2026, 21:27: 68 parameter-upload commands, each hitting
+  `write_verbose_wait()`'s own 5 s timeout (`no cmd: after ...`), ~6
+  minutes total, and — because the TNC was in Host Mode the entire
+  time — **none of them reached the TNC at all**. Host Mode expects
+  SOH-framed binary frames (§3/§4); a bare `b'MYCALL OE3GAS\r\n'` sent
+  there is not a command the TNC recognises, it is just bytes with
+  nowhere to go. Parameters are uploaded **exclusively** in verbose mode,
+  before Host Mode entry (`SerialManager`'s own module docstring: Phase 1
+  `init_tnc()` → Phase 2 `ParamsUploader.upload()` → Phase 3
+  `enter_host_mode()`; `SERIAL_CONNECTION_STATE_MACHINE.md`'s C3
+  VERBOSE/C4 UPLOADING states, both before C5 SWITCHING/C6 HOST MODE).
+  **Investigated, not found in `main_window.py`:** git history and the
+  current code both show `_on_verbose_mode_ready()` has called
+  `uploader.upload()` before `self._serial.enter_host_mode()` since the
+  function's original implementation (commit 1257114) — that call site
+  was never the defect. What was actually missing: nothing anywhere
+  refused to run the upload if some other/future caller ever invoked it
+  while already in Host Mode. `ParamsUploader.upload()` now checks
+  `serial.is_host_mode` itself, once, before the first command, and logs
+  an `ERROR` + returns `0` instead of silently timing out 68 times — the
+  reusable component enforces its own precondition rather than trusting
+  every caller to get it right.
+  **Also added (same investigation):** `upload()` now aborts after
+  `_MAX_CONSECUTIVE_SILENT` (3) commands in a row get no `cmd:` response
+  at all, instead of waiting out the full 5 s timeout for every remaining
+  command — a real TNC answers every command in well under a second
+  (T103), so several in a row this slow means something is genuinely
+  wrong, not an occasional fluke. And `ParamsUploader.verify()` /
+  `SerialManager.query_verbose_value()` spot-check MYCALL/PACLEN/MAXFRAME
+  back against `AppConfig` right after the upload, still in verbose mode
+  — cheap (under a second) and would have surfaced this exact failure
+  immediately instead of on the next real QSO attempt. Logs `INFO
+  "parameter upload verified (N/N)"` on a full match, `WARNING` with the
+  expected vs. actual value on a mismatch or no answer — purely
+  informational, never aborts the connection sequence.
 - **The 1988 BASE-generation firmware has no MailDrop at all (Device C,
   `docs/DEVICES.md`) — detected via a query, not the banner (P37,
   2026-09-24).** Unlike PACTOR, MailDrop capability leaves no marker in
