@@ -21,12 +21,25 @@ from __future__ import annotations
 
 import configparser
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 CONFIG_FILE = Path.home() / ".pk232py" / "pk232py.ini"
+
+# P48.1: the smallest possible opening to redirect ConfigManager's default
+# path away from the operator's real ~/.pk232py/pk232py.ini - read only
+# when actually set, so production behaviour (no env var present) is
+# unchanged. An env var was chosen over widening MainWindow's own
+# constructor: every existing MainWindow()/ConfigManager() call site (test
+# or production) keeps working unmodified, and the P48.2 autouse fixture
+# (tests/conftest.py) can redirect every test's config path without any
+# test needing to know ConfigManager exists at all. An explicit `path=`
+# argument to ConfigManager() still always wins - this only affects the
+# default. Not underscore-prefixed: the test suite imports it by name.
+CONFIG_PATH_ENV_VAR = "PK232PY_CONFIG_PATH"
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +304,10 @@ class ConfigManager:
         cfg.save()                    # persist to disk
     """
 
-    def __init__(self, path: Path = CONFIG_FILE) -> None:
+    def __init__(self, path: Path | None = None) -> None:
+        if path is None:
+            env_path = os.environ.get(CONFIG_PATH_ENV_VAR)
+            path = Path(env_path) if env_path else CONFIG_FILE
         self._path   = path
         self._config = configparser.RawConfigParser()
         self.app     = AppConfig()
