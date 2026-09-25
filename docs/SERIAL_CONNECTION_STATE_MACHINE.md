@@ -8,6 +8,7 @@ Abschnitt 6 — Alle Qt Signals mit ihrer Wirkung auf MainWindow — das ist die
 Abschnitt 7 — UI-Zustandstabelle: welche Controls sind in welchem Zustand enabled/disabled. Das verhindert Fehler bei neuen Menüeinträgen oder Buttons.
 Abschnitt 10–11 — _connect_mode Erklärung und alle Timing-Konstanten an einem Ort.
 Abschnitt 14 — P40 (2026-09-25): Parameter-Upload verweigert sich im Host Mode statt 68x 5s stumm zu verstreichen, plus Stichprobenverifikation nach dem Upload.
+Abschnitt 4 (Phase 1) — P43 (2026-09-25): der Wakeup ist jetzt eine aktive Vier-Schritt-Kette statt eines passiven SOH-Byte-Checks, weil is_host_mode nach einem Neustart der Anwendung nichts über den tatsächlichen Gerätezustand aussagt.
 
 
 **Scope:** `SerialManager` + `MainWindow` connection lifecycle.
@@ -18,7 +19,7 @@ Covers all states from port closed to Host Mode active.
 - `src/pk232py/comm/pk232_hostmode_sub.py` — subprocess for Host Mode entry
 - `src/pk232py/ui/main_window.py` — UI reactions via Qt Signals
 
-**Last updated:** 2026-09-25 (P40 — upload-before-Host-Mode guard, see §14)
+**Last updated:** 2026-09-25 (P43 — four-step active TNC-state detection, see §4 Phase 1; P40 — upload-before-Host-Mode guard, see §14)
 
 ---
 
@@ -49,9 +50,9 @@ Covers all states from port closed to Host Mode active.
 | `C0` | User: Connect + Host Mode | `connect_port()` opens serial port | `C1` |
 | `C1` | Port open OK | `init_tnc()` → background thread starts | `C2` |
 | `C1` | Port open failed | Error message; port remains closed | `C0` |
-| `C2` | Wakeup `*` → TNC responds `cmd:` | `_verbose_ready = True`; emit `verbose_mode_ready` | `C3` |
-| `C2` | Wakeup → SOH byte detected | TNC already in Host Mode; start Worker | `C6` |
-| `C2` | Timeout / no response | Emit error; start ReaderThread as fallback | `C7` |
+| `C2` | Step 1/2 (`*` or CR) → `cmd:`/banner | `_verbose_ready = True`, `verbose_confirmed = True`; emit `verbose_mode_ready` | `C3` |
+| `C2` | Step 3 (HPOLL query) → `$4F` frame | TNC genuinely in Host Mode — write `FRAME_HOST_OFF` directly, repeat step 2 | `C3` (if step-2 repeat sees `cmd:`) or `C7` (if not) |
+| `C2` | All four steps exhausted, nothing usable answered (P43) | Raise/abort — no upload attempted; message names port, baud rate, both possible causes | `C7` |
 | `C3` | `verbose_mode_ready` emitted | `ParamsUploader.upload()` starts in thread | `C4` |
 | `C4` | Upload complete | `ParamsUploader.verify()` spot-checks MYCALL/PACLEN/MAXFRAME against `AppConfig`, still in `C4` (P40, informational only — never blocks the transition below) | `C4` |
 | `C4` | Verify complete, `_connect_mode == "verbose"` | Stay in verbose terminal | `C3` |
@@ -101,20 +102,51 @@ The sequence for C5 entry is:
 
 ## 4. Host Mode Entry — Detailed Sequence
 
-### Phase 1: Wakeup (in `_init_tnc_thread`)
+### Phase 1: Wakeup (in `_init_tnc_thread`) — P43 four-step active detection
 
-```
-SerialManager                    TNC (PK-232MBX)
-     │                                │
-     │── write b"*" ─────────────────>│  autobaud trigger
-     │<── "Ver. 7.1  cmd: " ──────────│  firmware banner + prompt
-     │                                │
-     │  if SOH found in response:     │  TNC already in Host Mode
-     │    → skip to C6               │
-     │  if "cmd:" found:             │
-     │    → _verbose_ready = True    │
-     │    → emit verbose_mode_ready  │
-```
+**Rewritten 2026-09-25 (P43):** the old single-step wakeup ("send `*`,
+hope for `cmd:` or a stray SOH byte") could not detect a TNC left in Host
+Mode from a previous app session — `is_host_mode` starts `False` on every
+fresh `SerialManager` instance regardless of the physical device's real
+state, and in Host Mode the TNC answers `*` with **nothing at all** (not
+a valid frame there, and it sends nothing unsolicited while HPOLL is ON).
+Reproduced on the device 24.09.2026: this is what let a full parameter
+upload run into 68 x 5s timeouts with nothing reaching the TNC (P40).
+
+Four steps now run in order, each capped at `_TNC_STATE_STEP_TIMEOUT`
+(1.5 s) — detection itself must never take longer than the failure mode
+it prevents (worst case, step 4, is under 5 s total):
+
+| # | Stimulus | Expected answer | Conclusion |
+|---|---|---|---|
+| 1 | `*` | banner or `cmd:` | verbose, freshly booted → done |
+| 2 | bare `CR` | `cmd:` | verbose, was already awake → done |
+| 3 | HPOLL query frame (`build_command(b'HP')`, SOH `$4F` H P ETB — no argument) | any `$4F`-CTL frame | **Host Mode confirmed** → write `FRAME_HOST_OFF` directly (no `HostModeWorker` running yet at this point, so this reuses the byte sequence `exit_host_mode()` sends via the worker, not that method), then repeat step 2 |
+| 4 | — | none of the above answered anything | no PK-232 reachable — abort, message names port, baud rate, and both possible causes (wrong port/baud vs. a hung TNC) |
+
+Step 2 is tried **before** step 3 deliberately: the already-awake,
+verbose TNC is the more common case and is settled by a single `CR`;
+step 3 is the only one that can reach a genuinely-Host-Mode TNC, since it
+actively asks in frame language instead of waiting for an unsolicited
+answer that never comes. This is also what closes Backlog.md's P29
+(wakeup CR-fallback) — the app now has this built in, where before it
+only existed in `tools/hw_check.py`.
+
+On success (any of steps 1, 2, or 3-then-2), `_finish_verbose_init()`
+sets **both** `_verbose_ready` (existing) and the new
+`SerialManager.verbose_confirmed` property, then emits
+`verbose_mode_ready` exactly as before. `verbose_confirmed` is the
+positive-evidence flag `ParamsUploader.upload()` now also requires
+(P43.2, in addition to P40.2's `is_host_mode` check) — reset to `False`
+at the start of every `_init_tnc_thread()` run, cleared again on a
+successful Host Mode entry. See CLAUDE.md's "`is_host_mode` is the
+SOFTWARE's belief" gotcha for the full picture, and §8 below (the
+`is_host_mode`/`is_verbose_mode` guard-condition table) — `verbose_confirmed`
+is a third, stricter guard alongside those two, never a replacement for
+either.
+
+On failure (step 4), the connection sequence aborts entirely — no
+parameter upload is attempted from this connect cycle at all.
 
 ### Phase 2: Parameter Upload (in `ParamsUploader.upload`)
 
@@ -248,15 +280,22 @@ if not self._serial.is_host_mode:
 # For verbose mode operations:
 if not self._serial.is_verbose_mode:
     return
+
+# For the parameter uploader specifically (P43.2) — stricter than
+# is_verbose_mode: requires ACTIVE confirmation this session, not just
+# the software's belief that no Host Mode transition has happened yet.
+if not self._serial.verbose_confirmed:
+    return
 ```
 
-The three boolean properties map to states as follows:
+The boolean properties map to states as follows:
 
 | Property | True in states |
 |---|---|
 | `is_connected` | C1, C2, C3, C4, C5, C6, C7 |
 | `is_host_mode` | C6 only |
 | `is_verbose_mode` | C3, C4 only |
+| `verbose_confirmed` (P43) | C3, C4 — but ONLY once `_init_tnc_thread()`'s detection chain (§4 Phase 1) has actively seen evidence this session; unlike the other two, this is never true merely because no Host Mode transition happened to run yet |
 
 ---
 
