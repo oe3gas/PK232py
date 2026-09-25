@@ -258,6 +258,116 @@ class TestLinkMessageGatedByVisibleChannel:
         assert not screen.btn_unproto.isEnabled()
 
 
+class TestLinkMessageAppearsInItsOwnChannel:
+    """P47 — a $5x link message must appear in the channel it actually
+    happened on, never wherever the operator's screen happens to be
+    pointed. Reproduced 25.09.2026 (screenshot): a channel-1 "Retry count
+    exceeded ... DISCONNECTED: OE3XTC" appeared on the UI chip (channel 0)
+    because that was the visible channel at the time the message arrived.
+    Never attributed by callsign — "Retry count exceeded" carries none."""
+
+    def test_message_for_channel_1_appears_while_viewing_channel_1(self, wired_vhf):
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        screen.channel_bar.set_current(1)
+
+        mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
+
+        assert "*** DISCONNECTED: OE3XTC ***" in screen.rx_display.toPlainText()
+
+    def test_same_message_does_not_appear_on_ui_channel_in_ch_view(self, wired_vhf):
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        screen.channel_bar.set_current(0)
+        screen.set_view_all(False)
+
+        mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
+
+        assert "OE3XTC" not in screen.rx_display.toPlainText()
+
+    def test_all_view_shows_the_message_with_its_channel_tag(self, wired_vhf):
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        screen.channel_bar.set_current(0)
+        screen.set_view_all(True)
+
+        mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
+
+        text = screen.rx_display.toPlainText()
+        assert "[CH1]" in text
+        assert "*** DISCONNECTED: OE3XTC ***" in text
+
+    def test_channel_15_always_appears_in_the_ui_channel(self, wired_vhf):
+        # $5F is not channel-scoped at all (e.g. the generic data ack) -
+        # there is nowhere else for it to belong, regardless of the
+        # mirror setting (off by default here).
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        screen.channel_bar.set_current(0)
+        screen.set_view_all(False)
+        assert w._app_config.hf_packet.show_link_messages_in_ui_channel is False
+
+        mode.on_link_message(15, "some generic status")
+
+        assert "some generic status" in screen.rx_display.toPlainText()
+
+    def test_mirror_setting_off_by_default_does_not_leak_into_ui_channel(self, wired_vhf):
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        screen.channel_bar.set_current(0)
+        screen.set_view_all(False)
+
+        mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
+
+        assert "OE3XTC" not in screen.rx_display.toPlainText()
+
+    def test_mirror_setting_on_duplicates_into_the_ui_channel_with_a_tag(self, wired_vhf):
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        w._app_config.hf_packet.show_link_messages_in_ui_channel = True
+        screen.channel_bar.set_current(0)
+        screen.set_view_all(False)
+
+        mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
+
+        assert "[ch1] *** DISCONNECTED: OE3XTC ***" in screen.rx_display.toPlainText()
+
+    def test_mirror_setting_does_not_duplicate_a_ui_channel_message(self, wired_vhf):
+        # channel == UI_CHANNEL already means "this IS the UI channel" -
+        # mirroring it into itself would just double it.
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        w._app_config.hf_packet.show_link_messages_in_ui_channel = True
+        screen.channel_bar.set_current(0)
+        screen.set_view_all(False)
+
+        mode.on_link_message(15, "some generic status")
+
+        text = screen.rx_display.toPlainText()
+        assert text.count("some generic status") == 1
+
+    def test_single_arg_call_channel_none_is_unaffected_by_p47(self, wired_vhf):
+        # AMTOR/PACTOR call on_link_message(msg) with no channel argument -
+        # _make_link_handler() must still route these through
+        # _on_mode_link_message() exactly as before P47 (unrelated to
+        # append_channel_data()/UI-channel routing entirely).
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+
+        mode.on_link_message("CONNECTED")
+
+        assert "*** CONNECTED ***" in w._rx_display.toPlainText()
+
+    def test_set_status_still_fires_regardless_of_visible_channel(self, wired_vhf):
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        screen.channel_bar.set_current(0)
+
+        mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE1XYZ"))
+
+        assert "DISCONNECTED" in screen.lbl_status.text()
+
+
 class TestPassallMnemonic:
     """T86 (P16, hardware-verified 21.09.2026): PASSALL is host mnemonic
     PX, not PS. PS is PASS, a masking character - not a toggle; sending

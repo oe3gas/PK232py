@@ -189,6 +189,11 @@ UPLOAD_EXEMPT: dict[tuple[str, str], str] = {
         "only on later MBX firmware, P13.3) - wired to the dialog/INI but "
         "not uploaded until confirmed. See Backlog."
     ),
+    ("hf_packet", "show_link_messages_in_ui_channel"): (
+        "display setting, not a TNC parameter (P47) - controls whether "
+        "link messages are mirrored into the UI channel on this PC, has "
+        "no corresponding TNC command at all."
+    ),
     # The four *_calls fields only affect the upload when their paired
     # *_mode field is YES/NO (_access_filter_cmds ignores calls entirely for
     # ALL/NONE, P13.3). Test D bumps exactly one field at a time, so bumping
