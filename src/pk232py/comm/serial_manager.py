@@ -1325,10 +1325,26 @@ class SerialManager(QObject):
         return self._write_raw(build_command(mnemonic, args))
 
     def send_channel_command(self, channel: int, mnemonic: bytes, args: bytes = b"") -> bool:
-        """Send a channel command frame (CTL=$4x, for CONNECT/DISCONNECT)."""
+        """Send a channel command frame (CTL=$4x, for CONNECT/DISCONNECT).
+
+        P50 Teil A: logs the requested channel right next to the actual
+        CTL byte that goes out, in one line - so a hardware capture can
+        directly confirm build_ch_cmd() encoded the channel the operator
+        actually selected, without having to cross-reference a separate
+        hex dump. `_write_raw()` already hex-logs every write (unchanged,
+        not duplicated here); this is specifically for CONNECT/DISCONNECT,
+        the frames the 25.09.2026 channel-offset report (chip 1 green,
+        all incoming data/link messages tagged [CH2]) needs measured
+        against a real TNC to settle - see CLAUDE.md's own note on this.
+        """
         if not self._check_ready():
             return False
-        return self._write_raw(build_ch_cmd(channel, mnemonic, args))
+        frame = build_ch_cmd(channel, mnemonic, args)
+        logger.debug(
+            "TX channel cmd: channel=%d ctl=0x%02X mnemonic=%s frame=%s",
+            channel, frame[1], mnemonic, frame.hex(' '),
+        )
+        return self._write_raw(frame)
 
     def send_data(self, data: bytes, channel: int = 0) -> bool:
         """Send a data frame (CTL=$2x)."""
