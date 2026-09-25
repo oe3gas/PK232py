@@ -98,6 +98,24 @@ class ParamsUploader:
                 "Mode - verbose text is not executed there"
             )
             return 0
+        # P43.2: is_host_mode alone is not enough - it is the SOFTWARE's
+        # own belief, and a fresh connection cycle starts it at False
+        # regardless of what the physical TNC is actually doing (P43's
+        # own finding: a TNC left in Host Mode from a previous session
+        # is not noticed by is_host_mode at all). verbose_confirmed is
+        # only ever set True by SerialManager's active detection chain
+        # (_init_tnc_thread(), P43.1) once it has POSITIVE evidence of a
+        # verbose prompt this session - defaults to True here (permissive,
+        # same convention as has_pactor below) so a duck-typed test double
+        # that predates P43 and never heard of this attribute is not
+        # penalised for it; a real SerialManager always has the attribute
+        # and starts every connection cycle at False.
+        if not getattr(self._serial, 'verbose_confirmed', True):
+            logger.error(
+                "ParamsUploader: refusing to upload: the verbose prompt "
+                "was never confirmed in this session"
+            )
+            return 0
         has_pactor = getattr(self._serial, 'has_pactor', True)
         if not has_pactor:
             logger.info(
