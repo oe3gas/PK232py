@@ -1,7 +1,7 @@
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
 # Copyright (C) 2026  OE3GAS  —  GPL v2
 """Unit tests for MainWindow's connection-state honesty and Recovery
-feedback (P45).
+feedback (P45/P46).
 
 Covers:
   - P45.1 — _on_recovery() locks the button immediately;
@@ -14,6 +14,11 @@ Covers:
     and Recovery both stay enabled (the operator's way out). Also:
     _update_connection_ui(True) sets "connecting", never "verbose"
     outright - only a confirmed verbose_mode_ready may do that.
+  - P46.B — Recovery ("Emergency Reconnect") is never gated on
+    is_connected, not even in _update_connection_ui() - it is the one
+    action that must work from ANY state, including no connection at
+    all. MainWindow passes the saved AppConfig.tnc port/baud through so
+    SerialManager.recovery() can open the port itself when needed.
 
 Needs a QApplication; forced to the offscreen platform (see
 test_packet_screen.py for why this is done at module level, before any
@@ -52,8 +57,9 @@ class _StubSerial:
         self.writes: list[bytes] = []
         self.recovery_called = False
 
-    def recovery(self) -> bool:
+    def recovery(self, port_name=None, baudrate=None) -> bool:
         self.recovery_called = True
+        self.recovery_args = (port_name, baudrate)
         return True
 
     def write_verbose_wait(self, *args, **kwargs) -> bool:
@@ -182,13 +188,30 @@ class TestRecoveryFeedback:
         assert not w._tb_recovery.isEnabled()
         assert "running" in w._act_recovery.text().lower()
 
-    def test_on_recovery_does_nothing_when_not_connected(self, wired_window):
+    def test_on_recovery_works_even_when_not_connected(self, wired_window):
+        # P46.B - Recovery is the emergency reconnect: it is the way out
+        # of ANY state, so unlike every other TNC action it must never be
+        # gated on is_connected. SerialManager.recovery() itself is the
+        # one that opens the port (from the saved config) when needed.
         w, serial = wired_window
         serial.is_connected = False
 
         w._on_recovery()
 
-        assert serial.recovery_called is False
+        assert serial.recovery_called is True
+
+    def test_on_recovery_passes_the_saved_port_and_baudrate(self, wired_window):
+        # P46.B - "Port und Baudrate aus der Konfiguration": MainWindow is
+        # the one holding AppConfig, so it passes the saved TNC port/baud
+        # through to SerialManager.recovery(), which is the one that opens
+        # the port if it is not already open.
+        w, serial = wired_window
+        w._app_config.tnc.port  = "COM7"
+        w._app_config.tnc.tbaud = 9600
+
+        w._on_recovery()
+
+        assert serial.recovery_args == ("COM7", 9600)
 
     def test_recovery_finished_success_reenables_and_shows_message(self, wired_window):
         w, _serial = wired_window
