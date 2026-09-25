@@ -1152,6 +1152,18 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(1)
         self._vt_input.setFocus()
         self._vt_display.clear()
+        # P44.B2: mirror what the device actually sent during init (banner
+        # + cmd:, or just cmd: if the TNC was already awake) - that prompt
+        # was already consumed inside the P43 detection chain to confirm
+        # verbose mode and would otherwise never reach the terminal at
+        # all, leaving the operator looking at an empty RX window with no
+        # visible cmd: prompt after a successful connect. Reuses
+        # _on_vt_rx_data() (same formatting as any other TNC response)
+        # rather than sending a fresh CR for the sole purpose of getting
+        # something to show - nothing extra goes out to the TNC for this.
+        _init_resp = getattr(self._serial, 'last_verbose_init_response', b"")
+        if _init_resp:
+            self._on_vt_rx_data(_init_resp)
         self._vt_append("[SYS] TNC ready in verbose mode\n")
         # Enable mode selector
         self._mode_combo.setEnabled(True)
@@ -4727,9 +4739,19 @@ class MainWindow(QMainWindow):
             self._vt_append("[ERROR] Not connected\n", color="#f44747")
 
     def _on_vt_send(self) -> None:
-        """Send a command in verbose terminal mode (Enter pressed)."""
+        """Send a command in verbose terminal mode (Enter pressed).
+
+        An empty field sends a bare CR (P44.B1) - the usual, harmless way
+        to fetch the cmd: prompt again. The old behaviour sent nothing at
+        all for an empty Enter, so the one case an operator would press a
+        bare Enter for (checking the TNC is still there) visibly did
+        nothing; only typing some other character first and then Enter
+        actually reached the TNC (as a ?What? error, followed by the
+        prompt).
+        """
         text = self._vt_input.toPlainText().strip()
         if not text:
+            self._vt_send_raw(b"\r", echo="[CR]\n", color="#888888")
             return
         self._vt_input.clear()
         self._vt_append(f"cmd:{text}\n", color="#569cd6")
