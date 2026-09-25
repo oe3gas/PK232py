@@ -1969,6 +1969,31 @@ Grows over time.
   process with near-zero measured CPU time) is checked, rather than letting
   it run to completion. The fixture teardown now also calls `w.deleteLater()`
   + `QApplication.instance().processEvents()` after `w.close()`.
+- **A test that mutates `MainWindow._app_config` can silently overwrite
+  the OPERATOR'S REAL settings file on disk (P47, 2026-09-25).**
+  `ConfigManager()` with no path override — exactly what every plain
+  `MainWindow()` in the test suite constructs — reads AND writes the
+  real `~/.pk232py/pk232py.ini`, not an isolated test copy; `MainWindow.
+  closeEvent()` auto-saves it unconditionally
+  (`self._config_mgr.save()`), and every `wired_vhf`-style fixture calls
+  `w.close()` in its teardown. A `TestLinkMessageAppearsInItsOwnChannel`
+  test that set `w._app_config.hf_packet.show_link_messages_in_ui_channel
+  = True` with no reset therefore wrote that value into the real INI
+  file the instant the test finished — confirmed on disk
+  (`show_link_messages_in_ui_channel = true` in the operator's actual
+  `pk232py.ini`, port `COM7`, real callsigns) — and it then leaked into
+  every LATER `MainWindow()` in the same pytest run (including other
+  test files), failing three unrelated-looking tests in a full-suite run
+  that had all passed individually. **Rule: any test using a real
+  `MainWindow()`/`ConfigManager()` (no injected path) that changes an
+  `AppConfig` field must restore it (`try`/`finally`) before returning,
+  and should set the field it depends on EXPLICITLY at the start rather
+  than assuming a default** — the real file's current on-disk value is
+  never a safe assumption, precisely because earlier test runs (or the
+  developer's own actual use of the app) can have left it in any state.
+  This is a pre-existing architectural gap (no test-isolated config path
+  is injected anywhere in this fixture family) — not fixed at the root
+  here, only worked around for this one field.
 
 ### Dead Code / Cleanup
 
