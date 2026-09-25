@@ -166,6 +166,25 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   needs the read path exclusively" gotcha under Known Gotchas / Serial-
   Host Mode and "'Connect' is ambiguous" under UI/PyQt6 for the full
   writeup.
+- **Enter Host Mode from verbose; banner rendered as one block (P49,
+  2026-09-25, unit-verified):** the TNC menu had no way back into Host
+  Mode from an existing verbose connection ("Connect + Enter Host
+  Mode..." only works from a fresh connect) — new `Enter Host Mode`
+  action (Ctrl+H) closes this and is also the last chance to upload
+  parameters, since none of that is possible once inside Host Mode
+  (P40/P43): already uploaded this session → straight to Host Mode;
+  outstanding, Fast Init off → upload first; outstanding, Fast Init on →
+  ask (`Upload and switch` / `Switch without upload` / `Cancel`).
+  Separately, a screenshot showed the mirrored TNC banner torn in half
+  by the app's own `[SYS]` lines and stray control-character boxes at
+  line starts — fixed with a short quiet-window buffer
+  (`_start_banner_collection()`/`_finish_banner_collection()`) that
+  inserts the complete banner as one block before any `[SYS]` message,
+  plus `_filter_control_chars()` stripping non-CR/LF/TAB control bytes
+  from what is displayed (raw bytes stay in the DEBUG hex log
+  unaffected). See the "last chance to upload parameters", "a raw-bytes
+  mirror... can be torn apart", and "stray control bytes... must be
+  filtered" gotchas for the full writeup.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -704,6 +723,27 @@ Grows over time.
   trigger on the device — a fresh app restart with the physical TNC left
   in Host Mode from the previous session. See the next gotcha for why
   `is_host_mode` could not have caught this and what replaces it.
+- **The switch to Host Mode is the LAST chance to upload parameters
+  (P49, 2026-09-25) — after that it is impossible (no `cmd:` prompt at
+  all, see the gotcha above).** Found 25.09.2026: the TNC menu had
+  `Leave Host Mode + Return to Terminal` but no way BACK in from an
+  existing verbose connection — "Connect + Enter Host Mode..." only
+  ever reaches Host Mode from a fresh connect and is greyed out once
+  connected, so an operator who connected via "Connect + Enter Terminal
+  Mode..." had no way to switch at all. New TNC menu action, `Enter Host
+  Mode` (Ctrl+H, `MainWindow._on_enter_host_mode()`), closes this and is
+  also the one place that has to decide what to do about a still-
+  outstanding upload: already uploaded this session (tracked by the ONE
+  flag `_params_uploaded_this_session`, set in `_run_param_upload()`,
+  reset on every new connection) → straight to Host Mode; outstanding
+  with Fast Init off → upload runs first; outstanding with **Fast Init
+  on** → ask (`_ask_fast_init_upload_choice()`), since Fast Init already
+  deliberately skipped it once and switching silently would commit to
+  whatever the TNC is currently running on with no way back. **Fast Init
+  skips the upload — the TNC then runs on its stored values, which on a
+  TNC with no RAM buffer battery (see that gotcha below) means whatever
+  it had at power-on, i.e. its factory defaults**, not necessarily
+  anything the operator configured.
 - **`is_host_mode` is the SOFTWARE's belief, not the device's real state
   — never trust it without evidence from THIS session (P43, 2026-09-25,
   same rule P34 already established for `tools/hw_check.py`, now also in
@@ -1638,6 +1678,43 @@ Grows over time.
   AX.25/PACTOR/AMTOR station) either in its own label or by construction
   (e.g. it only ever appears on one screen) — never rely on position or
   context alone to disambiguate two different "Connect" buttons.
+- **A raw-bytes mirror written synchronously can be torn apart by an
+  async delivery of the REST of the same data arriving later (P49,
+  2026-09-25).** `_on_verbose_mode_ready()` used to mirror
+  `SerialManager.last_verbose_init_response` into the verbose terminal
+  with one synchronous `_on_vt_rx_data()` call, then immediately append
+  its own `[SYS] ...` lines. Reproduced 25.09.2026 (screenshot):
+  `"PK-232M is u[SYS] TNC ready in verbose mode\n[SYS] Fast Init —
+  parameter upload skipped\n[SYS] Verbose terminal ready (fast
+  init)\nsing default values."` — the banner word "using" torn in half.
+  Cause: the TNC's boot banner can arrive in more than one chunk, wider
+  apart than the ~150ms trailing-quiet window `_init_tnc_thread()`'s own
+  `read_until()` already waits out before returning
+  `last_verbose_init_response` — the SECOND fragment then arrives via the
+  freshly-(re)started `ReaderThread` (`raw_data_received` →
+  `_on_raw_data_received()`) sometime AFTER the app's own synchronous
+  `[SYS]` appends have already run. Fixed with a short buffering window:
+  `_start_banner_collection()` seeds a buffer from
+  `last_verbose_init_response` and arms a single-shot `_banner_timer`
+  (300ms, deliberately more generous than SerialManager's own 150ms);
+  `_on_raw_data_received()` re-arms it on every further byte while
+  collecting instead of displaying immediately; `_finish_banner_collection()`
+  (fires once nothing new has arrived for the whole window) inserts
+  everything collected as ONE block, THEN appends `[SYS] TNC ready...`
+  and starts the parameter upload — never interleaved. *Rule:* mirroring
+  something that might still be arriving in pieces needs a quiet-window
+  buffer, not a single synchronous read, or a later fragment can land
+  in between whatever the caller does next.
+- **Stray control bytes (`$00`-`$1F` except CR/LF/TAB, and `$7F`) must
+  be filtered before display, not just logged (P49.B.2, 2026-09-25).**
+  Same screenshot: boxes at the start of a line, from an unfiltered
+  stray `SOH` (Host Mode framing byte) leaking into the mirrored banner
+  text. `_filter_control_chars()` (module-level in `main_window.py`,
+  right before the `MainWindow` class) is the ONE filter for verbose-
+  terminal output, called from `_on_vt_rx_data()` — the single place raw
+  TNC bytes become displayed text there. The raw bytes are unaffected —
+  still logged in hex at `DEBUG` by `SerialManager` itself; this only
+  changes what is DISPLAYED.
 - **A free-floating `QTimer.singleShot(ms, callback)` can fire against
   widgets Qt has already destroyed — parent the timer to the widget it
   touches instead (P44, 2026-09-25, found via a real crash).** Chip's
