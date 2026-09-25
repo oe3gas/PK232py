@@ -109,9 +109,14 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   (it was silently consumed by the P43 detection chain and never
   reached the UI otherwise). (3) `SerialManager._init_tnc_thread()`
   gained a "step 3b" recovery stage (double-SOH + GG, then HOST OFF —
-  the same bytes the "Recovery" menu action sends) for a TNC left
-  mid-frame by an abruptly killed process, which otherwise answers
-  nothing at all, not even the HPOLL query step 3 already tries. See the
+  the same bytes the "Recovery" menu action sends) for a TNC that
+  answers nothing at all, not even the HPOLL query step 3 already tries
+  — suspected cause is a process abruptly killed mid-frame leaving the
+  TNC's own frame parser stuck (P44), corrected P45: **this is a
+  suspicion, not a measured finding** — a healthy TNC in Host Mode also
+  answers nothing in a plain terminal program, so silence alone cannot
+  tell "stuck" apart from "working normally"; see the "P44's half-frame
+  theory" gotcha for the full picture. See the
   "Packet chip colour states" and the recovery-stage gotchas under Known
   Gotchas for the full writeup. Also fixed a real cross-test crash found
   finishing this sprint: a bare `QTimer.singleShot()` for the failed-flash
@@ -119,6 +124,27 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   corrupting unrelated later tests — the same class of collateral damage
   as the P41 stale-event-filter finding; fixed by parenting the timer to
   `ChannelBar` instead.
+- **Recovery feedback / honest connection state sprint (P45, 2026-09-25,
+  unit-verified):** the operator reproduced a connect failure that left
+  the app claiming to be connected (Host Mode button enabled, firmware
+  still "unknown") and a Recovery press with no visible reaction at all.
+  `SerialManager.recovery()` now runs the documented sequence, THEN calls
+  the existing `_init_tnc_thread()` detection chain itself to determine
+  the result (no second version of it), and reports success/failure via
+  a new `recovery_finished` signal — status bar, verbose terminal, and a
+  dialog on failure; the button is locked and relabelled "Recovery
+  running..." meanwhile. `_update_connection_ui(True)` no longer jumps
+  straight to a "verbose" indicator on port-open alone (a new
+  "connecting" state is honest until confirmed); a new `init_failed`
+  signal resets the UI to an "error" state without needing to close the
+  port (Recovery still needs it) while explicitly keeping Connect and
+  Recovery themselves usable. Also corrected P44's own half-frame
+  explanation for step 3b from a stated finding to a labelled suspicion —
+  a healthy Host Mode TNC is silent in a plain terminal too, so silence
+  alone never proves anything is actually stuck. See the "A failed init
+  must not leave the app looking connected" and "Recovery reports what
+  it did" gotchas under Known Gotchas / TNC-firmware for the full
+  writeup.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -676,13 +702,11 @@ Grows over time.
      all — not even a malformed frame — try the documented recovery
      sequence (double-SOH + GG, TRM 4.1.6, then `HOST OFF`; the exact
      `FRAME_RECOVERY` bytes the "Recovery" menu action already sends)
-     before giving up: an application killed abruptly while in Host Mode
-     (`Ctrl-C` in the console, observed 25.09.2026) can leave the TNC's
-     own frame parser mid-frame, waiting for an `ETB` that will never
-     come and discarding everything further — including a fresh `SOH`,
-     so even step 3's own HPOLL query gets no answer at all. Sends
-     `FRAME_RECOVERY` then `FRAME_HOST_OFF` directly (same reasoning as
-     step 3: no `HostModeWorker` exists yet, so `recovery()`/
+     before giving up. **Why this might help is a suspicion, not a
+     measured finding (corrected P45, 2026-09-25) — see the "P44's
+     half-frame theory" gotcha.** The step itself stands regardless:
+     sends `FRAME_RECOVERY` then `FRAME_HOST_OFF` directly (same
+     reasoning as step 3: no `HostModeWorker` exists yet, so `recovery()`/
      `exit_host_mode()` cannot be called as-is), then repeats step 2 once
      more. Harmless if no TNC is attached at all — a few bytes go
      nowhere.
@@ -702,6 +726,74 @@ Grows over time.
   P43 and does not define the attribute at all (same convention as
   `has_pactor`) — only a real `SerialManager`, which always has it and
   starts every connection cycle at `False`, actually enforces this gate.
+- **A healthy TNC in Host Mode answers nothing in a plain terminal
+  program either — silence alone never distinguishes "normal" from
+  "stuck" (P45, 2026-09-25).** In Host Mode the TNC only processes
+  SOH-framed binary frames; a terminal program like PuTTY sends and shows
+  plain text, so a TNC sitting there completely normally, mid-session,
+  looks byte-for-byte identical in that terminal to one that is
+  genuinely wedged. **P44's "half-frame theory" — that an application
+  killed abruptly mid-frame (`Ctrl-C` in the console) leaves the TNC's
+  parser stuck waiting for an `ETB`, explaining why step 3's HPOLL query
+  got nothing back — is therefore a suspicion, not a measured finding.**
+  It was never verified against a TNC known to be in this exact state by
+  another means; it is simply consistent with the observed silence,
+  which a perfectly normal Host Mode TNC would also produce. The step 3b
+  recovery stage this theory motivated (CLAUDE.md's TNC-state-detection
+  gotcha above, §4 Phase 1 in `SERIAL_CONNECTION_STATE_MACHINE.md`)
+  remains in place regardless — it is harmless to try and demonstrably
+  helps in practice — but do not cite the half-frame explanation itself
+  as confirmed. A framed query (HPOLL, or the recovery sequence) is the
+  *only* way to tell the two cases apart; a silent terminal never can.
+- **Recovery reports what it did and always ends in a defined state
+  (P45.1, 2026-09-25).** The old `SerialManager.recovery()` sent the
+  double-SOH + GG + `HOST OFF` sequence and then stopped — no report of
+  whether it worked. Reproduced 25.09.2026: Recovery pressed, no visible
+  reaction at all; only pressing "Host Mode" afterwards (and watching it
+  actually work) revealed that Recovery HAD done something. `recovery()`
+  now runs in a background thread and, after sending the sequence, calls
+  `_init_tnc_thread()` itself — the exact same P43/P44 detection chain a
+  normal connect uses, not a second version of it — to determine the
+  result, then emits `recovery_finished(success, message)`:
+  `"Recovery successful - TNC is at the command prompt (verbose mode)."`
+  on success (ending in `C3`, `verbose_confirmed` set — parameter upload
+  and Host Mode entry proceed exactly as after any other successful
+  connect, via the existing paths, no special-casing), or
+  `"Recovery did not reach the TNC. Power-cycle it and reconnect."` on
+  failure. `MainWindow._on_recovery_finished()` shows the message in the
+  status bar and the verbose terminal's RX window (`[SYS] ...`, so it is
+  still there in a later capture, not just a transient status-bar line),
+  plus a warning dialog on failure. The Recovery button/menu action is
+  disabled and relabelled "Recovery running..." for the whole duration.
+- **A failed init must not leave the app looking connected (P45.2,
+  2026-09-25).** `connection_changed(True)` fires the instant
+  `connect_port()` opens the serial port — well before `init_tnc()`'s
+  detection chain has confirmed anything about the actual device.
+  Reproduced 25.09.2026: TNC in Host Mode, app started, Connect failed
+  with the detection chain's own error — and the app still showed itself
+  as connected (Host Mode button enabled/green-looking, firmware still
+  "unknown"). Root cause was a single, findable source: `_update_connection_ui(True)`
+  used to jump straight to the `"verbose"` mode-indicator state on
+  port-open alone. Fixed: it now sets a new, honest `"connecting"` state
+  instead, which only ever resolves to `"verbose"` (via the existing
+  `verbose_mode_ready` → `_on_verbose_mode_ready()` path) or to a new
+  `"error"` state via `SerialManager.init_failed` (emitted from
+  `_init_tnc_thread()`'s except block) → `MainWindow._on_init_failed()`.
+  The serial port itself is deliberately left open on this path (no
+  `disconnect_port()` call) — Recovery needs a real port object to write
+  to, and the spec explicitly requires both Recovery and Connect to stay
+  usable as the way out; `_on_init_failed()` disables the mode combo and
+  "Enter Host Mode" (nothing there is actually usable) but explicitly
+  re-enables Connect and Recovery. `_on_connect_verbose()`/
+  `_on_connect_host()` now also notice `is_connected` is already `True`
+  and retry `init_tnc()` directly on the same open port instead of going
+  through `connect_port()` again — that method's own "already open"
+  guard used to make a second Connect press silently do nothing at all.
+  The init-failure error text itself reaches the user via the existing
+  `status_message` → `_on_status_message()` path, which used to show an
+  error message ONLY as a dialog (an if/else — the status-bar branch
+  never ran for an error) — now every error also lands in the status bar
+  alongside the dialog.
 - **The 1988 BASE-generation firmware has no MailDrop at all (Device C,
   `docs/DEVICES.md`) — detected via a query, not the banner (P37,
   2026-09-24).** Unlike PACTOR, MailDrop capability leaves no marker in
