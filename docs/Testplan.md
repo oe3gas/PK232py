@@ -1005,7 +1005,7 @@ not appear" now means "not in the currently-attached document", not
 "was never written anywhere". Also now true, which the old append-time
 filter could not offer: switching to chip 3 in CH view shows chip 3's
 **complete** history, not just monitor/data that arrives from the
-switch onward — see T130a below.
+switch onward — see T132 below.
 
 **Status (P50):** ✅ PASS (2026-09-25, headless — `TestUiChannelZero`
 still passes unchanged against the new document-switch mechanism;
