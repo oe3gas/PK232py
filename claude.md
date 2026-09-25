@@ -80,6 +80,18 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   gotcha under Known Gotchas / TNC-firmware for the full writeup —
   including that the suspected order-reversal in `main_window.py` was
   investigated and NOT found; the code there was already correct.
+- **TNC-state detection sprint (P43, 2026-09-25, unit-verified):** the
+  operator reproduced P40's actual trigger on the device — a fresh app
+  restart with the physical TNC left in Host Mode from the previous
+  session, which the old passive wakeup check could never catch (`*`
+  gets no answer at all in Host Mode). `SerialManager._init_tnc_thread()`
+  now runs a four-step active detection chain (`*` → CR → HPOLL query
+  frame → give up) and only sets the new `SerialManager.verbose_confirmed`
+  property once one of them has positive evidence; `ParamsUploader.upload()`
+  now requires it in addition to P40.2's `is_host_mode` check. Closes
+  Backlog.md's P29 (wakeup CR-fallback) — the app now has its own. See
+  the "`is_host_mode` is the SOFTWARE's belief" gotcha under Known
+  Gotchas / TNC-firmware for the full writeup.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -593,6 +605,61 @@ Grows over time.
   "parameter upload verified (N/N)"` on a full match, `WARNING` with the
   expected vs. actual value on a mismatch or no answer — purely
   informational, never aborts the connection sequence.
+  **Follow-up (P43, 2026-09-25):** the operator reproduced the actual
+  trigger on the device — a fresh app restart with the physical TNC left
+  in Host Mode from the previous session. See the next gotcha for why
+  `is_host_mode` could not have caught this and what replaces it.
+- **`is_host_mode` is the SOFTWARE's belief, not the device's real state
+  — never trust it without evidence from THIS session (P43, 2026-09-25,
+  same rule P34 already established for `tools/hw_check.py`, now also in
+  the application).** A fresh `SerialManager` instance always starts
+  `_in_host_mode = False`, regardless of what the physical TNC is
+  actually doing — reproduced on the device 24.09.2026: the app leaves
+  the TNC in Host Mode when it quits (or is force-killed/crashes before
+  its clean-exit path runs — see `disconnect_port()`'s own P43.3 comment,
+  which confirms the clean-exit path has always sent `HOST OFF`
+  correctly since commit ff17aa0), then a fresh app restart connects
+  with `_in_host_mode` starting False, and the old passive wakeup check
+  (does a stray SOH byte happen to show up in the response to `*`) never
+  actually saw one — **in Host Mode the TNC answers `*` with nothing at
+  all**, since it is not a valid frame and the TNC sends nothing
+  unsolicited while HPOLL is ON (factory default). Result: 68 parameter
+  commands, 5 s timeout each, none executed (the P40 finding above).
+  **Fix:** `SerialManager._init_tnc_thread()` now runs a four-step ACTIVE
+  detection chain, each step capped at `_TNC_STATE_STEP_TIMEOUT` (1.5 s,
+  so detection itself can never take longer than the failure mode it
+  prevents — worst case, nothing responds at all, is under 5 s):
+  1. `*` → banner or `cmd:` → verbose, freshly booted → done.
+  2. bare `CR` → `cmd:` → verbose, already awake → done (tried before
+     step 3 deliberately: the already-awake, verbose TNC is the more
+     common case and is settled by a single `CR`; this is also what
+     closes Backlog.md's P29 CR-fallback item — the app now has its own).
+  3. An HPOLL query frame (`build_command(b'HP')`, no argument — reused
+     from the existing Host Mode entry code, not rebuilt) → any `$4F`-CTL
+     frame back → Host Mode confirmed. This is the only step that can
+     reach a TNC genuinely in Host Mode, because it actively asks in
+     frame language instead of waiting for something that never comes.
+     On a match, writes `FRAME_HOST_OFF` directly (there is no
+     `HostModeWorker` running yet at this point in the connection
+     sequence, so this reuses the same bytes `exit_host_mode()` sends via
+     the worker, not that method itself) and repeats step 2 — if THAT
+     sees `cmd:`, verbose is confirmed after all.
+  4. None of the above answered anything usable → no PK-232 reachable at
+     all. A wrong port/baud rate and a hung TNC (see the "PK-232 can
+     hang" gotcha) look identical from software, so the abort message
+     names both possibilities and includes the port and baud rate.
+  **New property `SerialManager.verbose_confirmed`** — True only once
+  this chain has ACTIVELY confirmed a verbose prompt this session, never
+  merely assumed; reset to `False` at the start of every
+  `_init_tnc_thread()` run and cleared again on a successful Host Mode
+  entry. `ParamsUploader.upload()` now requires it in addition to the
+  existing `is_host_mode` check (P40.2) — refuses with "the verbose
+  prompt was never confirmed in this session" if it is missing, even
+  when `is_host_mode` happens to read `False`. Defaults permissively to
+  `True` via `getattr()` for any duck-typed test double that predates
+  P43 and does not define the attribute at all (same convention as
+  `has_pactor`) — only a real `SerialManager`, which always has it and
+  starts every connection cycle at `False`, actually enforces this gate.
 - **The 1988 BASE-generation firmware has no MailDrop at all (Device C,
   `docs/DEVICES.md`) — detected via a query, not the banner (P37,
   2026-09-24).** Unlike PACTOR, MailDrop capability leaves no marker in
