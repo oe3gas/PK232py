@@ -2007,7 +2007,7 @@ hardware re-test open.
 
 ---
 
-### T128 — Recovery feedback, honest connection state after a failed init (P45)
+### T128 — Recovery feedback, honest connection state after a failed init (P45, menu wording updated P46)
 
 Bugfix (25.09.2026, operator at the device): TNC in Host Mode → app
 started → Connect → the detection chain's own error → the app still
@@ -2015,21 +2015,29 @@ showed itself as connected (Host Mode button enabled, firmware still
 "unknown") → Recovery pressed → no visible reaction at all → "Host Mode"
 pressed → SWITCHING → Baudot screen (TNC was in fact reachable).
 
+**Menu note (P46):** Connect/Disconnect/Host Mode/Recovery no longer
+have their own toolbar buttons - all of them moved into the **TNC**
+menu (or its shortcuts) as part of P46's "TNC actions live in the menu
+only" change. The steps below use the menu wording; the underlying
+actions and their behaviour are unchanged.
+
 **Live sequence to run:**
 1. Kill the app with `Ctrl-C` while it is in Host Mode (leaves the TNC
    possibly stuck, per P44's step 3b — see the note below).
-2. Start the app again, `Connect`.
+2. Start the app again, **TNC → Connect + Enter Terminal Mode...**
+   (Ctrl+T).
    **Expected (if the chain cannot confirm anything):** the connect
    sequence's own error appears as a dialog AND in the status bar; the
    mode indicator reads "ERROR", not "VERBOSE MODE" or "HOST MODE"; the
-   mode combo and "Enter Host Mode" are disabled; `Connect` and
-   `Recovery` both stay enabled.
-3. Press `Recovery`.
-   **Expected:** the button locks and reads "Recovery running..."
+   mode combo is disabled; **Connect + Enter Terminal/Host Mode...** and
+   **Emergency Reconnect (Host Mode Recovery)** all stay enabled in the
+   TNC menu.
+3. **TNC → Emergency Reconnect (Host Mode Recovery)** (Ctrl+R).
+   **Expected:** the menu entry locks and reads "Recovery running..."
    immediately; when it finishes, a message appears in BOTH the status
-   bar and the verbose terminal's RX window, and the button returns to
+   bar and the verbose terminal's RX window, and the entry returns to
    normal. One of:
-   - `"Recovery successful - TNC is at the command prompt (verbose mode)."`
+   - `"Connection recovered - TNC is at the command prompt (verbose mode)."`
      — proceed to connect normally (parameter upload runs automatically).
    - `"Recovery did not reach the TNC. Power-cycle it and reconnect."`
      — also shown as a dialog.
@@ -2050,20 +2058,73 @@ either way, steps 2-4 above are what this test case is really checking.
   `verbose_confirmed`; only the HPOLL query answering still ends in
   success after the chain's own exit-and-recheck; silence throughout
   reports the power-cycle message and leaves `verbose_confirmed` False.
-- `test_main_window_connection.py` (new file, 11 cases) —
+- `test_main_window_connection.py` (new file, 11 cases; P46 removed the
+  toolbar's own "Enter Host Mode"/"Connect"/"Recovery" buttons - see
+  T129 below, assertions now read the TNC menu actions instead) —
   `_update_connection_ui(True)` sets "CONNECTING...", never "VERBOSE
   MODE" outright; `_on_init_failed()` sets "ERROR", disables the mode
-  combo/"Enter Host Mode", and explicitly keeps Connect and Recovery
-  enabled; pressing Connect again after a failed init retries
-  `init_tnc()` on the still-open port instead of silently doing nothing;
-  `_on_recovery()` locks the button immediately; `_on_recovery_finished()`
-  always re-enables it and shows the message in the verbose terminal,
-  plus a dialog on failure.
+  combo, and explicitly keeps Connect and Recovery enabled; pressing
+  Connect again after a failed init retries `init_tnc()` on the
+  still-open port instead of silently doing nothing; `_on_recovery()`
+  locks the menu entry immediately; `_on_recovery_finished()` always
+  re-enables it and shows the message in the verbose terminal, plus a
+  dialog on failure.
 
 **Status:** ✅ PASS (2026-09-25, unit-verified — 14 new tests across a
 new `test_main_window_connection.py` and `test_serial_manager.py`'s
 `TestRecoverySequence`; full suite 566 passed). Live hardware re-test
 open (the full sequence above, once, per the Definition of Done).
+
+---
+
+### T129 — Emergency Reconnect works from any state, and the toolbar has no TNC buttons (P46)
+
+P46 turned Recovery into the "Emergency Reconnect (Host Mode Recovery)"
+entry: it must work from literally ANY state, not just after a failed
+init (T128's scenario) - including with no connection attempted at all
+in this app run, opening the port itself from the saved config. This
+case also covers the Teil A fix (Recovery no longer leaks its own
+detection frames into the RX window) and the Teil C toolbar/menu move.
+
+**Live sequence to run:**
+1. Start the app fresh - do NOT connect at all.
+2. **TNC → Emergency Reconnect (Host Mode Recovery)** (Ctrl+R).
+   **Expected:** the entry is enabled (never greyed out just because
+   nothing is connected yet); the port opens using the last-saved
+   port/baud from Settings; the same detection chain runs; on success,
+   `"Connection recovered - TNC is at the command prompt (verbose
+   mode)."` appears and the app ends up in verbose mode exactly as a
+   normal Connect would (parameter upload/Host Mode entry then follow
+   the usual path).
+3. Repeat with the TNC deliberately left in Host Mode beforehand (kill
+   the app with Ctrl-C while in Host Mode, restart, do NOT press Connect
+   first - go straight to Emergency Reconnect).
+   **Expected:** same successful outcome; the verbose terminal's RX
+   window shows only the `[SYS] Recovery: ...` lines, never raw framed
+   bytes (the 25.09.2026 screenshot bug this package fixed).
+4. Check the toolbar: no `Connect`/`Disconnect`/`Host Mode`/`Recovery`
+   button anywhere - only the mode selector, the TNC-Firmware label and
+   the mode indicator remain. All four actions are reachable from the
+   **TNC** menu instead.
+
+**Unit-verified:**
+- `test_serial_manager.py::TestRecoveryTakesOverTheReadPath` (2 cases) —
+  no write happens while a (real or stubbed) reader is still "running";
+  `raw_data_received` never fires during a full recovery run.
+- `test_serial_manager.py::TestRecoveryEmergencyReconnect` (2 cases) —
+  `recovery(port_name, baudrate)` opens the port via the injected port
+  factory when not connected and reports success; with no port and
+  nothing configured it does nothing.
+- `test_main_window_connection.py::TestMenuOnlyTncActions` (4 cases) —
+  the toolbar has no TNC action buttons; the Emergency Reconnect entry
+  has the Ctrl+R shortcut and the new wording; every TNC menu shortcut
+  is distinct; the menu's Ctrl+D (serial disconnect) does not collide
+  with the Packet screen's own channel-disconnect shortcut (moved to
+  Ctrl+K, `test_packet_screen.py`'s renamed Ctrl+K tests plus a new
+  regression test confirming Ctrl+D no longer disconnects a channel).
+
+**Status:** ✅ PASS (2026-09-25, unit-verified — full suite 576 passed).
+Live hardware re-test open (steps 1-4 above, per the Definition of Done).
 
 ---
 
