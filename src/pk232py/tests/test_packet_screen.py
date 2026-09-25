@@ -324,7 +324,11 @@ class TestChipConnectFlow:
         assert chip.is_editing()
         assert chip.editor.text() == "OE3XYZ"
 
-    def test_ctrl_d_disconnects_the_busy_current_channel(self):
+    def test_ctrl_k_disconnects_the_busy_current_channel(self):
+        # P46.C.2: moved off Ctrl+D (now the TNC menu's "Disconnect +
+        # Close Serial Port") to Ctrl+K, so the two different
+        # "disconnect" actions (station link vs. serial port) no longer
+        # share one shortcut.
         from PyQt6.QtCore import QEvent
         from PyQt6.QtGui import QKeyEvent
 
@@ -334,13 +338,13 @@ class TestChipConnectFlow:
         screen.channel_bar.set_channel_state(4, "connected", "OE1XYZ")
         screen.channel_bar.set_current(4)
 
-        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_D,
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_K,
                         Qt.KeyboardModifier.ControlModifier)
         screen.eventFilter(screen.tx_input, ev)
 
         assert received == [4]
 
-    def test_ctrl_d_on_a_free_channel_does_nothing(self):
+    def test_ctrl_k_on_a_free_channel_does_nothing(self):
         from PyQt6.QtCore import QEvent
         from PyQt6.QtGui import QKeyEvent
 
@@ -348,6 +352,24 @@ class TestChipConnectFlow:
         received: list[int] = []
         screen.channel_bar.disconnect_requested.connect(received.append)
         screen.channel_bar.set_current(3)
+
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_K,
+                        Qt.KeyboardModifier.ControlModifier)
+        screen.eventFilter(screen.tx_input, ev)
+
+        assert received == []
+
+    def test_ctrl_d_no_longer_disconnects_the_channel(self):
+        # P46.C.2 - Ctrl+D must fall through untouched now (it belongs to
+        # the TNC menu's "Disconnect + Close Serial Port" instead).
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QKeyEvent
+
+        screen = _make_screen()
+        received: list[int] = []
+        screen.channel_bar.disconnect_requested.connect(received.append)
+        screen.channel_bar.set_channel_state(4, "connected", "OE1XYZ")
+        screen.channel_bar.set_current(4)
 
         ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_D,
                         Qt.KeyboardModifier.ControlModifier)
