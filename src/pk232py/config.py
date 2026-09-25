@@ -148,6 +148,18 @@ class HFPacketConfig:
     # channel. Off by default.
     show_link_messages_in_ui_channel: bool = False
 
+    # Display-only settings (P50) - never uploaded, see UPLOAD_EXEMPT.
+    # show_timestamps: prepend "[HH:MM:SS] " (muted colour) to every RX
+    # line. Off by default - the compact "[CHn]"-free CH view and the
+    # "n|" ALL-view tag already cost enough width without it.
+    show_timestamps: bool = False
+    # rx_max_lines_per_channel: QTextDocument.setMaximumBlockCount() for
+    # each of the ten per-channel RX documents AND the merged ALL
+    # document (PacketBaseScreen._rx_docs/_rx_doc_all) - keeps a long
+    # operating day from growing memory without bound. 5000 matches the
+    # spec's own suggested default.
+    rx_max_lines_per_channel: int = 5000
+
 
 # ---------------------------------------------------------------------------
 # PACTOR parameters
@@ -415,6 +427,12 @@ class ConfigManager:
             "show_link_messages_in_ui_channel",
             hf.show_link_messages_in_ui_channel,
         )
+        hf.show_timestamps = s.getboolean(
+            "show_timestamps", hf.show_timestamps
+        )
+        hf.rx_max_lines_per_channel = s.getint(
+            "rx_max_lines_per_channel", hf.rx_max_lines_per_channel
+        )
 
     def _apply_pactor(self) -> None:
         if not self._config.has_section("PACTOR"):
@@ -510,6 +528,8 @@ class ConfigManager:
             "mbell":    str(hf.mbell).lower(),
             "show_link_messages_in_ui_channel":
                 str(hf.show_link_messages_in_ui_channel).lower(),
+            "show_timestamps": str(hf.show_timestamps).lower(),
+            "rx_max_lines_per_channel": str(hf.rx_max_lines_per_channel),
         }
 
     def _build_pactor(self) -> None:
