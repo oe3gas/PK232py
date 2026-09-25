@@ -1,24 +1,31 @@
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
 # Copyright (C) 2026  OE3GAS  —  GPL v2
-"""Unit tests for pk232py.comm.serial_manager (P35.4).
+"""Unit tests for pk232py.comm.serial_manager (P35.4, P43).
 
-Only _wakeup_log_message() — the pure decision behind the wakeup log
-line — is covered here; the rest of _init_tnc_thread() needs a real (or
-fully mocked) serial.Serial and background thread, out of scope for a
-unit test.
+_wakeup_log_message() and the other pure classifier functions are
+covered directly. TestTncStateDetectionChain (P43.4) exercises the full
+_init_tnc_thread() detection chain against a fully mocked, synchronous
+serial.Serial stand-in (_FakePort) - no real timing dependency, since a
+canned response is queued the instant the triggering write() returns.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 
+from pk232py.comm.constants import FRAME_HOST_OFF
+from pk232py.comm.frame import build_command
+from pk232py.comm.params_uploader import ParamsUploader
 from pk232py.comm.serial_manager import (
+    SerialManager,
     _classify_maildrop_response,
     _parse_defaults_flag,
     _parse_release,
     _parse_verbose_query_value,
     _wakeup_log_message,
 )
+from pk232py.config import AppConfig
 
 # Real fixture, hw_logs/20260924_181446_maildrop_session.log (Device B,
 # MBX, 01.08.1991) -- the exact 176-byte wakeup response, banner included.
@@ -133,3 +140,152 @@ class TestParseVerboseQueryValue:
         # The echo alone (token == name.upper() exactly) must never be
         # mistaken for the TNC's own answer line.
         assert _parse_verbose_query_value("MYCALL", "MYCALL\r\ncmd:") is None
+
+
+_HPOLL_QUERY  = build_command(b'HP')  # SOH $4F H P ETB - step 3's stimulus
+_HPOLL_ANSWER = bytes([0x01, 0x4F, ord('H'), ord('P'), ord('Y'), 0x17])
+
+
+class _FakePort:
+    """Duck-typed stand-in for serial.Serial - synchronous and in-memory.
+    A canned response is queued the instant the triggering write() call
+    returns, so the real polling loops in _init_tnc_thread() pick it up
+    on their very first pass; no test needs to sleep for real hardware
+    timing. *responder(data) -> bytes* decides what (if anything) comes
+    back for each write."""
+
+    def __init__(self, responder):
+        self._responder = responder
+        self._buf = bytearray()
+        self.port = "COM_TEST"
+        self.baudrate = 9600
+        self.writes: list[bytes] = []
+        self.is_open = True
+
+    def write(self, data: bytes) -> int:
+        self.writes.append(bytes(data))
+        self._buf.extend(self._responder(bytes(data)))
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def reset_input_buffer(self) -> None:
+        self._buf.clear()
+
+    @property
+    def in_waiting(self) -> int:
+        return len(self._buf)
+
+    def read(self, n: int = 1) -> bytes:
+        if not self._buf:
+            time.sleep(0.001)  # never a tight busy-loop in _ReaderThread
+            return b""
+        n = min(n, len(self._buf))
+        data = bytes(self._buf[:n])
+        del self._buf[:n]
+        return data
+
+    def open(self) -> None:
+        self.is_open = True
+
+    def close(self) -> None:
+        self.is_open = False
+
+
+def _run_detection(responder) -> tuple[SerialManager, _FakePort, list[str]]:
+    """Build a SerialManager wired to a _FakePort(responder), run the
+    P43.1 detection chain synchronously (never via the real init_tnc()
+    background thread - deterministic for a test), and clean up any
+    _ReaderThread it started."""
+    sm = SerialManager()
+    port = _FakePort(responder)
+    sm._serial = port
+    messages: list[str] = []
+    sm.status_message.connect(messages.append)
+    try:
+        sm._init_tnc_thread()
+    finally:
+        if sm._reader:
+            sm._reader.stop()
+            sm._reader.join(timeout=1.0)
+    return sm, port, messages
+
+
+class TestTncStateDetectionChain:
+    """P43.4 - one case per branch of the four-step chain, against
+    _FakePort. is_host_mode alone (the software's own belief) cannot
+    catch a TNC left in Host Mode from a previous session on a fresh
+    SerialManager instance - only actively asking (steps 1-3) can."""
+
+    def test_step1_banner_and_cmd_confirms_verbose(self):
+        def responder(data):
+            if data == b"*":
+                return b"AEA PK-232MBX Ver. 7.1\r\ncmd:"
+            return b""
+
+        sm, port, _messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is True
+        assert sm.is_host_mode is False
+        assert port.writes == [b"*"]  # no CR, no HPOLL query needed
+
+    def test_step2_cr_confirms_verbose_when_star_is_silent(self):
+        def responder(data):
+            if data == b"\r":
+                return b"\r\ncmd:"
+            return b""  # '*' unanswered
+
+        sm, port, _messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is True
+        assert sm.is_host_mode is False
+        assert port.writes == [b"*", b"\r"]
+        assert _HPOLL_QUERY not in port.writes
+
+    def test_step3_hpoll_frame_confirms_host_mode_then_exits_to_verbose(self):
+        cr_count = {"n": 0}
+
+        def responder(data):
+            if data == _HPOLL_QUERY:
+                return _HPOLL_ANSWER
+            if data == b"\r":
+                cr_count["n"] += 1
+                if cr_count["n"] >= 2:  # only the retry AFTER the exit answers
+                    return b"\r\ncmd:"
+                return b""
+            return b""  # '*' unanswered, FRAME_HOST_OFF gets no reply
+
+        sm, port, _messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is True
+        assert sm.is_host_mode is False
+        assert _HPOLL_QUERY in port.writes
+        assert FRAME_HOST_OFF in port.writes
+        assert port.writes.count(b"\r") == 2
+
+    def test_all_three_silent_aborts_and_sends_nothing_to_the_uploader(self):
+        def responder(_data):
+            return b""
+
+        sm, _port, messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is False
+        assert any("COM_TEST" in m and "9600" in m for m in messages)
+
+        # DoD: the abort must also stop ParamsUploader from ever sending
+        # a single parameter - not just fail the detection itself.
+        uploader = ParamsUploader(serial=sm, config=AppConfig())
+        sent = uploader.upload()
+        assert sent == 0
+
+    def test_hpoll_answers_but_exit_does_not_reach_cmd_aborts(self):
+        def responder(data):
+            if data == _HPOLL_QUERY:
+                return _HPOLL_ANSWER
+            return b""  # every CR, including the post-exit retry, silent
+
+        sm, _port, messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is False
+        assert any("COM_TEST" in m and "9600" in m for m in messages)
