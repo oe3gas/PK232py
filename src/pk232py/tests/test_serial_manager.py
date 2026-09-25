@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import time
 
-from pk232py.comm.constants import FRAME_HOST_OFF
+from pk232py.comm.constants import FRAME_HOST_OFF, FRAME_RECOVERY
 from pk232py.comm.frame import build_command
 from pk232py.comm.params_uploader import ParamsUploader
 from pk232py.comm.serial_manager import (
@@ -213,10 +213,11 @@ def _run_detection(responder) -> tuple[SerialManager, _FakePort, list[str]]:
 
 
 class TestTncStateDetectionChain:
-    """P43.4 - one case per branch of the four-step chain, against
-    _FakePort. is_host_mode alone (the software's own belief) cannot
-    catch a TNC left in Host Mode from a previous session on a fresh
-    SerialManager instance - only actively asking (steps 1-3) can."""
+    """P43.4/P44.D - one case per branch of the four-step (now five-step,
+    with P44's 3b recovery stage) chain, against _FakePort. is_host_mode
+    alone (the software's own belief) cannot catch a TNC left in Host
+    Mode from a previous session on a fresh SerialManager instance - only
+    actively asking (steps 1-3) can."""
 
     def test_step1_banner_and_cmd_confirms_verbose(self):
         def responder(data):
@@ -264,14 +265,43 @@ class TestTncStateDetectionChain:
         assert FRAME_HOST_OFF in port.writes
         assert port.writes.count(b"\r") == 2
 
+    def test_step3b_recovery_sequence_confirms_verbose_after_half_frame_hang(self):
+        # P44.C1 - the HPOLL query itself gets NOTHING back (the scenario
+        # observed 25.09.2026 after killing the app mid-frame in Host
+        # Mode: the TNC's own frame parser is stuck waiting for an ETB
+        # and discards everything further, including a fresh SOH), but
+        # the recovery sequence (double-SOH + GG, then HOST OFF) reaches
+        # it and a repeated CR confirms verbose mode afterwards.
+        cr_count = {"n": 0}
+
+        def responder(data):
+            if data == b"\r":
+                cr_count["n"] += 1
+                if cr_count["n"] >= 2:  # only the retry AFTER recovery answers
+                    return b"\r\ncmd:"
+                return b""
+            return b""  # '*', the HPOLL query, and both recovery frames unanswered
+
+        sm, port, _messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is True
+        assert sm.is_host_mode is False
+        assert _HPOLL_QUERY in port.writes       # step 3 was tried first
+        assert FRAME_RECOVERY in port.writes      # step 3b's own frame
+        assert FRAME_HOST_OFF in port.writes      # part of the recovery sequence
+        assert port.writes.count(b"\r") == 2
+
     def test_all_three_silent_aborts_and_sends_nothing_to_the_uploader(self):
         def responder(_data):
             return b""
 
-        sm, _port, messages = _run_detection(responder)
+        sm, port, messages = _run_detection(responder)
 
         assert sm.verbose_confirmed is False
         assert any("COM_TEST" in m and "9600" in m for m in messages)
+        # The recovery stage (3b) must still have been attempted before
+        # giving up - not skipped straight to step 4.
+        assert FRAME_RECOVERY in port.writes
 
         # DoD: the abort must also stop ParamsUploader from ever sending
         # a single parameter - not just fail the detection itself.
