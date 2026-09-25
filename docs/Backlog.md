@@ -807,22 +807,29 @@ Kein neuer "Stop TX"-Button nötig — die vorhandenen Pfade decken alle Modes a
   (already wired into `tools/hw_check.py`'s summary, P31.3) and collect
   anomalies before treating "bracket ⇔ EPROM" as confirmed.
 
-### P29 — wakeup CR-fallback, priority lowered (2026-09-23)
+### P29 — wakeup CR-fallback — CLOSED (P43, 2026-09-25)
 - The wakeup logic's CR-fallback classification (`tools/hw_check.py`,
   `"TNC already awake -- needs CR (see P29)"`, exercised by
   `test_hw_check.py`) remains a reasonable thing to have — a TNC that is
   already past the `*` prompt and just needs a bare CR to re-sync is a real
   case worth classifying distinctly.
-- **Priority lowered:** P31's investigation of the 23.09.2026 session
-  failures found the actual root cause was **not** this code path at all —
-  it was the TNC hardware hanging outright (see CLAUDE.md, "The PK-232 can
-  hang and stop responding to anything at all"). The 18:01 wakeup failure
-  that originally motivated treating P29 as urgent is now explained by that
-  hang, not by any gap in the CR-fallback classification itself. No
-  hardware evidence has shown a real P29 defect since — keep the
-  classification as documentation of a known TNC behaviour, but do not
-  prioritise further work on it without a new, distinct failure to
-  investigate.
+- **Priority lowered (2026-09-23):** P31's investigation of the 23.09.2026
+  session failures found the actual root cause was **not** this code path
+  at all — it was the TNC hardware hanging outright (see CLAUDE.md, "The
+  PK-232 can hang and stop responding to anything at all"). The 18:01
+  wakeup failure that originally motivated treating P29 as urgent is now
+  explained by that hang, not by any gap in the CR-fallback classification
+  itself.
+- **Closed (2026-09-25):** the main application's own `_init_tnc_thread()`
+  now has exactly this CR-fallback built in as step 2 of the P43 four-step
+  TNC-state detection chain — a `*`-silent, already-awake TNC is confirmed
+  verbose by a single bare CR, before ever trying the Host Mode probe
+  (step 3). See CLAUDE.md's "There is no cmd: prompt in Host Mode" gotcha
+  (P40) and the new P43 detection-chain gotcha for the full picture.
+  `tools/hw_check.py`'s own CR-fallback classification stays as-is — it is
+  a separate codebase from the app, and this closes only the "does the
+  concept exist anywhere that needs it" question, not a request to unify
+  the two.
 
 ### What state was the TNC in at the start of the 23.09.2026 mdcheck_scan run? (P34, open)
 - The whole verbose phase of a `mdcheck_scan` run on Device B got nothing
