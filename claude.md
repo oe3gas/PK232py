@@ -185,6 +185,31 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   unaffected). See the "last chance to upload parameters", "a raw-bytes
   mirror... can be torn apart", and "stray control bytes... must be
   filtered" gotchas for the full writeup.
+- **Per-channel RX documents, compact prefixes, resizable TX, MHEARD
+  auto-population (P50, 2026-09-25, unit-verified):** four independent
+  findings from one screenshot. (1) A suspected channel offset (chip 1
+  green/connected, but every received line and the eventual DISCONNECTED
+  tagged channel 2) could not be reproduced anywhere in code after
+  auditing the full TX/RX channel path (`build_ch_cmd()`/`ctl_channel()`/
+  `_make_host_frame()`/`ChannelBar`'s dict-keyed state) — root cause
+  still open, needs a real hardware capture; the measurement infra it
+  needs already existed (RX side) and gained one more explicit line (TX
+  side, `send_channel_command()`). (2) The single-`QTextEdit`, append-
+  time ALL/CH filter (v0.1) meant switching to a channel only showed
+  what arrived AFTER the switch — replaced with one `QTextDocument` per
+  channel plus a merged ALL log, so a channel's full history is there
+  the moment you switch to it. (3) The old `[HH:MM:SS] [CHn] ` prefix
+  cost about a third of the line width — CH view now has no prefix at
+  all (the chip already names the channel), ALL view gets a compact
+  `n│` tag, and timestamps are optional (default off). (4) RX/TX is now
+  a vertical `QSplitter` — RX grows with the window, TX height is
+  adjustable and persisted, instead of a fixed five-line TX box leaving
+  a large empty area below RX. (5) MHEARD now gains connection partners
+  from live link messages immediately, not only from a manual Refresh.
+  See the four new Packet gotchas ("channel-offset report", "every
+  channel has its own RX document", "RX/TX is a QSplitter now", "MHEARD
+  gains connection partners from live link messages") for the full
+  writeup.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -1557,7 +1582,9 @@ Grows over time.
   the UI chip (channel 0). Fixed: `_make_link_handler()` now routes a
   channel-bearing call through `MainWindow._route_packet_link_message()`
   → `screen.append_channel_data(channel, text)` (reusing the existing
-  ALL/CH filter and `[CHn]` tag, T100, rather than reimplementing it);
+  ALL/CH document-per-channel model and its compact `n│` tag, P50,
+  rather than reimplementing it — see the next bullet for the tag's
+  current format, changed from the original `[CHn]`);
   channel 15 (`$5F`, not channel-scoped — e.g. the generic data ack) and
   AMTOR/PACTOR's single-argument calls (channel is `None`, no channel
   concept at all) are unaffected. **Never attribute a link message by
@@ -1567,6 +1594,35 @@ Grows over time.
   UI channel: `HFPacketConfig.show_link_messages_in_ui_channel` (default
   off) — see the "PC-side display settings" gotcha under Parameter
   dialogs.
+- **A channel-offset report could not be reproduced in code — verified,
+  not guessed, and the measurement path was strengthened either way
+  (P50 Teil A, 2026-09-25).** Screenshot, 25.09.2026 19:07: chip 1 green
+  with `OE3TEC` ("Ch 1 Partner: OE3TEC"), but every received line and
+  the eventual `*** DISCONNECTED: OE3TEC-1 ***` tagged `[CH2]` (the old
+  ALL-view tag format at the time). Audited every step of the channel
+  path end to end: `HFPacketMode.connect_frame()` →
+  `SerialManager.send_channel_command()` → `build_ch_cmd()` (`ctl = 0x40
+  | channel`) on the way out; `_make_host_frame()` → `ctl_channel()`
+  (`ctl & 0x0F`) on the way in; `ChannelBar._chips`/`_state`/`_partner`
+  are plain `dict[int, ...]` keyed directly by channel number, no
+  positional/0-based indexing anywhere. All of it symmetric — **no
+  code-level offset found**. This does not rule out a genuine TNC-side
+  behaviour (e.g. the PK-232 itself reassigning or reporting a different
+  channel than requested) — that can only be settled by measuring a real
+  device, which this investigation could not do. What WAS already true:
+  the exact measurement the spec asked for — the sent CO frame's CTL
+  byte, and the channel of every incoming `$3x`/`$5x` frame — was already
+  fully available via existing DEBUG logging
+  (`_ReaderThread.run()`'s `logger.debug("RX %r", frame)`, whose
+  `HostFrame` repr includes `channel`; `HFPacketMode._handle_rx_data()`/
+  `_handle_link_msg()`'s own `ch=%d`/`ch%d` lines). Added one more,
+  purely for convenience: `SerialManager.send_channel_command()` now logs
+  the requested channel right next to the actual CTL byte it puts on the
+  wire, in one line, for CONNECT/DISCONNECT specifically — so a hardware
+  capture does not need to cross-reference a separate hex dump to confirm
+  `build_ch_cmd()` encoded the right channel. **Root cause of the
+  25.09.2026 report is still open — needs a real hardware capture**, not
+  a guess.
 - **Channel 0 is the UI/unproto/monitor channel, not a QSO channel (P10,
   2026-09-20).** AEA Host Mode only has `$2x` for outgoing data with
   `x` = 0–9 — there is no `$2F`. So Unproto is not its own channel; it is the
@@ -1652,17 +1708,93 @@ Grows over time.
   unconfirmed whether `USERS` also blocks *outgoing* connects on higher
   channels (it is documented as limiting *accepted*, i.e. incoming, ones) —
   see Testplan T104/T105 for what is still open on real hardware.
-- **ALL/CH RX filter is append-time, not a buffer rebuild.** Switching the
-  current channel or toggling ALL/CH does **not** redraw RX history —
-  `PacketBaseScreen.append_channel_data()` simply decides whether to write a
-  given line when it arrives. This is a deliberate v0.1 simplification (see
-  the method's docstring). `append_monitor_data()` (monitor/unproto frames)
-  gets the same filter since P10: ALL always shows it, CH shows it only when
-  channel 0 (the UI channel above) is current — giving the CH view one
-  consistent meaning, chip 0 = monitor traffic, chip N = only that QSO. This
-  is unrelated to (and does not replace) the pre-existing
-  `_packet_raw_frames` buffer + `_packet_rx_redraw()`, which still exists
-  solely to re-render raw ↔ APRS-decoded on the APRS toggle (T59/T60).
+- **Every channel has its own RX document; ALL/CH switches the document,
+  it does not filter at append time (P50, 2026-09-25 — supersedes the
+  v0.1 "append-time filter" design).** The old model kept everything in
+  ONE `QTextEdit` and `append_channel_data()`/`append_monitor_data()`
+  decided per line whether to write it at all — switching to a channel
+  in CH view therefore only ever showed what arrived AFTER the switch,
+  never its prior history. `PacketBaseScreen._rx_docs: dict[int,
+  QTextDocument]` (one per channel, 0–9) plus `_rx_doc_all` (a merged,
+  chronological log of everything) replace this: every line is written
+  into BOTH its own channel's document and `_rx_doc_all` — costs memory,
+  buys back the channel's full history on every switch.
+  `_sync_rx_document()` just re-attaches `rx_display` to whichever
+  document `_view_all`/`current_channel()` implies (called from
+  `set_view_all()` and `ChannelBar.channel_changed` via
+  `_on_rx_channel_switch()`), saving/restoring each document's own
+  scroll position (`_rx_scroll`) so switching back and forth does not
+  reset your reading position. `reset_channels()` clears every document.
+  Each document is capped via `QTextDocument.setMaximumBlockCount()`
+  (`HFPacketConfig.rx_max_lines_per_channel`, default 5000,
+  PC-side/`UPLOAD_EXEMPT` like `show_link_messages_in_ui_channel`).
+  **Display formatting changed alongside this:** a channel's own
+  document gets NO channel prefix at all (the channel is already named
+  by which chip/view is selected); `_rx_doc_all` gets a compact `n│`
+  tag (channel digit + thin separator, `"UI│"` for the UI channel,
+  matching the chip's own "UI" label) in a muted colour, replacing the
+  old `[CHn]` bracket form. A timestamp (`[HH:MM:SS]`, also muted) is
+  now OFF by default (`HFPacketConfig.show_timestamps`) — costs a third
+  of the line width when always on. A system/link message keeps (or
+  gains) its own eye-catching colour (`_SYSTEM_MSG_COLOR`, amber) via an
+  explicit `color=` override to `append_channel_data()`, distinct from
+  plain channel data (blue) and monitor traffic (grey) — never muted
+  like the tag/timestamp.
+  **The pre-existing `_packet_raw_frames` buffer + `_packet_rx_redraw()`
+  (APRS raw↔decoded toggle, T59/T60) still exists, but now only rebuilds
+  the UI channel's OWN document** (`PacketBaseScreen.
+  clear_monitor_channel()`/`append_monitor_data_local_only()`) — never
+  `_rx_doc_all`, which is a chronological log of everything that has
+  already arrived from every channel; rebuilding it on an APRS toggle
+  would either duplicate every historical monitor line (through the
+  normal dual-write path) or drop every QSO-channel line recorded since
+  (if cleared outright). This is a deliberate scoping decision, not an
+  oversight — see `clear_monitor_channel()`'s own docstring.
+- **RX/TX is a `QSplitter` now, not a fixed five-line TX height (P50
+  Teil D, 2026-09-25).** The RX window used to be added with
+  `stretch=1` directly into the screen's own `QVBoxLayout` and the TX
+  row right after it at a hard `setFixedHeight()` — RX therefore never
+  grew to fill extra window height (a big empty area below it in the
+  25.09.2026 screenshot), and the operator had no way to make the TX
+  area taller or shorter. `PacketBaseScreen._rxtx_splitter`
+  (`QSplitter(Qt.Orientation.Vertical)`) now holds both — RX has
+  `setStretchFactor(0, 1)` (takes any extra space on a window resize),
+  TX has `setStretchFactor(1, 0)` (stays put unless the handle itself is
+  dragged) and keeps its old five-line height only as the STARTING
+  `setSizes()` value, not a hard constraint; both panes have a
+  `setMinimumHeight()` so neither can be dragged away entirely. Saved/
+  restored in `MainWindow._save_window_geometry()`/
+  `_restore_window_geometry()` alongside the window geometry itself, one
+  `QSettings` key per Packet screen (`hfPacketRxTxSplitterSizes`/
+  `vhfPacketRxTxSplitterSizes` — `_PACKET_RXTX_SPLITTER_KEYS`) — the
+  Hold TX/Clear TX/Clear RX button column stays a fixed-size sibling
+  layout inside the TX pane (`addStretch()` keeps it top-anchored), it
+  does not grow when the handle is dragged.
+- **MHEARD gains connection partners from live link messages, not just
+  a manual Refresh (P50 Teil E, 2026-09-25).** Previously the list only
+  ever grew from an `MH` poll (`MainWindow._on_packet_mheard()`), which
+  only runs on a button click — a station you just connected to would
+  not appear until you remembered to press Refresh. Now
+  `_make_channel_state_handler()`'s callback (already fed channel+state+
+  partner by `HFPacketMode._handle_link_msg()` for every CONNECTED/
+  CALLING("connect request")/FREE(DISCONNECTED, busy) transition) calls
+  `MheardPanel.add_entry_if_new(partner, now)` whenever `partner` is
+  non-empty — never for "Retry count exceeded" (`_handle_link_msg()`
+  splits that into its own `elif`, passing `""`, precisely because it
+  carries no callsign at all and `_extract_partner()`'s bare-first-token
+  fallback would otherwise misread the message text itself as one).
+  `add_entry_if_new()` is deliberately NOT `add_entry()` with a dedup
+  check bolted on — it never updates an existing row either, so a
+  station mentioned repeatedly (several DATA exchanges on one QSO) does
+  not accumulate duplicate entries. Channel number and green colour
+  still come from the existing `set_channel_map()` call, unchanged. A
+  real CONNECTED, or a genuine DISCONNECTED of a link that was actually
+  up (checked via the chip's OWN prior state, `screen.channel_bar.
+  state(channel)`, read BEFORE `set_channel_state()` updates it — a
+  CALLING→FREE failed-attempt transition is deliberately NOT this),
+  additionally fires ONE `_on_packet_mheard()` poll so the list also
+  catches up on any OTHER stations heard in the meantime — reusing the
+  existing Refresh implementation outright, not a second one.
 
 ### UI / PyQt6
 
