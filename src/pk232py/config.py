@@ -127,6 +127,14 @@ class HFPacketConfig:
     # never uploaded until confirmed (see ParamsUploader / UPLOAD_EXEMPT).
     mbell:    bool = False
 
+    # Display-only setting (P47) - never uploaded, see UPLOAD_EXEMPT in
+    # test_param_dialogs_roundtrip.py. When on, every link message
+    # (CONNECTED/DISCONNECTED/Retry count exceeded/...) also appears in
+    # the UI channel (chip 0), tagged with the channel it actually
+    # happened on, so it stays visible even while looking at a different
+    # channel. Off by default.
+    show_link_messages_in_ui_channel: bool = False
+
 
 # ---------------------------------------------------------------------------
 # PACTOR parameters
@@ -387,6 +395,10 @@ class ConfigManager:
         hf.bitconv8  = s.getboolean("bitconv8", hf.bitconv8)
         hf.hid       = s.getboolean("hid",      hf.hid)
         hf.mbell     = s.getboolean("mbell",    hf.mbell)
+        hf.show_link_messages_in_ui_channel = s.getboolean(
+            "show_link_messages_in_ui_channel",
+            hf.show_link_messages_in_ui_channel,
+        )
 
     def _apply_pactor(self) -> None:
         if not self._config.has_section("PACTOR"):
@@ -480,6 +492,8 @@ class ConfigManager:
             "bitconv8": str(hf.bitconv8).lower(),
             "hid":      str(hf.hid).lower(),
             "mbell":    str(hf.mbell).lower(),
+            "show_link_messages_in_ui_channel":
+                str(hf.show_link_messages_in_ui_channel).lower(),
         }
 
     def _build_pactor(self) -> None:
