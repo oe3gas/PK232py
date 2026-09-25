@@ -194,6 +194,15 @@ UPLOAD_EXEMPT: dict[tuple[str, str], str] = {
         "link messages are mirrored into the UI channel on this PC, has "
         "no corresponding TNC command at all."
     ),
+    ("hf_packet", "show_timestamps"): (
+        "display setting, not a TNC parameter (P50) - controls whether "
+        "the RX view prepends a timestamp; no corresponding TNC command."
+    ),
+    ("hf_packet", "rx_max_lines_per_channel"): (
+        "display setting, not a TNC parameter (P50) - PC-side "
+        "QTextDocument.setMaximumBlockCount() cap; no corresponding TNC "
+        "command."
+    ),
     # The four *_calls fields only affect the upload when their paired
     # *_mode field is YES/NO (_access_filter_cmds ignores calls entirely for
     # ALL/NONE, P13.3). Test D bumps exactly one field at a time, so bumping
