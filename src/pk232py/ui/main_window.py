@@ -1111,6 +1111,27 @@ class MainWindow(QMainWindow):
         Always uploads parameters from INI to TNC.
         If _connect_mode == "host": additionally enters Host Mode after upload.
         If _connect_mode == "verbose": stays in verbose terminal after upload.
+
+        P40 (2026-09-25): there is no "cmd:" prompt in Host Mode at all -
+        the TNC expects SOH-framed binary frames there, and plain ASCII
+        text is never executed as a command (see
+        SERIAL_CONNECTION_STATE_MACHINE.md's C3 VERBOSE / C4 UPLOADING /
+        C5 SWITCHING / C6 HOST MODE states and serial_manager.py's own
+        module docstring, Phase 2 before Phase 3). uploader.upload() in
+        _upload() below MUST run to completion (Phase 2, verbose) before
+        self._serial.enter_host_mode() (Phase 3) is ever called - this
+        was investigated after a 24.09.2026 hardware run showed 68
+        parameter commands each timing out after 5 s (~6 minutes total,
+        none actually reaching the TNC): git history shows this method's
+        ordering has been upload-then-Host-Mode since its original
+        implementation (commit 1257114) and still is, so the sequence
+        below was not the defect - the missing piece was that nothing
+        anywhere refused to run the upload if some OTHER path ever called
+        it while already in Host Mode. That refusal now lives in
+        ParamsUploader.upload() itself (P40.2, params_uploader.py) since
+        it is the reusable component future callers must also respect,
+        not something that can be guaranteed by getting this one call
+        site right.
         """
         self._log_monitor("[SYS] TNC in verbose mode")
         self._sb_mode.setText("Mode: VERBOSE")
@@ -1197,6 +1218,22 @@ class MainWindow(QMainWindow):
             )
             n = uploader.upload()
             self._log_monitor(f"[SYS] {n} parameters uploaded")
+            # P40.3: spot-check MYCALL/PACLEN/MAXFRAME against AppConfig,
+            # still in verbose mode, before Host Mode entry - cheap
+            # (under a second) and would have caught the 24.09.2026
+            # Host Mode upload failure immediately instead of on the
+            # next QSO attempt. Purely informational: never aborts.
+            if n > 0:
+                matched, applicable = uploader.verify()
+                if applicable and matched == applicable:
+                    self._log_monitor(
+                        f"[SYS] parameter upload verified ({matched}/{applicable})"
+                    )
+                elif applicable:
+                    self._log_monitor(
+                        f"[SYS] parameter upload verification: only "
+                        f"{matched}/{applicable} matched - see log for details"
+                    )
             self._update_maildrop_gate_ui()
             if getattr(self._serial, 'has_maildrop', None) is False:
                 self._log_monitor(
