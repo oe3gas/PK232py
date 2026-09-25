@@ -7,6 +7,7 @@ Abschnitt 4–5 — Die exakten Byte-Sequenzen für Entry und Exit, inklusive de
 Abschnitt 6 — Alle Qt Signals mit ihrer Wirkung auf MainWindow — das ist die Schnittstelle zwischen SerialManager und der UI.
 Abschnitt 7 — UI-Zustandstabelle: welche Controls sind in welchem Zustand enabled/disabled. Das verhindert Fehler bei neuen Menüeinträgen oder Buttons.
 Abschnitt 10–11 — _connect_mode Erklärung und alle Timing-Konstanten an einem Ort.
+Abschnitt 14 — P40 (2026-09-25): Parameter-Upload verweigert sich im Host Mode statt 68x 5s stumm zu verstreichen, plus Stichprobenverifikation nach dem Upload.
 
 
 **Scope:** `SerialManager` + `MainWindow` connection lifecycle.
@@ -17,7 +18,7 @@ Covers all states from port closed to Host Mode active.
 - `src/pk232py/comm/pk232_hostmode_sub.py` — subprocess for Host Mode entry
 - `src/pk232py/ui/main_window.py` — UI reactions via Qt Signals
 
-**Last updated:** 2026-05-01
+**Last updated:** 2026-09-25 (P40 — upload-before-Host-Mode guard, see §14)
 
 ---
 
@@ -52,9 +53,11 @@ Covers all states from port closed to Host Mode active.
 | `C2` | Wakeup → SOH byte detected | TNC already in Host Mode; start Worker | `C6` |
 | `C2` | Timeout / no response | Emit error; start ReaderThread as fallback | `C7` |
 | `C3` | `verbose_mode_ready` emitted | `ParamsUploader.upload()` starts in thread | `C4` |
-| `C4` | Upload complete, `_connect_mode == "verbose"` | Stay in verbose terminal | `C3` |
-| `C4` | Upload complete, `_connect_mode == "host"` | `enter_host_mode()` → background thread | `C5` |
+| `C4` | Upload complete | `ParamsUploader.verify()` spot-checks MYCALL/PACLEN/MAXFRAME against `AppConfig`, still in `C4` (P40, informational only — never blocks the transition below) | `C4` |
+| `C4` | Verify complete, `_connect_mode == "verbose"` | Stay in verbose terminal | `C3` |
+| `C4` | Verify complete, `_connect_mode == "host"` | `enter_host_mode()` → background thread | `C5` |
 | `C4` | TNC rebooted during upload | Emit `params_upload_required`; re-upload | `C4` |
+| Any | `ParamsUploader.upload()` called while `is_host_mode` is true | **Refused (P40.2):** logs `ERROR`, sends nothing, returns `0` — this must never legitimately happen (upload only ever runs in `C4`, i.e. verbose mode), so hitting it means a caller violated the state machine | (unchanged) |
 | `C5` | Subprocess returns `"OK"` | Reopen port; start `HostModeWorker`; send HPOLL N | `C6` |
 | `C5` | Subprocess returns `"FAIL:..."` | Reopen port; start ReaderThread; error msg | `C7` |
 | `C5` | Subprocess timeout (>15 s) | Exception caught; fallback to verbose | `C7` |
@@ -130,6 +133,18 @@ SerialManager                    TNC
 
 Delay between commands: `_PARAM_DELAY = 0.12 s`
 If TNC sends banner instead of `cmd:` → TNC rebooted → emit `params_upload_required`
+
+**P40 (2026-09-25):** `upload()` refuses to run at all if
+`SerialManager.is_host_mode` is already true (checked once, before the
+first command) — there is no `cmd:` prompt in Host Mode, so every command
+would otherwise silently time out (5 s each; 68 commands measured
+24.09.2026, ~6 minutes, none reached the TNC). It also aborts after 3
+consecutive commands with no `cmd:` response at all, rather than waiting
+out the remaining timeouts one by one. Immediately after the last
+command, `ParamsUploader.verify()` queries MYCALL/PACLEN/MAXFRAME back
+(`SerialManager.query_verbose_value()`, same request/response shape as
+above) and compares them to `AppConfig` — still in verbose mode, still
+`C4` — logging `"parameter upload verified (N/N)"` on a match. See §14.
 
 ### Phase 3: Host Mode Entry (subprocess `pk232_hostmode_sub.py`)
 
@@ -364,3 +379,47 @@ This is equivalent to what the main PK232PY project achieves via the
 subprocess (`pk232_hostmode_sub.py`) — the subprocess performs Steps 1–3,
 closes the port, then `serial_manager` reopens it and sends HPOLL_OFF
 directly before starting the HostModeWorker.
+
+---
+
+## 14. P40 — Upload-before-Host-Mode guard (2026-09-25)
+
+**Finding (24.09.2026, 21:27):** a hardware run logged 68 parameter-upload
+commands, each hitting `write_verbose_wait()`'s 5 s timeout (`no cmd:
+after ...`) — ~6 minutes total, and because the TNC was in Host Mode the
+whole time, none of the 68 commands actually reached it. Host Mode
+expects SOH-framed binary frames (§4/§12); plain ASCII text sent there is
+not a command the TNC recognises at all.
+
+**Investigated and NOT found here:** this document's own §2/§10 and
+Phase 2/Phase 3 split already state the correct order (upload in verbose
+mode, C4, before Host Mode entry, C5→C6), and `main_window.py`'s
+`_on_verbose_mode_ready()` has called `ParamsUploader.upload()` before
+`enter_host_mode()` since that function's original implementation
+(commit 1257114) — git history shows no point where this was ever
+reversed. That call site was not the defect.
+
+**What was actually missing:** nothing anywhere refused to run the
+upload if some other or future caller ever invoked it while the TNC was
+already in Host Mode — the state machine's C4-only precondition for
+`ParamsUploader.upload()` existed only as documentation, never as a
+runtime check. Fixed in `ParamsUploader.upload()` itself (not in
+`main_window.py`): it now checks `SerialManager.is_host_mode` once,
+before the first command, and refuses outright (`ERROR` log, sends
+nothing, returns `0`) rather than silently timing out repeatedly — see
+the transition table row above ("Any → refused"). It also aborts after 3
+consecutive commands get no response at all, instead of waiting out
+every remaining 5 s timeout individually.
+
+**Also added:** `ParamsUploader.verify()` /
+`SerialManager.query_verbose_value()` read MYCALL/PACLEN/MAXFRAME back
+immediately after the upload (still C4, still verbose) and compare them
+to `AppConfig` — this alone would have made the 24.09.2026 failure
+visible in under a second instead of on the next real QSO attempt.
+Purely informational: `INFO "parameter upload verified (N/N)"` on a
+match, `WARNING` with expected-vs-actual on a mismatch or no answer,
+never blocks the `C4 → C3`/`C4 → C5` transition.
+
+See CLAUDE.md's "There is no `cmd:` prompt in Host Mode" gotcha (TNC /
+firmware v7.1) for the full writeup, and Testplan.md for the
+verification test case.
