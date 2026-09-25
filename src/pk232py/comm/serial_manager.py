@@ -361,6 +361,18 @@ class SerialManager(QObject):
 
     status_message(str)
         Human-readable status for the status bar.
+
+    init_failed() (P45.2)
+        The P43/P44 detection chain in _init_tnc_thread() could not
+        confirm any TNC state (its step 4). connection_changed(True) may
+        already have fired when the port opened — this tells the UI that
+        turned out not to mean anything and it must not keep looking
+        connected. The port itself is deliberately left open (Recovery
+        needs it) — see MainWindow._on_init_failed().
+
+    recovery_finished(bool, str) (P45.1)
+        Emitted when recovery() completes: (success, human-readable
+        message). success mirrors verbose_confirmed at that point.
     """
 
     frame_received         = pyqtSignal(object)  # HostFrame
@@ -370,6 +382,8 @@ class SerialManager(QObject):
     host_mode_changed      = pyqtSignal(bool)
     params_upload_required = pyqtSignal()
     status_message         = pyqtSignal(str)
+    init_failed             = pyqtSignal()          # P45.2
+    recovery_finished       = pyqtSignal(bool, str)  # P45.1
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -836,6 +850,14 @@ class SerialManager(QObject):
                     "Init: step 3 confirmed Host Mode (0x4F frame) - "
                     "exiting to verbose"
                 )
+                # P45.1: visible progress, not just a log line - this is
+                # exactly the moment recovery()/Connect knows FOR CERTAIN
+                # the TNC is alive and in Host Mode (not just silent),
+                # worth telling the operator while the exit-and-recheck
+                # below is still running.
+                self.status_message.emit(
+                    "TNC responds in Host Mode - leaving Host Mode..."
+                )
                 self._in_host_mode = True
                 logger.debug("Init: step 3 exit TX: %s", FRAME_HOST_OFF.hex(' '))
                 port.write(FRAME_HOST_OFF)
@@ -916,6 +938,14 @@ class SerialManager(QObject):
         except Exception as exc:
             logger.error("init_tnc failed: %s", exc)
             self.status_message.emit(f"TNC init error: {exc}")
+            # P45.2: connection_changed(True) already fired when the port
+            # opened, well before this detection chain ran - the UI must
+            # not go on looking connected just because that earlier
+            # signal said so. The port itself is deliberately left open
+            # (not disconnect_port()) - Recovery needs it, and this is
+            # exactly the "it is the way out" case. See
+            # MainWindow._on_init_failed().
+            self.init_failed.emit()
             if self._reader is None and self._serial and self._serial.is_open:
                 self._reader = _ReaderThread(
                     self._serial, self._on_frame_received,
@@ -1169,18 +1199,67 @@ class SerialManager(QObject):
         except Exception as exc:
             logger.error("exit_host_mode: %s", exc)
 
-    def recovery(self) -> None:
-        """Send double-SOH recovery frame (TRM 4.1.6)."""
+    def recovery(self) -> bool:
+        """P45.1: send the documented recovery sequence (double-SOH + GG,
+        TRM 4.1.6, then HOST OFF — the same FRAME_RECOVERY/FRAME_HOST_OFF
+        bytes _init_tnc_thread()'s own step 3b already sends), then
+        determine and report the resulting TNC state via the EXISTING
+        P43/P44 detection chain (_init_tnc_thread() itself — no second
+        version of it is built here).
+
+        Runs in a background thread — the detection chain alone can take
+        several seconds (up to five 1.5s steps), so never call this from
+        the GUI thread expecting an immediate result. Emits
+        recovery_finished(success, message) when done;
+        MainWindow._on_recovery_finished() is the sole consumer — the old
+        behaviour (send the sequence, emit a generic "Recovery sent" and
+        stop) left the operator with no way to tell whether anything had
+        actually worked (found 25.09.2026: Recovery pressed, no visible
+        reaction, only a later "Host Mode" button press revealed it had).
+        """
         if not self.is_connected:
-            return
+            return False
+        t = threading.Thread(
+            target=self._recovery_thread, daemon=True, name="PK232-Recovery"
+        )
+        t.start()
+        return True
+
+    def _recovery_thread(self) -> None:
         try:
+            logger.info("Recovery: sending recovery sequence")
+            self.status_message.emit("Recovery: sending recovery sequence...")
             self._write_raw(FRAME_RECOVERY)
             time.sleep(0.2)
-            self.exit_host_mode()
-            self.status_message.emit("Recovery sent")
-            logger.info("Recovery frame sent")
+            self._write_raw(FRAME_HOST_OFF)
+            time.sleep(0.2)
+            self._in_host_mode = False
+
+            self.status_message.emit("Recovery: determining TNC state...")
+            # Reuses the existing chain outright - it already implements
+            # "CR -> cmd:; else HPOLL frame; else the recovery sequence
+            # again" as its own steps 2/3/3b, plus a step 1 ('*') that is
+            # harmless to try again here.
+            self._init_tnc_thread()
+
+            if self._verbose_confirmed:
+                msg = (
+                    "Recovery successful - TNC is at the command prompt "
+                    "(verbose mode)."
+                )
+                logger.info("Recovery: %s", msg)
+                self.recovery_finished.emit(True, msg)
+            else:
+                msg = "Recovery did not reach the TNC. Power-cycle it and reconnect."
+                logger.error("Recovery: %s", msg)
+                self.recovery_finished.emit(False, msg)
         except Exception as exc:
+            msg = (
+                f"Recovery did not reach the TNC. Power-cycle it and "
+                f"reconnect. ({exc})"
+            )
             logger.error("recovery: %s", exc)
+            self.recovery_finished.emit(False, msg)
 
     # ------------------------------------------------------------------
     # Sending frames (Host Mode)
