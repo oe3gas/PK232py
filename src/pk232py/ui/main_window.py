@@ -557,13 +557,28 @@ class MainWindow(QMainWindow):
     def _indicator_style(state: str) -> str:
         """Return stylesheet for the mode indicator label.
 
-        state: 'offline' | 'verbose' | 'host' | 'switching'
+        state: 'offline' | 'connecting' | 'verbose' | 'host' | 'switching'
+               | 'error'
         """
         styles = {
-            "offline":   ("  OFFLINE  ",    "#888888", "#2a2a2a", "#555555"),
-            "verbose":   ("  VERBOSE  ",    "#ffcc44", "#2a2200", "#776600"),
-            "host":      ("  HOST MODE  ",  "#44ff88", "#00220f", "#007733"),
-            "switching": ("  SWITCHING...","#88aaff", "#001133", "#224488"),
+            "offline":    ("  OFFLINE  ",     "#888888", "#2a2a2a", "#555555"),
+            # P45.2: the serial PORT opening is not the same as the TNC
+            # having actually answered anything - "connecting" is the
+            # honest state between connect_port() succeeding and
+            # verbose_mode_ready/init_failed deciding which of "verbose"
+            # or "error" comes next. Never skip straight to "verbose" on
+            # port-open alone (that was the P45 bug: a failed init used
+            # to leave this reading "VERBOSE" forever).
+            "connecting": ("  CONNECTING...", "#88aaff", "#001133", "#224488"),
+            "verbose":    ("  VERBOSE  ",     "#ffcc44", "#2a2200", "#776600"),
+            "host":       ("  HOST MODE  ",   "#44ff88", "#00220f", "#007733"),
+            "switching":  ("  SWITCHING...",  "#88aaff", "#001133", "#224488"),
+            # P45.2: shown when init_tnc()'s detection chain (P43/P44)
+            # could not confirm any TNC state at all - the serial port
+            # itself may still be open (Recovery needs it), but the
+            # device side is unconfirmed, so this must never look like
+            # "verbose" or "host mode".
+            "error":      ("  ERROR  ",       "#ff5555", "#330000", "#772222"),
         }
         label, fg, bg, border = styles.get(state, styles["offline"])
         return (
@@ -579,10 +594,12 @@ class MainWindow(QMainWindow):
     def _set_mode_indicator(self, state: str) -> None:
         """Update the mode indicator label text and colour."""
         texts = {
-            "offline":   "  OFFLINE  ",
-            "verbose":   "  VERBOSE MODE  ",
-            "host":      "  HOST MODE  ",
-            "switching": "  SWITCHING...  ",
+            "offline":    "  OFFLINE  ",
+            "connecting": "  CONNECTING...  ",
+            "verbose":    "  VERBOSE MODE  ",
+            "host":       "  HOST MODE  ",
+            "switching":  "  SWITCHING...  ",
+            "error":      "  ERROR  ",
         }
         self._mode_indicator.setText(texts.get(state, "  OFFLINE  "))
         self._mode_indicator.setStyleSheet(self._indicator_style(state))
@@ -1043,6 +1060,8 @@ class MainWindow(QMainWindow):
         self._serial.verbose_mode_ready.connect(self._on_verbose_mode_ready)
         self._serial.params_upload_required.connect(self._on_params_upload_required)
         self._serial.raw_data_received.connect(self._on_raw_data_received)
+        self._serial.init_failed.connect(self._on_init_failed)
+        self._serial.recovery_finished.connect(self._on_recovery_finished)
 
  # SerialManager ModeManager (frame dispatch)
         self._serial.frame_received.connect(self._modes.on_frame)
@@ -1085,16 +1104,29 @@ class MainWindow(QMainWindow):
 
     def _on_connect_verbose(self) -> None:
         """Connect and enter verbose terminal mode (no automatic Host Mode)."""
+        self._connect_mode = "verbose"
+        if self._serial.is_connected:
+            # P45.2: a failed init leaves the port open (Recovery needs
+            # it) - "Connect" pressed again must retry the detection
+            # chain on that SAME already-open port, not silently do
+            # nothing. connect_port()'s own "already open" guard would
+            # otherwise make _open_connect_dialog() return False here and
+            # this method would just return, with no way for the operator
+            # to actually retry short of Disconnect first.
+            self._serial.init_tnc()
+            return
         if not self._open_connect_dialog():
             return
-        self._connect_mode = "verbose"
         self._serial.init_tnc()
 
     def _on_connect_host(self) -> None:
         """Connect, upload parameters and enter Host Mode automatically."""
+        self._connect_mode = "host"
+        if self._serial.is_connected:
+            self._serial.init_tnc()
+            return
         if not self._open_connect_dialog():
             return
-        self._connect_mode = "host"
         self._serial.init_tnc()
 
     def _on_connect(self) -> None:
@@ -1271,6 +1303,33 @@ class MainWindow(QMainWindow):
         self._log_monitor("[SYS] TNC rebooted re-uploading parameters...")
         self._on_verbose_mode_ready()
 
+    def _on_init_failed(self) -> None:
+        """P45.2 - the P43/P44 detection chain could not confirm any TNC
+        state. connection_changed(True) already fired when the port
+        opened (well before this chain ran) and set the UI looking
+        "connecting" - this must not be left looking connected just
+        because that earlier signal said the port was open (reproduced
+        25.09.2026: Host Mode button green, firmware "unknown", after a
+        Connect that had actually failed).
+
+        The error TEXT itself is already shown via status_message's own
+        dialog + status-bar path (_on_status_message, SerialManager
+        already emitted "TNC init error: ..." there) - this only resets
+        the UI state so it stops implying a working connection. The
+        serial port itself is deliberately left open (SerialManager does
+        not call disconnect_port() on this path) - Recovery needs it, and
+        both Recovery and Connect must stay usable as the way out.
+        """
+        self._set_mode_indicator("error")
+        self._sb_mode.setText("Mode: ERROR")
+        self._mode_combo.setEnabled(False)
+        self._tb_host_on.setEnabled(False)
+        self._act_connect_verbose.setEnabled(True)
+        self._act_connect_host.setEnabled(True)
+        self._tb_connect.setEnabled(True)
+        self._act_recovery.setEnabled(True)
+        self._tb_recovery.setEnabled(True)
+
     def _on_host_mode_enter(self) -> None:
         """Manual Host Mode entry from menu/toolbar.
 
@@ -1291,9 +1350,35 @@ class MainWindow(QMainWindow):
             self._serial.exit_host_mode()
 
     def _on_recovery(self) -> None:
-        if self._serial.is_connected:
-            self._serial.recovery()
-            self._log_monitor("[SYS] Host Mode recovery sent")
+        """Kick off the async recovery sequence (P45.1) and lock the
+        button while it runs - the old behaviour gave no visible
+        reaction at all, so pressing it a second time (or giving up on
+        it) looked exactly the same as it working (found 25.09.2026)."""
+        if not self._serial.is_connected:
+            return
+        self._act_recovery.setEnabled(False)
+        self._act_recovery.setText("Recovery running...")
+        self._tb_recovery.setEnabled(False)
+        self._tb_recovery.setText("Recovery running...")
+        self._log_monitor("[SYS] Recovery: sending recovery sequence...")
+        self._serial.recovery()
+
+    def _on_recovery_finished(self, success: bool, message: str) -> None:
+        """P45.1 - report Recovery's outcome visibly: status bar AND the
+        verbose terminal's RX window (so it is still there in a later
+        mitschnitt/capture, not just a transient status-bar line)."""
+        self._act_recovery.setEnabled(True)
+        self._act_recovery.setText("Host Mode &Recovery")
+        self._tb_recovery.setEnabled(True)
+        self._tb_recovery.setText("Recovery")
+        self._log_monitor(f"[SYS] Recovery: {message}")
+        self._vt_append(
+            f"[SYS] {message}\n",
+            color="#3a9e3a" if success else "#f44747",
+        )
+        self.statusBar().showMessage(message, 5000)
+        if not success:
+            QMessageBox.warning(self, "Recovery", message)
 
     # ------------------------------------------------------------------
     # Slots -- mode selection
@@ -4395,16 +4480,23 @@ class MainWindow(QMainWindow):
         # Writing here as well would produce duplicate output.
 
     def _on_status_message(self, msg: str) -> None:
-        """Route status messages: errors popup, info status bar."""
+        """Route status messages: errors popup AND status bar, info just
+        status bar.
+
+        P45.2: an error used to show ONLY as a dialog (this was an
+        if/else — the status bar branch never ran for an error message
+        at all), so once the dialog was dismissed nothing about the
+        failure was visible anywhere else. Now every error also lands in
+        the status bar, same as an info message would.
+        """
         # Keywords that indicate an error requiring user attention
         _error_keywords = (
             "error", "Error", "failed", "Failed",
             "cannot", "Cannot", "not installed",
         )
+        self.statusBar().showMessage(msg, 5000)
         if any(kw in msg for kw in _error_keywords):
             QMessageBox.critical(self, "TNC Error", msg)
-        else:
-            self.statusBar().showMessage(msg, 5000)
 
     # ------------------------------------------------------------------
     # UI state updates
@@ -4432,8 +4524,16 @@ class MainWindow(QMainWindow):
         if connected:
             self._sb_port.setText(f"Port: {self._config.port_name}")
             self._sb_baud.setText(f"Baud: {self._config.baudrate}")
-            # Connected but not yet in any mode → verbose indicator
-            self._set_mode_indicator("verbose")
+            # P45.2: the serial port opening only means connect_port()
+            # succeeded - it says NOTHING about whether the TNC has
+            # actually answered anything yet. Jumping straight to
+            # "verbose" here used to leave the indicator reading VERBOSE
+            # forever if init_tnc()'s detection chain (P43/P44) then
+            # failed - the exact bug the operator reproduced 25.09.2026
+            # ("die Anwendung zeigte sich trotzdem als verbunden").
+            # "connecting" is honest until verbose_mode_ready (success)
+            # or init_failed (failure) decides which comes next.
+            self._set_mode_indicator("connecting")
         else:
             self._sb_port.setText("Port: ---")
             self._sb_baud.setText("Baud: ---")
