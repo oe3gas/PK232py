@@ -1873,6 +1873,60 @@ suite 524 passed). Live hardware re-test open.
 
 ---
 
+### T126 — TNC-state detection chain and confirmed-verbose gate (P43)
+
+Bugfix (24.09.2026, reproduced on the device): the app leaves the TNC
+in Host Mode when it quits (or an unclean exit — crash, force-kill —
+never reaches the documented HOST-OFF-on-disconnect path at all); on the
+next app start, `SerialManager.is_host_mode` starts `False` regardless
+(the software's own belief, not the device's real state), and the old
+passive wakeup check never saw the stray SOH byte it was hoping for,
+since a TNC in Host Mode answers `*` with nothing at all. Result: T125's
+68-command silent upload.
+
+**Unit-verified (`test_serial_manager.py::TestTncStateDetectionChain`,
+against `_FakePort`, a fully synchronous in-memory stand-in for
+`serial.Serial`):**
+1. `*` → banner + `cmd:` → step 1 confirms verbose; no `CR`, no HPOLL
+   query frame ever sent.
+2. `*` silent, `CR` → `cmd:` → step 2 confirms verbose; no HPOLL query
+   frame sent.
+3. `*` and the first `CR` silent, HPOLL query frame (`build_command(b'HP')`)
+   → a `$4F`-CTL frame → Host Mode confirmed; `FRAME_HOST_OFF` written
+   directly, `CR` repeated → `cmd:` → verbose confirmed after the exit.
+4. All three (steps 1-3) silent → abort; `SerialManager.verbose_confirmed`
+   stays `False`; the abort message names the port and baud rate.
+   **DoD-critical:** a `ParamsUploader` built against this same
+   `SerialManager` afterwards sends exactly zero parameters.
+5. The HPOLL query answers (Host Mode confirmed), but the post-exit `CR`
+   retry never sees `cmd:` → abort the same way as case 4, not a silent
+   "assume it worked".
+6. `ParamsUploader.upload()` refuses when `verbose_confirmed` is `False`
+   even though `is_host_mode` also reads `False` — the P43.2 gate is
+   strictly additional to P40.2's, not a replacement
+   (`TestRequiresConfirmedVerbosePrompt` in `test_params_uploader.py`,
+   including that a legacy test double which never defines
+   `verbose_confirmed` at all still uploads normally — the permissive
+   `getattr` default only ever matters for real `SerialManager` instances).
+
+**Timing:** each of the three probing steps is capped at
+`_TNC_STATE_STEP_TIMEOUT` (1.5 s); the worst case (case 4, all three
+silent) totals under 5 s, measured directly by the unit test itself
+(no mocked-out sleep — the whole test file runs in ~14 s for exactly
+this reason).
+
+**Still open (needs real hardware):** quit the app, then immediately
+reconnect WITHOUT power-cycling the TNC — expect the connect sequence to
+complete in well under a minute either way (freshly-verbose or
+recovered-from-Host-Mode), with `"parameter upload verified (3/3)"` in
+the log and no `no cmd:` warning at all.
+
+**Status:** ✅ PASS (2026-09-25, unit-verified — 8 new tests across
+`test_serial_manager.py` and `test_params_uploader.py`, full suite 532
+passed). Live hardware re-test open.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
