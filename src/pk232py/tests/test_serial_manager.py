@@ -16,6 +16,7 @@ from pk232py.comm.serial_manager import (
     _classify_maildrop_response,
     _parse_defaults_flag,
     _parse_release,
+    _parse_verbose_query_value,
     _wakeup_log_message,
 )
 
@@ -102,3 +103,33 @@ class TestClassifyMaildropResponse:
     def test_empty_or_garbled_answers_none_not_a_guess(self):
         assert _classify_maildrop_response("") is None
         assert _classify_maildrop_response("cmd:") is None
+
+
+class TestParseVerboseQueryValue:
+    """P40.3 - upload-verification queries (MYCALL/PACLEN/MAXFRAME),
+    same '<echo>\\r\\n<Name mixed-case> <value>\\r\\ncmd:' format
+    confirmed by P15 for parse_query_value()-style responses."""
+
+    def test_extracts_the_value_skipping_the_echo(self):
+        assert _parse_verbose_query_value(
+            "MYCALL", "MYCALL\r\nMYcall    OE3GAS\r\ncmd:"
+        ) == "OE3GAS"
+
+    def test_numeric_value(self):
+        assert _parse_verbose_query_value(
+            "PACLEN", "PACLEN\r\nPAclen    128\r\ncmd:"
+        ) == "128"
+
+    def test_what_error_answers_none(self):
+        assert _parse_verbose_query_value(
+            "MAXFRAME", "MAXFRAME\r\n?What?\r\ncmd:"
+        ) is None
+
+    def test_empty_or_garbled_answers_none_not_a_guess(self):
+        assert _parse_verbose_query_value("MYCALL", "") is None
+        assert _parse_verbose_query_value("MYCALL", "cmd:") is None
+
+    def test_only_the_echo_with_no_answer_line_is_none(self):
+        # The echo alone (token == name.upper() exactly) must never be
+        # mistaken for the TNC's own answer line.
+        assert _parse_verbose_query_value("MYCALL", "MYCALL\r\ncmd:") is None
