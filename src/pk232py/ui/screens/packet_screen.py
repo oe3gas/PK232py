@@ -65,8 +65,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from PyQt6.QtCore import Qt, QTimer, QEvent, pyqtSignal, QStringListModel
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import (
+    Qt, QTimer, QEvent, pyqtSignal, QStringListModel,
+    QVariantAnimation, QEasingCurve, QAbstractAnimation,
+)
+from PyQt6.QtGui import QFont, QColor
 from PyQt6.QtWidgets import (
     QApplication, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel,
@@ -179,13 +182,37 @@ CHANNEL_COUNT = 10
 CHIP_MIN_W = 56
 UI_CHANNEL = 0   # P10: channel 0 is the UI/unproto/monitor channel, not a QSO
 
-# Chip fill colour per state — CH_FREE / CH_CALLING / CH_CONNECTED
+# Channel/chip states (P44 — named so both this module and its tests can
+# refer to them instead of repeating the raw strings). CH_FAILED is a
+# transient state only ChannelBar.set_channel_state() ever assigns itself
+# (see its docstring) — nothing external sets it directly.
+CH_FREE      = "free"
+CH_CALLING   = "calling"
+CH_CONNECTED = "connected"
+CH_FAILED    = "failed"
+
+# Chip fill colour per state. CH_CALLING's amber is also the pulse
+# animation's low value (_PULSE_LOW) — this is just what the chip shows
+# for the instant between entering "calling" and the animation's first
+# tick, or when the animation is disabled. CH_FAILED is red, shown only
+# for _FAILED_FLASH_MS before ChannelBar reverts the chip to CH_FREE
+# itself (P44 — a failed connect must be visible even on a single
+# screenshot / without colour vision, not just "calling forever").
 _CHIP_FILL = {
-    "free":      "#5a5a5a",
-    "calling":   "#cc8800",
-    "connected": "#3a9e3a",
+    CH_FREE:      "#5a5a5a",
+    CH_CALLING:   "#8a6a1e",
+    CH_CONNECTED: "#3a9e3a",
+    CH_FAILED:    "#b03a3a",
 }
 _CHIP_BORDER_CURRENT = "#ffb400"   # amber, 2px — marks the current channel
+
+# P44 — "calling" pulse animation (ONE QVariantAnimation for the whole
+# ChannelBar, not one per chip, so every calling chip pulses in sync —
+# see ChannelBar's own docstring for why a shared animation object).
+_PULSE_LOW           = "#8a6a1e"
+_PULSE_HIGH          = "#b08a2a"
+_PULSE_PERIOD_MS     = 1200   # 0.83 Hz — well under the 3 Hz photosensitivity limit
+_FAILED_FLASH_MS     = 1500   # how long CH_FAILED shows before reverting to CH_FREE
 # Channel 0 has no connection state a free/calling/connected fill could
 # express — it is a fixed, separate colour, always, regardless of _state[0]
 # (which set_channel_state() prevents from ever changing anyway).
@@ -201,6 +228,19 @@ _EDIT_STYLE_INVALID = (
     "QLineEdit { background-color: #12303f; color: #ffffff;"
     " border: 2px solid #d05a5a; border-radius: 4px; }"
 )
+
+
+def _chip_style(fill: str, border: str, border_w: int) -> str:
+    """Build a chip button's stylesheet (P44 — shared between
+    ChannelBar._update_chip()'s normal render and _on_pulse_value()'s
+    fast per-tick background-only update, so the two never drift apart
+    on the border/text portion)."""
+    return (
+        "QPushButton {"
+        f"  background-color: {fill}; color: white;"
+        f"  border: {border_w}px solid {border}; border-radius: 4px;"
+        "}"
+    )
 
 
 class ChannelChip(QWidget):
@@ -221,6 +261,12 @@ class ChannelChip(QWidget):
                   channel. Escape or losing focus cancels.
     Busy chip  -> shows the partner callsign; no editor, "Disconnect" and
                   "Copy callsign" instead.
+    Failed chip (CH_FAILED, P44) -> a failed connect attempt (retry count
+                  exceeded, busy, or disconnected while still calling)
+                  shows red for _FAILED_FLASH_MS before ChannelBar reverts
+                  it to free on its own; counts as free for interaction
+                  (editor/context menu) in the meantime — a chip that just
+                  failed is exactly where a retry is most likely.
     Channel 0 (UI) -> no editor, no context menu entries — there is
                   nothing to connect to there (P10).
 
@@ -240,7 +286,7 @@ class ChannelChip(QWidget):
     def __init__(self, channel: int, parent=None):
         super().__init__(parent)
         self._channel = channel
-        self._state = "free"
+        self._state = CH_FREE
         self._partner = ""
 
         self._stack = QStackedLayout(self)
@@ -319,7 +365,11 @@ class ChannelChip(QWidget):
         self._partner = partner
 
     def start_edit(self, prefill: str = "") -> None:
-        if self._channel == UI_CHANNEL or self._state != "free":
+        # CH_FAILED counts as free for interaction purposes (P44) - it is
+        # a free channel that is only shown red for _FAILED_FLASH_MS for
+        # visibility; blocking a retry click during that window would be
+        # exactly the wrong moment to make the operator wait.
+        if self._channel == UI_CHANNEL or self._state not in (CH_FREE, CH_FAILED):
             return
         self.editor.setStyleSheet(_EDIT_STYLE_NORMAL)
         self.editor.setToolTip("")
@@ -371,7 +421,7 @@ class ChannelChip(QWidget):
         if self._channel == UI_CHANNEL:
             return   # P10: no context menu on the UI channel
         menu = QMenu(self)
-        if self._state == "free":
+        if self._state in (CH_FREE, CH_FAILED):
             act = menu.addAction("Connect…")
             act.triggered.connect(lambda: self.edit_requested.emit(self._channel))
             act = menu.addAction("Connect via…")
@@ -397,7 +447,11 @@ class ChannelBar(QWidget):
 
     A chip shows the channel number while free, and the partner callsign once
     a connect attempt is under way or a link is up. Chip fill colour encodes
-    state (grey/amber/green); a 2px amber border marks the *current* channel.
+    state — grey (CH_FREE), pulsing amber (CH_CALLING), green (CH_CONNECTED),
+    red for _FAILED_FLASH_MS then back to grey (CH_FAILED, P44) — the same
+    semantics as MHEARD's own connected-station colour (P44.A3: one colour
+    logic for the whole window, not amber in one place and green in another.
+    A 2px amber border marks the *current* channel, independent of fill.
     Since P42, the chip is also where a connect happens — see ChannelChip.
 
     Lernmodus — why a local model and not a TNC query: the PK-232 Host Mode
@@ -418,11 +472,33 @@ class ChannelBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current = 1
-        self._state: dict[int, str] = {ch: "free" for ch in range(CHANNEL_COUNT)}
+        self._state: dict[int, str] = {ch: CH_FREE for ch in range(CHANNEL_COUNT)}
         self._partner: dict[int, str] = {ch: "" for ch in range(CHANNEL_COUNT)}
         self._chips: dict[int, ChannelChip] = {}
         # USERS (P11.5) — advisory only, see set_user_limit().
         self._user_limit: int = CHANNEL_COUNT - 1
+
+        # P44 — one shared pulse animation for every CH_CALLING chip (not
+        # one per chip: a single animation object keeps every calling
+        # chip pulsing in perfect sync, which reads as intentional rather
+        # than several independent, visibly-drifting timers). Low->high
+        # via a mid-cycle keyframe, not start/end alone, so the loop is a
+        # smooth oscillation rather than a sawtooth snap-back to the low
+        # value at the end of every 1.2s cycle.
+        self._pulse = QVariantAnimation(self)
+        self._pulse.setStartValue(QColor(_PULSE_LOW))
+        self._pulse.setKeyValueAt(0.5, QColor(_PULSE_HIGH))
+        self._pulse.setEndValue(QColor(_PULSE_LOW))
+        self._pulse.setDuration(_PULSE_PERIOD_MS)
+        self._pulse.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._pulse.setLoopCount(-1)
+        self._pulse.valueChanged.connect(self._on_pulse_value)
+
+        # P44 — one QTimer(self) per channel that is currently showing
+        # CH_FAILED, created on demand and reused; see
+        # _schedule_failed_clear() for why these must be parented to
+        # self rather than free-floating QTimer.singleShot() calls.
+        self._failed_timers: dict[int, "QTimer"] = {}
 
         self._history: list[str] = []
         self._history_model = QStringListModel([])
@@ -469,19 +545,84 @@ class ChannelBar(QWidget):
     # ------------------------------------------------------------------
 
     def set_channel_state(self, ch: int, state: str, partner: str = "") -> None:
-        """Update chip *ch* to *state* ('free'/'calling'/'connected').
+        """Update chip *ch* to *state* (CH_FREE/CH_CALLING/CH_CONNECTED).
 
         Channel 0 (P10, UI_CHANNEL) never changes state — it is not a QSO
         channel, so it can never be "calling" or "connected". This is a
         defensive guard, not just a UI nicety: in every non-Packet operating
         mode 0 is the only channel used (TRM 4.3), so a stray link-message
         frame reporting channel 0 is not entirely impossible.
+
+        P44 — a CALLING channel that is told to become FREE has, by
+        definition, failed to connect (retry count exceeded, busy, or a
+        DISCONNECTED that arrived before ever reaching CONNECTED — see
+        HFPacketMode._handle_link_msg()). Rather than snap straight back
+        to a plain free chip, this shows CH_FAILED (red) for
+        _FAILED_FLASH_MS first — a screenshot or a colour-blind operator
+        must be able to tell "that attempt just failed" apart from
+        "nothing has ever been tried here", which a chip that goes
+        straight from amber to grey cannot. A channel that was already
+        CONNECTED (a normal, successful hangup) skips this entirely and
+        goes straight to free, same as before — there is nothing that
+        failed there. This is still entirely driven through
+        set_channel_state() (P18/P16's existing channel-state path) - no
+        new callback route.
         """
         if ch == UI_CHANNEL or ch not in self._state:
             return
-        self._state[ch] = state if state in _CHIP_FILL else "free"
-        self._partner[ch] = partner if state != "free" else ""
+        prior = self._state[ch]
+        if state == CH_FREE and prior == CH_CALLING:
+            self._state[ch] = CH_FAILED
+            self._partner[ch] = ""
+            self._update_chip(ch)
+            self._sync_pulse_animation()
+            self._schedule_failed_clear(ch)
+            return
+        self._state[ch] = state if state in _CHIP_FILL else CH_FREE
+        self._partner[ch] = partner if state != CH_FREE else ""
         self._update_chip(ch)
+        self._sync_pulse_animation()
+
+    def _schedule_failed_clear(self, ch: int) -> None:
+        """Start (or restart) the QTimer that reverts chip *ch* from
+        CH_FAILED back to CH_FREE after _FAILED_FLASH_MS.
+
+        Deliberately a QTimer(self) PARENTED to this ChannelBar and kept
+        in self._failed_timers, never the free-floating
+        QTimer.singleShot(ms, callback) classmethod: that timer is owned
+        by the global Qt event loop, not by any widget, so it still fires
+        (and still calls into self._clear_failed(), touching widgets
+        that may already be gone) even after this ChannelBar's C++
+        object has been destroyed - found via a real crash (RuntimeError:
+        wrapped C/C++ object of type QLabel has been deleted) that only
+        showed up running the FULL test suite, never a single test file
+        in isolation: a test's ChannelBar went out of scope and was
+        garbage-collected long before its pending 1.5s singleShot fired,
+        and when it did, it corrupted an unrelated LATER test's own
+        pytest-qt exception capture - the exact same class of collateral
+        damage the P41 stale-event-filter finding hit (see CLAUDE.md). A
+        timer parented to self is destroyed by Qt along with it, so a
+        dead ChannelBar simply never fires this callback at all instead
+        of firing it against freed memory.
+        """
+        timer = self._failed_timers.get(ch)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda: self._clear_failed(ch))
+            self._failed_timers[ch] = timer
+        timer.start(_FAILED_FLASH_MS)
+
+    def _clear_failed(self, ch: int) -> None:
+        """Revert chip *ch* from CH_FAILED back to CH_FREE after
+        _FAILED_FLASH_MS (P44). Only acts if the chip is STILL showing
+        CH_FAILED - a fresh connect attempt (or any other state change)
+        in the meantime already moved it on, and must not be undone by
+        this stale timer firing late."""
+        if self._state.get(ch) == CH_FAILED:
+            self._state[ch] = CH_FREE
+            self._partner[ch] = ""
+            self._update_chip(ch)
 
     def set_current(self, ch: int) -> None:
         """Select *ch* as the current channel (used by Connect/TX)."""
@@ -496,7 +637,7 @@ class ChannelBar(QWidget):
         return self._partner.get(self._current if ch is None else ch, "")
 
     def state(self, ch: int | None = None) -> str:
-        return self._state.get(self._current if ch is None else ch, "free")
+        return self._state.get(self._current if ch is None else ch, CH_FREE)
 
     def channel_map(self) -> dict[str, int]:
         """Return {callsign: channel} for every channel that is currently
@@ -511,8 +652,35 @@ class ChannelBar(QWidget):
             call: ch
             for ch, call in self._partner.items()
             if ch != UI_CHANNEL and call
-            and self._state.get(ch) in ("connected", "calling")
+            and self._state.get(ch) in (CH_CONNECTED, CH_CALLING)
         }
+
+    # -- pulse animation (P44) ------------------------------------------
+
+    def _sync_pulse_animation(self) -> None:
+        """Start the shared pulse animation the instant any chip becomes
+        CH_CALLING, stop it the instant none are - never a permanent
+        timer running on the notebook while the screen is just sitting
+        idle."""
+        calling = any(s == CH_CALLING for s in self._state.values())
+        running = self._pulse.state() == QAbstractAnimation.State.Running
+        if calling and not running:
+            self._pulse.start()
+        elif not calling and running:
+            self._pulse.stop()
+
+    def _on_pulse_value(self, value: QColor) -> None:
+        """Apply the animation's current interpolated colour to every
+        CALLING chip's background only - text colour and border stay
+        fixed, so the label reads steadily while the fill breathes."""
+        fill = value.name()
+        for ch, chip in self._chips.items():
+            if self._state.get(ch) != CH_CALLING:
+                continue
+            is_current = ch == self._current
+            border   = _CHIP_BORDER_CURRENT if is_current else "#333333"
+            border_w = 2 if is_current else 1
+            chip.button.setStyleSheet(_chip_style(fill, border, border_w))
 
     def step(self, delta: int) -> None:
         """Move the current channel by *delta*, wrapping 0..9."""
@@ -528,9 +696,10 @@ class ChannelBar(QWidget):
         clear it. Does NOT change which channel is current.
         """
         for ch in range(CHANNEL_COUNT):
-            self._state[ch] = "free"
+            self._state[ch] = CH_FREE
             self._partner[ch] = ""
             self._update_chip(ch)
+        self._sync_pulse_animation()
 
     def set_user_limit(self, limit: int) -> None:
         """Number of simultaneous connections the TNC accepts (USERS, P11.5).
@@ -556,7 +725,8 @@ class ChannelBar(QWidget):
         current, free channel, in which case it opens that chip's
         inline editor instead (P42.1's table: 'Klick auf den bereits
         gewählten freien Chip öffnet die Eingabe')."""
-        if ch == self._current and ch != UI_CHANNEL and self._state[ch] == "free":
+        if (ch == self._current and ch != UI_CHANNEL
+                and self._state[ch] in (CH_FREE, CH_FAILED)):
             self._chips[ch].start_edit()
             return
         self._select(ch, emit=True)
@@ -590,7 +760,7 @@ class ChannelBar(QWidget):
         (P42 — MHEARD double-click on an unconnected station: 'the first
         free chip', not necessarily the one currently selected)."""
         for ch in range(1, CHANNEL_COUNT):
-            if self._state[ch] == "free":
+            if self._state[ch] in (CH_FREE, CH_FAILED):
                 self.start_edit(ch, prefill)
                 return
 
@@ -599,7 +769,7 @@ class ChannelBar(QWidget):
         MHEARD double-click handler in PacketBaseScreen). No-op for a
         busy chip or the UI channel; ChannelChip.start_edit() enforces
         that itself, this just also makes sure *ch* becomes current."""
-        if ch == UI_CHANNEL or self._state.get(ch) != "free":
+        if ch == UI_CHANNEL or self._state.get(ch) not in (CH_FREE, CH_FAILED):
             return
         self._select(ch, emit=True)
         self._chips[ch].start_edit(prefill)
@@ -640,15 +810,10 @@ class ChannelBar(QWidget):
         is_ui_channel = ch == UI_CHANNEL
         chip.set_state(state, partner)
 
-        fill = _UI_CHANNEL_FILL if is_ui_channel else _CHIP_FILL.get(state, _CHIP_FILL["free"])
+        fill = _UI_CHANNEL_FILL if is_ui_channel else _CHIP_FILL.get(state, _CHIP_FILL[CH_FREE])
         border = _CHIP_BORDER_CURRENT if is_current else "#333333"
         border_w = 2 if is_current else 1
-        style = (
-            "QPushButton {"
-            f"  background-color: {fill}; color: white;"
-            f"  border: {border_w}px solid {border}; border-radius: 4px;"
-            "}"
-        )
+        style = _chip_style(fill, border, border_w)
         if is_ui_channel:
             tip = (
                 "UI / Unproto / Monitor channel.\n"
@@ -671,9 +836,15 @@ class ChannelBar(QWidget):
                     f"\nUSERS is set to {self._user_limit} — incoming "
                     "connects on this channel will not be accepted."
                 )
+        # CH_CALLING gets a trailing ellipsis (P44) - the state must be
+        # readable even without colour (a screenshot, colour-blindness),
+        # and "OE3TEC" alone looks identical whether calling or connected.
+        call_text = partner if partner else ""
+        if state == CH_CALLING and call_text:
+            call_text += " …"
         chip.set_display(
             "UI" if is_ui_channel else str(ch),
-            partner if partner else "",
+            call_text,
             is_current,
             style,
             tip,
@@ -706,7 +877,11 @@ class _MheardRowWidget(QWidget):
         lbl_c = QLabel(display)
         lbl_c.setFont(QFont("Courier New", 9))
         if self._connected:
-            lbl_c.setStyleSheet("color: #ffb400;")   # amber = connected station
+            # P44 — one colour semantics for the whole window: connected
+            # means CH_CONNECTED's green everywhere, not amber here and
+            # green on the chip (the chip already uses amber for CALLING,
+            # so amber here used to contradict it).
+            lbl_c.setStyleSheet(f"color: {_CHIP_FILL[CH_CONNECTED]};")
         else:
             lbl_c.setStyleSheet("color: #66ee66;" if direct else "color: #88ccff;")
         lbl_t = QLabel(time_str)
@@ -788,7 +963,7 @@ class MheardPanel(QWidget):
 
         add_hline(root)
 
-        lbl_legend = QLabel("* = direct (no digi)  |  amber = connected")
+        lbl_legend = QLabel("* = direct (no digi)  |  green = connected")
         lbl_legend.setFont(QFont("Segoe UI", 8))
         root.addWidget(lbl_legend)
 
@@ -816,7 +991,8 @@ class MheardPanel(QWidget):
         """Update which callsigns are currently connected on which channel.
 
         Called whenever ChannelBar state changes so MHEARD rows for those
-        callsigns show the channel column and render amber (T87).
+        callsigns show the channel column and render green (T87; amber
+        until P44, when the chip/MHEARD colour semantics were unified).
         """
         self._channel_map = dict(mapping)
         self._render()
@@ -1052,7 +1228,8 @@ class PacketBaseScreen(QWidget):
             if (event.key() == _Qt.Key.Key_D and
                     event.modifiers() & _Qt.KeyboardModifier.ControlModifier):
                 ch = self.channel_bar.current()
-                if ch != UI_CHANNEL and self.channel_bar.state(ch) != "free":
+                if (ch != UI_CHANNEL
+                        and self.channel_bar.state(ch) not in (CH_FREE, CH_FAILED)):
                     self.channel_bar.disconnect_requested.emit(ch)
                 return True
         # Enter in one of the non-TX fields registered in __init__, while no
@@ -1753,7 +1930,7 @@ class PacketBaseScreen(QWidget):
               while a QSO link is up or pending on some channel).
           anything else (disconnected / idle) — Unproto re-enabled.
         """
-        self.btn_unproto.setEnabled(state.lower() not in ("connected", "calling"))
+        self.btn_unproto.setEnabled(state.lower() not in (CH_CONNECTED, CH_CALLING))
 
     def on_unproto_toggled(self, checked: bool) -> None:
         """Visual feedback for Unproto button toggle."""
