@@ -546,3 +546,157 @@ class TestMheardColourSemantics(object):
         assert legend_texts, "legend label not found"
         assert "green = connected" in legend_texts[0]
         assert "amber" not in legend_texts[0]
+
+
+class TestPerChannelRxDocuments:
+    """P50 Teil B/C/F — one QTextDocument per channel plus a merged ALL
+    document; the ALL/CH switch re-attaches rx_display to the right
+    document instead of filtering at append time (T100, rewritten)."""
+
+    def test_channel_history_survives_switching_away_and_back(self):
+        screen = _make_screen()
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(1)
+        screen.append_channel_data(1, "hello from channel 1")
+
+        screen.channel_bar.set_current(3)
+        assert "hello from channel 1" not in screen.rx_display.toPlainText()
+
+        screen.channel_bar.set_current(1)
+        assert "hello from channel 1" in screen.rx_display.toPlainText()
+
+    def test_all_view_contains_both_channels_in_arrival_order(self):
+        screen = _make_screen()
+        screen.set_view_all(True)
+        screen.append_channel_data(1, "first")
+        screen.append_channel_data(3, "second")
+
+        text = screen.rx_display.toPlainText()
+        assert text.index("first") < text.index("second")
+
+    def test_ch_view_has_no_prefix(self):
+        screen = _make_screen()
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(2)
+        screen.append_channel_data(2, "plain text")
+
+        text = screen.rx_display.toPlainText()
+        assert "plain text" in text
+        assert "2│" not in text
+        assert "[CH2]" not in text
+
+    def test_all_view_has_the_compact_tag(self):
+        screen = _make_screen()
+        screen.set_view_all(True)
+        screen.append_channel_data(2, "plain text")
+
+        assert "2│plain text" in screen.rx_display.toPlainText()
+
+    def test_timestamps_off_by_default(self):
+        import re
+
+        screen = _make_screen()
+        screen.append_channel_data(1, "no clock please")
+
+        text = screen.rx_display.toPlainText()
+        assert "no clock please" in text
+        assert re.search(r"\[\d{2}:\d{2}:\d{2}\]", text) is None
+
+    def test_timestamps_on_when_enabled(self):
+        import re
+
+        screen = _make_screen()
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(1)
+        screen.apply_display_settings(show_timestamps=True, rx_max_lines=5000)
+        screen.append_channel_data(1, "with a clock")
+
+        text = screen.rx_display.toPlainText()
+        assert re.search(r"\[\d{2}:\d{2}:\d{2}\] with a clock", text)
+
+    def test_scroll_position_is_remembered_per_channel(self):
+        screen = _make_screen()
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(1)
+        for i in range(200):
+            screen.append_channel_data(1, f"line {i}")
+        bar = screen.rx_display.verticalScrollBar()
+        bar.setValue(bar.maximum() // 2)
+        remembered = bar.value()
+
+        screen.channel_bar.set_current(3)
+        screen.channel_bar.set_current(1)
+
+        assert screen.rx_display.verticalScrollBar().value() == remembered
+
+    def test_reset_channels_clears_every_document(self):
+        screen = _make_screen()
+        screen.set_view_all(True)
+        screen.append_channel_data(1, "will be gone")
+        screen.append_monitor_data("also gone")
+
+        screen.reset_channels()
+
+        assert screen.rx_display.toPlainText().strip() == ""
+        screen.channel_bar.set_current(1)
+        screen.set_view_all(False)
+        assert "will be gone" not in screen.rx_display.toPlainText()
+
+    def test_system_message_color_override_is_applied(self):
+        screen = _make_screen()
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(1)
+        screen.append_channel_data(1, "*** CONNECTED to OE3TEC ***", color="#ffaa00")
+
+        doc = screen._rx_docs[1]
+        # Walk the document's text blocks for a fragment matching our text
+        # and confirm its foreground colour is the override, not the
+        # plain channel-data blue.
+        found = False
+        block = doc.begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                if frag.isValid() and "CONNECTED" in frag.text():
+                    assert frag.charFormat().foreground().color().name() == "#ffaa00"
+                    found = True
+                it += 1
+            block = block.next()
+        assert found, "system message fragment not found in the document"
+
+
+class TestMheardAutoPopulation:
+    """P50 Teil E — MHEARD gains connection partners from live link
+    messages, without waiting for a manual Refresh."""
+
+    def test_connected_adds_partner_with_channel(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(1, CH_CONNECTED, "OE3TEC")
+        screen.mheard_panel.add_entry_if_new("OE3TEC", "12:00")
+        screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
+
+        from PyQt6.QtWidgets import QLabel
+        labels = [lbl.text() for lbl in screen.mheard_panel.findChildren(QLabel)]
+        assert any("1 OE3TEC" in t for t in labels)
+
+    def test_add_entry_if_new_does_not_duplicate(self):
+        screen = _make_screen()
+        screen.mheard_panel.add_entry_if_new("OE3TEC", "12:00")
+        screen.mheard_panel.add_entry_if_new("OE3TEC", "12:05")
+
+        matches = [e for e in screen.mheard_panel._entries if e[0] == "OE3TEC"]
+        assert len(matches) == 1
+        assert matches[0] == ("OE3TEC", "12:00", False)   # first write wins
+
+    def test_disconnected_station_stays_but_loses_channel_and_colour(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(1, CH_CONNECTED, "OE3TEC")
+        screen.mheard_panel.add_entry_if_new("OE3TEC", "12:00")
+        screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
+
+        screen.channel_bar.set_channel_state(1, CH_FREE, "")
+        screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
+
+        assert any(e[0] == "OE3TEC" for e in screen.mheard_panel._entries)
+        assert "OE3TEC" not in screen.channel_bar.channel_map()
