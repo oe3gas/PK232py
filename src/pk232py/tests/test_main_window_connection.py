@@ -257,7 +257,8 @@ class TestMenuOnlyTncActions:
     def test_tnc_menu_shortcuts_are_all_distinct(self, wired_window):
         w, _serial = wired_window
         tnc_actions = [
-            w._act_connect_verbose, w._act_connect_host, w._act_host_off,
+            w._act_connect_verbose, w._act_connect_host,
+            w._act_enter_host_mode, w._act_host_off,
             w._act_disconnect, w._act_recovery,
         ]
         shortcuts = [a.shortcut().toString() for a in tnc_actions if a.shortcut().toString()]
@@ -274,3 +275,238 @@ class TestMenuOnlyTncActions:
         # packet_screen.py's eventFilter()).
         w, _serial = wired_window
         assert w._act_disconnect.shortcut().toString() == "Ctrl+D"
+
+
+class TestTncMenuGating:
+    """P49.A.1 - Connect/Enter-Host-Mode/Leave-Host-Mode are gated
+    strictly by the live connection sub-state, not just `connected`.
+    Before this fix, "Leave Host Mode + Return to Terminal" was enabled
+    whenever merely connected, even in verbose mode (where
+    exit_host_mode() is a harmless no-op) - exactly the kind of "enabled
+    but pointless" control this project has hit before."""
+
+    def test_disconnected_only_connect_actions_are_enabled(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = False
+        serial.is_verbose_mode = False
+        serial.is_host_mode = False
+
+        w._update_tnc_menu_gating()
+
+        assert w._act_connect_verbose.isEnabled()
+        assert w._act_connect_host.isEnabled()
+        assert not w._act_enter_host_mode.isEnabled()
+        assert not w._act_host_off.isEnabled()
+
+    def test_connected_verbose_enables_enter_host_mode_only(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = True
+        serial.is_verbose_mode = True
+        serial.is_host_mode = False
+
+        w._update_tnc_menu_gating()
+
+        assert not w._act_connect_verbose.isEnabled()
+        assert not w._act_connect_host.isEnabled()
+        assert w._act_enter_host_mode.isEnabled()
+        assert not w._act_host_off.isEnabled()
+
+    def test_connected_host_mode_enables_leave_host_mode_only(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = True
+        serial.is_verbose_mode = False
+        serial.is_host_mode = True
+
+        w._update_tnc_menu_gating()
+
+        assert not w._act_connect_verbose.isEnabled()
+        assert not w._act_connect_host.isEnabled()
+        assert not w._act_enter_host_mode.isEnabled()
+        assert w._act_host_off.isEnabled()
+
+    def test_disabled_enter_host_mode_explains_why_in_its_tooltip(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = True
+        serial.is_verbose_mode = False
+        serial.is_host_mode = True
+
+        w._update_tnc_menu_gating()
+
+        assert "Host Mode" in w._act_enter_host_mode.toolTip()
+
+
+class TestEnterHostModeFromVerbose:
+    """P49.A.2 - "Enter Host Mode" is the last chance to upload
+    parameters (no cmd: prompt exists in Host Mode at all, P40/P43)."""
+
+    def test_not_connected_does_nothing(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = False
+        calls = []
+        w._enter_host_mode_now = lambda: calls.append("entered")
+        w._start_param_upload_thread = lambda: calls.append("uploaded")
+
+        w._on_enter_host_mode()
+
+        assert calls == []
+
+    def test_not_verbose_does_nothing(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = True
+        serial.is_verbose_mode = False
+        calls = []
+        w._enter_host_mode_now = lambda: calls.append("entered")
+        w._start_param_upload_thread = lambda: calls.append("uploaded")
+
+        w._on_enter_host_mode()
+
+        assert calls == []
+
+    def test_already_uploaded_skips_straight_to_host_mode(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = True
+        serial.is_verbose_mode = True
+        w._params_uploaded_this_session = True
+        calls = []
+        w._enter_host_mode_now = lambda: calls.append("entered")
+        w._start_param_upload_thread = lambda: calls.append("uploaded")
+
+        w._on_enter_host_mode()
+
+        assert calls == ["entered"]
+
+    def test_upload_outstanding_fast_init_off_uploads_first(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = True
+        serial.is_verbose_mode = True
+        w._params_uploaded_this_session = False
+        w._config.fast_init = False
+        calls = []
+        w._enter_host_mode_now = lambda: calls.append("entered")
+        w._start_param_upload_thread = lambda: calls.append("uploaded")
+
+        w._on_enter_host_mode()
+
+        assert calls == ["uploaded"]
+        assert w._connect_mode == "host"
+
+    def test_fast_init_on_asks_and_upload_choice_uploads_first(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = True
+        serial.is_verbose_mode = True
+        w._params_uploaded_this_session = False
+        w._config.fast_init = True
+        calls = []
+        w._enter_host_mode_now = lambda: calls.append("entered")
+        w._start_param_upload_thread = lambda: calls.append("uploaded")
+        w._ask_fast_init_upload_choice = lambda: "upload"
+
+        w._on_enter_host_mode()
+
+        assert calls == ["uploaded"]
+        assert w._connect_mode == "host"
+
+    def test_fast_init_on_skip_choice_switches_without_upload(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = True
+        serial.is_verbose_mode = True
+        w._params_uploaded_this_session = False
+        w._config.fast_init = True
+        calls = []
+        w._enter_host_mode_now = lambda: calls.append("entered")
+        w._start_param_upload_thread = lambda: calls.append("uploaded")
+        w._ask_fast_init_upload_choice = lambda: "skip"
+
+        w._on_enter_host_mode()
+
+        assert calls == ["entered"]
+
+    def test_fast_init_on_cancel_choice_does_nothing(self, wired_window):
+        w, serial = wired_window
+        serial.is_connected = True
+        serial.is_verbose_mode = True
+        w._params_uploaded_this_session = False
+        w._config.fast_init = True
+        calls = []
+        w._enter_host_mode_now = lambda: calls.append("entered")
+        w._start_param_upload_thread = lambda: calls.append("uploaded")
+        w._ask_fast_init_upload_choice = lambda: "cancel"
+
+        w._on_enter_host_mode()
+
+        assert calls == []
+
+    def test_new_connection_resets_the_uploaded_flag(self, wired_window):
+        w, serial = wired_window
+        w._params_uploaded_this_session = True
+
+        w._update_connection_ui(True)
+
+        assert w._params_uploaded_this_session is False
+
+
+class TestBannerCollection:
+    """P49.B - the mirrored init banner is collected in full and inserted
+    as ONE block before any [SYS] message follows; stray control bytes
+    are filtered from what is displayed. Reproduced 25.09.2026
+    (screenshot): "PK-232M is u[SYS] TNC ready in verbose mode\\n[SYS]
+    Fast Init...\\n[SYS] Verbose terminal ready...\\nsing default
+    values." - the banner text torn apart by the app's own [SYS] lines,
+    because a second, later-arriving fragment of it reached the display
+    after those lines had already been appended."""
+
+    def test_banner_collected_from_two_fragments_is_shown_as_one_block(self, wired_window):
+        w, serial = wired_window
+        serial.last_verbose_init_response = b"PK-232M is u"
+        # Avoid spawning the real upload thread (touches Qt widgets from
+        # a background thread) - this test only checks banner ordering.
+        w._start_param_upload_thread = lambda: None
+
+        w._start_banner_collection()
+        # The straggling second fragment arrives before the quiet window
+        # elapses - exactly the real-world race this closes.
+        w._on_raw_data_received(b"sing default values.\r\ncmd:")
+        w._finish_banner_collection()
+
+        text = w._vt_display.toPlainText()
+        banner_pos = text.find("PK-232M is using default values.")
+        sys_pos = text.find("[SYS] TNC ready in verbose mode")
+        assert banner_pos != -1, f"banner not shown as one block: {text!r}"
+        assert sys_pos != -1
+        assert banner_pos < sys_pos, "the [SYS] line must follow the banner, not interrupt it"
+
+    def test_raw_data_is_buffered_not_displayed_while_collecting(self, wired_window):
+        w, serial = wired_window
+        serial.last_verbose_init_response = b""
+        w._stack.setCurrentIndex(1)  # verbose terminal visible
+
+        w._start_banner_collection()
+        w._on_raw_data_received(b"straggler")
+
+        assert "straggler" not in w._vt_display.toPlainText()
+        assert bytes(w._banner_buffer) == b"straggler"
+        # Left mid-collection deliberately (this test only checks
+        # buffering) - stop the real timer rather than let it fire later.
+        w._banner_timer.stop()
+
+    def test_control_characters_are_filtered_from_the_display(self, wired_window):
+        w, serial = wired_window
+        serial.last_verbose_init_response = b"\x01\x01OGG\x01AEA PK-232\r\ncmd:"
+        w._start_param_upload_thread = lambda: None
+
+        w._start_banner_collection()
+        w._finish_banner_collection()
+
+        text = w._vt_display.toPlainText()
+        assert "\x01" not in text
+        assert "OGGAEA PK-232" in text.replace("\n", "").replace("\r", "")
+
+    def test_no_banner_bytes_still_shows_the_sys_message(self, wired_window):
+        w, serial = wired_window
+        serial.last_verbose_init_response = b""
+        w._start_param_upload_thread = lambda: None
+
+        w._start_banner_collection()
+        w._finish_banner_collection()
+
+        assert "[SYS] TNC ready in verbose mode" in w._vt_display.toPlainText()
