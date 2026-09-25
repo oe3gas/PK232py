@@ -334,7 +334,7 @@ class HFPacketMode(BaseMode):
             self.on_link_message(ch, text)
 
         # Channel-scoped state for ChannelBar (P3) — a second consumer of the
-        # same message, independent of on_link_message above. Retry/FRMR/
+        # same message, independent of on_link_message above. FRMR/
         # link-out-of-order are left alone here (they do not by themselves
         # mean the channel is free again — a DISCONNECTED usually follows).
         if self.on_channel_state:
@@ -351,7 +351,19 @@ class HFPacketMode(BaseMode):
                 # request that is not answered, so the chip can stay
                 # "calling" indefinitely — Disconnect always frees it.
                 self.on_channel_state(ch, "calling", _extract_partner(text))
-            elif _MSG_DISCONNECTED in lower or _MSG_BUSY in lower:
+            elif _MSG_DISCONNECTED in lower or _MSG_BUSY in lower or _MSG_RETRY in lower:
+                # P44: "Retry count exceeded" used to fall through to
+                # nothing at all here (only logged, see the elif chain
+                # above) — a chip left CALLING with no TNC message ever
+                # freeing it again, observed on the device 25.09.2026
+                # (chip 1 stuck amber on OE3TEC while the status pill
+                # already read DISCONNECTED). ChannelBar.set_channel_state()
+                # turns a CALLING->FREE transition like this one into a
+                # brief CH_FAILED (red) flash before reverting to free on
+                # its own, not a silent snap back to grey — busy and a
+                # DISCONNECTED that arrives while still calling get the
+                # same treatment, since all three mean the same thing: the
+                # connect attempt did not succeed.
                 self.on_channel_state(ch, "free", "")
 
     def _handle_status_err(self, frame: "HostFrame") -> None:
