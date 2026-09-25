@@ -21,10 +21,12 @@ from pk232py.comm.frame import build_command
 from pk232py.comm.params_uploader import ParamsUploader
 from pk232py.comm.serial_manager import (
     SerialManager,
+    _ReaderThread,
     _classify_maildrop_response,
     _parse_defaults_flag,
     _parse_release,
     _parse_verbose_query_value,
+    _read_until_prompt,
     _wakeup_log_message,
 )
 from pk232py.config import AppConfig
@@ -559,3 +561,340 @@ class TestRecoveryEmergencyReconnect:
         sm = SerialManager()
         assert sm.is_connected is False
         assert sm.recovery() is False
+
+
+class TestReadUntilPrompt:
+    """P52.1/P52.4 - _read_until_prompt() tested directly, with a plain
+    read_more() stand-in - no port or threading needed, since the
+    function's whole job is the marker/idle/timeout state machine, not
+    how bytes actually arrive."""
+
+    def test_response_split_across_two_chunks_from_real_capture(self):
+        # Real bytes, hw capture 25.09.2026 23:30:43 (step 1, the
+        # successful 23.09.2026 run at the same point): '*\' CRLF
+        # arrives first, 'cmd:' a moment later - two chunks, one marker.
+        chunks = [bytes.fromhex("2a 5c 0d 0a"), bytes.fromhex("63 6d 64 3a")]
+
+        def read_more(_max_wait):
+            if chunks:
+                return chunks.pop(0)
+            return b""
+
+        data, found = _read_until_prompt(
+            read_more, b"cmd:", timeout=1.0, idle_after_marker=0.02
+        )
+
+        assert found is True
+        assert data == bytes.fromhex("2a 5c 0d 0a 63 6d 64 3a")
+
+    def test_marker_never_appears_exhausts_the_full_timeout(self):
+        def read_more(_max_wait):
+            return b""
+
+        start = time.monotonic()
+        data, found = _read_until_prompt(read_more, b"cmd:", timeout=0.15)
+        elapsed = time.monotonic() - start
+
+        assert found is False
+        assert data == b""
+        assert elapsed >= 0.15
+
+    def test_full_timeout_honoured_despite_a_pause_after_partial_data(self):
+        # P52.1 regression, modelling Fehler 2 exactly: a first chunk
+        # arrives (no match yet), then a pause with NO new data at all
+        # for longer than the old bug's re-armed 0.15s per-chunk deadline
+        # (the 25.09.2026 capture: step 1 returned after 184 ms with only
+        # 4 of the expected 8 bytes - 'cmd:' was still in transit). Only
+        # honouring the caller's FULL timeout - not one silently re-armed
+        # by the first chunk's own arrival - can still catch the marker
+        # once it shows up after the pause. Manually reverting P52.1's
+        # fix (re-adding "deadline = now + 0.15" on every chunk) makes
+        # this fail - cross-checked during implementation.
+        calls = {"n": 0}
+        sent_marker = {"yes": False}
+        start = time.monotonic()
+
+        def read_more(max_wait):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return bytes.fromhex("2a 5c 0d 0a")  # first chunk, no match
+            if sent_marker["yes"] or time.monotonic() - start < 0.25:
+                time.sleep(max_wait)  # pause - longer than the old shrunk deadline
+                return b""
+            sent_marker["yes"] = True
+            return bytes.fromhex("63 6d 64 3a")  # 'cmd:' finally arrives, once
+
+        data, found = _read_until_prompt(
+            read_more, b"cmd:", timeout=1.0, idle_after_marker=0.02
+        )
+
+        assert found is True
+        assert data == bytes.fromhex("2a 5c 0d 0a 63 6d 64 3a")
+
+    def test_predicate_marker_rejects_echo_containing_cmd_substring(self):
+        # write_verbose_wait()'s own stricter rule (SerialManager.
+        # _is_cmd_prompt): 'cmd:' only counts at buffer start or right
+        # after a newline - not a bare substring match, which would also
+        # fire on an echoed command that happens to spell "cmd:" inside
+        # itself with no newline in front of it.
+        def predicate(buf: bytes) -> bool:
+            return buf.startswith(b"cmd:") or b"\ncmd:" in buf
+
+        assert (
+            _read_until_prompt(
+                lambda _w: b"MYCALL\r\ncmd:", predicate, timeout=0.5,
+                idle_after_marker=0.02,
+            )[1]
+            is True
+        )
+
+        chunks = [b"somecmd:notreal", b""]
+
+        def read_more(_max_wait):
+            if chunks:
+                return chunks.pop(0)
+            return b""
+
+        data, found = _read_until_prompt(
+            read_more, predicate, timeout=0.15, idle_after_marker=0.02
+        )
+        assert found is False
+        assert data == b"somecmd:notreal"
+
+
+class _DelayedPort:
+    """Like _FakePort, but a write()'s response only becomes readable
+    after a real elapsed delay - for testing write_verbose_wait()/
+    query_verbose_value() against a genuinely staggered response instead
+    of one queued instantly (P52.4). *responder(data)* returns a list of
+    (delay_seconds, chunk) pairs to schedule."""
+
+    def __init__(self, responder):
+        self._responder = responder
+        self._pending: list[tuple[float, bytes]] = []
+        self.port = "COM_TEST"
+        self.baudrate = 9600
+        self.writes: list[bytes] = []
+        self.is_open = True
+
+    def write(self, data: bytes) -> int:
+        self.writes.append(bytes(data))
+        now = time.monotonic()
+        for delay, chunk in self._responder(bytes(data)):
+            self._pending.append((now + delay, chunk))
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def reset_input_buffer(self) -> None:
+        self._pending.clear()
+
+    @property
+    def in_waiting(self) -> int:
+        now = time.monotonic()
+        return sum(len(c) for t, c in self._pending if t <= now)
+
+    def read(self, n: int = 1) -> bytes:
+        now = time.monotonic()
+        for i, (t, chunk) in enumerate(self._pending):
+            if t <= now:
+                self._pending.pop(i)
+                return chunk
+        time.sleep(0.005)
+        return b""
+
+    def open(self) -> None:
+        self.is_open = True
+
+    def close(self) -> None:
+        self.is_open = False
+
+
+class TestWriteVerboseWaitTiming:
+    """P52.1/P52.4 - write_verbose_wait() against a real _ReaderThread and
+    a response delayed well past the old per-iteration deadline, using
+    the exact upload-verification example from the spec: 'MYcall
+    OE3GAS' arriving ~400 ms after the query. query_verbose_value()'s
+    own text extraction is exercised separately and directly by
+    TestParseVerboseQueryValue - it depends on raw_data_received, a Qt
+    signal queued cross-thread from the reader thread to whichever
+    thread owns the SerialManager, which needs a live Qt event loop to
+    ever get delivered (true in the real app, not in a plain synchronous
+    test); write_verbose_wait()'s own boolean result does not, since it
+    reads straight off _rx_buf under a lock/Event, so it is what is
+    tested here against real elapsed time."""
+
+    def test_delayed_cmd_prompt_is_still_found_within_the_timeout(self):
+        def responder(data):
+            if data == b"MYCALL\r\n":
+                return [(0.4, b"MYCALL\r\nMYcall    OE3GAS\r\ncmd:")]
+            return []
+
+        sm = SerialManager()
+        port = _DelayedPort(responder)
+        sm._serial = port
+        sm._reader = _ReaderThread(
+            port, sm._on_frame_received, raw_callback=sm._on_raw_data,
+            host_mode_flag=lambda: sm._in_host_mode,
+        )
+        sm._reader.start()
+        try:
+            start = time.monotonic()
+            ok = sm.write_verbose_wait(b"MYCALL\r\n", timeout=1.0)
+            elapsed = time.monotonic() - start
+        finally:
+            sm._reader.stop()
+            sm._reader.join(timeout=1.0)
+
+        assert ok is True
+        # Found shortly after the 0.4 s delay (plus the _IDLE_S idle
+        # confirmation) - not by exhausting the full 1.0 s budget.
+        assert elapsed < 0.9
+
+    def test_answer_that_never_comes_exhausts_the_timeout_and_fails(self):
+        def responder(_data):
+            return []
+
+        sm = SerialManager()
+        port = _DelayedPort(responder)
+        sm._serial = port
+        sm._reader = _ReaderThread(
+            port, sm._on_frame_received, raw_callback=sm._on_raw_data,
+            host_mode_flag=lambda: sm._in_host_mode,
+        )
+        sm._reader.start()
+        try:
+            ok = sm.write_verbose_wait(b"MYCALL\r\n", timeout=0.2)
+        finally:
+            sm._reader.stop()
+            sm._reader.join(timeout=1.0)
+
+        assert ok is False
+
+
+class TestStep3EchoDetection:
+    """P52.2/P52.4 - the detection chain's step 3 must not mistake the
+    verbose-mode echo of its own HPOLL query for a genuine Host Mode
+    answer. Real bytes, hw capture 25.09.2026 23:30:43: query
+    '01 4f 48 50 17' (5 B, no value byte) answered with the identical
+    5 bytes right back - an echo, not the 6-byte '01 4f 48 50 00 17'
+    form a real answer carries (same capture, 23:30:09)."""
+
+    def test_echo_of_own_query_falls_through_to_recovery_not_host_mode_exit(self):
+        # Crafted so the two interpretations diverge in outcome, not just
+        # in a log line: if the echo were mistaken for a genuine answer,
+        # the chain takes the Host-Mode-exit branch and never sends
+        # FRAME_RECOVERY at all - the post-exit CR (answered only once
+        # recovery has actually been sent, per this responder) then gets
+        # no reply, and the whole chain aborts at step 4 ("No PK-232
+        # responding"). With the echo correctly rejected, the chain falls
+        # through to step 3b, sends FRAME_RECOVERY, and the following CR
+        # succeeds.
+        recovery_sent = {"yes": False}
+
+        def responder(data):
+            if data == FRAME_RECOVERY:
+                recovery_sent["yes"] = True
+                return b""
+            if data == _HPOLL_QUERY:
+                return _HPOLL_QUERY  # byte-identical echo, no value byte
+            if data == b"\r":
+                return b"\r\ncmd:" if recovery_sent["yes"] else b""
+            return b""
+
+        sm, port, messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is True
+        assert sm.is_host_mode is False
+        assert FRAME_RECOVERY in port.writes
+        assert not any("No PK-232 responding" in m for m in messages)
+
+    def test_genuine_six_byte_answer_with_value_byte_is_host_mode(self):
+        # Not a new behaviour (the existing test3_hpoll_frame... case
+        # already covers a 6-byte answer with value 'Y') - kept here
+        # alongside the echo test, value byte $00 as in the capture's
+        # own genuine-answer example, so both P52.4 examples from the
+        # spec live next to each other.
+        cr_count = {"n": 0}
+        genuine_answer = bytes([0x01, 0x4F, ord('H'), ord('P'), 0x00, 0x17])
+
+        def responder(data):
+            if data == _HPOLL_QUERY:
+                return genuine_answer
+            if data == b"\r":
+                cr_count["n"] += 1
+                if cr_count["n"] >= 2:
+                    return b"\r\ncmd:"
+                return b""
+            return b""
+
+        sm, port, _messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is True
+        assert sm.is_host_mode is False
+        assert FRAME_HOST_OFF in port.writes
+        assert FRAME_RECOVERY not in port.writes
+
+
+class TestParamsUploaderVerifyEcho:
+    """P52.3 - verify()'s failures (no answer / mismatch) must also reach
+    the verbose terminal via echo_callback, not just the log."""
+
+    def test_no_answer_is_echoed_in_red(self):
+        from pk232py.config import AppConfig
+
+        echoed: list[tuple[str, str]] = []
+
+        class _StubSerial:
+            verbose_confirmed = True
+            is_host_mode = False
+            has_pactor = True
+
+            @staticmethod
+            def query_verbose_value(name, timeout=3.0):
+                return None
+
+        config = AppConfig()
+        config.hf_packet.mycall = "OE3GAS"
+        uploader = ParamsUploader(
+            serial=_StubSerial(), config=config,
+            echo_callback=lambda text, color: echoed.append((text, color)),
+        )
+
+        matched, applicable = uploader.verify()
+
+        assert matched == 0
+        assert applicable == 3
+        assert echoed, "verify() must echo the no-answer case to the terminal"
+        assert all(color == "#f44747" for _text, color in echoed)
+        assert any("MYCALL" in text for text, _c in echoed)
+
+    def test_mismatch_names_both_expected_and_actual(self):
+        from pk232py.config import AppConfig
+
+        echoed: list[tuple[str, str]] = []
+
+        class _StubSerial:
+            verbose_confirmed = True
+            is_host_mode = False
+            has_pactor = True
+
+            @staticmethod
+            def query_verbose_value(name, timeout=3.0):
+                return {"MYCALL": "OE3GAS", "PACLEN": "999", "MAXFRAME": "1"}.get(name)
+
+        config = AppConfig()
+        config.hf_packet.mycall = "OE3GAS"
+        config.hf_packet.paclen = 128
+        config.hf_packet.maxframe = 1
+        uploader = ParamsUploader(
+            serial=_StubSerial(), config=config,
+            echo_callback=lambda text, color: echoed.append((text, color)),
+        )
+
+        matched, applicable = uploader.verify()
+
+        assert matched == 2
+        assert applicable == 3
+        assert any("PACLEN" in text and "999" in text and "128" in text for text, _c in echoed)
