@@ -81,14 +81,20 @@ class TestOnChannelState:
         assert calls == [(3, "calling", "OE1XYZ")]
 
     def test_disconnected_frees_channel(self):
+        # P50 Teil E: DISCONNECTED now passes the extracted partner through
+        # (ChannelBar.set_channel_state() already discards it when state
+        # is "free" - this is for MainWindow's MHEARD hook). Real TRM
+        # 4.4.4 form always has the callsign after "DISCONNECTED: ".
         mode, calls = self._mode_with_spy()
-        mode._handle_link_msg(_FakeFrame(4, "DISCONNECTED"))
-        assert calls == [(4, "free", "")]
+        mode._handle_link_msg(_FakeFrame(4, "DISCONNECTED: OE3TEC-1"))
+        assert calls == [(4, "free", "OE3TEC-1")]
 
     def test_busy_frees_channel(self):
+        # P50 Teil E: "<callsign> busy" carries a real callsign - now
+        # passed through (see test_disconnected_frees_channel above).
         mode, calls = self._mode_with_spy()
         mode._handle_link_msg(_FakeFrame(2, "OE1XYZ busy"))
-        assert calls == [(2, "free", "")]
+        assert calls == [(2, "free", "OE1XYZ")]
 
     def test_colon_connected_form_extracts_partner(self):
         mode, calls = self._mode_with_spy()
