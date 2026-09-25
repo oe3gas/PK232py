@@ -47,6 +47,14 @@ class ParamsUploader:
     the duration of the upload (several seconds for a full set).
     """
 
+    # P40.4: abort rather than wait out 5 s x every remaining command once
+    # more than this many in a row got no "cmd:" response - a real TNC
+    # answers every command in well under a second (T103, hardware-
+    # confirmed), so several in a row this slow means something is
+    # actually wrong (Host Mode active, TNC hung, wrong port state), not
+    # an occasional slow response.
+    _MAX_CONSECUTIVE_SILENT = 3
+
     def __init__(
         self,
         serial: "SerialManager",
@@ -69,8 +77,27 @@ class ParamsUploader:
         before sending the next one.
 
         Returns:
-            Number of commands sent.
+            Number of commands sent (0 if refused - see below).
         """
+        # P40.2: there is no "cmd:" prompt in Host Mode at all - the TNC
+        # expects SOH-framed binary frames there, and plain ASCII text is
+        # never executed as a command. Sending the whole parameter set
+        # into Host Mode by mistake does not fail fast: write_verbose_wait()
+        # just times out on every single command (its own 5 s timeout,
+        # observed 24.09.2026: 68 commands x 5 s = ~6 minutes, and none of
+        # them actually reached the TNC). Checked ONCE, before the first
+        # command, not per-command - MainWindow._on_verbose_mode_ready()
+        # already calls this only in verbose mode (Phase 2, before Phase 3
+        # Host Mode entry - see serial_manager.py's own module docstring
+        # and SERIAL_CONNECTION_STATE_MACHINE.md's C3/C4/C5/C6 states), so
+        # this is defense-in-depth against any other/future caller, not a
+        # fix to that call site.
+        if getattr(self._serial, 'is_host_mode', False):
+            logger.error(
+                "ParamsUploader: refusing to upload parameters in Host "
+                "Mode - verbose text is not executed there"
+            )
+            return 0
         has_pactor = getattr(self._serial, 'has_pactor', True)
         if not has_pactor:
             logger.info(
@@ -94,6 +121,7 @@ class ParamsUploader:
         )
         logger.info("ParamsUploader: uploading %d commands", len(commands))
         sent = 0
+        consecutive_silent = 0
         for cmd in commands:
             logger.debug("Verbose param: %r", cmd)
             # Show sent command in UI (green)
@@ -101,12 +129,90 @@ class ParamsUploader:
                 text = cmd.decode("ascii", errors="replace")
                 self._echo(text, "#4ec94e")  # green
             ok = self._serial.write_verbose_wait(cmd, timeout=5.0)
-            if not ok:
-                logger.warning("ParamsUploader: no cmd: after %r, continuing",
-                               cmd.rstrip())
             sent += 1
+            if not ok:
+                consecutive_silent += 1
+                # P40.4: "no cmd:" is not a harmless hiccup - it means the
+                # command almost certainly never reached the TNC as a
+                # real command at all (exactly the 24.09.2026 Host Mode
+                # finding - every single one of 68 commands hit this and
+                # NONE were executed). Sharpened from the old "continuing"
+                # wording, which understated that.
+                logger.warning(
+                    "ParamsUploader: no cmd: after %r - "
+                    "command probably NOT executed",
+                    cmd.rstrip(),
+                )
+                if consecutive_silent > self._MAX_CONSECUTIVE_SILENT:
+                    logger.error(
+                        "ParamsUploader: %d commands in a row with no "
+                        "response - aborting upload, check TNC state",
+                        consecutive_silent,
+                    )
+                    break
+            else:
+                consecutive_silent = 0
         logger.info("ParamsUploader: upload complete (%d commands)", sent)
         return sent
+
+    # Three parameters confirmed (24.09.2026) to reliably answer a bare
+    # verbose-mode query - see verify().
+    _VERIFY_SAMPLE = ("MYCALL", "PACLEN", "MAXFRAME")
+
+    def verify(self) -> tuple[int, int]:
+        """P40.3: spot-check a small sample of just-uploaded parameters
+        against the configured values, while still in verbose mode.
+
+        write_verbose_wait() alone only confirms a "cmd:" prompt came
+        back after each upload command - it does not confirm the TNC
+        actually accepted or even parsed that command (exactly the gap
+        that let the 24.09.2026 Host Mode upload run silently "succeed"
+        for 6 minutes with nothing reaching the TNC at all). This reads
+        MYCALL/PACLEN/MAXFRAME back and compares them to AppConfig -
+        under a second, and it would have made that failure visible
+        immediately instead of only on the next real QSO attempt.
+
+        Never blocks or aborts the connection sequence - only logs.
+
+        Returns:
+            (matched, applicable) - applicable excludes a parameter with
+            nothing configured to compare against (MYCALL left as the
+            NOCALL placeholder, never uploaded in the first place), so a
+            clean run reports matched == applicable, not always out of 3.
+        """
+        query = getattr(self._serial, 'query_verbose_value', None)
+        if query is None:
+            return (0, 0)
+        hf = self._config.hf_packet
+        expected: dict[str, str | None] = {
+            "MYCALL": hf.mycall.upper() if hf.mycall and hf.mycall != "NOCALL" else None,
+            "PACLEN": str(hf.paclen),
+            "MAXFRAME": str(hf.maxframe),
+        }
+        applicable = {name: want for name, want in expected.items() if want is not None}
+        matched = 0
+        for name, want in applicable.items():
+            got = query(name)
+            if got is None:
+                logger.warning(
+                    "ParamsUploader: no answer verifying %s (expected %r)",
+                    name, want,
+                )
+                continue
+            if got.upper() == want.upper():
+                matched += 1
+            else:
+                logger.warning(
+                    "ParamsUploader: %s mismatch after upload - "
+                    "expected %r, TNC says %r",
+                    name, want, got,
+                )
+        if applicable and matched == len(applicable):
+            logger.info(
+                "ParamsUploader: parameter upload verified (%d/%d)",
+                matched, len(applicable),
+            )
+        return (matched, len(applicable))
 
     def _build_commands(
         self, has_pactor: bool = True, has_maildrop: bool = True,
