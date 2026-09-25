@@ -204,6 +204,90 @@ def _wakeup_log_message(resp: bytes) -> tuple[int, str]:
     )
 
 
+def _read_until_prompt(
+    read_more,
+    marker,
+    timeout: float,
+    idle_after_marker: float = 0.12,
+) -> tuple[bytes, bool]:
+    """Accumulate bytes from *read_more(max_wait)* until *marker* appears
+    AND a further *idle_after_marker* seconds pass with nothing new — not
+    until the first pause, and not the instant the marker is seen (P52.1).
+
+    *marker* is bytes, a tuple of byte-string alternatives, or a
+    predicate ``callable(bytes) -> bool`` for a match rule plainer
+    substring containment cannot express (write_verbose_wait()'s own
+    "cmd: at buffer start, or preceded by a newline" rule, so an echoed
+    command that merely CONTAINS "cmd:" mid-word is not mistaken for the
+    real prompt).
+
+    *read_more(max_wait)* is called repeatedly; each call waits AT MOST
+    max_wait seconds for new bytes and returns whatever arrived (b"" if
+    none did within that window) — callers own their own efficient wait
+    (a threading.Event, or a plain sleep); this function only owns the
+    marker/idle/timeout state machine, so ONE implementation serves both
+    a direct synchronous port read (the P43 detection chain) and an
+    Event-driven buffer read (write_verbose_wait()) without either
+    reimplementing the other's timing logic.
+
+    Returns (all bytes accumulated so far, whether the marker was
+    actually seen) — "found" stays True even if *timeout* then runs out
+    during the idle-confirmation wait, since the marker DID appear; only
+    the caller's own timeout budget decides how long that confirmation
+    gets before giving up on it.
+
+    P52.1 — the bug this replaces: the P43 detection chain's own
+    per-step read used to OVERWRITE its deadline (``deadline = now +
+    0.15``) on every iteration that received data without yet matching
+    the full marker. That can only ever SHRINK the remaining budget, not
+    extend it, so a response arriving in more than one chunk (`cmd:`
+    split from its own banner — normal at 9600 Bd) could be cut off
+    before the marker ever completed. Confirmed by a real console
+    capture, 25.09.2026, 23:30:43: step 1 returned after 184 ms with
+    just `2a 5c 0d 0a` (4 bytes), while a working run at the same step
+    saw `2a 5c 0d 0a 63 6d 64 3a` (8 bytes, ending in "cmd:") — the
+    trailing `cmd:` was simply still in flight when the shrunk deadline
+    expired. The full *timeout* is now always honoured; only a short,
+    fixed idle window runs AFTER the marker is confirmed, exactly
+    mirroring write_verbose_wait()'s own already-correct
+    prompt-then-idle design (used successfully by tools/hw_check.py's
+    Session.verbose_bytes() today) — extracted here so the detection
+    chain shares it instead of a second, independently-written (and
+    buggy) version.
+    """
+    import time as _t
+
+    def _matches(data: bytes) -> bool:
+        if callable(marker):
+            return marker(data)
+        if isinstance(marker, (list, tuple)):
+            return any(m in data for m in marker)
+        return marker in data
+
+    buf = bytearray()
+    deadline = _t.monotonic() + timeout
+    found = False
+    idle_since = None
+    while True:
+        remaining = deadline - _t.monotonic()
+        if remaining <= 0:
+            break
+        chunk = read_more(min(0.05, remaining))
+        if chunk:
+            buf.extend(chunk)
+            idle_since = None
+            if not found and _matches(bytes(buf)):
+                found = True
+                idle_since = _t.monotonic()
+        else:
+            if found:
+                if idle_since is None:
+                    idle_since = _t.monotonic()
+                elif _t.monotonic() - idle_since >= idle_after_marker:
+                    return bytes(buf), True
+    return bytes(buf), found
+
+
 # ---------------------------------------------------------------------------
 # Background reader thread
 # ---------------------------------------------------------------------------
@@ -798,23 +882,24 @@ class SerialManager(QObject):
             port = self._serial
             self._take_over_read_path()
 
-            # ── Read until marker ──────────────────────────────────────
+            # ── Read until marker (P52.1) ────────────────────────────────
+            # Delegates to the shared _read_until_prompt() - see its own
+            # docstring for the exact deadline-shrinking bug this
+            # replaces (confirmed via a real console capture,
+            # 25.09.2026). read_direct() is the "read whatever showed up,
+            # or wait a bit" primitive _read_until_prompt() needs; the
+            # marker/idle/timeout state machine itself now lives in ONE
+            # place, shared with write_verbose_wait().
+            def read_direct(max_wait: float) -> bytes:
+                n = port.in_waiting
+                if n:
+                    return port.read(n)
+                time.sleep(max_wait)
+                return b""
+
             def read_until(marker, timeout=_TNC_STATE_STEP_TIMEOUT):
-                buf = bytearray()
-                deadline = time.monotonic() + timeout
-                while time.monotonic() < deadline:
-                    n = port.in_waiting
-                    if n:
-                        buf.extend(port.read(n))
-                        if isinstance(marker, (list, tuple)):
-                            if any(m in buf for m in marker):
-                                return bytes(buf)
-                        elif marker in buf:
-                            return bytes(buf)
-                        deadline = time.monotonic() + 0.15
-                    else:
-                        time.sleep(0.02)
-                return bytes(buf)
+                data, _found = _read_until_prompt(read_direct, marker, timeout)
+                return data
 
             # ── STEP 1: Wakeup '*' — banner or cmd: means "already verbose,
             # freshly booted" (the common case right after power-on). ──
@@ -847,28 +932,63 @@ class SerialManager(QObject):
             # ── STEP 3: HPOLL query frame — the only way to reach a TNC
             # that is genuinely in Host Mode with HPOLL ON, since it does
             # not answer anything unsolicited there. ───────────────────
+            #
+            # P52.2: in verbose COMMAND mode the PK-232 echoes every
+            # character sent, including binary frame bytes - so a TNC
+            # that is actually in VERBOSE mode answers this query with
+            # its own bytes right back, byte-for-byte, which
+            # _extract_frames() happily parses as a well-formed-looking
+            # $4F frame (SOH/CTL/ETB all line up). Confirmed by a real
+            # console capture, 25.09.2026, 23:30:43: TX "01 4f 48 50 17"
+            # (5 bytes, no value byte - our own query has none), "response"
+            # "01 4f 48 50 17" - identical. A genuine $4F response has a
+            # VALUE byte the query itself never carries: SOH $4F <m1> <m2>
+            # <value> ETB, 6 bytes total (same capture, 23:30:09: TX "01
+            # 4f 48 50 4e 17", RX "01 4f 48 50 00 17" - a real answer,
+            # value byte $00). is_hpoll_echo() below rejects a frame whose
+            # payload is exactly the query's own 2-byte mnemonic with no
+            # value byte - length and content both checked, not just one.
             logger.info("Init: step 3 - HPOLL query frame")
             hpoll_query = build_command(b'HP')
+            hpoll_mnemonic_only = hpoll_query[2:-1]   # b'HP' - no value byte
+
+            def is_hpoll_echo(payload: bytes) -> bool:
+                return payload == hpoll_mnemonic_only
+
             logger.debug("Init: step 3 TX: %s", hpoll_query.hex(' '))
             port.write(hpoll_query)
             port.flush()
             raw = bytearray()
             frames: list = []
+            saw_echo = False
             deadline = time.monotonic() + _TNC_STATE_STEP_TIMEOUT
             while time.monotonic() < deadline:
                 n = port.in_waiting
                 if n:
                     raw.extend(port.read(n))
                     frames, _remaining = _extract_frames(bytearray(raw))
-                    if any(ctl == _CTL_BYTE for ctl, _payload in frames):
-                        break  # got our answer - no need to wait out the timeout
+                    if any(ctl == _CTL_BYTE and is_hpoll_echo(payload)
+                           for ctl, payload in frames):
+                        saw_echo = True
+                    if any(ctl == _CTL_BYTE and not is_hpoll_echo(payload)
+                           for ctl, payload in frames):
+                        break  # got a genuine answer - no need to wait out the timeout
                 else:
                     time.sleep(0.02)
             logger.debug(
                 "Init: step 3 raw (%d B): %s -- %d frame(s)",
                 len(raw), bytes(raw).hex(' '), len(frames),
             )
-            if any(ctl == _CTL_BYTE for ctl, _payload in frames):
+            if saw_echo and not any(
+                ctl == _CTL_BYTE and not is_hpoll_echo(payload)
+                for ctl, payload in frames
+            ):
+                logger.info(
+                    "Init: step 3: response equals the frame we sent "
+                    "(echo) - TNC is in verbose mode, not Host Mode"
+                )
+            if any(ctl == _CTL_BYTE and not is_hpoll_echo(payload)
+                   for ctl, payload in frames):
                 logger.info(
                     "Init: step 3 confirmed Host Mode (0x4F frame) - "
                     "exiting to verbose"
@@ -905,7 +1025,13 @@ class SerialManager(QObject):
                     "through to step 4"
                 )
             else:
-                logger.info("Init: step 3 saw no 0x4F frame either")
+                if saw_echo:
+                    logger.info(
+                        "Init: step 3 saw only its own echo, no genuine "
+                        "0x4F frame"
+                    )
+                else:
+                    logger.info("Init: step 3 saw no 0x4F frame either")
 
                 # ── STEP 3b (P44.C1): recovery sequence — a process killed
                 # abruptly while in Host Mode can leave the TNC's frame
@@ -1437,11 +1563,25 @@ class SerialManager(QObject):
     # ------------------------------------------------------------------
 
 
+    @staticmethod
+    def _is_cmd_prompt(buf: bytes) -> bool:
+        """The 'cmd:' match rule write_verbose_wait() has always used:
+        at the very start of the buffer, or preceded by a newline - never
+        a bare substring match, which would also fire on an ECHOED
+        command that merely contains the letters "cmd:" somewhere inside
+        it (P52.1 - kept exactly as it was, callable() form for
+        _read_until_prompt() below)."""
+        return buf.startswith(b'cmd:') or b'\ncmd:' in buf
+
     def write_verbose_wait(self, data: bytes, timeout: float = 5.0) -> bool:
         """Send a verbose-mode command and wait for TNC cmd: prompt.
 
         Sends the command, then accumulates incoming bytes until
-        'cmd:' is detected (preceded by newline, or at chunk start).
+        'cmd:' is detected (preceded by newline, or at chunk start), plus
+        a further short idle window (TNC has genuinely finished writing,
+        not just paused mid-response - simply returning on 'cmd:' alone
+        causes the next command to interleave with the TNC's still-running
+        response output).
 
         Args:
             data:    ASCII command e.g. b'MYCALL OE3GAS\r\n'
@@ -1456,80 +1596,34 @@ class SerialManager(QObject):
             return False
         import time as _t
 
-        # Idle-detection: wait until the TNC stops sending data
-        # for _IDLE_S seconds after the 'cmd:' prompt appears.
-        # Simply returning on 'cmd:' causes the next command to
-        # interleave with the TNC's still-running response output.
         _IDLE_S = 0.12   # 120 ms idle = TNC has finished writing
-
-        local_buf    = bytearray()
-        deadline     = _t.monotonic() + timeout
-        prompt_seen  = False
-        idle_since   = None
-
         _t.sleep(0.05)   # give TNC time to start responding
 
-        while _t.monotonic() < deadline:
+        def read_buffered(max_wait: float) -> bytes:
             with self._rx_buf_lock:
                 chunk = bytes(self._rx_buf)
                 self._rx_buf.clear()
             self._rx_buf_event.clear()
-
             if chunk:
-                local_buf.extend(chunk)
-                idle_since = None   # new data → reset idle timer
-                if not prompt_seen:
-                    if (b'\ncmd:' in local_buf
-                            or local_buf.startswith(b'cmd:')):
-                        prompt_seen = True
-                        idle_since  = _t.monotonic()
-            else:
-                # No new data — advance idle timer
-                if prompt_seen:
-                    if idle_since is None:
-                        idle_since = _t.monotonic()
-                    elif _t.monotonic() - idle_since >= _IDLE_S:
-                        return True   # prompt + idle → TNC ready
-
-            remaining = deadline - _t.monotonic()
-            if remaining <= 0:
-                break
-            self._rx_buf_event.wait(timeout=min(0.05, remaining))
-
-        # Timeout: return True if prompt was at least seen
-        return prompt_seen
-
-    def _read_raw_until(self, markers: tuple, timeout: float) -> bytes:
-        """Wait for marker in shared rx buffer (filled by ReaderThread).
-
-        Does NOT clear the buffer — caller must clear it before sending
-        the command (with self._rx_buf_lock: self._rx_buf.clear()).
-        This ensures responses already in the buffer are not lost.
-        """
-        deadline = time.monotonic() + timeout
-
-        while time.monotonic() < deadline:
-            # Check current buffer first (response may already be there)
+                return chunk
+            self._rx_buf_event.wait(timeout=max_wait)
             with self._rx_buf_lock:
-                buf_copy = bytes(self._rx_buf)
-            for marker in markers:
-                if marker in buf_copy:
-                    logger.debug("_read_raw_until: found %r in %d bytes",
-                                 marker, len(buf_copy))
-                    return buf_copy
-            # Wait for new data from ReaderThread
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            self._rx_buf_event.wait(timeout=min(0.1, remaining))
+                chunk = bytes(self._rx_buf)
+                self._rx_buf.clear()
             self._rx_buf_event.clear()
+            return chunk
 
-        # Timeout
-        with self._rx_buf_lock:
-            result = bytes(self._rx_buf)
-        logger.debug("_read_raw_until: timeout after %.1fs, got %d bytes",
-                     timeout, len(result))
-        return result
+        # P52.1: shares _read_until_prompt() with the P43 detection
+        # chain's own read_until() (_init_tnc_thread()) - ONE
+        # marker/idle/timeout state machine, two data sources (this one
+        # reads the ReaderThread-fed _rx_buf via an Event; the detection
+        # chain reads the port directly, since it stops the ReaderThread
+        # first). Behaviour is unchanged from before this refactor - only
+        # the state machine moved.
+        _resp, found = _read_until_prompt(
+            read_buffered, self._is_cmd_prompt, timeout, idle_after_marker=_IDLE_S
+        )
+        return found
 
     def _write_raw(self, data: bytes) -> bool:
         try:
