@@ -95,6 +95,18 @@ class TestOnChannelState:
         mode._handle_link_msg(_FakeFrame(4, "CONNECTED to: OE1XYZ-5"))
         assert calls == [(4, "connected", "OE1XYZ-5")]
 
+    def test_retry_count_exceeded_frees_channel(self):
+        # P44 - this used to fall through to nothing at all: a chip left
+        # CALLING with no TNC message ever freeing it again (observed on
+        # the device 25.09.2026, chip stuck amber while the status pill
+        # already read DISCONNECTED). ChannelBar.set_channel_state() is
+        # what turns a CALLING->FREE transition into the brief CH_FAILED
+        # flash (P44 Teil A); this only needs to confirm the message
+        # reaches on_channel_state at all, same as busy/DISCONNECTED do.
+        mode, calls = self._mode_with_spy()
+        mode._handle_link_msg(_FakeFrame(3, "Retry count exceeded"))
+        assert calls == [(3, "free", "")]
+
 
 # ---------------------------------------------------------------------------
 # get_init_frames() — MAXFRAME/SLOTTIME reset from the HF config (T112, P18.1)
