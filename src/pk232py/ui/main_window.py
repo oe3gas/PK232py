@@ -72,6 +72,13 @@ _MORSE_TXCTRL_MS = 50
 # buffer-overflow safety net. Adjust down if TX flow stutters on hardware.
 _AMTOR_TXCTRL_MS = 50
 
+# Packet RX view (P50 Teil C): a link/status message ("*** ... ***") gets
+# its own eye-catching colour, distinct from ordinary channel data
+# (#66ccff) and monitor traffic (#aaaaaa) - amber, matching this
+# project's existing "needs attention" colour role (e.g. CH_CALLING's
+# chip pulse, MainWindow's own rx_echo).
+_SYSTEM_MSG_COLOR = "#ffaa00"
+
 
 def _recolor_existing_text(widget: QTextEdit, color_map: dict) -> None:
     """Re-apply theme colours to text already in the document after a
@@ -916,6 +923,13 @@ class MainWindow(QMainWindow):
             # VHFPacketConfig, see the "Config: add USERS..." commit).
             if hasattr(screen, "channel_bar"):
                 screen.channel_bar.set_user_limit(self._app_config.hf_packet.users)
+            # P50 Teil C: PC-side RX display settings (timestamps, per-
+            # document line cap) - same sharing as USERS above.
+            if hasattr(screen, "apply_display_settings"):
+                screen.apply_display_settings(
+                    self._app_config.hf_packet.show_timestamps,
+                    self._app_config.hf_packet.rx_max_lines_per_channel,
+                )
 
         # For PACTOR: populate lbl_myptcall from AppConfig if set.
         if name == "PACTOR" and hasattr(screen, "lbl_myptcall"):
@@ -1895,33 +1909,37 @@ class MainWindow(QMainWindow):
         data-ack XX\\x00) — there is nowhere else for it to belong, so it
         always goes to the UI channel, regardless of the mirror setting
         below. Every other channel (0-9) goes through
-        screen.append_channel_data(), which already implements the ALL/CH
-        filter (T100) and its own "[CHn]" tag in ALL view — reused as-is,
-        not reimplemented here.
+        screen.append_channel_data(), which writes to both that
+        channel's own RX document and the merged ALL document (P50 Teil
+        B), tagging the ALL copy with its compact "n|" channel indicator
+        (P50 Teil C) — reused as-is, not reimplemented here. A link
+        message also gets its own eye-catching colour (_SYSTEM_MSG_COLOR)
+        instead of the plain channel-data blue, so it stands out from
+        ordinary received text (P50 Teil C).
 
         P47.2: if HFPacketConfig.show_link_messages_in_ui_channel is on,
         every message about a QSO channel (1-9) is ALSO mirrored into the
-        UI channel, tagged "[chN]" in the text itself (not relying on
-        append_channel_data()'s own ALL-view tag, which names the channel
-        being WRITTEN to — here that is always 0 — not the channel the
-        event is ABOUT). append_channel_data()'s own CH/ALL filter still
-        applies to this second write like any other UI-channel line: it
-        only shows while the UI channel itself is the visible one in CH
-        view, which is exactly the point — the mirror is for whoever is
-        watching the UI channel, not a way around the filter.
+        UI channel's own document, tagged "[chN]" in the text itself (not
+        relying on the ALL-view "n|" tag, which names the channel being
+        WRITTEN to — here that is always 0 — not the channel the event is
+        ABOUT). This second write is visible whenever the UI channel
+        itself is the one being viewed (CH view on chip UI, or ALL view
+        anywhere) — the mirror is for whoever is watching the UI channel.
         """
         from .screens.packet_screen import UI_CHANNEL
 
         text = f"*** {msg} ***"
         if channel == 15:
-            screen.append_channel_data(UI_CHANNEL, text)
+            screen.append_channel_data(UI_CHANNEL, text, color=_SYSTEM_MSG_COLOR)
             return
 
-        screen.append_channel_data(channel, text)
+        screen.append_channel_data(channel, text, color=_SYSTEM_MSG_COLOR)
 
         if (channel != UI_CHANNEL
                 and self._app_config.hf_packet.show_link_messages_in_ui_channel):
-            screen.append_channel_data(UI_CHANNEL, f"[ch{channel}] {text}")
+            screen.append_channel_data(
+                UI_CHANNEL, f"[ch{channel}] {text}", color=_SYSTEM_MSG_COLOR
+            )
 
     def _make_channel_state_handler(self, screen):
         """Return a callback for HFPacketMode.on_channel_state(ch, state, partner).
@@ -1930,11 +1948,35 @@ class MainWindow(QMainWindow):
         the link messages already parsed by _make_link_handler() — this is
         purely a second consumer of the same $5x frames, scoped per channel
         instead of screen-wide.
+
+        P50 Teil E: MHEARD used to show only stations from a manual
+        Refresh (MH poll) — connection partners were missing until the
+        operator happened to press it. Now:
+          - any channel-scoped link message with a known partner
+            (CONNECTED, DISCONNECTED, busy — never "Retry count
+            exceeded", which carries no callsign at all, see
+            HFPacketMode._handle_link_msg()) adds it to MHEARD
+            immediately if not already there (add_entry_if_new()) —
+            channel number + green colour still come from
+            set_channel_map() below, unchanged.
+          - a real CONNECTED, or a genuine DISCONNECTED of a link that
+            was actually up (prior state "connected" — a CALLING->FREE
+            failed-attempt transition is NOT this), additionally
+            triggers ONE MH poll (the existing Refresh function, not a
+            second implementation) so the list also catches up on any
+            OTHER stations heard in the meantime.
         """
         def handler(channel: int, state: str, partner: str) -> None:
+            prior = screen.channel_bar.state(channel)
             screen.channel_bar.set_channel_state(channel, state, partner)
             if hasattr(screen, "mheard_panel"):
                 screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
+                if partner:
+                    from datetime import datetime, timezone
+                    now = datetime.now(timezone.utc).strftime("%H:%M")
+                    screen.mheard_panel.add_entry_if_new(partner, now)
+                if state == "connected" or (state == "free" and prior == "connected"):
+                    self._on_packet_mheard()
             self._update_maildrop_gate_ui()
         return handler
 
@@ -3969,24 +4011,28 @@ class MainWindow(QMainWindow):
     def _packet_rx_redraw(self, screen) -> None:
         """Re-render the entire _packet_raw_frames buffer.
 
-        Called when the APRS toggle changes so the user sees
-        all frames in the new mode (raw ↔ decoded).
-        The RX display is cleared first, then all buffered
-        frames are written again — either raw or decoded, with each
-        frame's ORIGINAL timestamp (not "now" — see
-        PacketBaseScreen.append_monitor_data()).
+        Called when the APRS toggle changes so the user sees all frames
+        in the new mode (raw ↔ decoded). P50 Teil B: with one RX document
+        per channel, this now only clears and rebuilds the UI channel's
+        own document (screen.clear_monitor_channel()) via
+        append_monitor_data_local_only() — never the merged ALL document,
+        which would either duplicate every historical monitor line or
+        drop every QSO-channel line recorded since (see
+        PacketBaseScreen.clear_monitor_channel()'s own docstring for the
+        full reasoning). Each frame keeps its ORIGINAL timestamp (not
+        "now" — see PacketBaseScreen.append_monitor_data()).
         """
-        if not hasattr(screen, "rx_display"):
+        if not hasattr(screen, "clear_monitor_channel"):
             return
-        screen.rx_display.clear()
+        screen.clear_monitor_channel()
         if self._packet_aprs_active:
             from pk232py.modes.aprs_decoder import AprsDecoder
         for ts, raw_text in self._packet_raw_frames:
             if self._packet_aprs_active:
                 display_text = AprsDecoder.decode_html(raw_text, ts)
-                screen.append_monitor_data(display_text, is_html=True, ts=ts)
+                screen.append_monitor_data_local_only(display_text, is_html=True, ts=ts)
             else:
-                screen.append_monitor_data(raw_text, is_html=False, ts=ts)
+                screen.append_monitor_data_local_only(raw_text, is_html=False, ts=ts)
 
     def _on_packet_aprs_toggled(self, checked: bool) -> None:
         """APRS decode button toggled.
@@ -4257,6 +4303,13 @@ class MainWindow(QMainWindow):
                 _pkt_screen = self._opmode_screens.get(_pkt_name)
                 if _pkt_screen is not None and hasattr(_pkt_screen, "channel_bar"):
                     _pkt_screen.channel_bar.set_user_limit(self._app_config.hf_packet.users)
+                # P50 Teil C: same immediate-refresh treatment for the
+                # display settings (timestamps, per-document line cap).
+                if _pkt_screen is not None and hasattr(_pkt_screen, "apply_display_settings"):
+                    _pkt_screen.apply_display_settings(
+                        self._app_config.hf_packet.show_timestamps,
+                        self._app_config.hf_packet.rx_max_lines_per_channel,
+                    )
 
     def _on_params_misc(self) -> None:
         """Open Misc Parameters dialog."""
@@ -5262,6 +5315,15 @@ class MainWindow(QMainWindow):
     # Window geometry persistence (QSettings)
     # ------------------------------------------------------------------
 
+    # P50 Teil D: (opmode screen name, QSettings key) for every Packet
+    # RX/TX splitter whose size should survive a restart, alongside the
+    # window geometry itself. HF and VHF Packet each keep their own -
+    # they are separate QSplitter instances, one per screen.
+    _PACKET_RXTX_SPLITTER_KEYS = (
+        ("HF Packet", "hfPacketRxTxSplitterSizes"),
+        ("VHF Packet", "vhfPacketRxTxSplitterSizes"),
+    )
+
     def _save_window_geometry(self) -> None:
         """Save window position and size to QSettings (registry/config)."""
         s = QSettings("OE3GAS", APP_TITLE)
@@ -5269,6 +5331,11 @@ class MainWindow(QMainWindow):
         s.setValue("windowState", self.saveState())
         # Save splitter position (monitor panel)
         s.setValue("splitterSizes", self._splitter.sizes())
+        # P50 Teil D: Packet screens' own RX/TX splitter.
+        for _name, _key in self._PACKET_RXTX_SPLITTER_KEYS:
+            _screen = self._opmode_screens.get(_name)
+            if _screen is not None and hasattr(_screen, "_rxtx_splitter"):
+                s.setValue(_key, _screen._rxtx_splitter.sizes())
         logger.debug("Window geometry saved")
 
     def _restore_window_geometry(self) -> None:
@@ -5286,4 +5353,13 @@ class MainWindow(QMainWindow):
                 self._splitter.setSizes([int(x) for x in sizes])
             except Exception:
                 pass
+        # P50 Teil D: Packet screens' own RX/TX splitter.
+        for _name, _key in self._PACKET_RXTX_SPLITTER_KEYS:
+            _screen = self._opmode_screens.get(_name)
+            _sizes = s.value(_key)
+            if _screen is not None and hasattr(_screen, "_rxtx_splitter") and _sizes:
+                try:
+                    _screen._rxtx_splitter.setSizes([int(x) for x in _sizes])
+                except Exception:
+                    pass
         logger.debug("Window geometry restored")
