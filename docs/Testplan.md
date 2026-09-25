@@ -2186,6 +2186,78 @@ hardware re-test open (steps 1-5 above).
 
 ---
 
+### T131 — Enter Host Mode from an existing verbose connection; banner as one block (P49)
+
+Two independent findings from the same operator session, 25.09.2026.
+
+**Finding A:** the TNC menu had `Leave Host Mode + Return to Terminal`
+but no way back IN from an existing verbose connection - "Connect +
+Enter Host Mode..." only ever reaches Host Mode from a fresh connect
+and greys out once connected, so an operator who connected via
+"Connect + Enter Terminal Mode..." had no way to switch at all.
+
+**Finding B (screenshot):**
+```
+PK-232M is u[SYS] TNC ready in verbose mode
+[SYS] Fast Init — parameter upload skipped
+[SYS] Verbose terminal ready (fast init)
+sing default values.
+```
+The word "using" torn apart by the app's own `[SYS]` lines, plus boxes
+(unfiltered control bytes) at the start of some lines.
+
+**Live sequence to run:**
+1. **TNC → Connect + Enter Terminal Mode...** (Ctrl+T).
+   **Expected:** the banner appears as ONE continuous block in the RX
+   window, with no boxes at the start of any line, followed by the
+   `[SYS] TNC ready in verbose mode` line - never interleaved with it.
+2. Check the TNC menu: **Enter Host Mode** (Ctrl+H) is enabled;
+   **Leave Host Mode + Return to Terminal** is disabled.
+3. **TNC → Enter Host Mode** (Ctrl+H), with Fast Init OFF (Settings).
+   **Expected:** parameters upload (visible in the RX window), then the
+   TNC switches to Host Mode; the mode indicator ends on "HOST MODE".
+4. Leave Host Mode (Ctrl+L), then **Enter Host Mode** again (Ctrl+H)
+   without disconnecting in between.
+   **Expected:** no second upload runs - a single `[SYS] parameters
+   already uploaded` line, straight to Host Mode.
+5. Disconnect, reconnect via **Connect + Enter Terminal Mode...**, this
+   time with Fast Init ON (Settings), then **Enter Host Mode** (Ctrl+H).
+   **Expected:** a dialog appears: "Fast Init skipped the parameter
+   upload. The TNC is running on its stored values and cannot be
+   configured once Host Mode is active. Upload parameters now?" with
+   `Upload and switch` / `Switch without upload` / `Cancel`.
+   - `Switch without upload` → Host Mode immediately, no upload.
+   - `Cancel` → stays in verbose mode, nothing happens.
+   - (repeat once more) `Upload and switch` → parameters upload, then
+     Host Mode.
+
+**Unit-verified:**
+- `test_main_window_connection.py::TestTncMenuGating` (4 cases) - only
+  the Connect actions are enabled while disconnected; only `Enter Host
+  Mode` is enabled while connected+verbose; only `Leave Host Mode` is
+  enabled while connected+Host Mode; a disabled `Enter Host Mode`'s
+  tooltip names the reason.
+- `test_main_window_connection.py::TestEnterHostModeFromVerbose`
+  (8 cases) - not connected/not verbose does nothing; already uploaded
+  this session skips straight to Host Mode; upload outstanding with
+  Fast Init off uploads first; Fast Init on asks, and each of the three
+  choices (upload/skip/cancel) does exactly what it says; a new
+  connection resets the "uploaded this session" flag.
+- `test_main_window_connection.py::TestBannerCollection` (4 cases) - a
+  banner arriving in two fragments (one already captured, one
+  straggling in afterward) is still shown as one continuous block,
+  before the `[SYS]` line; raw data is buffered, not displayed, while a
+  collection is in progress; control characters are filtered from the
+  display; no banner bytes at all still shows the `[SYS]` line.
+- `test_main_window_connection.py::TestMenuOnlyTncActions` - the new
+  `Enter Host Mode` (Ctrl+H) shortcut does not collide with any other
+  TNC menu shortcut.
+
+**Status:** ✅ PASS (2026-09-25, unit-verified — full suite green). Live
+hardware re-test open (steps 1-5 above).
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
