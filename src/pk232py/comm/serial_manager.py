@@ -386,6 +386,11 @@ class SerialManager(QObject):
         # _init_tnc_thread() run, cleared again on successful Host Mode
         # entry (enter_host_mode()).
         self._verbose_confirmed = False
+        # P44.B2: raw bytes captured by whichever detection-chain step
+        # actually confirmed verbose mode this session - the prompt the
+        # chain consumed to confirm it never otherwise reached the
+        # verbose terminal display at all. See _finish_verbose_init().
+        self._last_verbose_init_resp: bytes = b""
         self._poll_active      = False
         self._poll_thread      = None
         self._worker           = None  # _HostModeWorker in Host Mode
@@ -652,6 +657,15 @@ class SerialManager(QObject):
         the software's unverified belief, not evidence)."""
         return self._verbose_confirmed
 
+    @property
+    def last_verbose_init_response(self) -> bytes:
+        """Raw bytes captured by whichever detection-chain step actually
+        confirmed verbose mode this session (P44.B2). MainWindow mirrors
+        this into the verbose terminal right after init - the prompt (and
+        banner, if the TNC had just booted) it represents was already
+        consumed inside the chain and never otherwise reaches the UI."""
+        return self._last_verbose_init_resp
+
     # ------------------------------------------------------------------
     # Phase 1 — TNC initialisation → verbose mode
     # ------------------------------------------------------------------
@@ -706,10 +720,28 @@ class SerialManager(QObject):
              connection sequence, so this reuses the byte sequence, not
              that method), then repeats step 2: if THAT sees 'cmd:', the
              TNC is confirmed back in verbose mode.
+          3b. (P44) If step 3 saw no 0x4F frame at ALL — not even that —
+             try the documented recovery sequence (double-SOH + GG, TRM
+             4.1.6, the same FRAME_RECOVERY bytes the "Recovery" menu
+             action sends) before giving up: an application killed
+             abruptly while in Host Mode (Ctrl-C in the console,
+             observed 25.09.2026) can leave the TNC's own frame parser
+             mid-frame, waiting for an ETB that will never come and
+             discarding everything further — including a fresh SOH, so
+             even step 3's HPOLL query gets nothing back. Sends
+             FRAME_RECOVERY then FRAME_HOST_OFF directly (not via
+             recovery()/exit_host_mode(), which assume a running
+             HostModeWorker that does not exist yet here — see step 3's
+             own note on this), then repeats step 2 once more.
           4. None of the above answered anything usable -> no PK-232
              reachable at all. A wrong port/baud rate and a hung TNC look
              identical from here (see CLAUDE.md's "PK-232 can hang"
              gotcha) - the abort message names both.
+
+        Every step logs both the bytes it sent and whatever it received,
+        in hex, at DEBUG level (P44.C2) — costs nothing when 0 bytes come
+        back, and saves a repeat hardware run the next time this needs
+        diagnosing.
 
         On success, sets both _verbose_ready (existing) and
         _verbose_confirmed (P43 — see its own docstring in __init__) and
@@ -751,6 +783,7 @@ class SerialManager(QObject):
             # freshly booted" (the common case right after power-on). ──
             self.status_message.emit("TNC: wakeup...")
             logger.info("Init: step 1 - wakeup '*'")
+            logger.debug("Init: step 1 TX: %s", _WAKEUP.hex(' '))
             port.write(_WAKEUP)
             port.flush()
             step1_markers = (b"cmd:",) + _BANNER_MARKERS
@@ -764,6 +797,7 @@ class SerialManager(QObject):
             # ── STEP 2: bare CR — the TNC may already be awake and simply
             # did not answer '*' the way step 1 expected. ──────────────
             logger.info("Init: step 2 - CR (already awake?)")
+            logger.debug("Init: step 2 TX: %s", b"\r".hex(' '))
             port.write(b"\r")
             port.flush()
             resp2 = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
@@ -777,7 +811,9 @@ class SerialManager(QObject):
             # that is genuinely in Host Mode with HPOLL ON, since it does
             # not answer anything unsolicited there. ───────────────────
             logger.info("Init: step 3 - HPOLL query frame")
-            port.write(build_command(b'HP'))
+            hpoll_query = build_command(b'HP')
+            logger.debug("Init: step 3 TX: %s", hpoll_query.hex(' '))
+            port.write(hpoll_query)
             port.flush()
             raw = bytearray()
             frames: list = []
@@ -801,11 +837,13 @@ class SerialManager(QObject):
                     "exiting to verbose"
                 )
                 self._in_host_mode = True
+                logger.debug("Init: step 3 exit TX: %s", FRAME_HOST_OFF.hex(' '))
                 port.write(FRAME_HOST_OFF)
                 port.flush()
                 time.sleep(0.2)
                 self._in_host_mode = False
                 logger.info("Init: repeating step 2 after Host Mode exit")
+                logger.debug("Init: step 3 post-exit TX: %s", b"\r".hex(' '))
                 port.write(b"\r")
                 port.flush()
                 resp3 = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
@@ -823,6 +861,47 @@ class SerialManager(QObject):
                 )
             else:
                 logger.info("Init: step 3 saw no 0x4F frame either")
+
+                # ── STEP 3b (P44.C1): recovery sequence — a process killed
+                # abruptly while in Host Mode can leave the TNC's frame
+                # parser mid-frame, waiting for an ETB that never comes and
+                # discarding everything further, including a fresh SOH (so
+                # step 3's own HPOLL query above got nothing back either).
+                # Reuses FRAME_RECOVERY, the exact bytes the "Recovery" menu
+                # action already sends (recovery()) — not calling that
+                # method itself, since it calls the worker-based
+                # exit_host_mode(), and there is no HostModeWorker running
+                # yet at this point in the connection sequence (same reason
+                # step 3 above writes FRAME_HOST_OFF directly rather than
+                # via exit_host_mode()). Harmless if no TNC is attached at
+                # all — a few bytes go out into nothing.
+                logger.info("Init: step 3b - recovery sequence (double-SOH + GG)")
+                logger.debug("Init: step 3b TX: %s", FRAME_RECOVERY.hex(' '))
+                port.write(FRAME_RECOVERY)
+                port.flush()
+                time.sleep(0.2)
+                logger.debug("Init: step 3b exit TX: %s", FRAME_HOST_OFF.hex(' '))
+                port.write(FRAME_HOST_OFF)
+                port.flush()
+                time.sleep(0.2)
+                self._in_host_mode = False
+                logger.info("Init: repeating step 2 after recovery sequence")
+                logger.debug("Init: step 3b post-recovery TX: %s", b"\r".hex(' '))
+                port.write(b"\r")
+                port.flush()
+                resp3b = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
+                logger.debug(
+                    "Init: post-recovery response (%d B): %s",
+                    len(resp3b), resp3b.hex(' '),
+                )
+                if b"cmd:" in resp3b:
+                    logger.info("Init: verbose confirmed after recovery sequence")
+                    self._finish_verbose_init(resp3b)
+                    return
+                logger.error(
+                    "Init: recovery sequence did not reach cmd: either - "
+                    "falling through to step 4"
+                )
 
             # ── STEP 4: nothing answered at all. ────────────────────────
             port_name = getattr(port, 'port', '?')
@@ -858,6 +937,7 @@ class SerialManager(QObject):
                 "TNC banner captured: PACTOR=%s (%d bytes)",
                 b"PACTOR" in resp, len(resp),
             )
+        self._last_verbose_init_resp = resp
         level, message = _wakeup_log_message(resp)
         logger.log(level, message)
         self._verbose_ready     = True
