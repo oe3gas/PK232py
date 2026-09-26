@@ -144,15 +144,13 @@ an opmode ComboBox entry (see CLAUDE.md's MailDrop section for why).
   flagged: `_advance_restore()` blanks `frm` when it equals the
   operator's own MYCALL, passing it through unchanged (a genuine
   foreign FROM) otherwise.
-- `archive_sync`/`archive_restore`/`archive_restore_scope` are still
-  only SAVED settings (P38.3) — this package's "Sync to archive"/
-  "Restore to TNC" toolbar buttons are USER-TRIGGERED (`manual`) only;
-  wiring `archive_sync="on_session_end"` to fire automatically inside
-  `leave()`, and `archive_restore`/`archive_restore_scope` to prompt
-  when the TNC comes up factory-fresh, is not built and is its own
-  follow-up (see the dedicated Sync/Restore item below) — the DoD for
-  P39 never required it, and the settings already say in the dialog
-  that "on_session_end"/"ask"/"auto" have no effect yet.
+- `archive_sync`/`archive_restore`/`archive_restore_scope` were still
+  only SAVED settings at the time P39 shipped (P38.3) — the manual
+  "Sync to archive"/"Restore to TNC" toolbar buttons were the only
+  working path. **Superseded by P59 (2026-09-26, see the dedicated
+  item below):** `on_session_end`/`ask`/`auto`/the restore scope are
+  now all wired up — this bullet is left here as history, not as the
+  current state.
 
 **Hardware confirmation — ✅ PASS (T122, Testplan.md, 2026-09-25, Device
 B, Release 01.AUG.91):** the operator ran the full dialog against real
@@ -206,18 +204,48 @@ commands are sent, and both `btn_maildrop` and every `Parameters →
 MailDrop...` field show the "This firmware has no MailDrop" tooltip
 (disabled, not hidden).
 
-### MailDrop dialog — Sync/Restore auto-trigger, still a separate follow-up (P39, 2026-09-24)
+### MailDrop dialog — Sync/Restore auto-trigger — ✅ DONE (P59, 2026-09-26)
 
 P39 built `MailDropConfig.archive_sync`/`archive_restore`/
 `archive_restore_scope` as real, working USER-TRIGGERED toolbar buttons
-("Sync to archive"/"Restore to TNC", `manual` behaviour only) — but the
-CONFIGURABLE automatic behaviour the settings describe
-(`archive_sync="on_session_end"` collecting automatically inside
-`leave()`; `archive_restore`/`archive_restore_scope` prompting on a
-factory-fresh TNC, `ask`/`auto`) is not wired to anything yet.
-`params_maildrop.py`'s settings copy was updated under P39 to say this
-precisely (manual sync/restore already works via the session window;
-automatic modes do not yet) — update it again once this is built.
+("Sync to archive"/"Restore to TNC", `manual` behaviour only), leaving
+the CONFIGURABLE automatic behaviour unwired. P59 closes this:
+- `SerialManager.fresh_boot_defaults` (new) — an EVENT flag, reset at
+  the start of every `_init_tnc_thread()`/`_recovery_thread()` run,
+  true only when THAT run's own boot banner said "is using default
+  values". Deliberately not derived from the existing `tnc_defaults`
+  (sticky — it keeps the LAST banner ever seen and would still read
+  True on a later reconnect/recovery against a TNC that has been
+  running fine the whole time, B.3 in `docs/
+  P59_MailDrop_Archive_Auto_Spec.md`).
+- `MailDropDialog._end_session()` is now the ONE path out of an ACTIVE
+  session (`btn_end` and a confirmed close gesture both call it) —
+  when `archive_sync == "on_session_end"`, it reads every TNC-only
+  message into the archive first, then leaves; a sync failure mid-
+  queue still leaves afterwards (packet operation must resume even if
+  the collection did not fully succeed).
+- `maildrop/archive.py::filter_restore_scope()` — the ONE scope filter
+  ("all"/"unread"/"none", unknown scope raises rather than falling
+  back to "all") used by both the manual "Restore to TNC" button and
+  the automatic trigger, so they can never disagree about what a scope
+  means.
+- `MainWindow._check_archive_restore_trigger()` (wired to
+  `host_mode_changed(True)`/`recovery_finished(True, ...)`) flags a
+  restore as pending when `fresh_boot_defaults` and the settings all
+  agree; `_update_maildrop_gate_ui()` fires the actual offer
+  (`_offer_archive_restore()`, `QTimer.singleShot(0, ...)` since a
+  modal dialog cannot open from inside a gate-update call) the moment
+  the gate — connected, Host Mode, HF/VHF Packet, no connected
+  channel — is actually open, which may be well after the TNC came up
+  if the operator was not in Packet mode yet.
+- `MailDropDialog(..., auto_restore=True)` (C.4) opens the session
+  itself, names what it is doing in the banner for the whole session,
+  restores every in-scope archive-only candidate after the first
+  listing, and ends the session (closing itself) once that queue is
+  empty — including immediately, if there was nothing to restore.
+  Stopping it mid-restore never aborts the in-flight message (no
+  `abort()` — the `/EX` rule).
+See Testplan.md T136 (sync)/T137 (restore) — both OPEN, need Device B.
 
 ### MailDrop archive (message_store.py schema gap) — ✅ DONE (P38, 2026-09-24)
 
