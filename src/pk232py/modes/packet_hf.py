@@ -51,6 +51,18 @@ def _extract_partner(text: str) -> str:
       "Connect request: OE1XYZ" -> "OE1XYZ"     (":" marker)
     Falls back to the first whitespace-separated token, e.g. "OE1XYZ busy".
     Returns "" if nothing usable is found — callers must tolerate that.
+
+    P55.A: with CONSTAMP/DAYSTAMP both ON (the default, params_uploader.py
+    uploads both) a real message is prefixed with the TNC's own date/time,
+    e.g. "*** 25-Sep-26 21:04:36 DISCONNECTED: OE3TEC-1 ***" - and that
+    stamp's own "HH:MM:SS" contributes TWO colons of its own, both ahead
+    of the ':' that actually marks the callsign. Splitting on the FIRST
+    colon in the whole string (the old `text.split(":", 1)`) landed
+    inside the timestamp instead - e.g. "04:36" read as the partner
+    callsign, reproducing the MHEARD screenshot's date/time-shaped
+    entries. rsplit() on the LAST colon is what the callsign marker
+    itself actually needs, since nothing legitimate ever follows a real
+    callsign with a colon.
     """
     lower = text.lower()
     if " to " in lower:
@@ -66,7 +78,7 @@ def _extract_partner(text: str) -> str:
             tail = tail[1:].strip()
         return tail.split()[0] if tail else ""
     if ":" in text:
-        tail = text.split(":", 1)[1].strip()
+        tail = text.rsplit(":", 1)[1].strip()
         return tail.split()[0] if tail else ""
     tokens = text.strip().split()
     return tokens[0] if tokens else ""
