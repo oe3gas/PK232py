@@ -276,6 +276,35 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   nothing of its own while still echoing everything typed at it — the
   identical symptom shape Converse mode (P53) produces. See the two new
   gotchas under Known Gotchas / Serial-Host Mode for the full writeup.
+- **UI findings from the test run (P55, 2026-09-26, unit-verified).**
+  Six independent findings from one operator session, replacing
+  `P51_Pruefdurchgang_Befunde_Spec.md`'s Teil A (superseded by P52-P54).
+  (1) MHEARD's Callsign/Time columns showed a date/timestamp fragment
+  instead of the real callsign — two sources: `_extract_partner()`
+  split on the FIRST colon in a message, landing inside the TNC's own
+  embedded `HH:MM:SS` (CONSTAMP/DAGSTAMP both ON by default); and
+  `_parse_mheard_line()` never accounted for a DAYSTAMP date token
+  ahead of the time/callsign. (2) The TX echo wrote directly into
+  `rx_display`'s cursor instead of through `append_channel_data()`
+  (P50), so it only reached whichever ONE document was visible at send
+  time, never the channel's own document if ALL was showing (or vice
+  versa). (3) Every RX `QTextDocument` visibly changed font when
+  switching ALL/CH, since none had `setDefaultFont()` called on it —
+  fixed with one shared `_RX_FONT` constant. (4) The firmware release
+  header stayed "unknown" despite a correctly-logged banner capture —
+  it was parsed from `SerialManager.tnc_banner` (frozen at the
+  detection chain's own read) instead of the fully-collected P49 banner
+  buffer, which can contain a `"Release ..."` line the chain's own read
+  never saw complete. (5) A reported "opmode mask doesn't fill the
+  window" could not be reproduced in code (measured against a real
+  `MainWindow` + `BaudotScreen`, filled correctly in every configuration
+  tried) — `apply_tooltips()` (the one call every screen's `__init__()`
+  already makes) now also asserts `Expanding` size policy as defensive
+  hardening regardless. (6) CONSTAMP/DAGSTAMP (the TNC's own link-
+  message timestamp) and `show_timestamps` (PK232PY's own added prefix)
+  documented as the two independent sources they are, in both the
+  Display tab's tooltip and here. See the six new gotchas under Known
+  Gotchas / Packet and UI-PyQt6 for the full writeup.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -1992,6 +2021,62 @@ Grows over time.
   additionally fires ONE `_on_packet_mheard()` poll so the list also
   catches up on any OTHER stations heard in the meantime — reusing the
   existing Refresh implementation outright, not a second one.
+- **`_extract_partner()` used to split on the FIRST colon in the whole
+  string — with CONSTAMP/DAGSTAMP both ON (the upload default), that
+  colon is INSIDE the TNC's own embedded timestamp, not the callsign
+  marker (P55.A, 2026-09-26).** A real message looks like `"*** 25-Sep-26
+  21:04:36 DISCONNECTED: OE3TEC-1 ***"` once both are enabled — the
+  `"21:04:36"` timestamp alone contributes two colons, both ahead of the
+  one that actually marks the callsign after `DISCONNECTED`. Reproduced
+  via a screenshot (26.09.2026): MHEARD's Callsign column showed a
+  fragment of the embedded time instead of the real callsign. Fixed by
+  `rsplit(":", 1)` (split on the LAST colon) instead of `split(":", 1)`
+  — nothing legitimate ever follows a real callsign with a colon of its
+  own, so the last one is always the right marker. The `" to "` branch
+  (CONNECTED) was never affected by this, since it never reaches the
+  colon-splitting code at all.
+- **`MainWindow._parse_mheard_line()` never accounted for a leading
+  DAYSTAMP date token either — same finding, same screenshot, a second
+  independent source (P55.A, 2026-09-26).** With DAYSTAMP ON, a real
+  `MH` poll response line is `"25-Sep-26 00:05:23 OE3TEC-1*"`, not just
+  `"00:05:23 OE3TEC-1*"` — the old parser's own docstring admitted this
+  ("too complex for v0.1") and read the date token itself as the
+  callsign whenever DAYSTAMP happened to be on. Fixed by stripping a
+  leading token that contains `'-'` with no `':'` (unambiguous against
+  both a `HH:MM(:SS)` time token and a bare callsign, since AX.25
+  callsigns never contain `-`) before the existing time/callsign split.
+  Not yet confirmed against a raw hardware capture of an actual `MH`
+  line — see the P55 Testplan entry.
+- **The TX echo used to write directly into `rx_display`'s cursor,
+  landing in only whichever ONE document (ALL or the current channel's
+  own) happened to be attached at send time — not through
+  `append_channel_data()` (P55.B, 2026-09-26).** P50 made every RX line
+  write into BOTH a channel's own document and the merged ALL document,
+  but `MainWindow._on_packet_tx_enter()`'s own TX-echo block was never
+  migrated onto that path — it kept manipulating `screen.rx_display`'s
+  `QTextCursor` directly, exactly as before P50, so the echo only ever
+  reached whichever document was currently VISIBLE. Reproduced
+  26.09.2026: `"> ch1 just testing"` showed up in ALL view but not in CH
+  view of channel 1 itself. Fixed by routing the echo through
+  `append_channel_data(channel, f"> {text}", color=...)`, the same path
+  a received line or a link message already uses — the manual
+  `"ch{channel}"` prefix text was also dropped as redundant, since the
+  ALL view's own compact `"n│"` tag and the CH view's channel selection
+  already say which channel a line belongs to.
+- **A `QTextDocument` created with no `setDefaultFont()` uses Qt's own
+  generic default, not whatever font `rx_display` is showing — switching
+  ALL/CH visibly changed the font (P55.C, 2026-09-26).** P50's per-
+  channel/ALL documents (`_rx_docs`/`_rx_doc_all`) were constructed with
+  a bare `QTextDocument(self)`; `rx_display.setFont()` only ever applies
+  to the ONE document attached at the moment it is called, never to a
+  document created (or later swapped in via `setDocument()`) afterward.
+  Fixed with a single module-level constant, `_RX_FONT`
+  (`packet_screen.py`), applied via `setDefaultFont()` to every document
+  at construction AND via `setFont()` to `rx_display` itself — one
+  value, so the two can never drift apart again. Character formats
+  inserted by `_rx_write_line()` only ever set `setForeground()`
+  (colour), never a font of their own, so fixing the document's default
+  font was sufficient — no per-line format change was needed.
 
 ### UI / PyQt6
 
@@ -2212,6 +2297,49 @@ Grows over time.
   case: the "see its own failed() message above" log line prints before that
   message has actually been flushed), so left as-is — flagged here for the
   next time that code is touched.
+- **The firmware release label was parsed from `SerialManager.tnc_banner`
+  (frozen at the P43 detection chain's own capture) instead of the
+  fully-collected P49 banner buffer — reproduced as "TNC-Firmware:
+  unknown" despite a correctly-logged banner capture (P55.D,
+  2026-09-26).** `SerialManager._tnc_banner` is set exactly once, from
+  whatever `_finish_verbose_init()`'s own step captured at that moment —
+  it is never updated with straggler bytes that arrive afterward via the
+  `ReaderThread`. `MainWindow._banner_buffer` (P49 Teil B) DOES collect
+  those stragglers (`_on_raw_data_received()` re-arms the quiet-window
+  timer on every further byte while collecting), so a `"Release ..."`
+  line split across that boundary could complete in the buffer the
+  terminal displays while never reaching `_tnc_banner` at all — the
+  terminal showed the banner correctly, the header did not, from the
+  SAME underlying data. Fixed by parsing the release from
+  `self._banner_buffer` itself, inside `_finish_banner_collection()`
+  (reusing `serial_manager.py`'s own `_parse_release()`, not a second
+  regex) — moved out of `_on_verbose_mode_ready()`'s own immediate,
+  synchronous block entirely. Left UNCHANGED (not reset to "unknown")
+  when a given round's buffer has no release line at all — a bare CR/
+  COMMAND-char/XON reconnect (P53/P54's own steps 2b/2c) carries no
+  banner, and the physical TNC has not actually changed just because
+  that particular reconnect's own response happened to be silent about
+  it.
+- **`apply_tooltips()` also asserts `Expanding` size policy on the
+  screen it is called on — the one place every opmode screen's
+  `__init__()` already reaches exactly once (P55.E, 2026-09-26).**
+  Investigated a reported "the opmode mask doesn't fill the window —
+  empty area below the macro buttons" (screenshot, 26.09.2026): every
+  screen's own top-level `QVBoxLayout` already gives `rx_display` (or,
+  for Packet, the RX/TX splitter) `stretch=1`, and measuring the real
+  `MainWindow` + `BaudotScreen` end to end (`_opmode_stack` →
+  `QSplitter` → `host_layout` → `host_page`) showed the layout already
+  filling correctly in every configuration tried — **no code-level bug
+  was actually reproduced.** A plain `QWidget` still defaults to
+  `Preferred`/`Preferred`, though, which is not a guarantee of filling
+  its container the way `Expanding` is — so `apply_tooltips()` now also
+  sets `Expanding` in both directions on `widget` itself, as defensive
+  hardening for whatever configuration the screenshot was actually taken
+  in, piggybacked onto the ONE call every screen (RttyBaseScreen/
+  AmtorScreen/PactorScreen/MorseScreen/PacketBaseScreen/NavtexScreen/
+  SignalScreen/FaxScreen) already makes at the end of its own
+  `__init__()`, per the spec's own explicit ask for a single touch
+  point — not a second, near-identical call added to all eight files.
 
 ### FAX (live image decode — implemented 2026-06-18, hardware-verified T82)
 
@@ -2310,6 +2438,22 @@ Grows over time.
   display-only setting is not a special case requiring its own storage
   mechanism — it is a normal config field that happens to be exempt from
   exactly one of the four wiring-chain tests.
+- **Two independent sources of a timestamp can appear in the same RX
+  line — CONSTAMP/DAGSTAMP (the TNC's own) and `show_timestamps` (this
+  app's own) are not the same setting (P55.F, 2026-09-26).** A link
+  message's own stamp, e.g. `"*** 25-Sep-26 21:04:36 CONNECTED to
+  OE3TEC ***"`, comes from the TNC itself — `CONSTAMP`/`DAGSTAMP`
+  (HF Packet Parameters → Parameters tab, both ON by default,
+  uploaded as real `CONSTAMP`/`DAYSTAMP` commands) put it there, and it
+  is part of the message TEXT, appearing regardless of any PC-side
+  setting. `HFPacketConfig.show_timestamps` (Display tab, P50 Teil C,
+  OFF by default) controls a SEPARATE, PK232PY-added `"[HH:MM:SS]"`
+  prefix on every RX line (link messages included) — turning it on
+  does not affect, and is not affected by, whether the TNC's own stamp
+  is present. Investigated after a session where both were visible at
+  once and easy to mistake for one setting doing double duty; both
+  checkboxes' own tooltips (`ui/dialogs/params_hf.py`) now cross-
+  reference this explicitly.
 
 ### Repo / tooling
 
