@@ -711,7 +711,13 @@ class ChannelBar(QWidget):
         connection that was never explicitly torn down before the TNC
         dropped out of Host Mode) would sit there with no frame left to
         clear it. Does NOT change which channel is current.
+
+        P57.1: also closes any open chip editor first - a mode switch
+        or leaving Host Mode makes any in-progress connect attempt
+        meaningless (PacketBaseScreen.reset_channels() is what actually
+        calls this, on both triggers).
         """
+        self.close_open_editor()
         for ch in range(CHANNEL_COUNT):
             self._state[ch] = CH_FREE
             self._partner[ch] = ""
@@ -802,7 +808,38 @@ class ChannelBar(QWidget):
         suppress Ctrl+Up/Ctrl+Down channel stepping while typing)."""
         return any(chip.is_editing() for chip in self._chips.values())
 
+    def close_open_editor(self) -> None:
+        """Cancel whichever chip's inline editor is currently open, if
+        any (P57.1) — discarding, exactly like Esc; nothing is sent.
+
+        Chips are NoFocus (so the keyboard stays in tx_input, P41) —
+        clicking a DIFFERENT chip therefore never fires the editing
+        chip's own focusOutEvent at all, so the P42.1 "losing focus
+        cancels like Esc" rule (ChannelChip.eventFilter()'s own
+        FocusOut branch) never triggers for this case. Reproduced
+        26.09.2026 (screenshot): the cursor stayed in channel 3's
+        editor while channel 4 carried the active frame, and keystrokes
+        kept landing in channel 3's field. ChannelBar is the one place
+        that knows which of its ten chips is editing — the rule
+        belongs here, called from every place a channel can change or
+        the whole bar can reset (_select(), reset()), not duplicated in
+        each chip or each caller.
+        """
+        for chip in self._chips.values():
+            if chip.is_editing():
+                chip.cancel_edit()
+                return
+
     def _select(self, ch: int, emit: bool) -> None:
+        # P57.1: close any OTHER chip's open editor before switching -
+        # the click/call that changes the channel keeps its normal
+        # effect (it still switches), it just also closes whatever was
+        # left open elsewhere. Never the chip about to become current
+        # itself: _select(ch) is only ever called for a chip whose
+        # BUTTON is visible (double-click, a plain click, set_current(),
+        # step()) - a chip currently editing shows its editor instead,
+        # so it can never be the *ch* this method was called with.
+        self.close_open_editor()
         changed = ch != self._current
         self._current = ch
         self._group.blockSignals(True)
@@ -1266,6 +1303,18 @@ class PacketBaseScreen(QWidget):
     # ------------------------------------------------------------------
 
     def eventFilter(self, obj, event) -> bool:
+        # P57.1: a click into any of the fields this filter already
+        # watches (tx_input, le_unproto, combo_monitor, combo_hbaud)
+        # closes an open chip editor first - the "click elsewhere in
+        # the mask" row of P57's own table. No new filter/installEvent
+        # Filter() call needed: this method is already installed on
+        # every one of those widgets (below), so extending it here is
+        # the one place this rule needs to live, exactly as the spec
+        # asks. Never consumed - the click must still reach its real
+        # target (e.g. actually focus tx_input) after closing the editor.
+        if (event.type() == QEvent.Type.MouseButtonPress
+                and self.channel_bar.is_editing()):
+            self.channel_bar.close_open_editor()
         # Enter / Return in tx_input → send as AX.25 DATA frame, unless
         # Hold TX is engaged (then let QTextEdit insert a literal newline —
         # Packet has no TxController/[^D] EOT concept, so "hold" just means
