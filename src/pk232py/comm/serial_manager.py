@@ -503,10 +503,25 @@ class SerialManager(QObject):
         # this stays None until detect_maildrop() actively queries it
         # (P37). None means "not yet detected", never "no MailDrop".
         self._has_maildrop: Optional[bool] = None
-        # Shared buffer: ReaderThread writes here, _read_raw_until reads here
+        # Shared buffer: ReaderThread writes here, write_verbose_wait()
+        # (via _read_until_prompt(), P52.1) reads here
         self._rx_buf           = bytearray()
         self._rx_buf_lock      = threading.Lock()
         self._rx_buf_event     = threading.Event()
+        # P53.B: the TNC's COMMAND character (default $03, Ctrl-C) - the
+        # one byte that pulls a Converse-mode TNC back to its cmd: prompt
+        # (TRM: every operating mode has a Converse state that echoes
+        # every character and shows no prompt at all). This is a PC-side
+        # mirror of AppConfig.misc.command, kept in sync by MainWindow
+        # (constructor, Misc Parameters dialog, Load Settings) - it is
+        # the only value ParamsUploader actually uploads as the real
+        # COMMAND parameter, so this is a best-effort "what we believe
+        # the TNC currently has", not a guarantee (the TNC may still be
+        # at its own factory default if nothing has been uploaded to it
+        # yet this session). Defaults to $03 so a duck-typed test double
+        # or a SerialManager built before any config exists still gets
+        # the documented factory value.
+        self.command_char: int = 0x03
 
     # ------------------------------------------------------------------
     # TNC capability detection
@@ -562,20 +577,16 @@ class SerialManager(QObject):
         entry) - built like has_pactor, but via a query instead of a
         passive banner read, since MailDrop capability has no banner
         marker. Never sends MDCHECK - see _classify_maildrop_response().
+
+        P53.A: reads the response via _write_verbose_wait_text() directly
+        instead of a transient raw_data_received.connect()/disconnect()
+        pair - see that method's own docstring for the race this used to
+        lose against (the exact same pattern query_verbose_value() had).
         """
         if not self.is_connected:
             return self._has_maildrop
-        raw = bytearray()
-
-        def _capture(data: bytes) -> None:
-            raw.extend(data)
-
-        self.raw_data_received.connect(_capture)
-        try:
-            self.write_verbose_wait(b"MAILDROP\r\n", timeout=timeout)
-        finally:
-            self.raw_data_received.disconnect(_capture)
-        text = bytes(raw).decode("ascii", errors="replace")
+        _found, raw = self._write_verbose_wait_text(b"MAILDROP\r\n", timeout=timeout)
+        text = raw.decode("ascii", errors="replace")
         self._has_maildrop = _classify_maildrop_response(text)
         return self._has_maildrop
 
@@ -587,23 +598,27 @@ class SerialManager(QObject):
         the command). Must be called while already in verbose mode - same
         caller discipline as detect_maildrop(), which this mirrors.
 
+        P53.A: reads the response via _write_verbose_wait_text() directly
+        instead of a transient raw_data_received.connect()/disconnect()
+        pair - the connect/disconnect version reliably lost a real race
+        against Qt's queued cross-thread delivery (26.09.2026: the
+        verbose terminal showed the TNC's correct answer to 'MYCALL'
+        while this method reported "no answer" for the very same query -
+        see _write_verbose_wait_text()'s own docstring for the confirmed
+        mechanism). MainWindow's own terminal display is unaffected - it
+        is a PERSISTENT raw_data_received connection, never torn down
+        around a single command, so it was never exposed to this race.
+
         Returns:
             The value string as answered by the TNC, or None if there was
             no clear answer (error line, no response, or not connected).
         """
         if not self.is_connected:
             return None
-        raw = bytearray()
-
-        def _capture(data: bytes) -> None:
-            raw.extend(data)
-
-        self.raw_data_received.connect(_capture)
-        try:
-            self.write_verbose_wait(f"{name}\r\n".encode("ascii"), timeout=timeout)
-        finally:
-            self.raw_data_received.disconnect(_capture)
-        text = bytes(raw).decode("ascii", errors="replace")
+        _found, raw = self._write_verbose_wait_text(
+            f"{name}\r\n".encode("ascii"), timeout=timeout
+        )
+        text = raw.decode("ascii", errors="replace")
         return _parse_verbose_query_value(name, text)
 
     # ------------------------------------------------------------------
@@ -830,14 +845,27 @@ class SerialManager(QObject):
         because it was genuinely in Host Mode and the old passive check —
         "does a stray SOH byte happen to show up in the wakeup response"—
         never actually saw one). This method instead ACTIVELY confirms
-        which state the TNC is in, via a four-step chain, each step short
-        (_TNC_STATE_STEP_TIMEOUT) so detection itself can never take
+        which state the TNC is in, via a chain of short steps
+        (_TNC_STATE_STEP_TIMEOUT each) so detection itself can never take
         longer than the failure mode it exists to prevent:
 
           1. '*'  -> banner or 'cmd:'  -> verbose, freshly booted -> done.
           2. CR   -> 'cmd:'            -> verbose, already awake -> done.
              (tried before step 3: the already-awake, verbose TNC is the
              more common case and is settled by a single CR)
+          2b. (P53.B) COMMAND char (self.command_char, default $03/
+             Ctrl-C) + CR -> 'cmd:' -> verbose, was in Converse mode.
+             Real console capture, 26.09.2026, 13:13-13:16: steps 1 and 2
+             both got only an ECHO of what was sent, no 'cmd:' either
+             time - the TNC was in the Converse state of whichever
+             operating mode (Baudot RTTY, that run) was active before
+             this disconnect, since HOST OFF returns the TNC to its
+             LAST active mode, not to the command prompt (TRM); Converse
+             echoes every character and shows no prompt at all, which
+             steps 1/2 alone cannot tell apart from "TNC not responding"
+             - only the COMMAND character actually escapes it. Matches
+             what tools/hw_check.py's Session.normalize() has done since
+             P21 for exactly this reason.
           3. An HPOLL query frame (build_command(b'HP'), no argument) ->
              any $4F-CTL frame back -> Host Mode confirmed. Step 3 must
              ACTIVELY ask: in Host Mode the TNC sends nothing on its own
@@ -927,6 +955,40 @@ class SerialManager(QObject):
             if b"cmd:" in resp2:
                 logger.info("Init: step 2 confirmed verbose (cmd: after CR)")
                 self._finish_verbose_init(resp2)
+                return
+
+            # ── STEP 2b (P53.B): COMMAND char — the TNC may be in
+            # Converse mode, not silent or Host Mode. Every operating
+            # mode has a Converse state that echoes every character typed
+            # at it and shows no cmd: prompt at all — steps 1/2 alone see
+            # exactly the same "echo, no cmd:" shape a genuinely
+            # unresponsive TNC would produce for a byte it does not
+            # recognise, so this step is the only way to tell them apart.
+            # Confirmed by a real console capture, 26.09.2026: HOST OFF
+            # returns the TNC to whichever operating mode was active
+            # before Host Mode was entered (Baudot RTTY, that run), not
+            # to the command prompt — and Converse is that mode's normal
+            # idle state (TRM). self.command_char defaults to $03/Ctrl-C
+            # and mirrors AppConfig.misc.command (P53.B) — the one value
+            # ParamsUploader actually uploads as the real COMMAND
+            # parameter, so this is "what we currently believe the TNC
+            # has", not a guaranteed value. ─────────────────────────────
+            logger.info(
+                "Init: step 2b - COMMAND char (Ctrl-C) - "
+                "TNC may be in converse mode"
+            )
+            command_bytes = bytes([self.command_char]) + b"\r"
+            logger.debug("Init: step 2b TX: %s", command_bytes.hex(' '))
+            port.write(command_bytes)
+            port.flush()
+            resp2b = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
+            logger.debug("Init: step 2b response (%d B): %s", len(resp2b), resp2b.hex(' '))
+            if b"cmd:" in resp2b:
+                logger.info(
+                    "Init: step 2b confirmed verbose (cmd: after COMMAND "
+                    "char) - TNC was in converse mode"
+                )
+                self._finish_verbose_init(resp2b)
                 return
 
             # ── STEP 3: HPOLL query frame — the only way to reach a TNC
@@ -1345,6 +1407,26 @@ class SerialManager(QObject):
             self.host_mode_changed.emit(False)
             self.status_message.emit("Host Mode off — verbose mode")
             logger.info("Host Mode deactivated")
+
+            # P53.B.2: HOST OFF returns the TNC to whichever operating
+            # mode was active before Host Mode was entered, not to the
+            # command prompt - for Baudot/AMTOR/PACTOR that mode's normal
+            # idle state is Converse, which echoes every character and
+            # shows no prompt at all (confirmed by a real console
+            # capture, 26.09.2026 - the same finding step 2b above
+            # exists for). Sending the COMMAND character right away here
+            # makes the verbose terminal immediately usable instead of
+            # just echoing, and spares the NEXT connect cycle its own
+            # step 2b - write_verbose_wait() already works over the
+            # ReaderThread just (re)started above, no read-path
+            # takeover needed.
+            command_bytes = bytes([self.command_char]) + b"\r"
+            ok = self.write_verbose_wait(command_bytes, timeout=1.5)
+            logger.info(
+                "Host Mode exit: COMMAND char resync %s",
+                "reached cmd: (TNC was in converse mode)" if ok
+                else "got no cmd: (TNC may already be at the prompt)",
+            )
         except Exception as exc:
             logger.error("exit_host_mode: %s", exc)
 
@@ -1590,10 +1672,54 @@ class SerialManager(QObject):
         Returns:
             True if cmd: received, False on timeout.
         """
+        found, _text = self._write_verbose_wait_text(data, timeout=timeout)
+        return found
+
+    def _write_verbose_wait_text(
+        self, data: bytes, timeout: float = 5.0,
+    ) -> tuple[bool, bytes]:
+        """Same send-and-wait as write_verbose_wait(), but also returns
+        every byte read while waiting (P53.A) - the accumulated response
+        _read_until_prompt() already assembled internally to decide
+        *found*, which the public write_verbose_wait() used to just
+        throw away.
+
+        Why this exists: query_verbose_value() and detect_maildrop() used
+        to get their own copy of the response through a SEPARATE,
+        transient raw_data_received.connect()/disconnect() pair wrapped
+        around a plain write_verbose_wait() call - reproduced as a real
+        race, not a suspicion (P53.A, 2026-09-25): raw_data_received is a
+        Qt signal crossing from the ReaderThread into whatever thread
+        constructed SerialManager (the GUI thread in production), which
+        needs THAT thread's event loop to actually pump the queued
+        delivery before it is seen. write_verbose_wait()'s own "found"
+        result never needed that signal at all - it reads _rx_buf/
+        _rx_buf_event directly, both filled by a plain synchronous call
+        from the reader (no Qt involved) - so it can return the instant
+        the idle window after 'cmd:' elapses. The transient listener's
+        disconnect() then ran on the CALLING thread microseconds later,
+        and Qt drops a queued delivery outright if the connection is torn
+        down before the receiver's event loop ever got to process it - a
+        20/20 reproduction with a real QCoreApplication actively pumping
+        (see test_serial_manager.py::TestVerboseQueryReadPath) confirmed
+        this drops the response every single time once the two race,
+        while a caller with no transient connect/disconnect (MainWindow's
+        own persistent terminal listener, MailDropSession's own
+        connect-at-open/disconnect-at-close) never loses anything - which
+        is exactly why the operator's terminal showed 'MYcall OE3GAS' in
+        the 26.09.2026 capture while ParamsUploader.verify() reported "no
+        answer" for the very same query. Handing back the SAME bytes
+        write_verbose_wait() already has removes the second, racy
+        consumer instead of trying to win the race some other way (a
+        direct port read while the ReaderThread is stopped would still
+        need its own new consumer and would cost a multi-command upload
+        the terminal's live display for however long it took - see the
+        commit message for why that alternative was not chosen).
+        """
         if not self.is_connected:
-            return False
+            return False, b""
         if not self._write_raw(data):
-            return False
+            return False, b""
         import time as _t
 
         _IDLE_S = 0.12   # 120 ms idle = TNC has finished writing
@@ -1620,10 +1746,10 @@ class SerialManager(QObject):
         # chain reads the port directly, since it stops the ReaderThread
         # first). Behaviour is unchanged from before this refactor - only
         # the state machine moved.
-        _resp, found = _read_until_prompt(
+        resp, found = _read_until_prompt(
             read_buffered, self._is_cmd_prompt, timeout, idle_after_marker=_IDLE_S
         )
-        return found
+        return found, resp
 
     def _write_raw(self, data: bytes) -> bool:
         try:
