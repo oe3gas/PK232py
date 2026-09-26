@@ -1,6 +1,6 @@
 # PK232PY — Test Plan
-**Updated: 2026-09-24 — T119 PASS on Device B (P37): 10/10 steps, LF cause confirmed as the P35 fix, /E trailer reclassified as regular**
-**Previous stand: 2026-09-23 — T119 partial result on Device B (P35): open PASS, list FAIL ('*** What?', cause open), recovery path fully confirmed**
+**Updated: 2026-09-26 — P58 backlog/testplan audit: T122 PASS on Device B (MailDrop session dialog); T130/T134/T135 hardware-confirmed; T127/T132 hardware findings added (chip states, recovery stage, MHEARD, channel-tag offset resolved); T131 firmware-label addendum**
+**Previous stand: 2026-09-24 — T119 PASS on Device B (P37): 10/10 steps, LF cause confirmed as the P35 fix, /E trailer reclassified as regular**
 
 ---
 
@@ -1761,8 +1761,13 @@ real TNC.
    text, and the window only actually closes once Host Mode is
    confirmed active again.
 
-**Status:** ⬜ OPEN — needs real hardware (Device A or B, both have
-MailDrop; see docs/DEVICES.md).
+**Status:** ✅ PASS (2026-09-25, Device B, Release 01.AUG.91) — the
+operator ran the full dialog against real hardware: gate page with its
+three-check list, opened the session, wrote a message, read it back,
+killed it, closed the window via the title-bar close button (X) with
+the confirmation prompt and visible leaving-Host-Mode progress text
+shown, and confirmed Packet operation was available again afterward.
+Everything worked as designed.
 
 ---
 
@@ -2011,16 +2016,25 @@ exception capture (only visible running the full suite, never a single
 test file — the same shape as the P41 stale-event-filter finding). Fixed
 by parenting the timer to `ChannelBar` instead (`_schedule_failed_clear()`).
 
-**Still open (needs real hardware):** kill the app with Ctrl-C while in
-Host Mode, restart, and connect again without power-cycling the TNC —
-expect the connect sequence to complete via the recovery stage. Also:
-attempt a Connect to an unreachable callsign and confirm the chip flashes
-red before reverting to free.
+**Hardware-confirmed (2026-09-25/26, Device B):** the chip colour states
+(A above) were seen live — pulsation while calling, the red CH_FAILED
+flash on a failed attempt, and the automatic revert to free afterward,
+all matching the design. Killing the app and reconnecting without a
+power-cycle (C above) also completed the connect sequence successfully
+via the recovery stage during this same test pass.
+
+**Still open (needs real hardware):** attempt a Connect to an
+unreachable callsign specifically and confirm the chip flashes red
+before reverting to free (a failed-attempt-by-rejection case,
+distinct from the app-killed/recovery-stage case already confirmed
+above).
 
 **Status:** ✅ PASS (2026-09-25, unit-verified — 20 new tests across
 `test_packet_screen.py`, `test_packet_hf.py`, `test_main_window_verbose.py`
-(new file) and `test_serial_manager.py`; full suite 552 passed). Live
-hardware re-test open.
+(new file) and `test_serial_manager.py`; full suite 552 passed;
+hardware-confirmed 2026-09-25/26, Device B, for the chip-state and
+recovery-stage findings above). One narrower hardware case (failed
+connect to an unreachable callsign) still open.
 
 ---
 
@@ -2198,8 +2212,10 @@ reimplemented).
   Test D ("display setting, not a TNC parameter" — it has no
   corresponding TNC command at all).
 
-**Status:** ✅ PASS (2026-09-25, unit-verified — full suite green). Live
-hardware re-test open (steps 1-5 above).
+**Status:** ✅ PASS (2026-09-25, unit-verified — full suite green;
+hardware-confirmed 2026-09-25/26, Device B — link messages stayed in
+their own channel throughout the operator's test pass, steps 1-3
+above).
 
 ---
 
@@ -2273,24 +2289,34 @@ The word "using" torn apart by the app's own `[SYS]` lines, plus boxes
 **Status:** ✅ PASS (2026-09-25, unit-verified — full suite green). Live
 hardware re-test open (steps 1-5 above).
 
+**Addendum, hardware-confirmed (2026-09-25/26, Device B):** the
+firmware release label in the header (populated from this same
+collected banner, see P55.D/`_finish_banner_collection()`) showed the
+correct `Release 01.AUG.91` after connecting — the "TNC-Firmware:
+unknown" symptom that motivated P55.D did not reproduce here.
+
 ---
 
 ### T132 — Per-channel RX documents, compact prefixes, resizable TX, MHEARD auto-population (P50)
 
 Four independent findings from one operator session, 25.09.2026.
 
-**Finding A (channel offset, unresolved):** screenshot 19:07 — chip 1
-green with `OE3TEC` ("Ch 1 Partner: OE3TEC"), but every received line
-and the eventual `*** DISCONNECTED: OE3TEC-1 ***` tagged channel 2 (the
-old `[CH2]` format). Audited the full channel path in code
+**Finding A (channel offset) — ✅ RESOLVED, no offset (2026-09-25/26,
+Device B):** screenshot 19:07 — chip 1 green with `OE3TEC` ("Ch 1
+Partner: OE3TEC"), but every received line and the eventual
+`*** DISCONNECTED: OE3TEC-1 ***` tagged channel 2 (the old `[CH2]`
+format). Audited the full channel path in code
 (`build_ch_cmd()`/`ctl_channel()`/`_make_host_frame()`/`ChannelBar`'s
-dict-keyed state) — **no code-level offset found**; this does not rule
-out a genuine TNC-side behaviour. `SerialManager.send_channel_command()`
-now logs the requested channel next to the actual CTL byte for every
-CONNECT/DISCONNECT frame (DEBUG); combined with the existing RX-side
-`ch=%d`/`ch%d` logging (`HFPacketMode._handle_rx_data()`/
-`_handle_link_msg()`), a hardware capture of a repeat can now directly
-compare both without cross-referencing a separate hex dump.
+dict-keyed state) — **no code-level offset found**; `SerialManager.
+send_channel_command()` gained a DEBUG log of the requested channel
+next to the actual CTL byte for every CONNECT/DISCONNECT frame, next to
+the existing RX-side `ch=%d`/`ch%d` logging, so a hardware capture
+could compare both directly. The repeat run confirms it: in the ALL
+view the compact tag reads `1│` for channel 1's own traffic, matching
+chip 1 — no offset on real hardware either. The original screenshot's
+appearance is best explained by the pre-P50 `[CHn]` tag format/display
+logic itself (already superseded), not a channel-numbering bug in the
+protocol layer.
 
 **Live sequence to run (to settle Finding A):**
 1. Connect to a real station on channel 1.
@@ -2356,9 +2382,14 @@ compare both without cross-referencing a separate hex dump.
   callsign, and the extraction fallback would otherwise misread the
   message text itself as one).
 
-**Status:** ✅ PASS (2026-09-25, unit-verified — full suite green).
-Finding A remains open; live hardware re-test for steps 1-8 above per
-the Definition of Done.
+**Status:** ✅ PASS (2026-09-25, unit-verified — full suite green;
+hardware-confirmed 2026-09-25/26, Device B). Finding A resolved (no
+offset — see above). Steps 4 and 8 confirmed live: channel 1's
+conversation history was still fully there after switching away and
+back (step 4), and MHEARD gained a partner's callsign, channel number
+and time with no manual Refresh needed (step 8). Steps 6-7 (timestamp
+toggle, splitter drag-and-persist) not specifically exercised in this
+pass — left open.
 
 ---
 
@@ -2404,8 +2435,10 @@ log). Both fixes cross-checked red-without-the-fix during implementation
 restored).
 
 **Status:** ✅ PASS (2026-09-25, unit-verified — full suite green,
-39/39 in `test_serial_manager.py`). Live hardware re-test (steps 1-4
-above) still open.
+39/39 in `test_serial_manager.py`; hardware-confirmed 2026-09-25/26,
+Device B — disconnect/reconnect succeeded in every state tried,
+including after Host Mode and after killing the app, with no false
+"No PK-232 responding" error).
 
 ---
 
@@ -2466,7 +2499,10 @@ cross-checked red-without-the-fix during implementation (reverting
 2b, each made its own new test fail, then restored).
 
 **Status:** ✅ PASS (2026-09-26, unit-verified — full suite green,
-632 passed). Live hardware re-test (steps 1-9 above) still open.
+632 passed; hardware-confirmed 2026-09-25/26, Device B — connection
+succeeded after Host Mode, after a plain disconnect, and after killing
+the app (steps 1-7), and `[SYS] parameter upload verified (3/3)`
+appeared in the verbose terminal as expected (steps 8-9)).
 
 ---
 
@@ -2511,9 +2547,12 @@ open"/"after reset" log lines name every field the spec asks for;
 red-without-the-fix during implementation (disabling step 2c's own
 success conditions made both of its new tests fail, then restored).
 
-**Status:** ✅ PASS (2026-09-26, unit-verified — full suite green).
-Live hardware re-test (steps 1-8 above, WITH a console capture — the
-new port-configuration log lines are the actual measurement) still open.
+**Status:** ✅ PASS (2026-09-26, unit-verified — full suite green;
+hardware-confirmed 2026-09-25/26, Device B, for the connection sequence
+itself — steps 1-6 succeeded with no error dialog, matching the same
+"connects in every state tried" finding recorded under T133/T134).
+Steps 7-8 (a console capture specifically confirming the new
+`Port config on open/after reset/at close` log lines) still open.
 
 ---
 
