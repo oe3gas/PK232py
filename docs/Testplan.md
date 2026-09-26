@@ -2470,6 +2470,53 @@ cross-checked red-without-the-fix during implementation (reverting
 
 ---
 
+### T135 — Connect, Host Mode, back to verbose, disconnect, reconnect — no error (P54)
+
+A console capture (26.09.2026, 15:25–15:27) and a counter-test with
+PuTTY showed the app failing to reconnect on a TNC that PuTTY reached
+with a single Enter, no flow control, on the same port/baud — the
+difference was the app's own port configuration (`connect_port()`
+cleared DTR/RTS; PuTTY leaves them asserted), not the TNC. Fixed by
+asserting DTR/RTS explicitly, logging every port parameter at each
+stage of the connection's lifetime, and adding a defense-in-depth XON
+stage (step 2c) for the PK-232's own software flow control (confirmed
+by its boot banner).
+
+**Live sequence to run:**
+1. Connect (Connect + Enter Terminal Mode).
+2. Enter Host Mode (Ctrl+H).
+3. Leave Host Mode (back to the verbose terminal).
+4. Disconnect (`Ctrl+D`).
+5. Reconnect (`Ctrl+T`).
+6. **Expected:** the reconnect succeeds with no error dialog and no "No
+   PK-232 responding" message — step 1 or 2 of the detection chain
+   should suffice (steps 2b/2c should not even be needed, since the
+   TNC is left at its own `cmd:` prompt by steps 2-4 above).
+7. Capture the console log for the whole sequence.
+8. **Expected:** the log shows `Port config on open: ...` and
+   `Port config after reset: ...` lines with `dtr=True`/`rts=True` for
+   the reconnect in step 5, and a `Port config at close: ...` line for
+   the disconnect in step 4 — this is the actual measurement the spec
+   asks for, not just "it worked".
+
+**Unit-verified:** `test_serial_manager.py::TestXonFlowControlDetection`
+(3 cases — step 2c releases a TNC stopped by software flow control
+using the real byte pattern from the capture, with no HPOLL frame sent
+at all; the second-CR retry specifically closes the case the first
+XON+CR attempt does not; a fully silent TNC still reaches step 4, XON
+having been tried along the way); `TestPortConfiguration` (3 cases —
+`connect_port()` asserts DTR/RTS and resets both buffers; the "on
+open"/"after reset" log lines name every field the spec asks for;
+`disconnect_port()` logs the end-of-life configuration). Cross-checked
+red-without-the-fix during implementation (disabling step 2c's own
+success conditions made both of its new tests fail, then restored).
+
+**Status:** ✅ PASS (2026-09-26, unit-verified — full suite green).
+Live hardware re-test (steps 1-8 above, WITH a console capture — the
+new port-configuration log lines are the actual measurement) still open.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
