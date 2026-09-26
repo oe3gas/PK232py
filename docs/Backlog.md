@@ -1,7 +1,20 @@
 # PK232PY — Development Backlog
 
-**Last updated:** 2026-09-23 (P36 — flaky test_maildrop_session.py fixed: Qt cross-thread signal race, not a thread leak)
+**Last updated:** 2026-09-26 (P58 — backlog audit: T122 PASS, P51 marked
+superseded, P55/P56 corrections recorded, hardware confirmations from
+2026-09-25/26 added, completeness pass against docs/P40 onward)
 **Current version:** v0.1 (development)
+
+**`docs/P51_Pruefdurchgang_Befunde_Spec.md` was never implemented — do
+not act on it (P58, 2026-09-26).** Its Teil A (echo/read-timing,
+Ctrl-C/read-path, DTR/RTS) was superseded before ever being executed,
+by the more precise diagnoses in P52 (`docs/P52_Echo_And_Read_Timing_
+Spec.md`), P53 (`docs/P53_CtrlC_And_Verify_Readpath_Spec.md`) and P54
+(`docs/P54_Port_Settings_Flow_Control_Spec.md`); its Teile B–I were
+superseded the same way by P55 (`docs/P55_UI_Befunde_Spec.md`). The
+file itself is not tracked in this repo (`docs/P51*.md` does not
+exist) — this note exists purely so nobody goes looking for it, or
+tries to execute it, expecting it to describe current work.
 
 ---
 
@@ -111,7 +124,7 @@ item: MDCHECK is not reachable as a two-letter Host Mode mnemonic.
 `$60`/`$70` channel itself, which P27's `MailDropSession` does not use
 at all, since it never needed to.)
 
-### MailDrop session mask (UI) — ✅ DONE (P39, 2026-09-24, hardware run still open — T122)
+### MailDrop session mask (UI) — ✅ DONE (P39, 2026-09-24; hardware run ✅ PASS, T122, 2026-09-25)
 
 `MailDropSession`/`protocol.py` (P27) built the state machine with no UI
 of its own by design; P38 built the storage half
@@ -141,10 +154,16 @@ an opmode ComboBox entry (see CLAUDE.md's MailDrop section for why).
   P39 never required it, and the settings already say in the dialog
   that "on_session_end"/"ask"/"auto" have no effect yet.
 
-**Hardware confirmation still open (T122, Testplan.md):** the whole
-dialog is software/mock-verified only (`test_maildrop_dialog.py` against
-a fake `MailDropSession`, `test_main_window_packet.py::TestMaildropGate`
-for the four-condition button/menu gate) — never run against a real TNC.
+**Hardware confirmation — ✅ PASS (T122, Testplan.md, 2026-09-25, Device
+B, Release 01.AUG.91):** the operator ran the full dialog against real
+hardware — gate page, opening a session, writing/reading/killing a
+message, and closing the window via the title-bar close button (X)
+with the confirmation prompt and visible leaving-Host-Mode progress
+shown, Packet operation available again afterward. Everything worked
+as designed. (Software coverage from before this run stays valid
+alongside it: `test_maildrop_dialog.py` against a fake
+`MailDropSession`, `test_main_window_packet.py::TestMaildropGate` for
+the four-condition button/menu gate.)
 
 ### MailDrop dialog — Header.../EDIT locked, unmeasured (P39, 2026-09-24)
 
@@ -169,6 +188,23 @@ session at all — see the identical open question already filed under
 "MDMON eavesdropped traffic" (P38.3 Backlog item) for archiving; the
 same unmeasured signal would also answer this "second source" question.
 Do not wire this without first measuring what `MDMON` actually announces.
+
+### Device C (1988 BASE firmware) — MailDrop capability detection unmeasured (P37/T120, open)
+
+`docs/DEVICES.md`'s Device C (30.12.1988, BASE generation) has never
+been connected through the app or `tools/hw_check.py` at all — the
+operator confirmed via a plain PuTTY session (23.09.2026) that it has
+no MailDrop, but `SerialManager.detect_maildrop()` (P37, a verbose-mode
+`MAILDROP` query) has only ever been exercised against Device C in
+software/mock tests (`test_serial_manager.py::
+TestClassifyMaildropResponse`, `test_params_uploader.py::
+TestMaildropCapabilitySkip`, `test_params_maildrop_dialog.py`), never
+against the real unit. See Testplan.md T120 for the exact live
+sequence: connect, let the app initialise normally, and confirm the
+`MAILDROP` query answers `?What?`, none of the seven MailDrop upload
+commands are sent, and both `btn_maildrop` and every `Parameters →
+MailDrop...` field show the "This firmware has no MailDrop" tooltip
+(disabled, not hidden).
 
 ### MailDrop dialog — Sync/Restore auto-trigger, still a separate follow-up (P39, 2026-09-24)
 
@@ -640,6 +676,20 @@ a separate, later measurement.
 | Beacon TX | UNPROTO APRS VIA WIDE1-1,WIDE2-1; periodic timer |
 | Beacon config UI | Position (lat/lon from INI), symbol, comment, interval |
 | Mic-E lon decode verify | Test with west-of-0° and lon > 100° stations |
+| Testplan T65 — APRS buffer cleared on mode switch | ⬜ OPEN. Switch VHF Packet → Baudot RTTY → back to VHF Packet; expect RX display empty, `_packet_raw_frames` cleared, APRS button reset to inactive. Not yet run. |
+
+### Older Test Block items still open (P58 completeness pass, 2026-09-26)
+
+Found while cross-checking every Testplan.md `⬜ OPEN` case against this
+file (P58) — pre-P-numbered "Test Block" items that had never been
+carried into the Backlog:
+
+| Testplan case | Notes |
+|---|---|
+| T19–T22 (Test Block 3 — Macros) | Formal test of macro buttons, edit dialog, `[^D]` inside a macro, and paste — only "basic macro send confirmed manually" so far, no structured pass. |
+| T28 (Help Viewer content) | Content review, not a code gap — see CLAUDE.md's own "Offen (Help-System Folge, v0.2)" note (`help_amtor.md` proof-read; `help_shortcuts.md`/`help_controls.md` as their own files). |
+| T52–T58 (Test Block 7 — PACTOR / AMTOR Identity Labels) | Wiring the PACTOR/AMTOR parameter dialogs to real TNC commands — CLAUDE.md's "Before beta" item 10. Not started. |
+| T123 (typing into every Packet-screen field, live GUI) | `is_keyboard_input_widget()` (P41) is software-verified against the real app-wide event filter (`QTest.keyClick()`) and reproduces the 24.09.2026 hardware finding (Dest-field typing landing in the TX window) — never run through the actual live GUI. Same "software proves the logic, hardware/live-GUI still needed" gap as the Packet Connect/Disconnect/MHEARD hardware retests above. |
 
 ### MHEARD — HBAUD-110 mid-poll consistency workaround (v0.2)
 
@@ -654,8 +704,10 @@ once the basic MHEARD flow is hardware-confirmed.
 
 - `tools/fax_wav_generator.py` + `tools/fax_decoder_test.py` provide a
   closed-loop WEFAX test path (generator → WAV → decoder). Working.
-- **Open:** formal test cases T66–T68 (FAX closed-loop decode for
-  weather/pattern/text) still to be added to `Testplan.md`.
+- **Correction (P58, 2026-09-26):** T66–T68 (FAX closed-loop decode for
+  weather/pattern/text) were already added to `Testplan.md` — this note
+  was stale. All three are still `⬜ OPEN (needs local run)`, which is
+  the actual remaining work here, not writing the test cases.
 - **Open:** `make_weather_image()` — the real weather-chart path is not
   resolvable locally; `WEATHER_IMAGE_CANDIDATES` does not match the actual
   file (e.g. `tools/Wetterkarte.jpg`), so it falls back to
@@ -948,6 +1000,107 @@ AMTOR nutzt TxController. TX startet bei ARQ CONNECTED
   save/reload-mailbox part of this is now a **Beta-blocking requirement**,
   not a v0.2+ nice-to-have; see "MailDrop — persist mailbox to disk" under
   Priority 2 (P18, 2026-09-22, no RAM buffer battery confirmed).
+
+---
+
+## Completed (2026-09-26 — P55–P57: UI findings from the test run, font/layout corrections, chip editor focus)
+
+Three sessions of `docs/P55_UI_Befunde_Spec.md`,
+`docs/P56_Font_And_Layout_Spec.md` and `docs/P57_Chip_Editor_Focus_Spec.md`,
+all from operator screenshots on 25./26.09.2026. Full detail in
+CLAUDE.md's Packet and UI-PyQt6 gotchas; no new Testplan entries beyond
+what P52–P54 already added (P55–P57 are unit-verified UI fixes with no
+dedicated hardware test case).
+
+| Item | Notes |
+|------|-------|
+| P55.A — MHEARD showed a date/time instead of the callsign | Two independent causes: `_extract_partner()` split on the FIRST colon in a message, landing inside the TNC's own CONSTAMP/DAGSTAMP `HH:MM:SS` timestamp (fixed with `rsplit`); `_parse_mheard_line()` never accounted for a leading DAYSTAMP date token (fixed by stripping it). |
+| P55.B — TX echo missing from the channel's own RX view | `_on_packet_tx_enter()` wrote directly into `rx_display`'s cursor instead of through `append_channel_data()` (P50) — fixed by routing it through that shared path. |
+| P55.C — RX font changed switching ALL/CH | Introduced a module constant `_RX_FONT` for every RX `QTextDocument`. **Corrected in P56.A** (below) — the constant itself was a second, independent font source. |
+| P55.D — firmware release label stuck at "unknown" | Was parsed from `SerialManager.tnc_banner` (frozen at the P43 detection chain's own read); fixed to parse from the fully-collected P49 banner buffer instead, inside `_finish_banner_collection()`. |
+| P55.E — "opmode mask doesn't fill the window" | Investigated (measured a real `MainWindow` + `BaudotScreen`, non-maximized) — no bug reproduced; `apply_tooltips()` got a defensive `Expanding` size-policy assertion anyway. **Corrected in P56.B** (below) — the measurement itself was the gap; a real bug existed elsewhere. |
+| P55.F — two timestamp sources | Documented that CONSTAMP/DAGSTAMP (TNC's own link-message stamp) and `show_timestamps` (PK232PY's own added prefix) are independent — both dialog tooltips now cross-reference this. |
+| P56.A — **P55.C's own fix was itself a second font-source bug** | `_RX_FONT` fixed the ALL-vs-CH mismatch by pinning every per-channel document to a hardcoded constant, independent of the operator's Appearance setting — ALL view (rx_display's own original document) kept tracking Appearance correctly, every per-channel document did not. `_RX_FONT` deleted; a new `PacketBaseScreen.apply_rx_font()` pushes the Appearance font onto every RX document, called from `MainWindow._apply_appearance()` — now the one and only font source. |
+| P56.B — **the P55.E "could not reproduce" finding was wrong** | P55's own measurement used a non-maximized `BaudotScreen`, which never had this bug. Measured against a real `MainWindow` at 2560×1440 (matching the screenshots): only the Packet screens had a genuine bug — `PacketBaseScreen._build_ui()` added its RX/TX splitter AND its status bar with neither given an explicit stretch factor, an ambiguity Qt resolved by giving the status bar ~683px instead of its ~19px natural height. Fixed with one added `stretch=1` on the splitter. Every other screen was checked the same way and never had this. **Lesson (also in CLAUDE.md now):** a test that only checks a declared `QSizePolicy` proves nothing about actual geometry — `test_opmode_screen_layout.py` measures real pixel positions after `resize()`/`show()`/`processEvents()` instead. |
+| P57.1 — chip editor did not close on channel switch | Chips are `NoFocus` (P41), so a click on a different chip never fires the editing chip's own `focusOutEvent` — the existing "losing focus cancels like Esc" rule never triggered. New `ChannelBar.close_open_editor()`, wired into `_select()` (chip click, `set_current()`, `step()`), `reset()` (mode switch, Host Mode exit), and the existing `MouseButtonPress` handling in `PacketBaseScreen.eventFilter()` (click into `tx_input`/`le_unproto`/`combo_monitor`/`combo_hbaud`). |
+| P57.2 — open editor's amber border looked missing | Investigated with pixel-level `QWidget.grab()` rendering, including reproducing the exact click-away sequence — the border (`#e8b23a`, 2px) rendered correctly in every case tried. No code change made; kept as a pixel-level regression test. |
+
+**Verification:** full suite green throughout, growing to 674 passed by
+the end of P57. All three sprints unit/pixel-verified only — no
+real-hardware step was required for any of them (nothing here talks to
+the TNC).
+
+---
+
+## Completed (2026-09-25/26 — P52–P54: echo detection, converse mode, port configuration)
+
+Three sessions replacing `docs/P51_Pruefdurchgang_Befunde_Spec.md`'s
+never-implemented Teil A (see the note at the top of this file) —
+`docs/P52_Echo_And_Read_Timing_Spec.md`,
+`docs/P53_CtrlC_And_Verify_Readpath_Spec.md`,
+`docs/P54_Port_Settings_Flow_Control_Spec.md`. Full detail in CLAUDE.md's
+"Serial / Host Mode" and "TNC / firmware v7.1" gotchas; Testplan.md
+T133–T135.
+
+| Item | Notes |
+|------|-------|
+| P52 — an echo is not a Host Mode response | The PK-232 echoes everything in verbose command mode, even binary Host Mode frame bytes — step 3's HPOLL query used to mistake its own byte-identical echo for a genuine `$4F` answer. Fixed with `is_hpoll_echo()` (checks length AND the mandatory value byte a real answer carries). |
+| P52 — reads were cut short before the expected prompt | The detection chain's own `read_until()` re-armed a short per-iteration deadline on every chunk of new data, which can only shrink the remaining timeout, never extend it — a multi-chunk `cmd:` response (normal at 9600 Bd) could be cut off. Fixed with `_read_until_prompt()`, one shared marker/idle/timeout implementation now used by the detection chain and `write_verbose_wait()`. |
+| P53.A — `ParamsUploader.verify()` reported "no answer" despite a correct reply | Corrected root cause, not the one first suspected: no second reader competes for the port. The actual mechanism is a real, 20/20-reproducible race between `query_verbose_value()`/`detect_maildrop()`'s own transient `raw_data_received.connect()`/`disconnect()` pair and Qt's queued cross-thread delivery. Fixed by reading the response a new `_write_verbose_wait_text()` helper already assembles directly — no signal-based capture in the loop at all. |
+| P53.B — reconnect failed with Baudot RTTY active before Host Mode | `HOST OFF` returns the TNC to whichever mode was last active, not the command prompt — Baudot/AMTOR/PACTOR all have a Converse state there (echoes everything, no prompt). New detection-chain step 2b (COMMAND char + CR); `exit_host_mode()` also sends the same resync immediately after leaving Host Mode. |
+| P54.1/.2 — the app's own port configuration, not the TNC, was the fault | Operator's own PuTTY counter-test (same port/baud, no flow control) got a prompt with one Enter; the app did not. `connect_port()` used to clear DTR/RTS — fixed to assert both `True`, matching PuTTY's working configuration. Every port parameter now logged on open/close. |
+| P54.3/.4 — software flow control (XON) as defense in depth | The PK-232's own boot banner proves it uses XON/XOFF — new detection-chain step 2c (XON + CR, then a second CR) for a TNC a stray XOFF left silent but still echoing. |
+
+**Verification:** full suite green throughout each sprint. Both fixes in
+each sprint cross-checked red-without-the-fix during implementation,
+then restored. Hardware re-test (T133–T135) still open — see
+Testplan.md.
+
+---
+
+## Completed (2026-09-25 — P47–P50: Packet channel polish, config isolation, Host Mode re-entry, per-channel RX layout)
+
+Four sessions: `docs/P47_Link_Message_Routing_Spec.md`,
+`docs/P48_Test_Config_Isolation_Spec.md`,
+`docs/P49_Enter_HostMode_Banner_Spec.md`,
+`docs/P50_Channel_Buffers_Layout_Spec.md`. Full detail in CLAUDE.md's
+"Packet (HF / VHF)" and "Repo / tooling" gotchas; Testplan.md
+T130–T132.
+
+| Item | Notes |
+|------|-------|
+| P47 — link message appeared in the wrong channel | A channel-1 "DISCONNECTED" used to appear on the UI chip because that was the visible channel when the frame arrived. Fixed: `_route_packet_link_message()` routes by the frame's own CTL-nibble channel, through `append_channel_data()`; optional mirror into the UI channel via `show_link_messages_in_ui_channel` (off by default). |
+| P48 — a test could silently overwrite the operator's real `pk232py.ini` | `ConfigManager()` with no path override reads/writes the REAL settings file; a test that mutated `MainWindow._app_config` with no reset wrote a real value onto disk and leaked into later tests. Fixed for good: `tests/conftest.py`'s autouse `isolate_config_path` fixture redirects every `ConfigManager()`'s default path to a throwaway file, for every test, whether or not it touches config at all. |
+| P49 — no way back into Host Mode from an existing verbose connection | New `Enter Host Mode` menu action (Ctrl+H) — decides upload-outstanding vs. already-uploaded vs. Fast-Init-skipped the same way a fresh connect would. Also fixed a torn boot banner (interleaved with the app's own `[SYS]` lines) with a short quiet-window collection buffer, and filtered stray control bytes from the mirrored display. |
+| P50 — per-channel RX documents, resizable TX, MHEARD auto-population | Replaced the old single-document append-time ALL/CH filter with one `QTextDocument` per channel + a merged ALL document, so switching to a channel shows its FULL history, not just what arrives afterward. RX/TX is now a `QSplitter` (resizable, persisted). MHEARD gains partners from live link messages, not only a manual Refresh. Compact `"n│"` ALL-view tag replaces the old `[CHn]` form; timestamps optional, off by default. A suspected channel-offset report could not be reproduced in code — root cause still open, needs a real hardware capture (see Testplan T132 Finding A). |
+
+**Verification:** full suite green throughout each sprint. T130–T132
+cover P47/P50's own live-sequence steps; hardware re-test for the
+channel-offset report (T132 Finding A) is still open.
+
+---
+
+## Completed (2026-09-25 — P40, P43–P46: connection-sequence hardening)
+
+Five sessions covering the connection state machine end to end —
+`docs/P40_Upload_Before_HostMode_Spec.md`,
+`docs/P43_TNC_State_Detection_Spec.md`,
+`docs/P44_Chip_States_Init_Recovery_Spec.md`,
+`docs/P45_Recovery_Feedback_Spec.md`,
+`docs/P46_Recovery_Emergency_Connect_Spec.md`. Full detail in
+CLAUDE.md's "Serial / Host Mode" and "TNC / firmware v7.1" gotchas.
+
+| Item | Notes |
+|------|-------|
+| P40 — parameter upload silently timed out 68 times in Host Mode | There is no `cmd:` prompt in Host Mode at all — `ParamsUploader.upload()` now refuses outright (checks `is_host_mode` once) instead of timing out on every command; aborts after 3 consecutive silent commands; `verify()` spot-checks MYCALL/PACLEN/MAXFRAME against `AppConfig` right after upload. |
+| P43 — a TNC left in Host Mode from a previous session was never detected | `is_host_mode` is the software's own belief, always `False` on a fresh `SerialManager` — closes Backlog's own P29 item (below). New active detection chain (`*` → CR → HPOLL query → give up), each step capped at 1.5s; `SerialManager.verbose_confirmed` only ever set on positive evidence. |
+| P44 — a failed connect left a chip stuck amber forever; verbose terminal Enter did nothing; a killed-mid-frame TNC answered nothing | `CH_FAILED` (red flash) state added; `CH_CALLING` gets a synchronized pulse; verbose terminal Enter now sends a bare CR; detection chain gained step 3b (recovery sequence) for a TNC answering nothing at all. Also fixed a real cross-test crash (a free-floating `QTimer.singleShot()` firing against destroyed widgets) by parenting the timer to `ChannelBar`. |
+| P45 — a failed init left the app looking connected; Recovery gave no feedback | `_update_connection_ui(True)` no longer jumps straight to "verbose" on port-open alone (new "connecting"/"error" states); `recovery()` now runs the P43/P44 detection chain itself and reports success/failure via `recovery_finished`, with the button relabelled "Recovery running..." meanwhile. |
+| P46 — Recovery's own preamble was consumed by the still-running ReaderThread; "Connect" was ambiguous | New shared `_take_over_read_path()` helper, called before ANY write in both `_init_tnc_thread()` and `_recovery_thread()`. Recovery renamed to "Emergency Reconnect" and opens the port itself from any state; Connect/Disconnect/Host Mode/Recovery removed from the toolbar entirely (TNC menu only) since "Connect" there was ambiguous against the opmode screens' own station-connect concept. |
+
+**Verification:** full suite green throughout each sprint. Closes the
+P29 backlog item below (wakeup CR-fallback — the app now has its own
+active detection).
 
 ---
 
