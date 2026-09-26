@@ -305,6 +305,31 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   documented as the two independent sources they are, in both the
   Display tab's tooltip and here. See the six new gotchas under Known
   Gotchas / Packet and UI-PyQt6 for the full writeup.
+- **One font source, screen fills the window (P56, 2026-09-26, unit-
+  verified).** Two corrections to P55's own findings above, both from
+  the same three screenshots (maximized window, 2560×1440). (1) P55.C's
+  `_RX_FONT` constant fixed the ALL-vs-CH font mismatch by introducing
+  a SECOND font source, independent of the operator's Appearance
+  setting — ALL view correctly showed `"Cascadia Mono SemiBold 14pt"`,
+  CH view stayed on the hardcoded constant. `_RX_FONT` is deleted; a
+  new `PacketBaseScreen.apply_rx_font()` pushes the Appearance font
+  onto every RX document (visible or not), called from
+  `MainWindow._apply_appearance()` — the ONE place any RX font now
+  comes from. (2) P55.E's `Expanding` size-policy hardening did not
+  actually fix the reported "opmode mask doesn't fill the window" —
+  measured directly against a real `MainWindow` at 2560×1440: only the
+  Packet screens (`PacketBaseScreen._build_ui()`) had a genuine bug —
+  its RX/TX splitter and its status bar were BOTH added to the same
+  layout at the stretch-factor default (0), an ambiguity Qt resolved by
+  giving the status bar roughly HALF the window (683px, for six small
+  labels) instead of the splitter getting the rest — fixed with one
+  added `stretch=1` on the splitter. Every other screen (Baudot/ASCII/
+  AMTOR/PACTOR/Morse/NAVTEX/Signal) was verified, the same way, to
+  never have had this. New `test_opmode_screen_layout.py` measures
+  actual geometry after a real resize()/show()/processEvents() cycle —
+  P55 Teil E's own `QSizePolicy`-only check would have stayed green
+  throughout a manually-confirmed 514px regression. See the four new/
+  corrected gotchas under Known Gotchas / Packet and UI-PyQt6.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -2077,6 +2102,33 @@ Grows over time.
   inserted by `_rx_write_line()` only ever set `setForeground()`
   (colour), never a font of their own, so fixing the document's default
   font was sufficient — no per-line format change was needed.
+- **Correction to the P55.C entry above — `_RX_FONT` fixed one font
+  mismatch by introducing a second one (P56.A, 2026-09-26).** Font
+  really does come from exactly ONE place now:
+  `MainWindow._apply_appearance()`, the operator's own Appearance
+  setting (theme/font family/size) — the same place that has always set
+  `rx_display`'s font, and every OTHER screen's `rx_display`/`tx_input`.
+  `_RX_FONT` pinned every Packet RX document to a hardcoded `"Courier
+  New" 10pt`, independent of Appearance — the ALL document (being
+  `rx_display`'s own original document) kept tracking Appearance
+  correctly since `rx_display.setFont()` propagates to whichever
+  document is CURRENTLY attached, while every per-channel document
+  stayed on the constant forever. Reproduced 26.09.2026 (screenshot,
+  maximized window): ALL view showed `"Cascadia Mono SemiBold 14pt"`
+  correctly, CH view did not. `_RX_FONT` is deleted; a new
+  `PacketBaseScreen.apply_rx_font(font)` pushes `setDefaultFont()` onto
+  every RX document (all ten channels plus the merged ALL one, visible
+  or not), called from `_apply_appearance()` right alongside the
+  existing `rx_display.setFont(font)` — both at startup and on every
+  later Appearance change, so a document created before a later change
+  gets the new font too. `tx_input` was checked and already hangs off
+  the same `_apply_appearance()` source (unconditional for every
+  screen) — no fix needed there. **MHEARD's own fonts
+  (`QFont("Segoe UI", ...)`/`QFont("Courier New", 9)` in
+  `MheardPanel`/`_MheardRowWidget`) are hardcoded and NOT wired to
+  Appearance at all** — named here because the spec explicitly asked
+  to check, not because it was fixed; left alone deliberately (not
+  asked for).
 
 ### UI / PyQt6
 
@@ -2340,6 +2392,49 @@ Grows over time.
   SignalScreen/FaxScreen) already makes at the end of its own
   `__init__()`, per the spec's own explicit ask for a single touch
   point — not a second, near-identical call added to all eight files.
+- **Correction to the P55.E entry above — the real bug existed, but
+  only on Packet screens, and only showed up on a MAXIMIZED window
+  (P56.B, 2026-09-26).** P55's own measurement used a non-maximized
+  `BaudotScreen`, which is exactly why it found nothing — `PacketBase
+  Screen._build_ui()`'s top-level layout adds its RX/TX splitter AND its
+  status bar with NEITHER given an explicit stretch factor
+  (`outer.addWidget(splitter)` / `outer.addWidget(self._status_bar)`);
+  with both at the layout default (stretch=0) and neither's
+  `maximumSize()` constrained, Qt split the leftover height between
+  them roughly evenly instead of giving it all to the splitter —
+  measured directly on a real `MainWindow` at 2560×1440 (matching the
+  screenshot): the status bar (six small `QLabel`s in a thin `QFrame`)
+  came out **683px tall**, and the macro row nested inside the
+  under-sized splitter landed near the middle of the screen instead of
+  at the bottom — exactly the reported symptom. Every OTHER screen
+  (Baudot/ASCII/AMTOR/PACTOR/Morse/NAVTEX/Signal) has only ONE major
+  stretchy item competing for space (`rx_display`, already `stretch=1`)
+  and nothing else large enough to compete with it — verified the same
+  way, at the same window size, and none of them showed this. Fixed
+  with one added `stretch=1` on the splitter
+  (`outer.addWidget(splitter, stretch=1)`) — the status bar's own small
+  `sizeHint()` is all it needs once it is no longer treated as an equal
+  competitor for the remaining space. **Rule, restated:** two sibling
+  layout items that are BOTH left at the default stretch (0) with
+  neither's height bounded is a real ambiguity Qt can resolve either
+  way, not a "one will obviously win" situation — always give the item
+  that should absorb extra space an explicit `stretch=1` rather than
+  relying on the other one being "obviously small."
+- **A test that only checks whether a `QSizePolicy` is SET proves
+  nothing about the actual result — measure geometry instead (P56.B,
+  2026-09-26, correcting the lesson P55 Teil E almost drew).** The
+  `Expanding` policy P55.E added is real and harmless, but it did not
+  actually fix the reported bug — the ambiguous stretch-factor tie
+  above did, and only a test that resizes a REAL `MainWindow` to a
+  specific size, calls `show()`/`processEvents()`, and measures where
+  the last row (or, for Packet, the status bar) actually ends up would
+  ever have caught it (`test_opmode_screen_layout.py`, one
+  parametrized test per screen, manually confirmed red without the
+  `stretch=1` fix — a 514px gap on the affected screens, a `QSizePolicy`
+  assertion alone would have stayed green throughout). **Rule:** a
+  geometry or layout-filling claim gets a test that measures actual
+  pixel positions after a real show()/resize()/processEvents() cycle,
+  never a test that only checks a declared property.
 
 ### FAX (live image decode — implemented 2026-06-18, hardware-verified T82)
 
