@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pk232py import __version__
-from ..comm.serial_manager import SerialManager
+from ..comm.serial_manager import SerialManager, _parse_release
 from ..comm.frame import HostFrame, FrameKind
 from ..mode_manager import ModeManager
 from ..modes.base_mode import BaseMode
@@ -1231,19 +1231,6 @@ class MainWindow(QMainWindow):
         # transition _update_connection_ui()/_update_host_mode_ui() alone
         # cannot see (they already ran, showing "connecting").
         self._update_tnc_menu_gating()
-
-        # Parse firmware version from TNC banner and show in toolbar.
-        # Banner example: "AEA PK-232M ...\nRelease 01.AUG.91"
-        # We extract the 'Release xx.MON.YY' token.
-        _banner = getattr(self._serial, 'tnc_banner', '')
-        _fw = "unknown"
-        for _line in _banner.splitlines():
-            _line = _line.strip()
-            if _line.lower().startswith("release"):
-                _fw = _line   # e.g. "Release 01.AUG.91"
-                break
-        if hasattr(self, '_lbl_firmware'):
-            self._lbl_firmware.setText(_fw)
         self._stack.setCurrentIndex(1)
         self._vt_input.setFocus()
         self._vt_display.clear()
@@ -1329,10 +1316,32 @@ class MainWindow(QMainWindow):
         """Insert the fully-collected banner as one block, then proceed
         with the [SYS] messages and the parameter upload (P49.B.1) -
         the tail _on_verbose_mode_ready() used to run immediately after
-        a single, possibly-incomplete _on_vt_rx_data() call."""
+        a single, possibly-incomplete _on_vt_rx_data() call.
+
+        P55.D: the firmware release label is parsed from THIS fully-
+        collected buffer, not SerialManager.tnc_banner - reproduced
+        26.09.2026 ("TNC-Firmware: unknown" in the header despite the
+        log's own "TNC banner captured" line and the full banner visible
+        in the terminal): SerialManager._tnc_banner is set once, from
+        whatever the P43 detection chain's own read captured at THAT
+        moment - it is never updated with straggler bytes that only
+        arrive afterward via the ReaderThread, which is exactly what
+        this buffer collects (_on_raw_data_received() re-arms the quiet-
+        window timer on every further byte while collecting). A
+        "Release ..." line split across that boundary would complete
+        here but never reach _tnc_banner at all. Left UNCHANGED (not
+        reset to "unknown") when no release line is found this round -
+        a bare CR/COMMAND-char/XON reconnect (P53/P54's own steps 2b/2c)
+        carries no banner at all, and the physical TNC has not actually
+        changed just because this particular reconnect's own response
+        happened to be silent about it.
+        """
         self._banner_collecting = False
         if self._banner_buffer:
             self._on_vt_rx_data(bytes(self._banner_buffer))
+        release = _parse_release(bytes(self._banner_buffer))
+        if release and hasattr(self, '_lbl_firmware'):
+            self._lbl_firmware.setText(f"Release {release}")
         self._banner_buffer = bytearray()
         self._vt_append("[SYS] TNC ready in verbose mode\n")
         self._start_param_upload_thread()
@@ -3346,10 +3355,24 @@ class MainWindow(QMainWindow):
         not be present, so we detect it by the ':' in the first token.
           "18:06:27 OE3GAS*" → ("OE3GAS", "18:06", True)   ('*' = heard direct)
           "OE1XYZ"           → ("OE1XYZ", "", False)
-        A trailing DAYSTAMP date prefix is not handled (ignored) — too complex
-        for v0.1.
+
+        P55.A: a leading DAYSTAMP date token ("25-Sep-26", DD-Mon-YY - the
+        same format CLAUDE.md's MailDrop findings confirm elsewhere), if
+        present, is now stripped before the time/callsign split above -
+        the old code had no such handling ("too complex for v0.1") and
+        with DAYSTAMP ON (the upload default) misread the date itself as
+        the callsign, reproducing the MHEARD screenshot ("25-Sep-26" /
+        "00:05" appearing in the Callsign/Time columns). Detected by a
+        '-' with no ':' in the first token - unambiguous against both a
+        HH:MM(:SS) time token and a bare callsign (AX.25 callsigns never
+        contain '-'). Not yet confirmed against a raw hardware capture of
+        an actual MH response line - see the Testplan entry for this.
         """
         tokens = line.strip().split()
+        if not tokens:
+            return ("", "", False)
+        if len(tokens) >= 2 and '-' in tokens[0] and ':' not in tokens[0]:
+            tokens = tokens[1:]  # drop a DAYSTAMP date prefix
         if not tokens:
             return ("", "", False)
         # Time token (if any) contains ':' — truncate to HH:MM.
@@ -4227,19 +4250,25 @@ class MainWindow(QMainWindow):
         self._packet_capture_write(f"[CH{channel} TX] {text.rstrip()}")
         self._log_monitor(f"[PKT TX ch{channel}] {text.rstrip()!r}")
 
-        # Echo in RX display — will be confirmed by DATA_ACK
-        from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat
-        cursor = screen.rx_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(self._semantic_colors['rx_echo']))
-        cursor.setCharFormat(fmt)
-        # Channel number in the echo prefix (matches the Capture line format
-        # "[CH{n} TX] ..." above) so the ALL view shows which channel was
-        # actually sent on, not just that *something* was sent.
-        cursor.insertText(f'> ch{channel} {text.rstrip()}\n')
-        screen.rx_display.setTextCursor(cursor)
-        screen.rx_display.ensureCursorVisible()
+        # Echo in RX display — will be confirmed by DATA_ACK. P55.B: this
+        # used to manipulate screen.rx_display's cursor directly, writing
+        # only into whichever ONE document (a channel's own, or ALL) the
+        # view happened to be showing at that moment - reproduced
+        # 26.09.2026: the echo appeared in ALL view but not in CH view of
+        # the very channel it was sent on. append_channel_data() is the
+        # one place (P50 Teil B) that writes a line into BOTH the
+        # channel's own document AND the merged ALL document - the same
+        # path a received line or a link message already uses, so the TX
+        # echo is no longer a special case with its own, separate
+        # writing logic. The leading '>' still marks it as sent (not
+        # received); the per-line channel tag itself now comes from
+        # append_channel_data()/_rx_append() automatically (ALL view's
+        # compact "n|" tag, CH view's none at all), so the old manual
+        # "ch{channel}" text is dropped as redundant.
+        screen.append_channel_data(
+            channel, f"> {text.rstrip()}",
+            color=self._semantic_colors['rx_echo'],
+        )
 
         # Clear TX window AND that channel's buffered draft (P9.3) — never
         # screen.tx_input.clear() directly, and always with the fixed
