@@ -153,6 +153,11 @@ class MainWindow(QMainWindow):
         self._config_mgr = ConfigManager()
         self._config_mgr.load()
         self._app_config = self._config_mgr.app
+        # P53.B: keep SerialManager's own COMMAND-char mirror (used for
+        # the converse-mode detection step and the post-Host-Mode-exit
+        # resync) in sync with the configured value - also refreshed in
+        # _on_params_misc() and _on_load_settings().
+        self._serial.command_char = self._app_config.misc.command
         self._misc_params:   dict = {}
         self._connect_mode:  str  = "verbose"
         # P49.A.2: whether _run_param_upload() has actually uploaded (not
@@ -4277,6 +4282,7 @@ class MainWindow(QMainWindow):
         self._config_mgr.load()
         self._config_mgr._path = old_path
         self._app_config = self._config_mgr.app
+        self._serial.command_char = self._app_config.misc.command
         self.statusBar().showMessage(f"Settings loaded from {path}", 4000)
         self._log_monitor(f"[SYS] Settings loaded: {path}")
 
@@ -4332,6 +4338,11 @@ class MainWindow(QMainWindow):
             mi.command  = v["command"];  mi.sendpac = v["sendpac"]
             mi.mark     = v["mark"];     mi.space   = v["space"]
             self._config_mgr.save()
+            # P53.B: SerialManager's own COMMAND-char mirror - see the
+            # constructor's own comment for why this needs to stay in
+            # sync (it is what the converse-mode detection step and the
+            # post-Host-Mode-exit resync send).
+            self._serial.command_char = mi.command
             self._log_monitor("[SYS] Misc parameters saved — sent to TNC on next initialisation")
 
     def _on_params_pactor(self) -> None:
