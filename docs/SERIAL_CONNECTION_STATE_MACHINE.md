@@ -22,7 +22,7 @@ Covers all states from port closed to Host Mode active.
 - `src/pk232py/comm/pk232_hostmode_sub.py` — subprocess for Host Mode entry
 - `src/pk232py/ui/main_window.py` — UI reactions via Qt Signals
 
-**Last updated:** 2026-09-26 (P53 — step 2b, Converse-mode detection after HOST OFF returns to a non-Host-Mode operating mode; verify()/detect_maildrop() read their own response directly instead of a racy transient signal listener, see §4 Phase 1/Phase 2; P52 — an echo is not a Host Mode response, reads honour the full timeout instead of a shrinking per-chunk deadline, see §4 Phase 1; P49 — Enter Host Mode from an existing verbose connection, the last chance to upload parameters, see §17; banner rendered as one block, control characters filtered; P46 — Recovery is the emergency reconnect: owns the read path before its own preamble, works from any state, opens the port itself; TNC actions moved from the toolbar into the TNC menu only, see §16; P45 — Recovery reports its outcome and ends in a defined state, honest connection state after a failed init, see §15; P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
+**Last updated:** 2026-09-26 (P54 — step 2c, software flow control (XON); connect_port() asserts DTR/RTS and logs the full port configuration on open/close, see §4/§4a; P53 — step 2b, Converse-mode detection after HOST OFF returns to a non-Host-Mode operating mode; verify()/detect_maildrop() read their own response directly instead of a racy transient signal listener, see §4 Phase 1/Phase 2; P52 — an echo is not a Host Mode response, reads honour the full timeout instead of a shrinking per-chunk deadline, see §4 Phase 1; P49 — Enter Host Mode from an existing verbose connection, the last chance to upload parameters, see §17; banner rendered as one block, control characters filtered; P46 — Recovery is the emergency reconnect: owns the read path before its own preamble, works from any state, opens the port itself; TNC actions moved from the toolbar into the TNC menu only, see §16; P45 — Recovery reports its outcome and ends in a defined state, honest connection state after a failed init, see §15; P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
 
 ---
 
@@ -49,15 +49,16 @@ Covers all states from port closed to Host Mode active.
 
 | From | Event / Trigger | Action | Next |
 |---|---|---|---|
-| `C0` | User: Connect + Verbose | `connect_port()` opens serial port | `C1` |
-| `C0` | User: Connect + Host Mode | `connect_port()` opens serial port | `C1` |
+| `C0` | User: Connect + Verbose | `connect_port()` opens serial port (P54: with an explicit, known configuration — see §4a) | `C1` |
+| `C0` | User: Connect + Host Mode | `connect_port()` opens serial port (P54: see §4a) | `C1` |
 | `C1` | Port open OK | `init_tnc()` → background thread starts | `C2` |
 | `C1` | Port open failed | Error message; port remains closed | `C0` |
 | `C2` | Step 1/2 (`*` or CR) → `cmd:`/banner | `_verbose_ready = True`, `verbose_confirmed = True`; emit `verbose_mode_ready` | `C3` |
 | `C2` | Step 2b (P53, only if step 2 got only an echo) → COMMAND char + CR → `cmd:` | Verbose confirmed — TNC was in Converse mode | `C3` |
+| `C2` | Step 2c (P54.3, only if step 2b also got only an echo) → XON + CR, then a second CR → `cmd:` | Verbose confirmed — TNC was stopped by software flow control (XOFF) | `C3` |
 | `C2` | Step 3 (HPOLL query) → `$4F` frame | TNC genuinely in Host Mode — write `FRAME_HOST_OFF` directly, repeat step 2 | `C3` (if step-2 repeat sees `cmd:`) or step 3b (if not) |
 | `C2` | Step 3b (P44, only if step 3 got NOTHING) → recovery sequence, then repeat step 2 → `cmd:` | Verbose confirmed after recovery | `C3` |
-| `C2` | All six steps exhausted, nothing usable answered (P43/P44/P53) | Raise/abort — no upload attempted; message names port, baud rate, both possible causes | `C7` |
+| `C2` | All seven steps exhausted, nothing usable answered (P43/P44/P53/P54) | Raise/abort — no upload attempted; message names port, baud rate, both possible causes | `C7` |
 | `C3` | `verbose_mode_ready` emitted | `ParamsUploader.upload()` starts in thread | `C4` |
 | `C4` | Upload complete | `ParamsUploader.verify()` spot-checks MYCALL/PACLEN/MAXFRAME against `AppConfig`, still in `C4` (P40, informational only — never blocks the transition below) | `C4` |
 | `C4` | Verify complete, `_connect_mode == "verbose"` | Stay in verbose terminal | `C3` |
@@ -120,10 +121,11 @@ a valid frame there, and it sends nothing unsolicited while HPOLL is ON).
 Reproduced on the device 24.09.2026: this is what let a full parameter
 upload run into 68 x 5s timeouts with nothing reaching the TNC (P40).
 
-Six steps now run in order (four as of P43, plus P44's step 3b, plus
-P53's step 2b), each capped at `_TNC_STATE_STEP_TIMEOUT` (1.5 s) —
-detection itself must never take longer than the failure mode it
-prevents (worst case, step 4, is under 9 s total):
+Seven steps now run in order (four as of P43, plus P44's step 3b, plus
+P53's step 2b, plus P54's step 2c — which itself makes two attempts,
+XON+CR then a second bare CR), each capped at `_TNC_STATE_STEP_TIMEOUT`
+(1.5 s) — detection itself must never take longer than the failure mode
+it prevents (worst case, step 4, is under 12 s total):
 
 | # | Stimulus | Expected answer | Conclusion |
 |---|---|---|---|
@@ -242,6 +244,57 @@ HPOLL query (which only a genuinely Host-Mode TNC can answer at all).
 immediately after leaving Host Mode itself — the terminal is usable
 right away instead of just echoing, and the NEXT connect cycle never
 needs step 2b at all, since the TNC is already back at `cmd:`.
+
+**P54 correction (2026-09-26) — step 2c, software flow control, and the
+port configuration itself.** A `Ctrl+D`/`Ctrl+T` (disconnect then
+reconnect) run got the identical "echo, no cmd:" shape from steps
+1/2/2b — but the operator's own counter-test with PuTTY (same port/
+baud, flow control **none**, one Enter) got a prompt immediately on the
+same physical TNC. **The port configuration this app used was the
+actual difference, not the TNC:** `connect_port()` used to clear DTR/
+RTS after opening (`rts = False`, `dtr = False`); PuTTY leaves them
+asserted. Fixed to set both `True` explicitly instead (§4a below has
+the full, current port-open sequence). Independently, the PK-232's own
+boot banner proves it uses software flow control (XON `$11`/XOFF
+`$13`) — a TNC halted by a stray XOFF echoes everything but generates
+nothing of its own, the identical symptom shape Converse mode (P53)
+produces. A new step, 2c, now runs between step 2b and the HPOLL query,
+as defense in depth alongside the port-configuration fix above (which
+the 26.09.2026 counter-test suggests may already be the primary repair
+for this specific incident):
+
+| # | Stimulus | Expected answer | Conclusion |
+|---|---|---|---|
+| 2c | `$11` (XON) + `CR`, then a second bare `CR` if that alone did not answer | `cmd:` | verbose, was stopped by software flow control (XOFF) → done |
+
+Two bytes, harmless if the TNC was never stopped at all.
+
+### 4a. Port Configuration — a Precondition of Connecting (P54)
+
+`connect_port()`'s own configuration is now itself a documented
+precondition of the whole connection sequence above, not an
+implementation detail — the 26.09.2026 finding was that TWO physically
+identical connection attempts (this app vs. PuTTY) produced different
+results purely because of it. Current sequence, in order:
+
+```
+factory(port, baudrate, bytesize=8, parity=N, stopbits=1,
+        timeout=SerialDefaults.TIMEOUT, xonxoff=False, rtscts=False,
+        dsrdtr=False)
+  -> logger.info("Port config on open: ...")      # P54.1
+serial.dtr = True                                  # P54.2 (was False)
+serial.rts = True                                   # P54.2 (was False)
+serial.reset_input_buffer()
+serial.reset_output_buffer()                        # P54.2 (new)
+  -> logger.info("Port config after reset: ...")  # P54.1
+```
+
+Both log lines name every parameter that affects behaviour
+(`xonxoff`/`rtscts`/`dsrdtr`/`dtr`/`rts`/`timeout`/`write_timeout`) —
+`disconnect_port()` logs the same line once more right before actually
+closing the port, so a hardware run has the port's configuration at
+every stage of its lifetime to compare against a working counter-test
+with, not just `"Port COM6 opened at 9600 baud"`.
 
 ### Phase 2: Parameter Upload (in `ParamsUploader.upload`)
 
@@ -648,7 +701,7 @@ entry run over the existing paths (`verbose_mode_ready` fires exactly as
 after any other successful connect; no Recovery-specific handling).
 
 **End state on failure:** whatever `_init_tnc_thread()`'s own step 4
-already leaves behind (§2's "All six steps exhausted" row → `C7`) —
+already leaves behind (§2's "All seven steps exhausted" row → `C7`) —
 `verbose_confirmed` stays `False`, the port stays open.
 
 ### The connection-state half of the same finding (P45.2)
