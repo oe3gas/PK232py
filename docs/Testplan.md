@@ -2409,6 +2409,67 @@ above) still open.
 
 ---
 
+### T134 — Disconnect from Host Mode with Baudot active; converse-mode resync and a correctly-read verification (P53)
+
+A console capture and screenshot (26.09.2026, 13:13–13:16) showed two
+independent findings from one operator session. (1) `ParamsUploader.
+verify()` reported "no answer verifying MYCALL" even though the verbose
+terminal showed the TNC's correct reply to the identical query in the
+same session — traced to a real, 20/20-reproducible race between
+`query_verbose_value()`/`detect_maildrop()`'s own transient
+`raw_data_received.connect()`/`disconnect()` pair and Qt's queued
+cross-thread delivery (not, as first suspected, a second reader
+competing for the port — code audit found none). (2) A reconnect after
+disconnecting from Host Mode with Baudot RTTY active failed: `*` and a
+bare `CR` both got only an echo, never `cmd:` — the TNC was in Baudot's
+Converse state (`HOST OFF` returns to the last-active operating mode,
+not the command prompt), which the old chain could not tell apart from
+a dead TNC.
+
+**Live sequence to run:**
+1. Connect, select Baudot RTTY, enter Host Mode.
+2. Disconnect (or leave Host Mode via the TNC menu).
+3. **Expected (Finding 2's fix, in `exit_host_mode()` itself):** the
+   verbose terminal is immediately usable — typing produces a `cmd:`
+   response, not just an echo of what was typed. Check the log for
+   `Host Mode exit: COMMAND char resync ...`.
+4. Reconnect (same session, no app restart).
+5. **Expected:** reconnect succeeds via step 1 or 2 of the detection
+   chain (step 2b should not even be needed, since step 3 above already
+   left the TNC at the prompt) — no "No PK-232 responding" error.
+6. Repeat steps 1-2, but kill the app (or physically power-cycle the
+   TNC) between leaving Host Mode and reconnecting, so `exit_host_mode()`
+   never gets to run its own resync. Reconnect.
+7. **Expected:** the detection chain's own step 2b catches this instead
+   — log shows `Init: step 2b - COMMAND char (Ctrl-C) - TNC may be in
+   converse mode` followed by `step 2b confirmed verbose`. Reconnect
+   still succeeds, no error dialog.
+8. Upload parameters (Fast Init off) and check the verbose terminal.
+9. **Expected:** `[SYS] parameter upload verified (3/3)` appears in the
+   verbose terminal itself (not only the Monitor panel/log) — matching
+   whatever the terminal already showed for the MYCALL/PACLEN/MAXFRAME
+   spot-check queries just above it.
+
+**Unit-verified:** `test_serial_manager.py::TestVerboseQueryReadPath`
+(3 cases — the old transient connect/disconnect pattern reproducibly
+loses the signal with a real, actively-pumping `QCoreApplication`;
+`query_verbose_value()`/`detect_maildrop()` no longer depend on it at
+all, proven by calling each from a background thread with no event-loop
+pumping whatsoever); `TestConverseModeDetection` (4 cases — step 2b
+confirms verbose mode using the real byte sequences from the
+26.09.2026 capture, with no HPOLL frame sent at all; a non-default
+configured COMMAND character is used instead of `$03`; `verify()`
+reaches the TNC's answer end-to-end for a full 3/3; `exit_host_mode()`
+sends the COMMAND-char resync and logs the result). Both P53 fixes
+cross-checked red-without-the-fix during implementation (reverting
+`query_verbose_value()` to the old signal pattern, and disabling step
+2b, each made its own new test fail, then restored).
+
+**Status:** ✅ PASS (2026-09-26, unit-verified — full suite green,
+632 passed). Live hardware re-test (steps 1-9 above) still open.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
