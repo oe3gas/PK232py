@@ -2081,7 +2081,7 @@ class PacketBaseScreen(QWidget):
         splitter.addWidget(left)
         splitter.addWidget(self.mheard_panel)
         splitter.setSizes([540, 160])
-        outer.addWidget(splitter)
+        outer.addWidget(splitter, stretch=1)
 
         # Status bar (full width, below the splitter): channel, partner,
         # capture state, RX buffer size, band + last VHF mnemonic sent.
