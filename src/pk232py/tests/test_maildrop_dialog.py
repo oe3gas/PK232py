@@ -194,6 +194,184 @@ class TestCloseConfirmation:
         assert not dlg.btn_retry.isHidden()
 
 
+class TestEndSessionSync:
+    """P59, C.2/C.4 - _end_session() is the ONE path out of an ACTIVE
+    session; when archive_sync is 'on_session_end' it collects every
+    TNC-only message first, then leaves - via btn_end OR a confirmed
+    window-close gesture, so the two can never disagree."""
+
+    def _make_on_session_end(self, tmp_path):
+        session = FakeSession()
+        config = MailDropConfig(
+            archive_enabled=True, archive_path=str(tmp_path / "archive.db"),
+            archive_sync="on_session_end",
+        )
+        dlg = MailDropDialog(
+            FakeSerial(), FakeChannelBar(), "OE3GAS", config, session=session,
+        )
+        session.state_changed.emit("ACTIVE")
+        session.listing.emit([_ENTRY_1, _ENTRY_2])   # both TNC-only
+        return dlg, session
+
+    def test_btn_end_reads_every_tnc_only_message_then_leaves(self, tmp_path):
+        dlg, session = self._make_on_session_end(tmp_path)
+        dlg.btn_end.click()
+        assert ("read", 1) in session.calls
+        session.message_read.emit(_ENTRY_1, "body one")
+        assert ("read", 2) in session.calls
+        session.message_read.emit(_ENTRY_2, "body two")
+        # Order matters: both reads before the leave, never after.
+        tail = [c for c in session.calls if c[0] in ("read", "leave")]
+        assert tail == [("read", 1), ("read", 2), ("leave",)]
+
+    def test_confirmed_close_gesture_takes_the_same_path(self, tmp_path, monkeypatch):
+        dlg, session = self._make_on_session_end(tmp_path)
+        monkeypatch.setattr(
+            QMessageBox, "question",
+            staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+        )
+        dlg.reject()
+        session.message_read.emit(_ENTRY_1, "body one")
+        session.message_read.emit(_ENTRY_2, "body two")
+        tail = [c for c in session.calls if c[0] in ("read", "leave")]
+        assert tail == [("read", 1), ("read", 2), ("leave",)]
+
+    def test_manual_sync_setting_skips_the_collection(self, tmp_path):
+        # Default MailDropConfig.archive_sync is "manual" - P59 must not
+        # change this default's behaviour at all.
+        session = FakeSession()
+        config = MailDropConfig(
+            archive_enabled=True, archive_path=str(tmp_path / "archive.db"),
+        )
+        assert config.archive_sync == "manual"
+        dlg = MailDropDialog(
+            FakeSerial(), FakeChannelBar(), "OE3GAS", config, session=session,
+        )
+        session.state_changed.emit("ACTIVE")
+        session.listing.emit([_ENTRY_1, _ENTRY_2])
+        dlg.btn_end.click()
+        assert [c for c in session.calls if c[0] == "read"] == []
+        assert ("leave",) in session.calls
+
+    def test_sync_failure_mid_queue_still_leaves(self, tmp_path):
+        dlg, session = self._make_on_session_end(tmp_path)
+        dlg.btn_end.click()
+        session.message_read.emit(_ENTRY_1, "body one")   # 1 of 2 archived
+        session.failed.emit("TNC did not answer R 2")
+        assert ("leave",) in session.calls
+        assert "Sync incomplete: 1 of 2 archived" in dlg.lbl_status.text()
+
+
+class TestManualRestoreScope:
+    """P59, C.3 - the manual "Restore to TNC" button is filtered by
+    archive_restore_scope, the same filter_restore_scope() the automatic
+    trigger uses."""
+
+    def _make_with_archive_only(self, tmp_path, scope: str):
+        session = FakeSession()
+        config = MailDropConfig(
+            archive_enabled=True, archive_path=str(tmp_path / "archive.db"),
+            archive_restore_scope=scope,
+        )
+        dlg = MailDropDialog(
+            FakeSerial(), FakeChannelBar(), "OE3GAS", config, session=session,
+        )
+        # Two archive-only messages, one already read at archiving time.
+        dlg._archive.add(_ENTRY_1, "body one")
+        read_entry = MailDropEntry(
+            number=_ENTRY_2.number, mtype=_ENTRY_2.mtype, read=True,
+            size=_ENTRY_2.size, to=_ENTRY_2.to, frm=_ENTRY_2.frm,
+            bbs=_ENTRY_2.bbs, stamp=_ENTRY_2.stamp, title=_ENTRY_2.title,
+        )
+        dlg._archive.add(read_entry, "body two")
+        session.state_changed.emit("ACTIVE")
+        session.listing.emit([])   # nothing in the TNC - both archive-only
+        return dlg, session
+
+    def test_unread_scope_never_restores_the_already_read_message(self, tmp_path):
+        dlg, session = self._make_with_archive_only(tmp_path, "unread")
+        dlg.btn_restore.click()
+        assert [c[5] for c in session.calls if c[0] == "send"] == ["T119 personal"]
+        session.stored.emit(999)   # let the (one-item) queue drain
+        # No SECOND send for the already-read message once the queue is
+        # empty - proves it was excluded, not merely sent later.
+        assert [c[5] for c in session.calls if c[0] == "send"] == ["T119 personal"]
+        assert dlg._pending_op is None
+
+    def test_none_scope_locks_the_button(self, tmp_path):
+        dlg, _session = self._make_with_archive_only(tmp_path, "none")
+        assert not dlg.btn_restore.isEnabled()
+        assert "none" in dlg.btn_restore.toolTip()
+
+
+class TestAutoRestore:
+    """P59, C.4 - MainWindow opens this dialog with auto_restore=True
+    after detecting the TNC came up at factory defaults."""
+
+    def _make_auto(self, tmp_path, scope: str = "all"):
+        session = FakeSession()
+        config = MailDropConfig(
+            archive_enabled=True, archive_path=str(tmp_path / "archive.db"),
+            archive_restore_scope=scope,
+        )
+        dlg = MailDropDialog(
+            FakeSerial(), FakeChannelBar(), "OE3GAS", config, session=session,
+            auto_restore=True,
+        )
+        return dlg, session
+
+    def test_opens_the_session_itself_without_any_click(self, tmp_path):
+        dlg, session = self._make_auto(tmp_path)
+        assert ("open",) in session.calls
+
+    def test_sends_every_candidate_then_leaves_no_sync(self, tmp_path):
+        dlg, session = self._make_auto(tmp_path)
+        dlg._archive.add(_ENTRY_1, "body one")
+        dlg._archive.add(_ENTRY_2, "body two")
+        session.state_changed.emit("ACTIVE")
+        session.listing.emit([])   # TNC is empty - both are candidates
+
+        sent = [c for c in session.calls if c[0] == "send"]
+        assert len(sent) == 1
+        session.stored.emit(101)
+        sent = [c for c in session.calls if c[0] == "send"]
+        assert len(sent) == 2
+        session.stored.emit(102)
+
+        assert ("leave",) in session.calls
+        assert [c for c in session.calls if c[0] == "read"] == []
+        assert dlg._closing_confirmed is True
+
+    def test_empty_candidate_list_ends_immediately(self, tmp_path):
+        dlg, session = self._make_auto(tmp_path)   # empty archive
+        session.state_changed.emit("ACTIVE")
+        session.listing.emit([])
+        assert [c for c in session.calls if c[0] == "send"] == []
+        assert ("leave",) in session.calls
+
+    def test_closing_mid_restore_finishes_current_then_leaves(
+        self, tmp_path, monkeypatch,
+    ):
+        dlg, session = self._make_auto(tmp_path)
+        dlg._archive.add(_ENTRY_1, "body one")
+        dlg._archive.add(_ENTRY_2, "body two")
+        session.state_changed.emit("ACTIVE")
+        session.listing.emit([])
+        assert len([c for c in session.calls if c[0] == "send"]) == 1
+
+        monkeypatch.setattr(
+            QMessageBox, "question",
+            staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+        )
+        dlg.reject()   # Esc/X during the restore
+        # The in-flight send is not aborted (no session.abort() call).
+        assert ("abort",) not in session.calls
+        session.stored.emit(101)   # the in-flight message finishes...
+        # ...but no SECOND send follows - the queue was cleared.
+        assert len([c for c in session.calls if c[0] == "send"]) == 1
+        assert ("leave",) in session.calls
+
+
 class TestArchiveGating:
 
     def test_empty_archive_shows_hint_and_locks_restore(self, tmp_path):

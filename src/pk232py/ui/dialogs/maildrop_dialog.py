@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QBrush, QColor, QFont
@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
 
 from ...maildrop import (
     ArchivedMessage, MailDropArchive, MailDropEntry, MailDropSession,
-    SerialManagerChannel, open_archive,
+    SerialManagerChannel, filter_restore_scope, open_archive,
 )
 from ...maildrop import protocol as maildrop_protocol
 from ..screens.macro_store import add_hline
@@ -310,7 +310,7 @@ class MailDropDialog(QDialog):
 
     def __init__(
         self, serial_manager, channel_bar, mycall: str, maildrop_config,
-        parent=None, session=None,
+        parent=None, session=None, auto_restore: bool = False,
     ) -> None:
         """*serial_manager* is the app's connected SerialManager.
         *channel_bar* is the currently active Packet screen's ChannelBar
@@ -323,6 +323,15 @@ class MailDropDialog(QDialog):
         session (P39.6: "Sitzung gegen eine Attrappe von
         MailDropSession"), the same kind of injection seam
         SerialManager.set_port_factory() already uses elsewhere.
+
+        *auto_restore* (P59, C.4) — True when MainWindow opened this
+        dialog to restore the local archive after the TNC came up at
+        factory defaults (fresh_boot_defaults). It changes three things:
+        the dialog opens the session itself instead of waiting for a
+        button click, the banner names what it is doing throughout the
+        whole session, and the first listing in ACTIVE starts a restore
+        of every in-scope archive-only message, ending the session (and
+        closing this dialog) once that queue is empty.
         """
         super().__init__(parent)
         self._serial = serial_manager
@@ -330,6 +339,8 @@ class MailDropDialog(QDialog):
         self._mycall = (mycall or "NOCALL").upper()
         self._md_config = maildrop_config
         self._device_release = getattr(serial_manager, 'tnc_release', None)
+        self._auto_restore = auto_restore
+        self._auto_restore_started = False
 
         self.setWindowTitle(f"MailDrop - {self._mycall}")
         self.resize(1000, 690)
@@ -340,7 +351,11 @@ class MailDropDialog(QDialog):
         self._state = "CLOSED"
         self._pending_op: Optional[str] = None   # None|sync|restore|preview|kill
         self._sync_queue: list[int] = []
-        self._restore_queue: list[ArchivedMessage] = []
+        self._sync_then: Optional[Callable[[], None]] = None
+        self._sync_total = 0
+        self._sync_done = 0
+        self._restore_queue: list[_Row] = []
+        self._restore_then: Optional[Callable[[], None]] = None
         self._closing_confirmed = False
         self.last_have_mail: Optional[bool] = None   # P39.5, from prompt_info
 
@@ -351,6 +366,9 @@ class MailDropDialog(QDialog):
             self._build_session()
         self._build_ui()
         self._apply_state()
+
+        if self._auto_restore:
+            self.session.open()
 
     # -- session wiring (P39.2 - signals only, never session.state) --------
 
@@ -699,7 +717,7 @@ class MailDropDialog(QDialog):
         self.btn_end = _btn("End session", "Send B and return to Host Mode",
                             _BTN_END, 150)
         self.btn_end.setFont(QFont(FONT_UI, 9, QFont.Weight.Bold))
-        self.btn_end.clicked.connect(self.session.leave)
+        self.btn_end.clicked.connect(self._end_session)
         row.addWidget(self.btn_end)
 
         self.btn_close = _btn("Close", width=90)
@@ -776,6 +794,18 @@ class MailDropDialog(QDialog):
                 "background-color: #24313d; color: #9fb4c4;"
                 " border: 1px solid #2a3a4a; border-radius: 4px;")
 
+        if self._auto_restore and state in ("OPENING", "ACTIVE", "CLOSING"):
+            # P59, C.4.2: names what is actually happening for the WHOLE
+            # session, overriding the generic text above - an operator
+            # who did not click anything must not have to guess why the
+            # TNC is suddenly busy.
+            self.banner.setText(
+                "Restoring the local archive after TNC power-on   ·   "
+                "packet operation is suspended")
+            self.banner.setStyleSheet(
+                "background-color: #8a6a1e; color: #ffffff;"
+                " border: 1px solid #6a4a0e; border-radius: 4px;")
+
         archive_note = (
             f"Archive: {self._md_config.archive_path}" if self._archive
             else "Local archive disabled - see Parameters -> MailDrop..."
@@ -803,24 +833,83 @@ class MailDropDialog(QDialog):
 
     def _request_close(self) -> bool:
         """Common entry point for X, Esc (reject()) and the Close button
-        (P39.3). Returns True when the dialog may close immediately."""
+        (P39.3/P59 C.2/C.4.4). Returns True when the dialog may close
+        immediately."""
         if self._state in ("OPENING", "CLOSING"):
             return False
         if self._state != "ACTIVE":
             return True
         if self._closing_confirmed:
-            return False   # leave() already in flight from a prior confirm
+            return False   # a confirmed end is already in flight
+
+        if self._auto_restore and self._pending_op == "restore":
+            # P59, C.4.4: stopping mid-restore never aborts the message
+            # currently being sent (no abort() call — the /EX rule,
+            # CLAUDE.md) — it only clears what has not been sent yet and
+            # lets _end_session() run once that in-flight send completes
+            # and the queue drains empty on its own.
+            reply = QMessageBox.question(
+                self, "MailDrop archive restore",
+                "Stop restoring and end the session?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+            self._restore_queue.clear()
+            self._restore_then = self._end_session
+            self._closing_confirmed = True
+            return False
+
+        sync_pending = (
+            self._archive is not None
+            and self._md_config.archive_sync == "on_session_end"
+            and any(r.where == WHERE_TNC and r.tnc_number is not None
+                    for r in self._rows)
+        )
+        if sync_pending:
+            n = sum(1 for r in self._rows
+                    if r.where == WHERE_TNC and r.tnc_number is not None)
+            text = (
+                f"End the MailDrop session? {n} new message(s) will be "
+                f"collected into the local archive first."
+            )
+        else:
+            text = (
+                "The MailDrop session is still open. End it and return to "
+                "normal packet operation?"
+            )
         reply = QMessageBox.question(
-            self, "End MailDrop session",
-            "The MailDrop session is still open. End it and return to "
-            "normal packet operation?",
+            self, "End MailDrop session", text,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return False
         self._closing_confirmed = True
-        self.session.leave()
+        self._end_session()
         return False
+
+    def _end_session(self) -> None:
+        """The ONE path out of an ACTIVE session (P59, C.2/B.4) — the End
+        session button and a confirmed window-close gesture (X/Esc/
+        Close) both call this, so an on_session_end sync can never run
+        on only one of the two paths. If archive_sync is
+        'on_session_end' and there are TNC-only messages, collects them
+        into the archive first and only leaves once that sync finishes
+        (or gives up, see _on_failed) - otherwise leaves immediately, as
+        before P59."""
+        if (self._archive is not None
+                and self._md_config.archive_sync == "on_session_end"):
+            queue = [r.tnc_number for r in self._rows
+                     if r.where == WHERE_TNC and r.tnc_number is not None]
+            if queue:
+                self.lbl_status.setText(
+                    f"Collecting {len(queue)} message(s) into the archive "
+                    f"before leaving..."
+                )
+                self.lbl_status.setStyleSheet(f"color: {_muted()};")
+                self._start_sync(queue, then=self.session.leave)
+                return
+        self.session.leave()
 
     def closeEvent(self, event) -> None:
         if self._request_close():
@@ -839,8 +928,11 @@ class MailDropDialog(QDialog):
         page, rather than pretending the same session can recover."""
         self._build_session()
         self._state = "CLOSED"
+        self._auto_restore_started = False
         self.lbl_status.setText("")
         self._apply_state()
+        if self._auto_restore:
+            self.session.open()
 
     # -- prompt / listing / read / stored / killed / failed -------------
 
@@ -851,11 +943,57 @@ class MailDropDialog(QDialog):
     def _on_listing(self, entries: list) -> None:
         self._tnc_entries = entries
         self._refresh_rows()
+        if (self._auto_restore and self._state == "ACTIVE"
+                and not self._auto_restore_started):
+            # P59, C.4.3: the first listing after opening the session is
+            # what tells us which archive-only rows actually exist on
+            # THIS TNC right now (a fresh power-on, per D.1 - the TNC's
+            # own mailbox is empty, so every in-scope archive message is
+            # a restore candidate) - never guessed ahead of the listing.
+            self._auto_restore_started = True
+            archive_rows = [r for r in self._rows if r.where == WHERE_ARCHIVE]
+            candidates = self._restore_candidates(archive_rows)
+            self._start_restore(candidates, then=self._finish_auto_restore)
+
+    def _finish_auto_restore(self) -> None:
+        """P59, C.4.3/C.4.5: once the auto-restore queue is empty (or was
+        empty from the start), the session's only job was that restore -
+        end it through the same _end_session() every other path out of
+        an ACTIVE session uses (never a second call site for leaving),
+        and let _on_state_changed's existing CLOSED handling
+        close this dialog itself. This trigger only ever fires right
+        after the TNC came up at factory defaults (D.1) - the TNC's own
+        mailbox is empty at that point, so _end_session()'s own
+        archive_sync=="on_session_end" check finds no genuine TNC-only
+        row to collect and just leaves - the messages just restored
+        stay marked archive-only in this stale, never-relisted _rows,
+        so they can never be mistaken for something still needing a
+        sync (P59, C.4.5)."""
+        self._closing_confirmed = True
+        self._end_session()
+
+    def _restore_candidates(self, rows: list) -> list:
+        """WHERE_ARCHIVE rows narrowed to archive_restore_scope (P59,
+        C.3/C.4.3) via filter_restore_scope() - the same filter for the
+        manual "Restore to TNC" button and the automatic trigger, so
+        they can never disagree about what a scope means. Matches a
+        _Row to its ArchivedMessage via archive_id - the existing
+        _header_key match _refresh_rows() already did, not a second
+        comparison."""
+        if self._archive is None:
+            return []
+        by_id = {m.id: m for m in self._archive.all()}
+        candidates = [r for r in rows if r.archive_id in by_id]
+        msgs = [by_id[r.archive_id] for r in candidates]
+        scope = self._md_config.archive_restore_scope
+        keep_ids = {m.id for m in filter_restore_scope(msgs, scope)}
+        return [r for r in candidates if r.archive_id in keep_ids]
 
     def _on_message_read(self, entry, body: str) -> None:
         if self._pending_op == "sync":
             if self._archive is not None:
                 self._archive.add(entry, body, device=self._device_release)
+            self._sync_done += 1
             self._advance_sync()
             return
         if self._pending_op == "preview":
@@ -884,10 +1022,35 @@ class MailDropDialog(QDialog):
     def _on_failed(self, text: str) -> None:
         self.lbl_status.setText(text)
         self.lbl_status.setStyleSheet("color: #e05a5a;")
+        if self._pending_op == "sync":
+            done = self._sync_done
+            total = self._sync_total
+            self._sync_queue.clear()
+            then, self._sync_then = self._sync_then, None
+            self._pending_op = None
+            self._update_toolbar_enablement()
+            # P59, C.1: a manual sync (then=session.list) stops here, as
+            # before - only a sync that was itself the way OUT of the
+            # session (then=session.leave, from _end_session) still has
+            # to run its continuation, or packet operation never resumes.
+            if then is not None and then == self.session.leave:
+                self.lbl_status.setText(
+                    f"Sync incomplete: {done} of {total} archived - "
+                    f"leaving the session anyway."
+                )
+                self.lbl_status.setStyleSheet(f"color: {_muted()};")
+                then()
+            return
+        if self._pending_op == "restore":
+            self._restore_queue.clear()
+            then, self._restore_then = self._restore_then, None
+            self._pending_op = None
+            self._update_toolbar_enablement()
+            if then is not None and then == self.session.leave:
+                then()
+            return
         if self._pending_op is not None:
             self._pending_op = None
-            self._sync_queue.clear()
-            self._restore_queue.clear()
             self._update_toolbar_enablement()
 
     # -- data / list rendering -----------------------------------------
@@ -1027,19 +1190,30 @@ class MailDropDialog(QDialog):
             "archive" if archive_on else
             "Enable the local archive in Parameters -> MailDrop... first."
         )
+        scope = self._md_config.archive_restore_scope
+        restore_candidates = (
+            self._restore_candidates(
+                [r for r in self._rows if r.where == WHERE_ARCHIVE]
+            ) if archive_on else []
+        )
         self.btn_restore.setEnabled(
-            active and archive_on and not busy and has_archive_only
+            active and archive_on and not busy and bool(restore_candidates)
         )
         if not archive_on:
             self.btn_restore.setToolTip(
                 "Enable the local archive in Parameters -> MailDrop... first."
             )
+        elif scope == "none":
+            self.btn_restore.setToolTip("Restore scope is 'none'")
         elif not has_archive_only:
             self.btn_restore.setToolTip("Nothing archive-only to restore.")
+        elif not restore_candidates:
+            self.btn_restore.setToolTip(
+                f"Nothing archive-only within restore scope '{scope}'."
+            )
         else:
             self.btn_restore.setToolTip(
-                "Write archive-only messages back into the TNC, keeping "
-                "sender, BBS and type"
+                f"Restore scope: {scope} (Parameters -> MailDrop...)"
             )
 
         row = self._current_row()
@@ -1131,6 +1305,66 @@ class MailDropDialog(QDialog):
             QMessageBox.warning(self, "Save message", f"Could not save: {exc}")
 
     # -- sync / restore --------------------------------------------------
+    #
+    # P59, C.1: one queue mechanism per direction, each ending in a
+    # caller-supplied continuation instead of a hardcoded self.session.
+    # list() - the manual buttons below pass then=self.session.list (the
+    # pre-P59 behaviour, unchanged), _end_session() passes
+    # then=self.session.leave, and auto-restore (C.4) passes
+    # then=self._finish_auto_restore. Only ONE of the two queues can ever
+    # be "then=session.leave" at a time (sync during _end_session OR
+    # restore during a stopped auto-restore, never both), so _on_failed()
+    # checking each queue's own _*_then independently is enough.
+
+    def _start_sync(self, numbers: list, then: Callable[[], None]) -> None:
+        self._sync_then = then
+        self._sync_total = len(numbers)
+        self._sync_done = 0
+        if not numbers:
+            then()
+            return
+        self._pending_op = "sync"
+        self._sync_queue = list(numbers)
+        self._update_toolbar_enablement()
+        self._advance_sync()
+
+    def _advance_sync(self) -> None:
+        if not self._sync_queue:
+            self._pending_op = None
+            self._update_toolbar_enablement()
+            then, self._sync_then = self._sync_then, None
+            if then is not None:
+                then()
+            return
+        number = self._sync_queue.pop(0)
+        self.lbl_status.setText(f"Syncing message #{number} to the archive...")
+        self.lbl_status.setStyleSheet(f"color: {_muted()};")
+        self.session.read(number)
+
+    def _start_restore(self, rows: list, then: Callable[[], None]) -> None:
+        self._restore_then = then
+        if not rows:
+            then()
+            return
+        self._pending_op = "restore"
+        self._restore_queue = list(rows)
+        self._update_toolbar_enablement()
+        self._advance_restore()
+
+    def _advance_restore(self) -> None:
+        if not self._restore_queue:
+            self._pending_op = None
+            self._update_toolbar_enablement()
+            then, self._restore_then = self._restore_then, None
+            if then is not None:
+                then()
+            return
+        row = self._restore_queue.pop(0)
+        self.lbl_status.setText(f"Restoring '{row.subject}' to the TNC...")
+        self.lbl_status.setStyleSheet(f"color: {_muted()};")
+        frm = "" if row.frm.strip().upper() == self._mycall else row.frm
+        self.session.send(row.to, row.bbs, frm, row.mtype, row.subject,
+                          row.body or "")
 
     def _on_sync_clicked(self) -> None:
         if self._archive is None or self._pending_op is not None:
@@ -1141,42 +1375,15 @@ class MailDropDialog(QDialog):
             QMessageBox.information(self, "Sync to archive",
                                     "Nothing new to sync.")
             return
-        self._pending_op = "sync"
-        self._sync_queue = queue
-        self._update_toolbar_enablement()
-        self._advance_sync()
-
-    def _advance_sync(self) -> None:
-        if not self._sync_queue:
-            self._pending_op = None
-            self._update_toolbar_enablement()
-            self.session.list()
-            return
-        number = self._sync_queue.pop(0)
-        self.lbl_status.setText(f"Syncing message #{number} to the archive...")
-        self.lbl_status.setStyleSheet(f"color: {_muted()};")
-        self.session.read(number)
+        self._start_sync(queue, then=self.session.list)
 
     def _on_restore_clicked(self) -> None:
         if self._archive is None or self._pending_op is not None:
             return
-        queue = [r for r in self._rows if r.where == WHERE_ARCHIVE]
+        if self._md_config.archive_restore_scope == "none":
+            return
+        archive_rows = [r for r in self._rows if r.where == WHERE_ARCHIVE]
+        queue = self._restore_candidates(archive_rows)
         if not queue:
             return
-        self._pending_op = "restore"
-        self._restore_queue = queue
-        self._update_toolbar_enablement()
-        self._advance_restore()
-
-    def _advance_restore(self) -> None:
-        if not self._restore_queue:
-            self._pending_op = None
-            self._update_toolbar_enablement()
-            self.session.list()
-            return
-        row = self._restore_queue.pop(0)
-        self.lbl_status.setText(f"Restoring '{row.subject}' to the TNC...")
-        self.lbl_status.setStyleSheet(f"color: {_muted()};")
-        frm = "" if row.frm.strip().upper() == self._mycall else row.frm
-        self.session.send(row.to, row.bbs, frm, row.mtype, row.subject,
-                          row.body or "")
+        self._start_restore(queue, then=self.session.list)
