@@ -102,10 +102,13 @@ class MailDropParamsDialog(QDialog):
         # ── Local archive (PC side, P38) ────────────────────────────────
         # This section is PK232PY's own bookkeeping, never sent to the TNC
         # (see MailDropConfig.archive_* in config.py and UPLOAD_EXEMPT in
-        # test_param_dialogs_roundtrip.py). This package builds only the
-        # storage and these settings - archive_sync/archive_restore have
-        # no effect yet, there is no MailDrop session window to act on
-        # them (docs/P38_MailDrop_Archive_Spec.md P38.3).
+        # test_param_dialogs_roundtrip.py). archive_sync/archive_restore
+        # ARE wired up as of P59: 'on_session_end' collects TNC-only
+        # messages when the MailDrop session ends; 'ask'/'auto' restore
+        # from the archive when MainWindow detects the TNC came up at
+        # factory defaults (fresh_boot_defaults, from the boot banner)
+        # and a MailDrop session is possible (docs/P38_MailDrop_
+        # Archive_Spec.md P38.3, docs/P59_MailDrop_Archive_Auto_Spec.md).
         archive_group = QGroupBox("Local archive (PC side)")
         archive_layout = QVBoxLayout(archive_group)
 
@@ -178,10 +181,10 @@ class MailDropParamsDialog(QDialog):
         archive_layout.addWidget(self._lbl_archive_auto_warn)
 
         effect_note = QLabel(
-            "The MailDrop session window's 'Sync to archive'/'Restore to "
-            "TNC' buttons already use this archive (manual only). "
-            "Automatic sync/restore (on_session_end / ask / auto) is not "
-            "wired up yet - see Backlog.md."
+            "'on_session_end' collects new messages when you end a "
+            "MailDrop session. 'ask'/'auto' restore from the archive "
+            "when the TNC comes up at factory defaults (detected from "
+            "its power-on banner) and a MailDrop session is possible."
         )
         effect_note.setWordWrap(True)
         archive_layout.addWidget(effect_note)
