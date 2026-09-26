@@ -510,3 +510,39 @@ class TestBannerCollection:
         w._finish_banner_collection()
 
         assert "[SYS] TNC ready in verbose mode" in w._vt_display.toPlainText()
+
+    def test_firmware_label_set_from_the_fully_collected_banner(self, wired_window):
+        # P55.D - reproduced 26.09.2026: the header showed "TNC-Firmware:
+        # unknown" despite the log's own "TNC banner captured" line and
+        # the full banner visible in the terminal. Root cause:
+        # SerialManager._tnc_banner is frozen at whatever the P43
+        # detection chain's own read captured - never updated with
+        # straggler bytes that only arrive afterward via the
+        # ReaderThread, which is exactly what _banner_buffer collects
+        # (this test's own two-fragment split puts the "Release ..."
+        # line's tail in the SECOND fragment). The firmware label is now
+        # parsed from THIS fully-collected buffer instead.
+        w, serial = wired_window
+        serial.last_verbose_init_response = b"AEA PK-232M\r\nRelease 01."
+        w._start_param_upload_thread = lambda: None
+
+        w._start_banner_collection()
+        w._on_raw_data_received(b"AUG.91\r\n\r\ncmd:")
+        w._finish_banner_collection()
+
+        assert w._lbl_firmware.text() == "Release 01.AUG.91"
+
+    def test_firmware_label_unchanged_when_this_round_has_no_banner(self, wired_window):
+        # A bare CR/COMMAND-char/XON reconnect (P53/P54's own steps
+        # 2b/2c) carries no banner at all - the label must stay whatever
+        # it was, not reset to a blank/placeholder, since the physical
+        # TNC has not actually changed.
+        w, serial = wired_window
+        w._lbl_firmware.setText("Release 01.AUG.91")
+        serial.last_verbose_init_response = b"\r\ncmd:"
+        w._start_param_upload_thread = lambda: None
+
+        w._start_banner_collection()
+        w._finish_banner_collection()
+
+        assert w._lbl_firmware.text() == "Release 01.AUG.91"
