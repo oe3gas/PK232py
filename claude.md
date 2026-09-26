@@ -348,6 +348,32 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   investigated with pixel-level rendering and could not be reproduced —
   no code change made for that part. See the new gotcha under Known
   Gotchas / Packet.
+- **MailDrop archive sync/restore automation (P59, 2026-09-26, unit-
+  verified).** Closes the P39.3/Backlog "on_session_end/ask/auto not
+  wired up yet" gap. New `SerialManager.fresh_boot_defaults` — an EVENT
+  flag (reset every init/recovery run), never the sticky `tnc_defaults`
+  it is derived from, since a trigger checking the sticky flag would
+  fire on every later reconnect too, not just the one that actually
+  followed a power-on. `MailDropDialog._end_session()` is now the ONE
+  path out of an ACTIVE session (`btn_end` and a confirmed close
+  gesture both call it) — collects TNC-only messages into the archive
+  first when `archive_sync == "on_session_end"`, then leaves either
+  way. `maildrop/archive.py::filter_restore_scope()` is the ONE scope
+  filter (`all`/`unread`/`none`) shared by the manual "Restore to TNC"
+  button and the new automatic trigger. `MainWindow.
+  _check_archive_restore_trigger()` (wired to `host_mode_changed(True)`/
+  `recovery_finished(True, ...)`) flags a restore as pending;
+  `_update_maildrop_gate_ui()` fires the actual offer
+  (`_offer_archive_restore()`, via `QTimer.singleShot(0, ...)`) the
+  moment the MailDrop gate is actually open — which can be well after
+  the TNC came up, if the operator was not in Packet mode yet.
+  `MailDropDialog(..., auto_restore=True)` opens the session itself,
+  restores every in-scope candidate after the first listing, and ends
+  the session (closing itself) once that queue is empty — including
+  immediately if there was nothing to restore. See the two new
+  gotchas under Known Gotchas / TNC-firmware and / Packet for the full
+  writeup. Hardware test cases T136/T137 (Testplan.md) are OPEN —
+  needs Device B.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -1615,6 +1641,99 @@ Grows over time.
   duplicate-detection fingerprint — a listing has no body text, so an
   exact fingerprint match is only possible once a message has actually
   been read.
+- **An EVENT ("the TNC was just powered on") must be its own flag, never
+  derived from a STATE that never resets (P59, 2026-09-26).**
+  `SerialManager.fresh_boot_defaults` is true only if THIS init/recovery
+  run's own boot banner said "is using default values" —
+  `self._banner_this_init` is reset to `False` at the start of every
+  `_init_tnc_thread()`/`_recovery_thread()` run (`_recovery_thread()`
+  calls `_init_tnc_thread()` directly, so one reset covers both) and
+  only set `True` inside `_finish_verbose_init()`'s existing banner-
+  marker branch — no second banner detector. The existing
+  `tnc_defaults`/`tnc_release`/`has_pactor` properties are all derived
+  from `self._tnc_banner`, which is set exactly once per SESSION and
+  **never reset** (by design — the firmware does not change just
+  because a later reconnect's own read happened to be silent). A
+  restore-after-power-on trigger checking `tnc_defaults` alone would
+  therefore fire on EVERY later reconnect or Recovery too, not just the
+  one that actually followed a power-on — `fresh_boot_defaults` is the
+  only one of the four that is safe to gate an automatic action on.
+- **MailDrop archive sync/restore automation (P59, 2026-09-26).**
+  `docs/P59_MailDrop_Archive_Auto_Spec.md` closes the P39.3/Backlog
+  "not wired up yet" gap for `MailDropConfig.archive_sync`/
+  `archive_restore`/`archive_restore_scope`:
+  - `MailDropDialog._end_session()` is now the ONE path out of an
+    ACTIVE session — `btn_end.clicked` and a confirmed window-close
+    gesture (X/Esc/Close) both call it, never `session.leave()`
+    directly (`grep -rn "session.leave()"` in the file finds exactly
+    one call site, inside this method). When
+    `archive_sync == "on_session_end"` and TNC-only messages exist, it
+    reads them all into the archive FIRST (`_start_sync(queue,
+    then=self.session.leave)`), then leaves — a sync failure mid-queue
+    still calls `then()` (leaves anyway, packet operation must resume)
+    where a MANUAL sync's failure (`then=self.session.list`) does not,
+    distinguished by comparing the stored continuation to
+    `self.session.leave` (bound-method equality), not a separate flag.
+  - `_start_sync()`/`_start_restore()` (`then: Callable[[], None]`)
+    replace the old hardcoded `self.session.list()` at the end of the
+    sync/restore queues — the ONE queue-draining implementation per
+    direction now serves three different endings: the manual buttons
+    (`then=self.session.list`, unchanged behaviour), `_end_session()`
+    (`then=self.session.leave`), and auto-restore (`then=self.
+    _finish_auto_restore`, C.4 below) — never three different queue
+    implementations.
+  - `maildrop/archive.py::filter_restore_scope()` (`all`/`unread`/
+    `none`, unknown scope raises `ValueError` rather than silently
+    becoming `all`) is the ONE scope filter — `MailDropDialog.
+    _restore_candidates()` maps a `_Row` to its `ArchivedMessage` via
+    `archive_id` (the SAME `_header_key`-matched id `_refresh_rows()`
+    already computed, never a second comparison) and calls it, used by
+    both the manual "Restore to TNC" button and the automatic trigger.
+  - `MailDropDialog(..., auto_restore=True)` opens the session itself
+    (`self.session.open()`, called from `__init__` — `MailDropSession.
+    open()` is itself async, safe to call before the dialog is even
+    shown), overrides the banner for the WHOLE session ("Restoring the
+    local archive after TNC power-on..."), and on the FIRST `listing`
+    while ACTIVE starts a restore of every in-scope archive-only
+    candidate (`_start_restore(candidates, then=self.
+    _finish_auto_restore)`) — an EMPTY candidate list ends the session
+    immediately for free, since `_start_restore([], then)` already
+    calls `then()` right away with no special-cased "nothing to do"
+    branch. `_finish_auto_restore()` sets `_closing_confirmed = True`
+    then calls `_end_session()` itself — the file's only
+    `session.leave()` call site stays the one inside `_end_session()`,
+    satisfied here because this trigger only ever fires right after
+    the TNC came up at factory defaults (D.1): its mailbox is empty at
+    that point, so `_end_session()`'s own `on_session_end` check finds
+    no genuinely TNC-only row (the messages just restored stay marked
+    archive-only in this stale, never-relisted `_rows`) and just
+    leaves — it is never trying to re-collect what it just wrote back,
+    without needing a second code path to guarantee that. Stopping the
+    dialog mid-restore (a close
+    gesture while `_pending_op == "restore"`) asks "Stop restoring and
+    end the session?", clears the QUEUE but never calls `session.
+    abort()` on the message currently being sent (the `/EX` rule: a
+    mailbox `S`/`SB`/`ST` exchange is one atomic worker call, not
+    something that can be interrupted mid-write) — the continuation is
+    simply changed to `self._end_session` so the session still ends,
+    honestly, once that one in-flight `send()` reports back.
+  - `MainWindow._check_archive_restore_trigger()` — wired to
+    `host_mode_changed(True)` and `recovery_finished(True, ...)`, the
+    two moments a fresh init/recovery run's own `fresh_boot_defaults`
+    is guaranteed current — sets `_archive_restore_pending = True` and
+    logs a `[SYS]` line, but opens NOTHING: `_update_maildrop_gate_ui()`
+    (already called from every relevant transition — connect, Host
+    Mode, mode switch, channel state) fires the actual offer,
+    `_offer_archive_restore()`, via `QTimer.singleShot(0, ...)` the
+    moment `_maildrop_gate()` first reads open — a modal
+    `QMessageBox`/`QDialog` must never open from inside the SAME call
+    stack as a gate-update triggered by some OTHER signal handler
+    still running. Right after the TNC came up at defaults, the app is
+    not necessarily in Packet mode yet — the pending flag can sit for
+    an arbitrary time (with a one-time status/monitor hint) until the
+    operator switches there. Disconnecting clears the pending flag —
+    the next connection decides `fresh_boot_defaults` fresh, never
+    inheriting a stale offer from a different session/TNC.
 - **P31 (2026-09-23) hardened the above against the first real hardware
   run of the full session harness.** Two gaps the first `maildrop_session`
   run against real hardware (`hw_logs/20260923_184302_maildrop_session.log`)
