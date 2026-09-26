@@ -4679,6 +4679,14 @@ class MainWindow(QMainWindow):
                 # not per-character QTextCharFormat already applied to
                 # existing received/echoed/warning text.
                 _recolor_existing_text(screen.rx_display, recolor_map)
+                # P56.A: Packet screens own NINE further RX documents
+                # (one per channel + the merged ALL one) besides whatever
+                # rx_display.setFont() above happens to touch (only the
+                # CURRENTLY attached one) - push the same font onto every
+                # one of them, visible or not, so ALL and CH can never
+                # show a different font again.
+                if hasattr(screen, "apply_rx_font"):
+                    screen.apply_rx_font(font)
             if hasattr(screen, "tx_input"):
                 screen.tx_input.setFont(font)
                 screen.tx_input.setStyleSheet(style_tx)
