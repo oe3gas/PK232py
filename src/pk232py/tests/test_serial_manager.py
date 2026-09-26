@@ -178,6 +178,9 @@ class _FakePort:
     def reset_input_buffer(self) -> None:
         self._buf.clear()
 
+    def reset_output_buffer(self) -> None:
+        pass
+
     @property
     def in_waiting(self) -> int:
         return len(self._buf)
@@ -250,16 +253,18 @@ class TestTncStateDetectionChain:
         assert _HPOLL_QUERY not in port.writes
 
     def test_step3_hpoll_frame_confirms_host_mode_then_exits_to_verbose(self):
-        cr_count = {"n": 0}
+        # P54: gated on the HPOLL query having been sent (not a bare CR
+        # count) - step 2c now sends its own CRs before step 3 ever
+        # runs, so only a CR sent AFTER the HPOLL query may succeed
+        # here, isolating step 3's own post-exit retry specifically.
+        hpoll_sent = {"yes": False}
 
         def responder(data):
             if data == _HPOLL_QUERY:
+                hpoll_sent["yes"] = True
                 return _HPOLL_ANSWER
             if data == b"\r":
-                cr_count["n"] += 1
-                if cr_count["n"] >= 2:  # only the retry AFTER the exit answers
-                    return b"\r\ncmd:"
-                return b""
+                return b"\r\ncmd:" if hpoll_sent["yes"] else b""
             return b""  # '*' unanswered, FRAME_HOST_OFF gets no reply
 
         sm, port, _messages = _run_detection(responder)
@@ -268,7 +273,6 @@ class TestTncStateDetectionChain:
         assert sm.is_host_mode is False
         assert _HPOLL_QUERY in port.writes
         assert FRAME_HOST_OFF in port.writes
-        assert port.writes.count(b"\r") == 2
 
     def test_step3b_recovery_sequence_confirms_verbose_after_half_frame_hang(self):
         # P44.C1 - the HPOLL query itself gets NOTHING back (the scenario
@@ -277,14 +281,18 @@ class TestTncStateDetectionChain:
         # and discards everything further, including a fresh SOH), but
         # the recovery sequence (double-SOH + GG, then HOST OFF) reaches
         # it and a repeated CR confirms verbose mode afterwards.
-        cr_count = {"n": 0}
+        # P54: gated on FRAME_RECOVERY having been sent (not a bare CR
+        # count) - step 2c now sends its own CRs before step 3/3b ever
+        # run, so only a CR sent AFTER the recovery sequence may
+        # succeed here.
+        recovery_sent = {"yes": False}
 
         def responder(data):
-            if data == b"\r":
-                cr_count["n"] += 1
-                if cr_count["n"] >= 2:  # only the retry AFTER recovery answers
-                    return b"\r\ncmd:"
+            if data == FRAME_RECOVERY:
+                recovery_sent["yes"] = True
                 return b""
+            if data == b"\r":
+                return b"\r\ncmd:" if recovery_sent["yes"] else b""
             return b""  # '*', the HPOLL query, and both recovery frames unanswered
 
         sm, port, _messages = _run_detection(responder)
@@ -294,7 +302,6 @@ class TestTncStateDetectionChain:
         assert _HPOLL_QUERY in port.writes       # step 3 was tried first
         assert FRAME_RECOVERY in port.writes      # step 3b's own frame
         assert FRAME_HOST_OFF in port.writes      # part of the recovery sequence
-        assert port.writes.count(b"\r") == 2
 
     def test_all_three_silent_aborts_and_sends_nothing_to_the_uploader(self):
         def responder(_data):
@@ -369,16 +376,16 @@ class TestRecoverySequence:
         assert FRAME_HOST_OFF in port.writes
 
     def test_only_hpoll_answers_still_reports_success_after_exit(self):
-        cr_count = {"n": 0}
+        # P54: gated on the HPOLL query (not a bare CR count) - see the
+        # equivalent fix in TestTncStateDetectionChain for why.
+        hpoll_sent = {"yes": False}
 
         def responder(data):
             if data == _HPOLL_QUERY:
+                hpoll_sent["yes"] = True
                 return _HPOLL_ANSWER
             if data == b"\r":
-                cr_count["n"] += 1
-                if cr_count["n"] >= 2:  # only the retry after the exit answers
-                    return b"\r\ncmd:"
-                return b""
+                return b"\r\ncmd:" if hpoll_sent["yes"] else b""
             return b""  # '*' and both HOST_OFF writes get no direct reply
 
         sm, port, results = _run_recovery(responder)
@@ -817,17 +824,17 @@ class TestStep3EchoDetection:
         # alongside the echo test, value byte $00 as in the capture's
         # own genuine-answer example, so both P52.4 examples from the
         # spec live next to each other.
-        cr_count = {"n": 0}
+        # P54: gated on the HPOLL query (not a bare CR count) - see the
+        # equivalent fix in TestTncStateDetectionChain for why.
+        hpoll_sent = {"yes": False}
         genuine_answer = bytes([0x01, 0x4F, ord('H'), ord('P'), 0x00, 0x17])
 
         def responder(data):
             if data == _HPOLL_QUERY:
+                hpoll_sent["yes"] = True
                 return genuine_answer
             if data == b"\r":
-                cr_count["n"] += 1
-                if cr_count["n"] >= 2:
-                    return b"\r\ncmd:"
-                return b""
+                return b"\r\ncmd:" if hpoll_sent["yes"] else b""
             return b""
 
         sm, port, _messages = _run_detection(responder)
@@ -1111,3 +1118,175 @@ class TestConverseModeDetection:
             if sm._reader:
                 sm._reader.stop()
                 sm._reader.join(timeout=1.0)
+
+
+class TestXonFlowControlDetection:
+    """P54.3/P54.4 - the PK-232 uses software flow control (its own boot
+    banner proves it: '... 0d 0a 11 41 45 41 ...', that $11 right before
+    the banner text is a self-generated XON). A TNC stopped by a stray
+    XOFF ($13) keeps echoing every character but sends nothing it
+    generates itself - the identical "echo, no cmd:" shape steps 1/2/2b
+    already see. Real console capture, 26.09.2026, 13:13-13:16: steps
+    1/2/2b all got only an echo."""
+
+    def test_step2c_xon_then_cr_releases_a_stopped_tnc(self):
+        xon_sent = {"yes": False}
+
+        def responder(data):
+            if data == bytes([0x11]):
+                xon_sent["yes"] = True
+                return b""
+            if data == b"\r":
+                return b"\r\ncmd:" if xon_sent["yes"] else b""
+            return b""
+
+        sm, port, _messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is True
+        assert bytes([0x11]) in port.writes
+        assert _HPOLL_QUERY not in port.writes  # never needed step 3 at all
+
+    def test_step2c_second_cr_reaches_cmd_when_the_first_attempt_does_not(self):
+        # P54.4 - only the THIRD bare CR overall (step 2's own, then
+        # step 2c's post-XON CR, then step 2c's own second CR) succeeds,
+        # isolating that the second-CR logic specifically is what closes
+        # this case, not an earlier CR getting lucky.
+        calls = {"n": 0}
+
+        def responder(data):
+            if data == b"\r":
+                calls["n"] += 1
+                if calls["n"] >= 3:
+                    return b"\r\ncmd:"
+                return b""
+            return b""
+
+        sm, port, _messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is True
+        assert port.writes.count(b"\r") == 3
+
+    def test_all_steps_silent_still_aborts_at_step_4_with_xon_attempted(self):
+        def responder(_data):
+            return b""
+
+        sm, port, messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is False
+        assert bytes([0x11]) in port.writes  # step 2c's XON was tried
+        assert any("No PK-232 responding" in m for m in messages)
+
+
+class _ConfigCapturePort:
+    """Duck-typed serial.Serial stand-in that just remembers what
+    connect_port() configured (P54.5) - accepts the same keyword
+    arguments serial.Serial does (via SerialManager.set_port_factory()),
+    so connect_port()'s own real implementation runs end-to-end, no
+    second copy of its logic needed in the test."""
+
+    def __init__(self, **kwargs):
+        self.port           = kwargs.get("port")
+        self.baudrate        = kwargs.get("baudrate")
+        self.bytesize        = kwargs.get("bytesize")
+        self.parity          = kwargs.get("parity")
+        self.stopbits        = kwargs.get("stopbits")
+        self.timeout         = kwargs.get("timeout")
+        self.write_timeout   = kwargs.get("write_timeout")
+        self.xonxoff         = kwargs.get("xonxoff")
+        self.rtscts          = kwargs.get("rtscts")
+        self.dsrdtr          = kwargs.get("dsrdtr")
+        self.dtr             = False
+        self.rts             = False
+        self.is_open         = True
+        self.reset_calls: list[str] = []
+
+    def reset_input_buffer(self) -> None:
+        self.reset_calls.append("input")
+
+    def reset_output_buffer(self) -> None:
+        self.reset_calls.append("output")
+
+    def read(self, n: int = 1) -> bytes:
+        time.sleep(0.02)
+        return b""
+
+    def write(self, data: bytes) -> int:
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.is_open = False
+
+
+class TestPortConfiguration:
+    """P54.1/P54.2/P54.5 - connect_port() must open with the same known-
+    working configuration a PuTTY session used on the same port/baud
+    (26.09.2026: PuTTY got a prompt with one Enter; the app, with dtr/
+    rts both False, did not, on the identical physical TNC), and must
+    log every parameter that affects behaviour - the pre-P54 log line
+    ('Port COM6 opened at 9600 baud') gave a hardware run nothing to
+    compare against."""
+
+    def test_connect_port_asserts_dtr_rts_and_resets_both_buffers(self):
+        sm = SerialManager()
+        sm.set_port_factory(lambda **kwargs: _ConfigCapturePort(**kwargs))
+        try:
+            ok = sm.connect_port("COM_TEST", baudrate=9600)
+            assert ok is True
+            port = sm._serial
+            assert port.dtr is True
+            assert port.rts is True
+            assert port.xonxoff is False
+            assert port.rtscts is False
+            assert port.dsrdtr is False
+            assert "input" in port.reset_calls
+            assert "output" in port.reset_calls
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+    def test_port_config_log_lines_name_every_field(self, caplog):
+        sm = SerialManager()
+        sm.set_port_factory(lambda **kwargs: _ConfigCapturePort(**kwargs))
+        try:
+            with caplog.at_level(logging.INFO, logger="pk232py.comm.serial_manager"):
+                sm.connect_port("COM_TEST", baudrate=9600)
+            messages = [r.message for r in caplog.records]
+            on_open = next(m for m in messages if m.startswith("Port config on open:"))
+            after_reset = next(
+                m for m in messages if m.startswith("Port config after reset:")
+            )
+            for line in (on_open, after_reset):
+                for field in (
+                    "xonxoff=", "rtscts=", "dsrdtr=",
+                    "dtr=", "rts=", "timeout=", "write_timeout=",
+                ):
+                    assert field in line, f"{field!r} missing from {line!r}"
+            # The "after reset" line is the configuration the connection
+            # actually runs with - it must show the P54.2 values, not
+            # whatever the bare constructor call happened to leave dtr/
+            # rts at.
+            assert "dtr=True" in after_reset
+            assert "rts=True" in after_reset
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+    def test_disconnect_port_logs_the_end_state(self, caplog):
+        sm = SerialManager()
+        sm.set_port_factory(lambda **kwargs: _ConfigCapturePort(**kwargs))
+        sm.connect_port("COM_TEST", baudrate=9600)
+        with caplog.at_level(logging.INFO, logger="pk232py.comm.serial_manager"):
+            sm.disconnect_port()
+
+        messages = [r.message for r in caplog.records]
+        at_close = next(m for m in messages if m.startswith("Port config at close:"))
+        for field in (
+            "xonxoff=", "rtscts=", "dsrdtr=",
+            "dtr=", "rts=", "timeout=", "write_timeout=",
+        ):
+            assert field in at_close, f"{field!r} missing from {at_close!r}"
