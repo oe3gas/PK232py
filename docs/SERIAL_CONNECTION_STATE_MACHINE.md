@@ -22,7 +22,7 @@ Covers all states from port closed to Host Mode active.
 - `src/pk232py/comm/pk232_hostmode_sub.py` — subprocess for Host Mode entry
 - `src/pk232py/ui/main_window.py` — UI reactions via Qt Signals
 
-**Last updated:** 2026-09-25 (P49 — Enter Host Mode from an existing verbose connection, the last chance to upload parameters, see §17; banner rendered as one block, control characters filtered; P46 — Recovery is the emergency reconnect: owns the read path before its own preamble, works from any state, opens the port itself; TNC actions moved from the toolbar into the TNC menu only, see §16; P45 — Recovery reports its outcome and ends in a defined state, honest connection state after a failed init, see §15; P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
+**Last updated:** 2026-09-26 (P53 — step 2b, Converse-mode detection after HOST OFF returns to a non-Host-Mode operating mode; verify()/detect_maildrop() read their own response directly instead of a racy transient signal listener, see §4 Phase 1/Phase 2; P52 — an echo is not a Host Mode response, reads honour the full timeout instead of a shrinking per-chunk deadline, see §4 Phase 1; P49 — Enter Host Mode from an existing verbose connection, the last chance to upload parameters, see §17; banner rendered as one block, control characters filtered; P46 — Recovery is the emergency reconnect: owns the read path before its own preamble, works from any state, opens the port itself; TNC actions moved from the toolbar into the TNC menu only, see §16; P45 — Recovery reports its outcome and ends in a defined state, honest connection state after a failed init, see §15; P44 — recovery stage 3b added to the detection chain, see §4 Phase 1; P43 — four-step active TNC-state detection; P40 — upload-before-Host-Mode guard, see §14)
 
 ---
 
@@ -54,9 +54,10 @@ Covers all states from port closed to Host Mode active.
 | `C1` | Port open OK | `init_tnc()` → background thread starts | `C2` |
 | `C1` | Port open failed | Error message; port remains closed | `C0` |
 | `C2` | Step 1/2 (`*` or CR) → `cmd:`/banner | `_verbose_ready = True`, `verbose_confirmed = True`; emit `verbose_mode_ready` | `C3` |
+| `C2` | Step 2b (P53, only if step 2 got only an echo) → COMMAND char + CR → `cmd:` | Verbose confirmed — TNC was in Converse mode | `C3` |
 | `C2` | Step 3 (HPOLL query) → `$4F` frame | TNC genuinely in Host Mode — write `FRAME_HOST_OFF` directly, repeat step 2 | `C3` (if step-2 repeat sees `cmd:`) or step 3b (if not) |
 | `C2` | Step 3b (P44, only if step 3 got NOTHING) → recovery sequence, then repeat step 2 → `cmd:` | Verbose confirmed after recovery | `C3` |
-| `C2` | All five steps exhausted, nothing usable answered (P43/P44) | Raise/abort — no upload attempted; message names port, baud rate, both possible causes | `C7` |
+| `C2` | All six steps exhausted, nothing usable answered (P43/P44/P53) | Raise/abort — no upload attempted; message names port, baud rate, both possible causes | `C7` |
 | `C3` | `verbose_mode_ready` emitted | `ParamsUploader.upload()` starts in thread | `C4` |
 | `C4` | Upload complete | `ParamsUploader.verify()` spot-checks MYCALL/PACLEN/MAXFRAME against `AppConfig`, still in `C4` (P40, informational only — never blocks the transition below) | `C4` |
 | `C4` | Verify complete, `_connect_mode == "verbose"` | Stay in verbose terminal | `C3` |
@@ -119,10 +120,10 @@ a valid frame there, and it sends nothing unsolicited while HPOLL is ON).
 Reproduced on the device 24.09.2026: this is what let a full parameter
 upload run into 68 x 5s timeouts with nothing reaching the TNC (P40).
 
-Five steps now run in order (four as of P43, plus P44's step 3b), each
-capped at `_TNC_STATE_STEP_TIMEOUT` (1.5 s) — detection itself must never
-take longer than the failure mode it prevents (worst case, step 4, is
-under 5 s total):
+Six steps now run in order (four as of P43, plus P44's step 3b, plus
+P53's step 2b), each capped at `_TNC_STATE_STEP_TIMEOUT` (1.5 s) —
+detection itself must never take longer than the failure mode it
+prevents (worst case, step 4, is under 9 s total):
 
 | # | Stimulus | Expected answer | Conclusion |
 |---|---|---|---|
@@ -208,11 +209,39 @@ real console capture (25.09.2026, 23:30:43):**
   regardless of how the response is chunked, and is shared with
   `write_verbose_wait()` (Phase 2's own read, already correct before
   P52 — this consolidated it into one implementation instead of two).
-  This is also what made Phase 2's own upload verification (below) look
-  broken when the TNC was in fact answering the whole time.
+
+**Correction (P53, 2026-09-25):** the line above used to also credit
+this fix with explaining why Phase 2's own upload verification looked
+broken. A 26.09.2026 capture showed `ParamsUploader.verify()` STILL
+reporting "no answer" for MYCALL after P52 — the read-timing fix was
+real and necessary, but verify()'s specific symptom had a second,
+independent cause of its own; see the P53 correction below Phase 2's
+own diagram for what that actually was.
 
 See CLAUDE.md's "echoes everything" and "don't read until the first
 pause" gotchas (TNC / firmware v7.1) for the full writeup.
+
+**P53 correction (2026-09-25) — step 2b, Converse mode:** steps 1/2
+above can both come back with ONLY an echo and no `cmd:` for a SECOND
+reason besides a dead TNC or Host Mode: `HOST OFF` returns the TNC to
+whichever operating mode was active before Host Mode was entered, not
+to the command prompt. Baudot/AMTOR/PACTOR all have a Converse idle
+state there that echoes every character and shows no prompt at all —
+confirmed by a real console capture, 26.09.2026, 13:13–13:16 (Baudot
+RTTY had been active before the disconnect that triggered this). A new
+step, 2b, now runs between the bare-`CR` step and the HPOLL query:
+
+| # | Stimulus | Expected answer | Conclusion |
+|---|---|---|---|
+| 2b | `SerialManager.command_char` (default `$03`/Ctrl-C, mirrors `AppConfig.misc.command`) + `CR` | `cmd:` | verbose, was in Converse mode → done |
+
+Tried after the bare-CR step (that one step still covers the more
+common "verbose, already at the prompt" case on its own) and before the
+HPOLL query (which only a genuinely Host-Mode TNC can answer at all).
+`exit_host_mode()` also now sends the same COMMAND-char resync
+immediately after leaving Host Mode itself — the terminal is usable
+right away instead of just echoing, and the NEXT connect cycle never
+needs step 2b at all, since the TNC is already back at `cmd:`.
 
 ### Phase 2: Parameter Upload (in `ParamsUploader.upload`)
 
@@ -243,6 +272,33 @@ command, `ParamsUploader.verify()` queries MYCALL/PACLEN/MAXFRAME back
 (`SerialManager.query_verbose_value()`, same request/response shape as
 above) and compares them to `AppConfig` — still in verbose mode, still
 `C4` — logging `"parameter upload verified (N/N)"` on a match. See §14.
+
+**P53 correction (2026-09-25) — `verify()` reading its own answer.** A
+26.09.2026 capture showed the verbose terminal correctly display
+`MYcall    OE3GAS` while `verify()` logged "no answer verifying MYCALL"
+for the identical query, in the same session, on the same connection.
+Root cause, found by code audit rather than assumed from the symptom
+alone: `query_verbose_value()`/`detect_maildrop()` used to wrap their
+single command in a TRANSIENT `raw_data_received.connect(_capture)` /
+`write_verbose_wait(...)` / `raw_data_received.disconnect(_capture)`.
+`raw_data_received` is a Qt signal crossing from the `_ReaderThread`'s
+own OS thread into whichever thread constructed `SerialManager` (the
+GUI thread in production) — delivered only once that thread's event
+loop processes the queued call. `write_verbose_wait()`'s own "found"
+result never needed that signal (it reads `_rx_buf`/`_rx_buf_event`
+directly, filled by a plain synchronous call from the reader), so it
+returns — and the `finally` block's `disconnect()` runs — before the
+queued delivery is necessarily processed; Qt drops a queued call
+outright if the connection is gone by the time it would be delivered.
+`test_serial_manager.py::TestVerboseQueryReadPath` reproduces this
+20/20 with a real, actively-pumping `QCoreApplication`. **A persistent
+connection is never exposed to this** — only a connect-then-disconnect
+wrapped tightly around one command is — which is exactly why the
+terminal's own listener (never torn down) got the answer while
+`verify()`'s transient one did not. Fixed by having both methods read
+the response a new internal helper, `_write_verbose_wait_text()`,
+already assembles — no signal-based capture in the loop at all, so
+there is nothing left to race.
 
 ### Phase 3: Host Mode Entry (subprocess `pk232_hostmode_sub.py`)
 
@@ -592,7 +648,7 @@ entry run over the existing paths (`verbose_mode_ready` fires exactly as
 after any other successful connect; no Recovery-specific handling).
 
 **End state on failure:** whatever `_init_tnc_thread()`'s own step 4
-already leaves behind (§2's "All five steps exhausted" row → `C7`) —
+already leaves behind (§2's "All six steps exhausted" row → `C7`) —
 `verbose_confirmed` stays `False`, the port stays open.
 
 ### The connection-state half of the same finding (P45.2)
