@@ -231,6 +231,12 @@ class MainWindow(QMainWindow):
         # source is future work (Backlog.md), so nothing here guesses in
         # the meantime.
         self._maildrop_have_mail: Optional[bool] = None
+        # P59.D: set once by _check_archive_restore_trigger() when the
+        # TNC just came up at factory defaults and the archive/restore
+        # settings ask for a restore - cleared once the offer has
+        # actually been made (D.2) or the TNC is disconnected (D.1/D.2:
+        # the next connection decides again from scratch).
+        self._archive_restore_pending = False
 
         self._build_ui()
         self._connect_signals()
@@ -1572,6 +1578,8 @@ class MainWindow(QMainWindow):
         mitschnitt/capture, not just a transient status-bar line)."""
         self._act_recovery.setEnabled(True)
         self._act_recovery.setText("Emergency &Reconnect (Host Mode Recovery)")
+        if success:
+            self._check_archive_restore_trigger()   # P59.D.1
         self._log_monitor(f"[SYS] Recovery: {message}")
         self._vt_append(
             f"[SYS] {message}\n",
@@ -3291,6 +3299,125 @@ class MainWindow(QMainWindow):
                 else:
                     screen.btn_maildrop.setStyleSheet("")
 
+        # P59.D.2: fire the pending auto-restore offer the moment the
+        # gate first opens after D.1 flagged it - this method is already
+        # called from every relevant transition (connect, Host Mode,
+        # mode switch, channel state), so no separate poll is needed.
+        if self._archive_restore_pending and can_open:
+            self._archive_restore_pending = False   # once only
+            # singleShot(0): a modal QMessageBox/QDialog must never be
+            # opened from inside a gate-update call that some OTHER
+            # signal handler is still in the middle of (e.g. a mode-
+            # switch handler this same call was reached from).
+            QTimer.singleShot(0, self._offer_archive_restore)
+
+    def _check_archive_restore_trigger(self) -> None:
+        """P59, D.1 - called from the host_mode_changed(True) and
+        recovery_finished(True, ...) slots. Flags an automatic archive
+        restore as pending (never opens anything itself - see D.2/D.3)
+        the first time THIS connection's init/recovery run captured a
+        boot banner saying the TNC is at factory defaults
+        (fresh_boot_defaults - an EVENT, reset every run, unlike the
+        sticky tnc_defaults/tnc_release/has_pactor state flags) and the
+        configuration actually wants a restore. Idempotent: does nothing
+        if a restore is already pending, so calling it from both slots
+        in the same connection cycle (e.g. Recovery succeeds, then the
+        operator enters Host Mode) never logs the notice twice.
+        """
+        if self._archive_restore_pending:
+            return
+        serial = self._serial
+        md = self._app_config.maildrop
+        if not (
+            getattr(serial, "fresh_boot_defaults", False)
+            and md.archive_enabled
+            and md.archive_restore in ("ask", "auto")
+            and md.archive_restore_scope != "none"
+            and getattr(serial, "has_maildrop", None) is not False
+        ):
+            return
+        self._archive_restore_pending = True
+        self._log_monitor(
+            "[SYS] TNC came up at factory defaults - MailDrop archive "
+            "restore pending"
+        )
+        can_open, _reason = self._maildrop_gate()
+        if not can_open:
+            self._log_monitor(
+                "[SYS] MailDrop archive restore pending - switch to "
+                "HF/VHF Packet (no connected channels) to start it."
+            )
+
+    # P38/T119 measurements, Device B - opening the session (~4s) plus
+    # leaving it (~3s), and about 6-7s per restored message. Named here,
+    # not a bare number, so a future re-measurement has one place to fix.
+    _ARCHIVE_RESTORE_SECONDS_PER_MESSAGE = 7
+    _ARCHIVE_RESTORE_SECONDS_OVERHEAD = 7
+
+    def _offer_archive_restore(self) -> None:
+        """P59, D.3 - runs once the maildrop gate is open and D.2 has
+        fired the pending offer. Opens the archive itself only to count
+        in-scope candidates for the estimate/question; the dialog (in
+        auto_restore mode) re-derives its own candidate list from the
+        TNC's first listing, which is authoritative (D.3's own note:
+        the TNC is empty right after a factory-default power-on, but
+        this count is still only a pre-estimate)."""
+        from ..maildrop import open_archive
+        from ..maildrop.archive import filter_restore_scope
+        md = self._app_config.maildrop
+        scope = md.archive_restore_scope
+        archive = open_archive(md)
+        if archive is None:
+            self._log_monitor(
+                f"[SYS] MailDrop archive restore: nothing to restore "
+                f"(scope '{scope}')"
+            )
+            return
+        try:
+            candidates = filter_restore_scope(archive.all(), scope)
+        finally:
+            archive.close()
+        if not candidates:
+            self._log_monitor(
+                f"[SYS] MailDrop archive restore: nothing to restore "
+                f"(scope '{scope}')"
+            )
+            return
+        n = len(candidates)
+
+        if md.archive_restore == "ask":
+            seconds = (
+                n * self._ARCHIVE_RESTORE_SECONDS_PER_MESSAGE
+                + self._ARCHIVE_RESTORE_SECONDS_OVERHEAD
+            )
+            reply = QMessageBox.question(
+                self, "MailDrop archive restore",
+                f"The TNC came up at factory defaults, so its MailDrop "
+                f"is empty. Restore {n} message(s) from the local "
+                f"archive now? This takes about {seconds} seconds and "
+                f"suspends packet operation - other stations receive "
+                f"BUSY.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self._log_monitor("[SYS] MailDrop archive restore declined")
+                return
+
+        self._log_monitor(
+            f"[SYS] MailDrop archive restore started ({n} message(s))"
+        )
+        mode_name = self._modes.current_mode_name
+        screen = self._opmode_screens.get(mode_name)
+        from .dialogs.maildrop_dialog import MailDropDialog
+        dlg = MailDropDialog(
+            self._serial, screen.channel_bar if screen else None,
+            self._app_config.hf_packet.mycall, self._app_config.maildrop,
+            parent=self, auto_restore=True,
+        )
+        dlg.exec()
+        self._maildrop_have_mail = dlg.last_have_mail
+        self._update_maildrop_gate_ui()
+
     def _on_open_maildrop_dialog(self) -> None:
         """P39.5: btn_maildrop and TNC -> MailDrop... both land here.
         Re-checks the gate right before opening (defense in depth — the
@@ -4924,6 +5051,10 @@ class MainWindow(QMainWindow):
             self._sb_mode.setText("Mode: OFFLINE")
             self._mode_combo.setEnabled(False)
             self._set_mode_indicator("offline")
+            # P59, D.1/D.2: the next connection decides fresh_boot_defaults
+            # again from scratch - a pending offer from a connection that
+            # just ended must not carry over to a different TNC/session.
+            self._archive_restore_pending = False
         self._update_maildrop_gate_ui()
 
     def _update_host_mode_ui(self, active: bool) -> None:
@@ -4936,6 +5067,7 @@ class MainWindow(QMainWindow):
             "" if active else "Ctrl+D"
         )
         if active:
+            self._check_archive_restore_trigger()   # P59.D.1
             # Clear TX controller — fresh state for new Host Mode session
             self._tx_ctrl.clear()
             screen = self._opmode_stack.currentWidget()

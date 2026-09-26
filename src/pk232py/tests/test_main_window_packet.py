@@ -886,3 +886,105 @@ class TestKeyboardFocusHandling:
         _app.processEvents()
 
         assert screen.channel_bar.current() == 2
+
+
+class TestArchiveRestoreTrigger:
+    """P59, D - _check_archive_restore_trigger() (wired to
+    host_mode_changed(True)/recovery_finished(True, ...)) flags a
+    pending automatic MailDrop archive restore; _update_maildrop_gate_ui()
+    (D.2) fires it exactly once the gate is actually open.
+    _offer_archive_restore() itself is stubbed here — its real behaviour
+    (candidate counting, the ask/auto question, opening the dialog in
+    auto_restore mode) is exercised by test_maildrop_dialog.py's
+    TestAutoRestore instead, against a fake session."""
+
+    @staticmethod
+    def _armed(w, restore="ask", scope="all"):
+        w._serial.fresh_boot_defaults = True
+        w._serial.has_maildrop = None
+        w._app_config.maildrop.archive_enabled = True
+        w._app_config.maildrop.archive_restore = restore
+        w._app_config.maildrop.archive_restore_scope = scope
+
+    def test_gate_open_offers_exactly_once(self, wired_vhf):
+        w, _screen = wired_vhf
+        self._armed(w)
+        calls = []
+        w._offer_archive_restore = lambda: calls.append(1)
+
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is True
+
+        w._update_maildrop_gate_ui()   # gate is already open (wired_vhf)
+        _app.processEvents()
+        assert calls == [1]
+        assert w._archive_restore_pending is False
+
+        # A later, unrelated gate update must not offer a second time.
+        w._update_maildrop_gate_ui()
+        _app.processEvents()
+        assert calls == [1]
+
+    def test_gate_closed_hints_once_then_offers_after_switching_to_packet(
+        self, wired_vhf,
+    ):
+        w, _screen = wired_vhf
+        self._armed(w)
+        w._modes._active_mode = None   # not a Packet mode - gate closed
+        calls = []
+        w._offer_archive_restore = lambda: calls.append(1)
+        before = len(w._monitor.toPlainText())
+
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is True
+        hint = w._monitor.toPlainText()[before:]
+        assert hint.count("switch to HF/VHF Packet") == 1
+        assert calls == []
+
+        # A second gate update while still closed must not repeat the hint.
+        w._update_maildrop_gate_ui()
+        _app.processEvents()
+        assert w._monitor.toPlainText()[before:].count(
+            "switch to HF/VHF Packet"
+        ) == 1
+        assert calls == []
+
+        w._modes._active_mode = VHFPacketMode()
+        w._update_maildrop_gate_ui()
+        _app.processEvents()
+        assert calls == [1]
+
+    def test_never_does_not_arm(self, wired_vhf):
+        w, _screen = wired_vhf
+        self._armed(w, restore="never")
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is False
+
+    def test_scope_none_does_not_arm(self, wired_vhf):
+        w, _screen = wired_vhf
+        self._armed(w, scope="none")
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is False
+
+    def test_has_maildrop_false_does_not_arm(self, wired_vhf):
+        w, _screen = wired_vhf
+        self._armed(w)
+        w._serial.has_maildrop = False
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is False
+
+    def test_archive_disabled_does_not_arm(self, wired_vhf):
+        w, _screen = wired_vhf
+        self._armed(w)
+        w._app_config.maildrop.archive_enabled = False
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is False
+
+    def test_disconnect_clears_the_pending_flag(self, wired_vhf):
+        w, _screen = wired_vhf
+        self._armed(w)
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is True
+
+        w._update_connection_ui(False)
+        assert w._archive_restore_pending is False
