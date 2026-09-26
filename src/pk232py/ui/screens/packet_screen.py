@@ -184,18 +184,20 @@ CHANNEL_COUNT = 10
 CHIP_MIN_W = 56
 UI_CHANNEL = 0   # P10: channel 0 is the UI/unproto/monitor channel, not a QSO
 
-# P55.C: the one font every RX QTextDocument (per-channel + ALL) and
-# rx_display itself share. A QTextDocument constructed with no
-# setDefaultFont() call falls back to Qt's own generic default, not
-# whatever font rx_display happens to be showing at the time - switching
-# ALL/CH visibly changed the font (26.09.2026) because rx_display.
-# setFont() only ever touched the ONE document attached when it was
-# called, never a document created (or swapped in later via
-# setDocument()) afterward. Defined once, at module level, so both the
-# per-document setDefaultFont() calls and rx_display.setFont() itself
-# stay the same value by construction, not by remembering to keep two
-# literals in sync.
-_RX_FONT = QFont("Courier New", 10)
+# P56.A: there is no module-level RX font constant any more (P55.C's
+# _RX_FONT, removed) - the single source of truth for every RX
+# QTextDocument's font is now MainWindow._apply_appearance(), the same
+# place that already sets rx_display's own font from the operator's
+# Appearance setting. _RX_FONT fixed the ALL-vs-CH font MISMATCH P55
+# found, but introduced a second, independent font source: the ALL
+# document (rx_display's own original document) kept following the
+# Appearance setting (rx_display.setFont() propagates to whichever
+# document is CURRENTLY attached), while every per-channel document
+# was pinned to this constant forever, never updated on an Appearance
+# change - reproduced 26.09.2026 (screenshot, maximized window): ALL
+# view correctly showed "Cascadia Mono SemiBold 14pt", CH view did not.
+# See _apply_appearance()'s own Packet-specific font push and
+# PacketBaseScreen.apply_rx_font() below.
 
 # Channel/chip states (P44 — named so both this module and its tests can
 # refer to them instead of repeating the raw strings). CH_FAILED is a
@@ -1173,10 +1175,17 @@ class PacketBaseScreen(QWidget):
         }
         self._rx_doc_all = QTextDocument(self)
         for _doc in list(self._rx_docs.values()) + [self._rx_doc_all]:
-            _doc.setDefaultFont(_RX_FONT)     # P55.C - see the constant's
-                                               # own comment
             _doc.setMaximumBlockCount(5000)   # overwritten by
                                                # apply_display_settings()
+        # P56.A: no font is set here - Qt's own generic default holds
+        # only until MainWindow._apply_appearance() runs (always, right
+        # after _build_central() completes, both at startup and on
+        # every later Appearance change) and calls apply_rx_font() below
+        # with the operator's actual font. A screen built standalone
+        # (e.g. in a test, with no MainWindow) simply keeps Qt's default
+        # on every document AND on rx_display itself, consistently -
+        # never a mismatch between the two, which is the one property
+        # that actually matters here.
         self._rx_scroll: dict[object, int] = {}
         self._rx_current_key: object = self._ALL_DOC_KEY
         self._show_timestamps = False   # P50 Teil C - set via
@@ -1470,6 +1479,25 @@ class PacketBaseScreen(QWidget):
         channel (matching the chip's own "UI" label, P10), the plain
         digit for a QSO channel."""
         return "UI" if channel == UI_CHANNEL else str(channel)
+
+    def apply_rx_font(self, font: QFont) -> None:
+        """Push *font* onto every RX document - each channel's own AND
+        the merged ALL document (P56.A) - called by MainWindow.
+        _apply_appearance() with the operator's Appearance font,
+        alongside the existing generic rx_display.setFont(font) every
+        screen already gets.
+
+        rx_display.setFont() alone only ever touches whichever ONE
+        document happens to be attached at that moment - never the
+        other nine documents this screen also owns. Without this, only
+        the document visible when Appearance was last applied (usually
+        ALL, since it is the default view) ever gets the operator's own
+        font; every per-channel document keeps whatever font it was
+        left at, INCLUDING one not currently visible at all - exactly
+        the ALL-vs-CH mismatch a screenshot showed 26.09.2026.
+        """
+        for doc in list(self._rx_docs.values()) + [self._rx_doc_all]:
+            doc.setDefaultFont(font)
 
     def _sync_rx_document(self) -> None:
         """Attach rx_display to whichever document the current ALL/CH +
@@ -1953,8 +1981,13 @@ class PacketBaseScreen(QWidget):
 
         self.rx_display = QTextEdit()
         self.rx_display.setReadOnly(True)
-        self.rx_display.setFont(_RX_FONT)   # P55.C - same font every
-                                             # RX QTextDocument uses
+        # P56.A: no explicit font here - MainWindow._apply_appearance()
+        # sets it (and every RX document's, via apply_rx_font() below),
+        # both at startup and on every later Appearance change. Setting
+        # one here too would just be a second, temporary source that
+        # _apply_appearance() immediately overwrites in production
+        # anyway - removing it entirely is what keeps this screen and
+        # its documents from ever disagreeing on font again.
         self.rx_display.setPlaceholderText(
             "RX — received and monitored AX.25 frames appear here …\n\n"
             "Connected data:   $3x frames (channel data)\n"
