@@ -256,6 +256,26 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   leaving Host Mode itself so the terminal is usable right away and the
   next connect cycle never needs step 2b at all. See the four new
   gotchas under Known Gotchas / TNC-firmware for the full writeup.
+- **Port configuration and software flow control (P54, 2026-09-26,
+  unit-verified).** After `Ctrl+D`/`Ctrl+T` (close then reconnect),
+  steps 1/2/2b all got only an echo, never `cmd:` — but the operator's
+  own counter-test settled it: PuTTY, same COM port/baud, no flow
+  control configured, got a prompt with a single Enter on the identical
+  physical TNC. **The TNC was fine — the app's own port configuration
+  was not the same as PuTTY's.** `connect_port()` used to clear DTR/RTS
+  (`rts = False`, `dtr = False`); PuTTY leaves them asserted. Fixed to
+  assert both explicitly (`True`), and to log every parameter that
+  affects behaviour (`xonxoff`/`rtscts`/`dsrdtr`/`dtr`/`rts`/`timeout`/
+  `write_timeout`) right after open and again after this app's own
+  post-open adjustments — the previous log line
+  (`"Port COM6 opened at 9600 baud"`) gave a hardware run nothing to
+  compare against. Independently: the PK-232 uses SOFTWARE flow control
+  (its own boot banner proves it — see the dedicated gotcha below), so
+  the detection chain also gained step 2c (XON, then CR, then a second
+  CR) as defense in depth for a TNC a stray XOFF left generating
+  nothing of its own while still echoing everything typed at it — the
+  identical symptom shape Converse mode (P53) produces. See the two new
+  gotchas under Known Gotchas / Serial-Host Mode for the full writeup.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -693,6 +713,49 @@ Grows over time.
 
 - **Direct serial I/O only — never a queue/worker for Host Mode frames.** The
   single most important constraint in the project. See §3.
+- **The app's own port configuration, not the TNC, can be the actual
+  fault — a terminal-program counter-test is part of diagnosis, not an
+  afterthought (P54, 2026-09-26).** After `Ctrl+D`/`Ctrl+T`
+  (disconnect/reconnect), the detection chain got nothing but echoes,
+  never `cmd:` — looked identical to a dead TNC or a stuck Host Mode
+  session. The operator's own counter-test settled it: quit the app,
+  open PuTTY on the same COM port at the same baud with flow control
+  set to **none**, press Enter once — `cmd:` appeared immediately, no
+  `Ctrl-C` needed. **Same physical TNC, same stimulus, different
+  result — the difference has to be in how the two programs open and
+  configure the port, not the TNC itself.** Root cause found:
+  `connect_port()` used to clear DTR/RTS (`rts = False`, `dtr = False`
+  after construction); PuTTY leaves them asserted. Fixed to set both
+  explicitly `True` instead, and to log every parameter that affects
+  behaviour (`xonxoff`/`rtscts`/`dsrdtr`/`dtr`/`rts`/`timeout`/
+  `write_timeout`) right after `open()` and again after this app's own
+  post-open adjustments (`"Port config on open: ..."` /
+  `"Port config after reset: ..."`) — the old log line
+  (`"Port COM6 opened at 9600 baud"`) named nothing a hardware run
+  could actually compare against a working counter-test with. **Rule:**
+  when a TNC behaves differently under this app than under a plain
+  terminal program on the same port/baud, the fault is in the app's own
+  port setup until proven otherwise — run the counter-test before
+  assuming a hardware or firmware problem.
+- **The PK-232 uses SOFTWARE flow control (XON `$11` / XOFF `$13`) —
+  a stopped TNC keeps echoing but sends nothing it generates itself,
+  identical to Converse mode's symptom shape (P54.3, 2026-09-26).** The
+  boot banner itself proves the scheme is in use: `... 0d 0a 11 41 45
+  41 ...` — that `$11` right before the `"AEA"` banner text is a
+  self-generated XON (TRM ch.12: `CMDTIME`/`TRFLOW`/`XFLOW`/`START`/
+  `STOP` all govern it). A TNC halted by a stray XOFF (e.g. a Host Mode
+  frame byte `$13` that leaked through) still echoes every character
+  typed at it, but sends no prompt and no banner — exactly what
+  Converse mode (P53) also looks like from a bare wakeup/CR probe, and
+  exactly what the 26.09.2026 capture showed (steps 1/2/2b all echo,
+  never `cmd:`). The detection chain's new step 2c (`$11`, wait, `CR`,
+  then a second bare `CR` if that alone did not work) is defense in
+  depth for this — two bytes, harmless if the TNC was never stopped —
+  layered on top of, not instead of, the P54 port-configuration fix
+  above (which the 26.09.2026 counter-test suggests may already be the
+  primary repair for THIS specific incident). **Manual knowledge:**
+  `TRANSPARENT` mode needs **three** COMMAND characters within
+  `CMDTIME` to escape back to command mode; `CONVERSE` needs only one.
 - **Every detection needs the read path exclusively (P46, 25.09.2026).**
   If `ReaderThread` keeps running while something else tries a direct,
   synchronous read of the same port, the answers land in `ReaderThread`
