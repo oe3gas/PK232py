@@ -12,6 +12,7 @@ canned response is queued the instant the triggering write() returns.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 from PyQt6.QtCore import Qt
@@ -898,3 +899,215 @@ class TestParamsUploaderVerifyEcho:
         assert matched == 2
         assert applicable == 3
         assert any("PACLEN" in text and "999" in text and "128" in text for text, _c in echoed)
+
+
+class TestVerboseQueryReadPath:
+    """P53.A - query_verbose_value()/detect_maildrop() used to read their
+    response through a SEPARATE, transient raw_data_received.connect()/
+    disconnect() pair wrapped around write_verbose_wait() - a real race
+    against Qt's queued cross-thread delivery (raw_data_received crosses
+    from the ReaderThread into whichever thread constructed
+    SerialManager - the GUI thread in production), which the disconnect()
+    reliably loses if nothing pumps that thread's event loop in between.
+    Confirmed 26.09.2026: the verbose terminal (a PERSISTENT
+    raw_data_received connection, never torn down around one command)
+    showed the TNC's correct answer to MYCALL while
+    ParamsUploader.verify() reported "no answer" for the very same
+    query. Fixed by having query_verbose_value()/detect_maildrop() read
+    the response _write_verbose_wait_text() already assembled directly,
+    with no signal-based capture in the loop at all."""
+
+    def test_old_transient_connect_disconnect_pattern_loses_the_signal(self):
+        # Reproduces the actual mechanism directly against a real
+        # SerialManager.raw_data_received signal, with no event loop
+        # pumping at all - the exact condition a plain pytest run
+        # provides, and the worst case a momentarily busy GUI thread
+        # approximates in production. This documents the bug
+        # query_verbose_value()/detect_maildrop() used to have; it is
+        # deliberately NOT how either reads any more (see the next test).
+        sm = SerialManager()
+        captured: list[bytes] = []
+
+        def _capture(data: bytes) -> None:
+            captured.append(data)
+
+        def reader() -> None:
+            sm.raw_data_received.emit(b"MYcall    OE3GAS\r\ncmd:")
+
+        sm.raw_data_received.connect(_capture)
+        t = threading.Thread(target=reader)
+        t.start()
+        t.join(timeout=1.0)
+        sm.raw_data_received.disconnect(_capture)
+
+        assert captured == []  # the queued delivery was dropped
+
+    def test_query_verbose_value_no_longer_depends_on_the_signal_at_all(self):
+        def responder(data):
+            if data == b"MYCALL\r\n":
+                return [(0.05, b"MYCALL\r\nMYcall    OE3GAS\r\ncmd:")]
+            return []
+
+        sm = SerialManager()
+        port = _DelayedPort(responder)
+        sm._serial = port
+        sm._reader = _ReaderThread(
+            port, sm._on_frame_received, raw_callback=sm._on_raw_data,
+            host_mode_flag=lambda: sm._in_host_mode,
+        )
+        sm._reader.start()
+        result: dict[str, object] = {}
+        try:
+            def worker() -> None:
+                # Deliberately no app.processEvents() anywhere around
+                # this call - if query_verbose_value() still depended on
+                # a queued Qt signal, this would reproduce the same drop
+                # as the test above.
+                result["value"] = sm.query_verbose_value("MYCALL", timeout=1.0)
+
+            t = threading.Thread(target=worker)
+            t.start()
+            t.join(timeout=2.0)
+        finally:
+            sm._reader.stop()
+            sm._reader.join(timeout=1.0)
+
+        assert result.get("value") == "OE3GAS"
+
+    def test_detect_maildrop_no_longer_depends_on_the_signal_at_all(self):
+        def responder(data):
+            if data == b"MAILDROP\r\n":
+                return [(0.05, b"MAILDROP\r\nMAildrop  ON\r\ncmd:")]
+            return []
+
+        sm = SerialManager()
+        port = _DelayedPort(responder)
+        sm._serial = port
+        sm._reader = _ReaderThread(
+            port, sm._on_frame_received, raw_callback=sm._on_raw_data,
+            host_mode_flag=lambda: sm._in_host_mode,
+        )
+        sm._reader.start()
+        result: dict[str, object] = {}
+        try:
+            def worker() -> None:
+                result["value"] = sm.detect_maildrop(timeout=1.0)
+
+            t = threading.Thread(target=worker)
+            t.start()
+            t.join(timeout=2.0)
+        finally:
+            sm._reader.stop()
+            sm._reader.join(timeout=1.0)
+
+        assert result.get("value") is True
+
+
+class TestConverseModeDetection:
+    """P53.B - HOST OFF returns the TNC to whichever operating mode was
+    active before Host Mode was entered, not to the command prompt -
+    Baudot/AMTOR/PACTOR all have a Converse idle state there that echoes
+    every character and shows no cmd: prompt at all. Steps 1/2 alone see
+    exactly the same "echo, no cmd:" shape a genuinely unresponsive TNC
+    would produce - real console capture, 26.09.2026, 13:13-13:16."""
+
+    def test_step2b_command_char_confirms_verbose_after_converse_mode(self):
+        # Real bytes from the capture: '*' -> echo only, CR -> echo only,
+        # neither ever reaching cmd: - only the COMMAND char (+ CR)
+        # actually escapes Converse.
+        def responder(data):
+            if data == b"*":
+                return bytes.fromhex("2a 5c 0d 0a")
+            if data == b"\r":
+                return bytes.fromhex("0d 0a")
+            if data == bytes([0x03]) + b"\r":
+                return b"\x03\r\ncmd:"
+            return b""
+
+        sm, port, _messages = _run_detection(responder)
+
+        assert sm.verbose_confirmed is True
+        assert sm.is_host_mode is False
+        assert port.writes == [b"*", b"\r", bytes([0x03]) + b"\r"]
+        assert _HPOLL_QUERY not in port.writes  # never needed step 3 at all
+
+    def test_configured_command_char_is_used_instead_of_the_default(self):
+        sm = SerialManager()
+        sm.command_char = 0x18  # a non-default COMMAND char
+
+        def responder(data):
+            if data == bytes([0x18]) + b"\r":
+                return b"\x18\r\ncmd:"
+            return b""  # '*' and bare CR unanswered
+
+        port = _FakePort(responder)
+        sm._serial = port
+        try:
+            sm._init_tnc_thread()
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+        assert sm.verbose_confirmed is True
+        assert bytes([0x18]) + b"\r" in port.writes
+        assert bytes([0x03]) + b"\r" not in port.writes
+
+    def test_verify_reaches_the_tnc_answer_end_to_end(self):
+        # P53.A+B combined, the spec's own example: verify() must
+        # actually see 'MYcall    OE3GAS' via the fixed read path
+        # (P53.A), not just the terminal - full verified (3/3).
+        def responder(data):
+            if data == b"MYCALL\r\n":
+                return b"MYCALL\r\nMYcall    OE3GAS\r\ncmd:"
+            if data == b"PACLEN\r\n":
+                return b"PACLEN\r\nPAclen    128\r\ncmd:"
+            if data == b"MAXFRAME\r\n":
+                return b"MAXFRAME\r\nMAXframe  1\r\ncmd:"
+            return b""
+
+        sm = SerialManager()
+        port = _FakePort(responder)
+        sm._serial = port
+        sm._reader = _ReaderThread(
+            port, sm._on_frame_received, raw_callback=sm._on_raw_data,
+            host_mode_flag=lambda: sm._in_host_mode,
+        )
+        sm._reader.start()
+
+        config = AppConfig()
+        config.hf_packet.mycall = "OE3GAS"
+        config.hf_packet.paclen = 128
+        config.hf_packet.maxframe = 1
+        uploader = ParamsUploader(serial=sm, config=config)
+
+        try:
+            matched, applicable = uploader.verify()
+        finally:
+            sm._reader.stop()
+            sm._reader.join(timeout=1.0)
+
+        assert (matched, applicable) == (3, 3)
+
+    def test_exit_host_mode_sends_command_char_and_logs_the_result(self, caplog):
+        def responder(data):
+            if data == bytes([0x03]) + b"\r":
+                return b"\x03\r\ncmd:"
+            return b""
+
+        sm = SerialManager()
+        sm._serial = _FakePort(responder)
+        sm._in_host_mode = True
+        try:
+            with caplog.at_level(logging.INFO, logger="pk232py.comm.serial_manager"):
+                sm.exit_host_mode()
+
+            assert sm.is_host_mode is False
+            assert bytes([0x03]) + b"\r" in sm._serial.writes
+            assert any(
+                "COMMAND char resync" in r.message for r in caplog.records
+            )
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
