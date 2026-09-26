@@ -32,7 +32,7 @@ from PyQt6.QtCore import Qt, QAbstractAnimation
 from PyQt6.QtWidgets import QApplication
 
 from pk232py.ui.screens.packet_screen import (
-    HFPacketScreen, UI_CHANNEL,
+    HFPacketScreen, UI_CHANNEL, CHANNEL_COUNT,
     CH_FREE, CH_CALLING, CH_CONNECTED, CH_FAILED,
     _CHIP_FILL,
 )
@@ -664,6 +664,35 @@ class TestPerChannelRxDocuments:
                 it += 1
             block = block.next()
         assert found, "system message fragment not found in the document"
+
+    def test_every_rx_document_shares_rx_displays_font(self):
+        # P55.C - a QTextDocument constructed with no setDefaultFont()
+        # falls back to Qt's own generic default, not whatever font
+        # rx_display happens to show - switching ALL/CH visibly changed
+        # the font (26.09.2026) because rx_display.setFont() only ever
+        # touched the ONE document attached when it was called, never a
+        # document created (or swapped in later via setDocument())
+        # afterward. Every per-channel document and the merged ALL
+        # document must now share the exact font rx_display itself uses.
+        screen = _make_screen()
+        expected = screen.rx_display.font()
+        for ch in range(CHANNEL_COUNT):
+            assert screen._rx_docs[ch].defaultFont() == expected
+        assert screen._rx_doc_all.defaultFont() == expected
+
+    def test_font_stays_the_same_switching_between_all_and_a_channel(self):
+        screen = _make_screen()
+        expected = screen.rx_display.font()
+
+        screen.set_view_all(True)
+        assert screen.rx_display.document().defaultFont() == expected
+
+        screen.channel_bar.set_current(2)
+        screen.set_view_all(False)
+        assert screen.rx_display.document().defaultFont() == expected
+
+        screen.set_view_all(True)
+        assert screen.rx_display.document().defaultFont() == expected
 
 
 class TestMheardAutoPopulation:
