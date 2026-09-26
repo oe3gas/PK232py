@@ -2556,6 +2556,57 @@ Steps 7-8 (a console capture specifically confirming the new
 
 ---
 
+### T136 — Sync beim Verlassen (`on_session_end`, P59)
+
+`SerialManager.fresh_boot_defaults` (an EVENT flag, reset every init/
+recovery run, unlike the sticky `tnc_defaults`) and
+`MailDropDialog._end_session()` (the one path out of an ACTIVE
+session, P59 C.2) are unit-verified against a fake session
+(`test_serial_manager.py::TestFreshBootDefaults`,
+`test_maildrop_dialog.py::TestEndSessionSync`). Not yet run against
+real hardware.
+
+1. Archive on, `archive_sync = on_session_end`.
+2. Open a MailDrop session, write two messages, `End session`.
+3. **Expected:** status line "Collecting 2 message(s)...", then a
+   normal return to Host Mode; both messages show as `TNC + archive`
+   in the next dialog open.
+4. **Measure:** the duration of each `read` from the log timestamps —
+   closes the B.6 gap (P59 spec) that "message read (Sync) duration"
+   was never measured.
+
+**Status:** ⬜ OPEN (Device B).
+
+---
+
+### T137 — Restore nach dem Einschalten (`ask`, P59)
+
+`MainWindow._check_archive_restore_trigger()`/`_update_maildrop_gate_ui()`
+(D.1/D.2) and `MailDropDialog(..., auto_restore=True)` (C.4) are
+unit-verified against a fake session/stub serial
+(`test_main_window_packet.py::TestArchiveRestoreTrigger`,
+`test_maildrop_dialog.py::TestAutoRestore`). Not yet run against real
+hardware.
+
+1. Archive with >= 2 messages (from T136), `archive_restore = ask`,
+   scope `all`.
+2. Power-cycle the TNC, connect the application, select HF Packet.
+3. **Expected:** exactly one confirmation naming the count and a time
+   estimate; after Yes the dialog runs on its own, closes itself,
+   packet operation resumes; the messages show as `TNC + archive` in
+   the next manual dialog open.
+4. **Counter-check:** disconnect and reconnect the application
+   **without** power-cycling the TNC → **no** confirmation.
+5. **Measure:** actual duration against the estimate
+   (`n * 7 + 7` seconds, P38/T119 measurement).
+
+Device A and C: explicitly out of scope for this package; findings do
+not transfer (`docs/DEVICES.md`).
+
+**Status:** ⬜ OPEN (Device B).
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
