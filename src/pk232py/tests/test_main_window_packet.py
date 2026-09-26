@@ -394,6 +394,90 @@ class TestLinkMessageAppearsInItsOwnChannel:
         assert "DISCONNECTED" in screen.lbl_status.text()
 
 
+class TestMheardColumnMapping:
+    """P55.A — MHEARD's Callsign/Channel/Time columns showed a DAYSTAMP
+    date and/or a timestamp fragment instead of the real callsign
+    (26.09.2026 screenshot). _extract_partner()'s own colon-split fix is
+    covered separately in test_packet_hf.py::TestExtractPartner; this
+    covers the OTHER contributing source, MainWindow._parse_mheard_line()
+    (the MH-poll response format), plus an end-to-end check that a live
+    link message fills the panel correctly through the real pipeline."""
+
+    def test_mh_line_with_daystamp_date_prefix(self):
+        # Real MH line shape once DAYSTAMP is ON (the upload default) -
+        # a leading "DD-Mon-YY" date token ahead of the time/callsign
+        # this parser already handled correctly.
+        callsign, time_str, direct = MainWindow._parse_mheard_line(
+            "25-Sep-26 00:05:23 OE3TEC-1*"
+        )
+        assert callsign == "OE3TEC-1"
+        assert time_str == "00:05"
+        assert direct is True
+
+    def test_mh_line_without_daystamp_still_works(self):
+        # Pre-existing, already-correct case - must not regress.
+        callsign, time_str, direct = MainWindow._parse_mheard_line(
+            "18:06:27 OE3GAS*"
+        )
+        assert callsign == "OE3GAS"
+        assert time_str == "18:06"
+        assert direct is True
+
+    def test_mh_line_bare_callsign_no_date_no_time(self):
+        callsign, time_str, direct = MainWindow._parse_mheard_line("OE1XYZ")
+        assert callsign == "OE1XYZ"
+        assert time_str == ""
+        assert direct is False
+
+    def test_mh_line_daystamp_prefix_with_no_direct_marker(self):
+        callsign, time_str, direct = MainWindow._parse_mheard_line(
+            "25-Sep-26 00:05:23 DB0MUC"
+        )
+        assert callsign == "DB0MUC"
+        assert time_str == "00:05"
+        assert direct is False
+
+    def test_disconnected_with_tnc_own_timestamp_fills_callsign_column_correctly(
+        self, wired_vhf
+    ):
+        # End-to-end through the real pipeline: HFPacketMode.handle_frame()
+        # -> on_channel_state() -> MainWindow._make_channel_state_handler()
+        # -> MheardPanel.add_entry_if_new(). CONSTAMP/DAGSTAMP both ON is
+        # the upload default, so a real DISCONNECTED carries this exact
+        # date+time prefix.
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+
+        mode.handle_frame(_FakeLinkMsgFrame(
+            3, "*** 25-Sep-26 21:04:36 DISCONNECTED: OE3TEC-1 ***"
+        ))
+
+        entries = screen.mheard_panel._entries
+        assert entries
+        callsign, _time_str, _direct = entries[0]
+        assert callsign == "OE3TEC-1"
+
+
+class TestTxEchoAppearsInChannelDocumentToo:
+    """P55.B — the TX echo used to write directly into whichever ONE RX
+    document rx_display happened to be showing at send time (ALL or the
+    current channel's own), via its own manual cursor manipulation,
+    instead of through append_channel_data() (P50 Teil B), which writes
+    into BOTH. Reproduced 26.09.2026: '> ch1 just testing' appeared in
+    ALL view but not in CH view of the very channel it was sent on."""
+
+    def test_tx_echo_lands_in_both_the_channel_document_and_all(self, wired_vhf):
+        w, screen = wired_vhf
+        screen.channel_bar.set_channel_state(1, "connected", "OE3TEC")
+        screen.channel_bar.set_current(1)
+        screen.tx_input.setPlainText("just testing")
+
+        w._on_packet_tx_enter()
+
+        assert "just testing" in screen._rx_docs[1].toPlainText()
+        assert "just testing" in screen._rx_doc_all.toPlainText()
+
+
 class TestPacketRxTxSplitterPersistence:
     """P50 Teil D - the Packet screen's own RX/TX splitter size is saved
     and restored alongside the window geometry.
