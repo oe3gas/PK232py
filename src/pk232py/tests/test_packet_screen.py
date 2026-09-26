@@ -378,6 +378,160 @@ class TestChipConnectFlow:
         assert received == []
 
 
+class TestChipEditorClosesOnChannelSwitch:
+    """P57.1 - chips are NoFocus (P41), so a click on a DIFFERENT chip
+    never fires the editing chip's own focusOutEvent - the P42.1
+    "losing focus cancels like Esc" rule never triggers for this case.
+    Reproduced 26.09.2026 (screenshot): the cursor stayed in channel
+    3's editor while channel 4 carried the active frame. ChannelBar
+    now closes an open editor explicitly instead, from the one place
+    (_select()/reset()) every channel-changing/resetting path already
+    goes through - never a second, separate rule per caller."""
+
+    def test_click_on_another_chip_closes_the_open_editor_and_still_switches(self):
+        screen = _make_screen()
+        received: list[tuple[int, str]] = []
+        screen.channel_bar.connect_requested.connect(
+            lambda ch, call: received.append((ch, call))
+        )
+        screen.channel_bar.start_edit(3)
+        chip3 = screen.channel_bar._chips[3]
+        assert chip3.is_editing()
+
+        screen.channel_bar._on_chip_clicked(4)
+
+        assert not chip3.is_editing()
+        assert received == []  # discarded, not connected
+        assert screen.channel_bar.current() == 4  # the click's normal effect still happened
+
+    def test_set_current_from_outside_closes_the_open_editor(self):
+        screen = _make_screen()
+        screen.channel_bar.start_edit(3)
+        chip3 = screen.channel_bar._chips[3]
+
+        screen.channel_bar.set_current(5)
+
+        assert not chip3.is_editing()
+        assert screen.channel_bar.current() == 5
+
+    def test_click_into_tx_field_closes_the_open_editor(self):
+        from PyQt6.QtCore import QEvent, QPointF
+        from PyQt6.QtGui import QMouseEvent
+
+        screen = _make_screen()
+        screen.channel_bar.start_edit(3)
+        chip3 = screen.channel_bar._chips[3]
+        assert chip3.is_editing()
+
+        ev = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(5, 5),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        screen.eventFilter(screen.tx_input, ev)
+
+        assert not chip3.is_editing()
+
+    def test_reset_channels_closes_the_open_editor(self):
+        screen = _make_screen()
+        screen.channel_bar.start_edit(3)
+        chip3 = screen.channel_bar._chips[3]
+
+        screen.reset_channels()
+
+        assert not chip3.is_editing()
+
+    def test_escape_still_closes_the_editor_unchanged(self):
+        screen = _make_screen()
+        screen.channel_bar.start_edit(3)
+        chip3 = screen.channel_bar._chips[3]
+
+        chip3.cancel_edit()
+
+        assert not chip3.is_editing()
+
+    def test_enter_with_valid_callsign_still_connects_unchanged(self):
+        screen = _make_screen()
+        received: list[tuple[int, str]] = []
+        screen.channel_bar.connect_requested.connect(
+            lambda ch, call: received.append((ch, call))
+        )
+        screen.channel_bar.start_edit(3)
+        chip3 = screen.channel_bar._chips[3]
+        chip3.editor.setText("OE3XYZ")
+        chip3.editor.returnPressed.emit()
+
+        assert received == [(3, "OE3XYZ")]
+        assert not chip3.is_editing()
+
+    def test_two_double_clicks_in_a_row_leave_exactly_one_editor_open(self):
+        screen = _make_screen()
+        screen.channel_bar._on_chip_double_clicked(3)
+        screen.channel_bar._on_chip_double_clicked(5)
+
+        editing = [
+            ch for ch, chip in screen.channel_bar._chips.items()
+            if chip.is_editing()
+        ]
+        assert editing == [5]
+
+
+class TestChipEditorBorder:
+    """P57.2 - investigated the screenshot's second finding (the open
+    editor showing a dark background with no amber border) via both
+    static review and pixel-level rendering (QWidget.grab()), including
+    reproducing the exact click-away sequence the screenshot showed -
+    the border (#e8b23a, 2px, same width the selected chip's own
+    border uses) rendered correctly in every case tried; no code-level
+    defect was found. Kept as a pixel-level regression guard rather
+    than a QSizePolicy-style check that would prove nothing (P56 Teil
+    B's own lesson)."""
+
+    def test_editor_border_pixels_are_the_specified_amber(self):
+        screen = _make_screen()
+        screen.show()
+        _app.processEvents()
+        screen.channel_bar.start_edit(3)
+        _app.processEvents()
+
+        chip3 = screen.channel_bar._chips[3]
+        img = chip3.editor.grab().toImage()
+        # Sample just inside the border on all four edges - antialiasing
+        # makes the outermost pixel row/column unreliable.
+        w, h = img.width(), img.height()
+        samples = [
+            img.pixelColor(1, h // 2).name(),
+            img.pixelColor(w - 2, h // 2).name(),
+            img.pixelColor(w // 2, 1).name(),
+            img.pixelColor(w // 2, h - 2).name(),
+        ]
+        for color in samples:
+            assert color.lower() in ("#e8b23a", "#e7b23a"), samples
+
+    def test_border_still_amber_after_the_old_buggy_click_away_sequence(self):
+        # Reproduces the exact pre-P57.1 sequence (channel switched to 4
+        # WITHOUT closing chip 3's editor first) to confirm the border
+        # was never actually the missing piece - this is what settled
+        # that P57.2 needed no code fix.
+        screen = _make_screen()
+        screen.show()
+        _app.processEvents()
+        screen.channel_bar.start_edit(3)
+        _app.processEvents()
+        bar = screen.channel_bar
+        bar._current = 4
+        bar._chips[4].button.setChecked(True)
+        for c in bar._chips:
+            bar._update_chip(c)
+        _app.processEvents()
+
+        chip3 = bar._chips[3]
+        assert chip3.is_editing()
+        img = chip3.editor.grab().toImage()
+        color = img.pixelColor(1, img.height() // 2).name()
+        assert color.lower() in ("#e8b23a", "#e7b23a")
+
+
 class TestChipCallingFailedStates(object):
     """P44 Teil A - a calling chip shows an ellipsis, and a failed
     connect attempt flashes CH_FAILED (red) before reverting to CH_FREE,
