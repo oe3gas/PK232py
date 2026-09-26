@@ -231,6 +231,31 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   verbose terminal, not just the log. See the "echoes everything" and
   "don't read until the first pause" gotchas under Known Gotchas /
   TNC-firmware for the full writeup.
+- **Converse-mode detection and a corrected read-path diagnosis (P53,
+  2026-09-25, unit-verified).** Two independent findings from a real
+  console capture and screenshot, 26.09.2026, 13:13–13:16. (1)
+  `ParamsUploader.verify()` reported "no answer verifying MYCALL" even
+  though the verbose terminal showed the TNC's correct reply to the very
+  same query — investigated past the spec's own first framing ("the
+  verification reads directly from the port") to the actual mechanism: a
+  20/20-reproducible race between `query_verbose_value()`/
+  `detect_maildrop()`'s transient `raw_data_received.connect()`/
+  `disconnect()` pair and Qt's queued cross-thread delivery, which drops
+  the call outright if disconnected before the receiving thread's event
+  loop processes it. Fixed by reading the response
+  `write_verbose_wait()`'s own new internal helper
+  (`_write_verbose_wait_text()`) already assembled, directly — no
+  signal-based capture in the loop at all. (2) A fresh reconnect failed
+  with steps 1 and 2 both getting only an echo, never `cmd:` — the TNC
+  was in Converse (Baudot RTTY had been the active mode before the
+  disconnect, and `HOST OFF` returns to the last-active mode, not the
+  command prompt), which the old chain could not tell apart from a
+  genuinely dead TNC. New step 2b (COMMAND char + CR,
+  `SerialManager.command_char`, mirrors `AppConfig.misc.command`) closes
+  this, and `exit_host_mode()` now sends the same byte immediately after
+  leaving Host Mode itself so the terminal is usable right away and the
+  next connect cycle never needs step 2b at all. See the four new
+  gotchas under Known Gotchas / TNC-firmware for the full writeup.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -877,6 +902,71 @@ Grows over time.
   `_read_until_prompt()` (`serial_manager.py`), which always honours
   the caller's full timeout regardless of how the response is chunked,
   shared by the detection chain and `write_verbose_wait()`.
+- **After `HOST OFF` the TNC is in whichever operating mode was active
+  before Host Mode was entered — not the command prompt (P53.B,
+  2026-09-25).** For Baudot, AMTOR and PACTOR that means Converse: the
+  TNC echoes every character and shows **no** prompt at all. Confirmed
+  by a real console capture, 26.09.2026, 13:13–13:16: after a disconnect
+  with Baudot RTTY active, both `*` and a bare `CR` got only an echo
+  back, never `cmd:` — indistinguishable from a genuinely unresponsive
+  TNC by that evidence alone. `Ctrl-C` (`$03`, the COMMAND character —
+  `SerialManager.command_char`, mirrors `AppConfig.misc.command`) is
+  what actually escapes Converse; `tools/hw_check.py`'s own
+  `Session.normalize()` has sent it before every command since P21 for
+  exactly this reason. Two fixes: the detection chain gained step 2b
+  (COMMAND char + CR, tried between the bare-CR step and the HPOLL
+  query) so a fresh reconnect can tell Converse apart from a truly dead
+  TNC; `SerialManager.exit_host_mode()` now also sends it immediately
+  after leaving Host Mode itself, so the verbose terminal is usable
+  right away instead of just echoing, and the next connect cycle never
+  needs step 2b at all.
+- **Echo without a prompt means Converse, not "the TNC is stuck"
+  (P53.B, 2026-09-25) — corrects the earlier read of an identical
+  symptom.** The P44/P45 "half-frame theory" (a process killed abruptly
+  mid-frame leaving the TNC's parser stuck) was floated for exactly this
+  shape of evidence — everything echoed, nothing at `cmd:` — and left as
+  an unconfirmed suspicion. The 26.09.2026 capture shows a second,
+  now-confirmed explanation for the identical symptom: Converse mode
+  after `HOST OFF` returns to a non-Host-Mode operating mode. Neither
+  explanation is wrong in general — they are different TNC states that
+  happen to look the same from a plain wakeup/CR probe — but "echoes
+  everything, no prompt" is no longer evidence of being stuck by itself;
+  try the COMMAND character before assuming the worse case.
+- **The transient `raw_data_received.connect()`/`disconnect()` pattern
+  loses the delivery if nothing pumps the receiver thread's event loop
+  in between — a real, 20/20-reproducible race, not a suspicion (P53.A,
+  2026-09-25).** `query_verbose_value()` and `detect_maildrop()` used to
+  wrap a single command in `raw_data_received.connect(_capture)` /
+  `write_verbose_wait(...)` / `raw_data_received.disconnect(_capture)`.
+  `raw_data_received` crosses from the ReaderThread's own OS thread into
+  whichever thread constructed `SerialManager` (the GUI thread in
+  production) as a Qt queued connection, which is only delivered once
+  that thread's event loop actually processes it — but
+  `write_verbose_wait()`'s own "found" result never needed that signal
+  at all (it reads `_rx_buf`/`_rx_buf_event` directly, filled by a plain
+  synchronous call from the reader, no Qt involved), so it can return —
+  and the `finally` block's `disconnect()` can run — before the queued
+  delivery has been processed. Qt drops a queued call outright if the
+  connection is torn down before it is processed, which
+  `test_serial_manager.py::TestVerboseQueryReadPath` reproduces
+  deterministically (20/20) with a real, actively-pumping
+  `QCoreApplication`. Confirmed 26.09.2026: the verbose terminal (a
+  **persistent** `raw_data_received` connection, never torn down around
+  one command) showed the TNC's correct answer to `MYCALL` while
+  `ParamsUploader.verify()` reported "no answer" for the very same
+  query. **Correction to this spec's own first framing** ("the
+  verification reads directly from the port, the ReaderThread takes the
+  bytes for the terminal") — code audit found no second, competing
+  direct port read anywhere in the upload/verify path; the actual
+  mechanism is the connect/disconnect race above. Fixed by having
+  `query_verbose_value()`/`detect_maildrop()` read the response
+  `write_verbose_wait()`'s own internal helper
+  (`_write_verbose_wait_text()`) already assembled, directly — no
+  signal-based capture in the loop at all, so there is nothing left to
+  race. A **persistent** `raw_data_received` connection (MainWindow's
+  own terminal display, `MailDropSession`'s connect-at-open/disconnect-
+  at-close) is never exposed to this — only a connect-then-disconnect
+  wrapped tightly around one command is.
 - **A healthy TNC in Host Mode answers nothing in a plain terminal
   program either — silence alone never distinguishes "normal" from
   "stuck" (P45, 2026-09-25).** In Host Mode the TNC only processes
