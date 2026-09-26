@@ -184,6 +184,19 @@ CHANNEL_COUNT = 10
 CHIP_MIN_W = 56
 UI_CHANNEL = 0   # P10: channel 0 is the UI/unproto/monitor channel, not a QSO
 
+# P55.C: the one font every RX QTextDocument (per-channel + ALL) and
+# rx_display itself share. A QTextDocument constructed with no
+# setDefaultFont() call falls back to Qt's own generic default, not
+# whatever font rx_display happens to be showing at the time - switching
+# ALL/CH visibly changed the font (26.09.2026) because rx_display.
+# setFont() only ever touched the ONE document attached when it was
+# called, never a document created (or swapped in later via
+# setDocument()) afterward. Defined once, at module level, so both the
+# per-document setDefaultFont() calls and rx_display.setFont() itself
+# stay the same value by construction, not by remembering to keep two
+# literals in sync.
+_RX_FONT = QFont("Courier New", 10)
+
 # Channel/chip states (P44 — named so both this module and its tests can
 # refer to them instead of repeating the raw strings). CH_FAILED is a
 # transient state only ChannelBar.set_channel_state() ever assigns itself
@@ -1160,6 +1173,8 @@ class PacketBaseScreen(QWidget):
         }
         self._rx_doc_all = QTextDocument(self)
         for _doc in list(self._rx_docs.values()) + [self._rx_doc_all]:
+            _doc.setDefaultFont(_RX_FONT)     # P55.C - see the constant's
+                                               # own comment
             _doc.setMaximumBlockCount(5000)   # overwritten by
                                                # apply_display_settings()
         self._rx_scroll: dict[object, int] = {}
@@ -1938,7 +1953,8 @@ class PacketBaseScreen(QWidget):
 
         self.rx_display = QTextEdit()
         self.rx_display.setReadOnly(True)
-        self.rx_display.setFont(QFont("Courier New", 10))
+        self.rx_display.setFont(_RX_FONT)   # P55.C - same font every
+                                             # RX QTextDocument uses
         self.rx_display.setPlaceholderText(
             "RX — received and monitored AX.25 frames appear here …\n\n"
             "Connected data:   $3x frames (channel data)\n"
