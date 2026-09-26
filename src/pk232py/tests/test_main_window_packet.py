@@ -30,6 +30,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -476,6 +477,46 @@ class TestTxEchoAppearsInChannelDocumentToo:
 
         assert "just testing" in screen._rx_docs[1].toPlainText()
         assert "just testing" in screen._rx_doc_all.toPlainText()
+
+
+class TestAppearanceFontReachesEveryRxDocument:
+    """P56.A - P55's _RX_FONT fixed the ALL-vs-CH font mismatch by
+    pinning every RX document to a hardcoded constant, but that
+    introduced a SECOND font source independent of the operator's own
+    Appearance setting - reproduced 26.09.2026 (screenshot, maximized
+    window): ALL view correctly showed "Cascadia Mono SemiBold 14pt",
+    CH view did not. _RX_FONT is gone; MainWindow._apply_appearance()
+    is now the one place every RX document's font comes from, via the
+    new PacketBaseScreen.apply_rx_font()."""
+
+    def test_appearance_change_reaches_a_channel_document_never_shown(self, wired_vhf):
+        # Channel 3 is never the currently-attached document (the
+        # default view is ALL) - exactly the case P55's rx_display.
+        # setFont() alone could never reach.
+        w, screen = wired_vhf
+        w._app_config.appearance.theme = "custom"
+        w._app_config.appearance.font_family = "Cascadia Mono SemiBold"
+        w._app_config.appearance.font_size = 14
+
+        w._apply_appearance()
+
+        expected = QFont("Cascadia Mono SemiBold", 14)
+        assert screen._rx_docs[3].defaultFont() == expected
+        assert screen._rx_doc_all.defaultFont() == expected
+        assert screen.rx_display.font() == expected
+
+    def test_a_document_created_before_the_change_gets_the_new_font_too(self, wired_vhf):
+        w, screen = wired_vhf
+        before = QFont(screen._rx_docs[5].defaultFont())
+
+        w._app_config.appearance.theme = "custom"
+        w._app_config.appearance.font_family = "Consolas"
+        w._app_config.appearance.font_size = 18
+        w._apply_appearance()
+
+        after = screen._rx_docs[5].defaultFont()
+        assert after != before
+        assert after == QFont("Consolas", 18)
 
 
 class TestPacketRxTxSplitterPersistence:
