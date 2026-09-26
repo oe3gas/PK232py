@@ -55,6 +55,35 @@ class TestExtractPartner:
     def test_connect_request_colon_marker(self):
         assert _extract_partner("Connect request: OE1XYZ") == "OE1XYZ"
 
+    # -----------------------------------------------------------------
+    # P55.A — with CONSTAMP/DAGSTAMP both ON (params_uploader.py's
+    # default), a real message is prefixed with the TNC's own
+    # "DD-Mon-YY HH:MM:SS" - whose own two colons sit AHEAD of the one
+    # that actually marks the callsign. Reproduced 26.09.2026: MHEARD's
+    # Callsign column showed a fragment of the embedded timestamp
+    # instead of the real callsign, because the old code split on the
+    # FIRST colon in the whole string, landing inside "HH:MM:SS".
+    # -----------------------------------------------------------------
+
+    def test_disconnected_with_tnc_daystamp_and_constamp_prefix(self):
+        assert _extract_partner(
+            "*** 25-Sep-26 21:04:36 DISCONNECTED: OE3TEC-1 ***"
+        ) == "OE3TEC-1"
+
+    def test_connected_with_tnc_daystamp_and_constamp_prefix(self):
+        # The " to " marker is found before any colon check runs, so
+        # this shape was never actually broken - kept here anyway to
+        # document that both message shapes are covered under the
+        # same real-world prefix.
+        assert _extract_partner(
+            "*** 25-Sep-26 21:04:36 CONNECTED to OE3TEC ***"
+        ) == "OE3TEC"
+
+    def test_connect_request_with_tnc_daystamp_and_constamp_prefix(self):
+        assert _extract_partner(
+            "*** 25-Sep-26 21:04:36 Connect request: OE1XYZ ***"
+        ) == "OE1XYZ"
+
 
 # ---------------------------------------------------------------------------
 # on_channel_state — "Connect request" must map to "calling", not "connected"
