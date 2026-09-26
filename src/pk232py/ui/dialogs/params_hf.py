@@ -132,6 +132,20 @@ class HFPacketParamsDialog(QDialog):
         self._chk_headerln  = chk("HEADERLN",   True);  flags_layout.addWidget(self._chk_headerln)
         self._chk_constamp  = chk("CONSTAMP",   True);  flags_layout.addWidget(self._chk_constamp)
         self._chk_dagstamp  = chk("DAGSTAMP",   True);  flags_layout.addWidget(self._chk_dagstamp)
+        # P55.F: these two are the TNC's OWN link-message timestamp
+        # source - independent of the Display tab's "Show timestamps in
+        # the RX view" (PK232PY's own added prefix). See that option's
+        # own tooltip for the full explanation.
+        _stamp_tip = (
+            "Uploaded to the TNC (sent as {0} ON/OFF). When ON, the TNC "
+            "itself prepends a date and/or time to every link message "
+            "(e.g. \"*** 25-Sep-26 21:04:36 CONNECTED to OE3TEC ***\") - "
+            "independent of the Display tab's \"Show timestamps in the "
+            "RX view\" option, which only controls PK232PY's own added "
+            "prefix."
+        )
+        self._chk_constamp.setToolTip(_stamp_tip.format("CONSTAMP"))
+        self._chk_dagstamp.setToolTip(_stamp_tip.format("DAYSTAMP"))
         self._chk_ilfpack   = chk("ILFPACK",    True);  flags_layout.addWidget(self._chk_ilfpack)
         self._chk_acrpack   = chk("ACRPACK",    True);  flags_layout.addWidget(self._chk_acrpack)
         self._chk_alfpack   = chk("ALFPACK",    True);  flags_layout.addWidget(self._chk_alfpack)
@@ -231,7 +245,16 @@ class HFPacketParamsDialog(QDialog):
             "by default - the CH view already names the channel via the "
             "chip, and the ALL view's own compact \"n|\" tag costs less "
             "width than a repeated timestamp on every line.\n"
-            "This is a display setting only; it is never sent to the TNC."
+            "This is a display setting only; it is never sent to the TNC.\n\n"
+            "P55.F: link messages carry the TNC's OWN timestamp already "
+            "(e.g. \"*** 25-Sep-26 21:04:36 CONNECTED to OE3TEC ***\") "
+            "whenever CONSTAMP and/or DAGSTAMP (Parameters tab, both ON "
+            "by default) are enabled on the TNC - that stamp is part of "
+            "the message text itself and appears regardless of this "
+            "option. This checkbox only controls the SEPARATE "
+            "\"[HH:MM:SS]\" prefix PK232PY itself adds to every RX line "
+            "(link messages included) - two independent sources of a "
+            "timestamp in the same view, not one setting for both."
         )
         form.addRow(self._chk_show_timestamps)
 
