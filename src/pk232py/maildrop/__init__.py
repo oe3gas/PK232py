@@ -15,10 +15,14 @@ was replaced outright by `archive.MailDropArchive`.
 
 from .protocol       import MailDropEntry, PromptInfo
 from .session        import MailDropSession, SerialManagerChannel
-from .archive        import ArchivedMessage, MailDropArchive, open_archive
+from .archive        import (
+    ArchivedMessage, MailDropArchive, RESTORE_SCOPES, filter_restore_scope,
+    open_archive,
+)
 
 __all__ = [
     "MailDropEntry", "PromptInfo",
     "MailDropSession", "SerialManagerChannel",
     "ArchivedMessage", "MailDropArchive", "open_archive",
+    "RESTORE_SCOPES", "filter_restore_scope",
 ]

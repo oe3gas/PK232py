@@ -9,8 +9,12 @@ from hw_logs/20260924_181446_maildrop_session.log (T119, Device B).
 
 from __future__ import annotations
 
+import pytest
+
 from pk232py.config import MailDropConfig
-from pk232py.maildrop.archive import MailDropArchive, open_archive
+from pk232py.maildrop.archive import (
+    MailDropArchive, filter_restore_scope, open_archive,
+)
 from pk232py.maildrop.protocol import MailDropEntry
 
 _PERSONAL = MailDropEntry(
@@ -136,6 +140,39 @@ class TestMissingInTnc:
             archive.add(_FOREIGN, _FOREIGN_BODY)
             missing = archive.missing_in_tnc([(renumbered, _FOREIGN_BODY)])
             assert missing == []
+
+
+class TestFilterRestoreScope:
+    """P59, Teil B - the one filter shared by the manual "Restore to
+    TNC" button and the automatic restore-after-power-on trigger, so
+    the two can never disagree about what a scope means."""
+
+    def test_all_returns_everything_unchanged(self, tmp_path):
+        with MailDropArchive(tmp_path / "archive.db") as archive:
+            archive.add(_PERSONAL, _PERSONAL_BODY)
+            archive.add(_FOREIGN, _FOREIGN_BODY)
+            result = filter_restore_scope(archive.all(), "all")
+            assert len(result) == 2
+
+    def test_unread_excludes_the_read_flag(self, tmp_path):
+        with MailDropArchive(tmp_path / "archive.db") as archive:
+            id1, _ = archive.add(_PERSONAL, _PERSONAL_BODY)
+            archive.add(_FOREIGN, _FOREIGN_BODY)
+            archive.mark_read(id1)
+            result = filter_restore_scope(archive.all(), "unread")
+            assert [m.subject for m in result] == ["T119 foreign from"]
+
+    def test_none_returns_nothing(self, tmp_path):
+        with MailDropArchive(tmp_path / "archive.db") as archive:
+            archive.add(_PERSONAL, _PERSONAL_BODY)
+            result = filter_restore_scope(archive.all(), "none")
+            assert result == []
+
+    def test_unknown_scope_raises_never_falls_back_to_all(self, tmp_path):
+        with MailDropArchive(tmp_path / "archive.db") as archive:
+            archive.add(_PERSONAL, _PERSONAL_BODY)
+            with pytest.raises(ValueError):
+                filter_restore_scope(archive.all(), "some-typo")
 
 
 class TestOpenArchive:

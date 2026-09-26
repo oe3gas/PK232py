@@ -249,6 +249,36 @@ class MailDropArchive:
         )
 
 
+RESTORE_SCOPES = ("all", "unread", "none")
+
+
+def filter_restore_scope(
+    messages: Sequence[ArchivedMessage], scope: str,
+) -> list[ArchivedMessage]:
+    """Narrow *messages* (archive-only candidates) to what
+    MailDropConfig.archive_restore_scope (P59) actually permits
+    restoring: 'all' -> unchanged, 'unread' -> only messages whose
+    read_flag was False AT ARCHIVING TIME (mark_read() is not called
+    anywhere in this codebase yet — that is not a bug in this function,
+    it just means 'unread' currently behaves like 'all' until something
+    starts marking messages read), 'none' -> always []. An unknown scope
+    raises ValueError rather than silently falling back to 'all' — a
+    typo'd or future config value must not restore more than the
+    operator asked for.
+
+    Used both by the manual "Restore to TNC" button and by the automatic
+    restore-after-power-on trigger (P59), so the two can never disagree
+    about what "restore scope X" means.
+    """
+    if scope == "all":
+        return list(messages)
+    if scope == "unread":
+        return [m for m in messages if not m.read_flag]
+    if scope == "none":
+        return []
+    raise ValueError(f"unknown restore scope: {scope!r}")
+
+
 def open_archive(config: "MailDropConfig") -> Optional[MailDropArchive]:
     """Open the local archive per *config* (MailDropConfig, P38.1), or
     return None without ever creating a database file when
