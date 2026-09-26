@@ -330,6 +330,24 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   P55 Teil E's own `QSizePolicy`-only check would have stayed green
   throughout a manually-confirmed 514px regression. See the four new/
   corrected gotchas under Known Gotchas / Packet and UI-PyQt6.
+- **Chip editor closes on channel switch (P57, 2026-09-26, unit-
+  verified).** Reproduced via a screenshot: with channel 3's inline
+  callsign editor open, a click on channel 4 switched the current
+  channel but left channel 3's editor open and focused, so keystrokes
+  kept landing there instead of the TX window. Root cause: chips are
+  `NoFocus` (P41), so a click on a different chip never fires the
+  editing chip's own `focusOutEvent`, and the existing "losing focus
+  cancels like Esc" rule never triggers. New
+  `ChannelBar.close_open_editor()` cancels whichever chip is editing,
+  called from `_select()` (covers a chip click, `set_current()` from
+  outside, and `step()`), `reset()` (mode switch, leaving Host Mode),
+  and the existing `PacketBaseScreen.eventFilter()`'s `MouseButtonPress`
+  handling (a click into `tx_input`/`le_unproto`/`combo_monitor`/
+  `combo_hbaud` — no new filter installed). A second finding from the
+  same screenshot (the open editor's amber border looked missing) was
+  investigated with pixel-level rendering and could not be reproduced —
+  no code change made for that part. See the new gotcha under Known
+  Gotchas / Packet.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -1911,11 +1929,11 @@ Grows over time.
 
   | Action | Result |
   |---|---|
-  | Click a different chip | switches the current channel only |
+  | Click a different chip | switches the current channel (and closes any OTHER chip's open editor first — P57.1, see below) |
   | Click the already-current free chip, or double-click any free chip, or "Connect…" in its context menu | opens that chip's inline callsign editor |
   | Enter with a valid callsign in the editor | `ChannelBar.request_connect()` → `connect_requested(ch, callsign)` → `MainWindow._on_chip_connect_requested()` sends `CO` on that channel |
   | Enter with an invalid callsign | editor stays open, red border + tooltip, no signal |
-  | Esc, or losing focus, while editing | closes the editor, no signal |
+  | Esc while editing | closes the editor, no signal |
   | "Connect via…" in a free chip's context menu | `PacketConnectDialog` (callsign + optional digipeater path, channel fixed to the chip that opened it) |
   | "Disconnect" in a busy chip's context menu, or Ctrl+D while that channel is current | `disconnect_requested(ch)` → `MainWindow._on_chip_disconnect_requested()` sends `DI` on that channel |
   | Double-click an unconnected MHEARD row | `ChannelBar.start_edit_first_free()` — opens the FIRST free chip's editor, prefilled with the heard callsign (not necessarily the currently selected chip) |
@@ -1928,6 +1946,45 @@ Grows over time.
   left that could reach it with channel 0). `PacketConnectDialog` no longer
   has an editable channel field (it used to be a `QSpinBox`) — the channel
   always comes from whichever chip's "Connect via..." entry opened it.
+- **Chips are `NoFocus` (P41), so a click on a DIFFERENT chip never
+  closes an open editor via `focusOut` — `ChannelBar` closes it
+  explicitly instead (P57.1, 2026-09-26).** The P42.1 "losing focus
+  cancels like Esc" rule (`ChannelChip.eventFilter()`'s own `FocusOut`
+  branch) only ever fires when Qt actually delivers a focus-out event
+  to the editor — and a click on a chip BUTTON never does that, since
+  every `QPushButton` in this app is `NoFocus` by design (so the
+  keyboard stays in `tx_input`, CLAUDE.md §5). Reproduced 26.09.2026
+  (screenshot): channel 3's editor stayed open and focused while
+  channel 4 carried the active frame, and keystrokes kept landing in
+  channel 3's field. Fixed with `ChannelBar.close_open_editor()` —
+  cancels whichever of its ten chips is editing, discarding exactly
+  like Esc — called from every place a channel can change or the bar
+  can reset, since `ChannelBar` is the one place that actually knows
+  which chip is open:
+
+  | Trigger | Where the close is wired in |
+  |---|---|
+  | Click on a different chip | `ChannelBar._select()` (also reached by `set_current()`/`step()` below) |
+  | `set_current()` from outside (MHEARD double-click, Unproto, program) | same `_select()` — this is the ONE method every channel change already goes through |
+  | Mode (re)activation, leaving Host Mode | `PacketBaseScreen.reset_channels()` → `ChannelBar.reset()` |
+  | Click into `tx_input` (or `le_unproto`/`combo_monitor`/`combo_hbaud`) | `PacketBaseScreen.eventFilter()`'s existing `MouseButtonPress` handling — no new filter, no new `installEventFilter()` call; this method is already installed on all four widgets |
+
+  **Rule: a `QLineEdit` embedded inside a `NoFocus` widget (or shown
+  via a `QStackedLayout` alongside one) cannot rely on `focusOutEvent`
+  to notice it has been "clicked away from" — whatever owns the
+  aggregate state must close it explicitly on every path that changes
+  what is selected/visible.** The click that triggers the close keeps
+  its own normal effect (e.g. still switches channels) — closing is a
+  side effect of the SAME call, never a separate "first click only
+  closes" step. **A second finding from the same screenshot — the open
+  editor's amber border looked missing — was investigated (static
+  review AND pixel-level `QWidget.grab()` rendering, including
+  reproducing the exact click-away sequence) and could not be
+  reproduced: the border (`#e8b23a`, 2px, matching the selected chip's
+  own border width) rendered correctly in every case tried.** No code
+  change was made for that part; see `test_packet_screen.py::
+  TestChipEditorBorder` for the pixel-level regression guard kept in
+  its place.
 - **Chip colour states, and the same semantics for MHEARD (P44,
   2026-09-25).** Four states, one meaning everywhere in the Packet screen
   (chip fill AND MHEARD's connected-station colour):
