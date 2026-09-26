@@ -88,6 +88,14 @@ _CMD_RESTART  = b"RESTART\r\n"
 _CMD_HOST_3   = b"HOST 3\r"
 _CMD_HPOLL_Y  = bytes([0x01, 0x4F, ord('H'), ord('P'), ord('Y'), 0x17])
 _HPOLL_ACK    = bytes([0x01, 0x4F, ord('H'), ord('P'), 0x00, 0x17])
+# P54.3: the PK-232 uses SOFTWARE flow control (XON $11 / XOFF $13) - the
+# boot banner's own leading bytes prove it sends XON there
+# ('... 0d 0a 11 41 45 41 ...', hw capture). A TNC stopped by a stray
+# $13 (e.g. a frame byte that leaked through during Host Mode) keeps
+# echoing every character but stops sending anything it generates
+# itself (a prompt, a banner) - indistinguishable from "not responding"
+# by steps 1/2 alone. $11 releases it.
+_XON_BYTE     = 0x11
 
 # TNC response classifiers
 _BANNER_MARKERS  = (b"AEA", b"Ver.", b"PK-232", b"Copyright")
@@ -201,6 +209,38 @@ def _wakeup_log_message(resp: bytes) -> tuple[int, str]:
         logging.WARNING,
         f"wakeup answered without prompt ({len(resp)} bytes) -- "
         f"continuing: {resp.hex(' ')}",
+    )
+
+
+def _port_config_line(port, port_name: str, baudrate: int) -> str:
+    """One line naming every port parameter that affects behaviour
+    (P54.1) - logged right after open(), again after this app's own
+    post-open adjustments (P54.2's dtr/rts/buffer resets - line states
+    can change during and after opening), and once more right before
+    close(). Without this, a hardware run has nothing to compare
+    against besides "Port COM6 opened at 9600 baud" - not enough to
+    tell a genuine TNC problem apart from a difference in how THIS app
+    opens the port versus a terminal program that works (26.09.2026:
+    PuTTY got a prompt on the same port/baud with one Enter, the app did
+    not - the difference had to be in the port configuration, not the
+    TNC, and there was nothing in the log to actually show what that
+    configuration was).
+
+    getattr() throughout: some duck-typed test doubles do not define
+    every one of these attributes, and a missing value should show as
+    '?' in the log, never raise."""
+    bytesize = getattr(port, 'bytesize', '?')
+    parity   = getattr(port, 'parity', '?')
+    stopbits = getattr(port, 'stopbits', '?')
+    return (
+        f"port {port_name} @ {baudrate} Bd {bytesize}{parity}{stopbits}: "
+        f"xonxoff={getattr(port, 'xonxoff', '?')}, "
+        f"rtscts={getattr(port, 'rtscts', '?')}, "
+        f"dsrdtr={getattr(port, 'dsrdtr', '?')}, "
+        f"dtr={getattr(port, 'dtr', '?')}, "
+        f"rts={getattr(port, 'rts', '?')}, "
+        f"timeout={getattr(port, 'timeout', '?')}, "
+        f"write_timeout={getattr(port, 'write_timeout', '?')}"
     )
 
 
@@ -645,6 +685,15 @@ class SerialManager(QObject):
 
         xonxoff=False: XON ($11) must pass through unfiltered for HOST 3.
         rtscts=False:  PK-232 uses XON/XOFF flow control, not hardware handshaking.
+
+        P54.2: dtr/rts are now explicitly asserted HIGH (True), not left
+        clear (False, the pre-P54 setting) - the known-working
+        configuration a PuTTY session used on the same port/baud
+        (26.09.2026: PuTTY got a prompt with one Enter; the app, with
+        dtr/rts both False, did not, on the identical physical TNC).
+        This is this app's OWN port configuration, asserted the same way
+        every time - it does not by itself prove anything about the
+        TNC's state (see P54.3's XON stage for that).
         """
         if not PYSERIAL_AVAILABLE:
             self.status_message.emit("Error: pyserial not installed")
@@ -665,8 +714,23 @@ class SerialManager(QObject):
                 rtscts   = False,
                 dsrdtr   = False,
             )
-            self._serial.rts = False
-            self._serial.dtr = False
+            # P54.1: state right after open(), before this app's own
+            # further adjustments below.
+            logger.info(
+                "Port config on open: %s",
+                _port_config_line(self._serial, port_name, baudrate),
+            )
+            self._serial.dtr = True
+            self._serial.rts = True
+            self._serial.reset_input_buffer()
+            self._serial.reset_output_buffer()
+            # P54.1: state after this app's own adjustments - the line
+            # states above can change during/after opening, so this is
+            # the configuration the connection actually runs with.
+            logger.info(
+                "Port config after reset: %s",
+                _port_config_line(self._serial, port_name, baudrate),
+            )
             logger.info("Port %s opened at %d baud", port_name, baudrate)
             self.status_message.emit(f"Connected: {port_name} @ {baudrate} Bd")
             self._reader = _ReaderThread(
@@ -734,6 +798,18 @@ class SerialManager(QObject):
         if self._serial:
             try:
                 if self._serial.is_open:
+                    # P54.1: the end-of-life configuration - completes
+                    # the "on open" / "after reset" pair connect_port()
+                    # already logs, so a hardware run has the port's
+                    # configuration at every stage, not just at open.
+                    logger.info(
+                        "Port config at close: %s",
+                        _port_config_line(
+                            self._serial,
+                            getattr(self._serial, 'port', '?'),
+                            getattr(self._serial, 'baudrate', '?'),
+                        ),
+                    )
                     self._serial.close()
                     logger.info("Serial port closed")
             except Exception as exc:
@@ -866,6 +942,18 @@ class SerialManager(QObject):
              - only the COMMAND character actually escapes it. Matches
              what tools/hw_check.py's Session.normalize() has done since
              P21 for exactly this reason.
+          2c. (P54.3) XON ($11) + CR, then a second bare CR if that
+             alone did not reach 'cmd:' (P54.4) -> 'cmd:' -> verbose,
+             was stopped by software flow control (XOFF). The PK-232
+             uses XON/XOFF (its own boot banner proves it, see
+             _XON_BYTE's own comment) - a TNC stopped by a stray XOFF
+             keeps echoing every character but sends nothing it
+             generates itself, the identical "echo, no cmd:" shape
+             steps 1/2/2b already see. Confirmed 26.09.2026: PuTTY got
+             a prompt with one Enter on the same TNC/port/baud with no
+             XON needed at all - this step is defense in depth for
+             whatever P54.2's own dtr/rts correction does not already
+             fix, not the primary repair.
           3. An HPOLL query frame (build_command(b'HP'), no argument) ->
              any $4F-CTL frame back -> Host Mode confirmed. Step 3 must
              ACTIVELY ask: in Host Mode the TNC sends nothing on its own
@@ -989,6 +1077,53 @@ class SerialManager(QObject):
                     "char) - TNC was in converse mode"
                 )
                 self._finish_verbose_init(resp2b)
+                return
+
+            # ── STEP 2c (P54.3): XON — the TNC uses SOFTWARE flow
+            # control (its own boot banner proves it: '... 0d 0a 11 41
+            # 45 41 ...', that $11 right before the "AEA" banner text is
+            # a self-generated XON). A TNC stopped by a stray XOFF
+            # ($13) - e.g. a Host Mode frame byte that leaked through -
+            # keeps echoing every typed character but sends nothing it
+            # generates itself (a prompt, a banner): exactly the same
+            # "echo, no cmd:" shape steps 1/2/2b already saw, and the
+            # SAME shape a genuinely stuck or Converse-mode TNC
+            # produces - only actually sending XON can tell this case
+            # apart from those. Confirmed 26.09.2026: PuTTY, on the same
+            # physical TNC/port/baud with the app's own dtr/rts left
+            # False (the pre-P54.2 setting), got a prompt with a single
+            # Enter and no XON at all - so this step is defense, not the
+            # only fix (see P54.2's own dtr/rts correction, which alone
+            # may already prevent this). Two bytes, harmless if the TNC
+            # was never stopped. ─────────────────────────────────────
+            logger.info("Init: step 2c - XON, then CR (TNC may be flow-stopped)")
+            port.write(bytes([_XON_BYTE]))
+            port.flush()
+            time.sleep(0.1)
+            port.write(b"\r")
+            port.flush()
+            resp2c = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
+            logger.debug("Init: step 2c response (%d B): %s", len(resp2c), resp2c.hex(' '))
+            if b"cmd:" in resp2c:
+                logger.info("Init: step 2c - XON released a stopped TNC")
+                self._finish_verbose_init(resp2c)
+                return
+
+            # P54.4: a second bare CR - cheap, and covers the case that
+            # the first CR only completed an incomplete input line
+            # rather than actually requesting a fresh prompt. No own
+            # XON resend; if the first one was going to help, it already
+            # would have by now.
+            port.write(b"\r")
+            port.flush()
+            resp2c2 = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
+            logger.debug(
+                "Init: step 2c second CR response (%d B): %s",
+                len(resp2c2), resp2c2.hex(' '),
+            )
+            if b"cmd:" in resp2c2:
+                logger.info("Init: step 2c - second CR reached cmd: after XON")
+                self._finish_verbose_init(resp2c2)
                 return
 
             # ── STEP 3: HPOLL query frame — the only way to reach a TNC
