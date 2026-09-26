@@ -49,7 +49,7 @@ LERNMODUS — three non-obvious design points
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QWidget, QSizePolicy
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +226,33 @@ def apply_tooltips(widget: QWidget) -> None:
         from pk232py.ui.tooltips import apply_tooltips
         ...
         apply_tooltips(self)
+
+    P55.E: also asserts an Expanding vertical (and horizontal) size
+    policy on *widget* itself. This call is already the one place every
+    opmode screen's __init__() reaches (RttyBaseScreen, AmtorScreen,
+    PactorScreen, MorseScreen, PacketBaseScreen, NavtexScreen,
+    SignalScreen, FaxScreen each call it exactly once) - piggybacking the
+    size-policy fix onto it, per the spec's own explicit ask for a
+    single touch point, avoids adding a second near-identical call to
+    all eight files just to keep the two concerns in separate-looking
+    functions. A plain QWidget defaults to Preferred/Preferred, which
+    still happened to fill the whole window correctly in every
+    configuration checked while investigating a reported "empty area
+    below the macro buttons" (26.09.2026) - so this is defensive
+    hardening for whatever configuration that screenshot was actually
+    taken in, not a fix for a reproduced code bug: it guarantees the
+    screen always claims whatever height _opmode_stack (a
+    QStackedWidget) gives it, rather than only its sizeHint(), so each
+    screen's own rx_display (or, for Packet, the RX/TX splitter)
+    stretch=1 has the full available height to distribute and the
+    macro row - the last, unstretched item in every screen's own
+    QVBoxLayout - ends up anchored at the bottom rather than floating
+    above unclaimed space.
     """
+    widget.setSizePolicy(
+        QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+    )
+
     def _set(mapping: dict[str, str]) -> None:
         for attr, tip in mapping.items():
             w = getattr(widget, attr, None)
