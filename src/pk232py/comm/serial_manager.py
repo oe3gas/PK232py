@@ -539,6 +539,13 @@ class SerialManager(QObject):
         self._port_factory     = None
         # TNC boot banner — captured during init for capability detection
         self._tnc_banner: bytes = b""
+        # P59.A: whether THIS init/recovery run captured a boot banner
+        # saying "is using default values" — unlike tnc_defaults, which
+        # keeps the last banner ever seen and never resets, this is an
+        # EVENT flag ("the TNC was just powered on"), not a STATE flag
+        # ("which firmware/defaults it has"). Reset at the start of every
+        # _init_tnc_thread()/_recovery_thread() run; see fresh_boot_defaults.
+        self._banner_this_init: bool = False
         # MailDrop capability — unlike has_pactor, not in the banner, so
         # this stays None until detect_maildrop() actively queries it
         # (P37). None means "not yet detected", never "no MailDrop".
@@ -609,6 +616,18 @@ class SerialManager(QObject):
         if its query gave no clear answer - callers must treat None as
         "unknown, assume capable", never as "no MailDrop"."""
         return self._has_maildrop
+
+    @property
+    def fresh_boot_defaults(self) -> bool:
+        """True only if THIS init/recovery run captured a boot banner
+        that said 'is using default values' (P59). Unlike tnc_defaults,
+        which keeps the last banner ever seen (B.3: sticky, unusable as
+        a trigger — it would still read True on every later reconnect or
+        recovery even once the TNC has long since been given real
+        parameters), this is reset at the start of every init/recovery
+        run — the only safe trigger for "the TNC was just powered on
+        and its MailDrop is empty"."""
+        return self._banner_this_init and self.tnc_defaults is True
 
     def detect_maildrop(self, timeout: float = 3.0) -> Optional[bool]:
         """Actively query MAILDROP (no argument) in verbose mode (P37) and
@@ -996,6 +1015,12 @@ class SerialManager(QObject):
         """
         try:
             port = self._serial
+            # P59.A: reset the per-run banner flag before the first write
+            # of THIS run — same phase as _take_over_read_path() just
+            # below. _recovery_thread() calls this method directly (it
+            # has no detection chain of its own), so resetting it here
+            # covers both callers without a second copy of the reset.
+            self._banner_this_init = False
             self._take_over_read_path()
 
             # ── Read until marker (P52.1) ────────────────────────────────
@@ -1309,6 +1334,7 @@ class SerialManager(QObject):
         wakeup did."""
         if any(m in resp for m in _BANNER_MARKERS):
             self._tnc_banner = resp
+            self._banner_this_init = True
             logger.info(
                 "TNC banner captured: PACTOR=%s (%d bytes)",
                 b"PACTOR" in resp, len(resp),

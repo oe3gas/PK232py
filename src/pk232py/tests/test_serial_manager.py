@@ -409,6 +409,115 @@ class TestRecoverySequence:
         assert FRAME_RECOVERY in port.writes
 
 
+def _run_again(sm: SerialManager, responder, recovery: bool = False) -> "_FakePort":
+    """Re-run the detection chain (or recovery) on an EXISTING
+    SerialManager instance with a fresh _FakePort - simulates a LATER
+    reconnect/recovery in the same process (P59.A: proving
+    fresh_boot_defaults resets every run while tnc_defaults/tnc_release/
+    has_pactor stay sticky, B.3)."""
+    if sm._reader:
+        sm._reader.stop()
+        sm._reader.join(timeout=1.0)
+        sm._reader = None
+    port = _FakePort(responder)
+    sm._serial = port
+    try:
+        if recovery:
+            sm._recovery_thread()
+        else:
+            sm._init_tnc_thread()
+    finally:
+        if sm._reader:
+            sm._reader.stop()
+            sm._reader.join(timeout=1.0)
+    return port
+
+
+class TestFreshBootDefaults:
+    """P59.A - fresh_boot_defaults is an EVENT flag (reset at the start
+    of every _init_tnc_thread()/_recovery_thread() run), never the
+    sticky tnc_defaults STATE flag it is derived from - the whole point
+    being that a restore trigger checking it can never fire twice for
+    the same power-on, and never fires at all for a later reconnect/
+    recovery against a TNC that has been running fine the whole time."""
+
+    def test_true_after_init_with_defaults_banner(self):
+        def responder(data):
+            if data == b"*":
+                return _DEVICE_B_BANNER
+            return b""
+
+        sm, _port, _messages = _run_detection(responder)
+
+        assert sm.fresh_boot_defaults is True
+        assert sm.tnc_defaults is True
+
+    def test_false_after_a_later_init_with_no_banner_state_stays_sticky(self):
+        def responder1(data):
+            if data == b"*":
+                return _DEVICE_B_BANNER
+            return b""
+
+        sm, _port, _m = _run_detection(responder1)
+        assert sm.fresh_boot_defaults is True
+
+        # A later reconnect on the SAME instance: the TNC is already
+        # awake, answers a bare CR with cmd:, no banner at all this time.
+        def responder2(data):
+            if data == b"\r":
+                return b"\r\ncmd:"
+            return b""
+
+        _run_again(sm, responder2)
+
+        assert sm.fresh_boot_defaults is False   # B.3: the event resets
+        assert sm.tnc_defaults is True            # B.3: the state is sticky
+
+    def test_banner_without_defaults_phrase_is_false(self):
+        def responder(data):
+            if data == b"*":
+                return b"AEA PK-232 ...\r\nRelease 11.SEP.95\r\n\r\ncmd:"
+            return b""
+
+        sm, _port, _m = _run_detection(responder)
+
+        assert sm.fresh_boot_defaults is False
+        assert sm.tnc_defaults is False
+
+    def test_no_banner_at_all_is_false(self):
+        def responder(data):
+            if data == b"\r":
+                return b"\r\ncmd:"
+            return b""
+
+        sm, _port, _m = _run_detection(responder)
+
+        assert sm.fresh_boot_defaults is False
+        assert sm.tnc_defaults is None
+
+    def test_recovery_resets_the_flag_too(self):
+        def responder1(data):
+            if data == b"*":
+                return _DEVICE_B_BANNER
+            return b""
+
+        sm, _port, _m = _run_detection(responder1)
+        assert sm.fresh_boot_defaults is True
+
+        # Recovery afterwards gets no banner at all - the flag must not
+        # still read True from the earlier init just because tnc_defaults
+        # itself (sticky) still does.
+        def responder2(data):
+            if data == b"*":
+                return b"cmd:"
+            return b""
+
+        _run_again(sm, responder2, recovery=True)
+
+        assert sm.fresh_boot_defaults is False
+        assert sm.tnc_defaults is True
+
+
 class _StubReader:
     """Records stop()/join() without any real thread - lets a test assert
     ordering (was the reader stopped BEFORE a given write?) without racing
