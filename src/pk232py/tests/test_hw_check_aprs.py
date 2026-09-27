@@ -317,6 +317,40 @@ class TestAprsDryRun:
         assert ("T140", "INFO", "dry-run, nothing sent") in log.findings
 
 
+class TestAprsDryRunShowsFollowUpSteps:
+    """P62a, Teil E - the --dry-run preview must show the NEW steps
+    each follow-up part adds, not just that a dry-run happened at all."""
+
+    def test_aprs_query_preview_shows_a6_a7_a8(self, capsys):
+        session, log = _dry_run_session()
+        hw_check.test_aprs_query(session, log)
+        out = capsys.readouterr().out
+        assert "A.6" in out
+        assert "A.7" in out
+        assert "A.8" in out
+        # The PL frame (A.8): SOH 4F 'PL' '128' ETB.
+        assert hw_check.HostModeProtocol.build_command(
+            b"PL", b"128"
+        ).hex(" ").upper() in out
+
+    def test_aprs_tx_preview_shows_r6_and_paclen_handling(self, capsys):
+        session, log = _dry_run_session()
+        hw_check.test_aprs_tx(session, log)
+        out = capsys.readouterr().out
+        assert "(R6)" in out
+        assert "PACLEN" in out
+        # R6 reuses R4's own info field verbatim.
+        assert hw_check.build_aprs_r4_info() in out
+
+    def test_aprs_reject_preview_mentions_direwolf_and_agw(self, capsys):
+        session, log = _dry_run_session()
+        hw_check.test_aprs_reject(session, log)
+        out = capsys.readouterr().out
+        assert "Direwolf" in out
+        assert "AGW" in out
+        assert "software" in out
+
+
 class TestUnFrameComesFromHostModeProtocol:
     """P62, Teil D - the UN frame aprs_query (A.3) and aprs_tx build must
     be HostModeProtocol.cmd_unproto()'s own bytes, never a second,
