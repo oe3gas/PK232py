@@ -326,7 +326,8 @@ class MailDropDialog(QDialog):
 
         *auto_restore* (P59, C.4) — True when MainWindow opened this
         dialog to restore the local archive after the TNC came up at
-        factory defaults (fresh_boot_defaults). It changes three things:
+        factory defaults (a one-shot power-on event, consumed exactly
+        once per power cycle - P60). It changes three things:
         the dialog opens the session itself instead of waiting for a
         button click, the banner names what it is doing throughout the
         whole session, and the first listing in ACTIVE starts a restore
@@ -352,10 +353,14 @@ class MailDropDialog(QDialog):
         self._pending_op: Optional[str] = None   # None|sync|restore|preview|kill
         self._sync_queue: list[int] = []
         self._sync_then: Optional[Callable[[], None]] = None
+        self._sync_ends_session = False
         self._sync_total = 0
         self._sync_done = 0
         self._restore_queue: list[_Row] = []
         self._restore_then: Optional[Callable[[], None]] = None
+        self._restore_ends_session = False
+        self._restore_total = 0
+        self._restore_done = 0
         self._closing_confirmed = False
         self.last_have_mail: Optional[bool] = None   # P39.5, from prompt_info
 
@@ -857,6 +862,7 @@ class MailDropDialog(QDialog):
                 return False
             self._restore_queue.clear()
             self._restore_then = self._end_session
+            self._restore_ends_session = True
             self._closing_confirmed = True
             return False
 
@@ -907,7 +913,8 @@ class MailDropDialog(QDialog):
                     f"before leaving..."
                 )
                 self.lbl_status.setStyleSheet(f"color: {_muted()};")
-                self._start_sync(queue, then=self.session.leave)
+                self._start_sync(queue, then=self.session.leave,
+                                 ends_session=True)
                 return
         self.session.leave()
 
@@ -953,7 +960,8 @@ class MailDropDialog(QDialog):
             self._auto_restore_started = True
             archive_rows = [r for r in self._rows if r.where == WHERE_ARCHIVE]
             candidates = self._restore_candidates(archive_rows)
-            self._start_restore(candidates, then=self._finish_auto_restore)
+            self._start_restore(candidates, then=self._finish_auto_restore,
+                                ends_session=True)
 
     def _finish_auto_restore(self) -> None:
         """P59, C.4.3/C.4.5: once the auto-restore queue is empty (or was
@@ -1009,6 +1017,7 @@ class MailDropDialog(QDialog):
 
     def _on_stored(self, number: int) -> None:
         if self._pending_op == "restore":
+            self._restore_done += 1
             self._advance_restore()
             return
         self.lbl_status.setText(f"Stored as #{number}.")
@@ -1027,13 +1036,20 @@ class MailDropDialog(QDialog):
             total = self._sync_total
             self._sync_queue.clear()
             then, self._sync_then = self._sync_then, None
+            ends_session = self._sync_ends_session
+            self._sync_ends_session = False
             self._pending_op = None
             self._update_toolbar_enablement()
-            # P59, C.1: a manual sync (then=session.list) stops here, as
-            # before - only a sync that was itself the way OUT of the
-            # session (then=session.leave, from _end_session) still has
-            # to run its continuation, or packet operation never resumes.
-            if then is not None and then == self.session.leave:
+            # P59, C.1/P60, B: a manual sync (ends_session=False, as
+            # started by _on_sync_clicked) stops here, as before - only
+            # a sync that was itself the way OUT of the session
+            # (ends_session=True, started by _end_session) still has to
+            # run its continuation, or packet operation never resumes.
+            # Marked explicitly by the caller, not inferred by comparing
+            # `then` against self.session.leave — the continuation of an
+            # ends_session sync/restore can itself be _end_session (P60,
+            # B.1, a stopped auto-restore), never literally that method.
+            if ends_session and then is not None:
                 self.lbl_status.setText(
                     f"Sync incomplete: {done} of {total} archived - "
                     f"leaving the session anyway."
@@ -1042,11 +1058,27 @@ class MailDropDialog(QDialog):
                 then()
             return
         if self._pending_op == "restore":
+            done = self._restore_done
+            total = self._restore_total
             self._restore_queue.clear()
             then, self._restore_then = self._restore_then, None
+            ends_session = self._restore_ends_session
+            self._restore_ends_session = False
             self._pending_op = None
             self._update_toolbar_enablement()
-            if then is not None and then == self.session.leave:
+            # P60, B.2: a manual restore (ends_session=False, from
+            # _on_restore_clicked) stops here, unchanged from before P59
+            # ever added an ends-session concept. An ends_session restore
+            # (auto-restore from _on_listing, or a stopped auto-restore
+            # whose continuation _request_close() switched to
+            # _end_session) must still call its continuation on failure,
+            # or the session (and packet operation) never resumes.
+            if ends_session and then is not None:
+                self.lbl_status.setText(
+                    f"Restore incomplete: {done} of {total} restored - "
+                    f"ending the session."
+                )
+                self.lbl_status.setStyleSheet(f"color: {_muted()};")
                 then()
             return
         if self._pending_op is not None:
@@ -1311,13 +1343,21 @@ class MailDropDialog(QDialog):
     # list() - the manual buttons below pass then=self.session.list (the
     # pre-P59 behaviour, unchanged), _end_session() passes
     # then=self.session.leave, and auto-restore (C.4) passes
-    # then=self._finish_auto_restore. Only ONE of the two queues can ever
-    # be "then=session.leave" at a time (sync during _end_session OR
-    # restore during a stopped auto-restore, never both), so _on_failed()
-    # checking each queue's own _*_then independently is enough.
+    # then=self._finish_auto_restore.
+    #
+    # P60, B: whether that continuation must still run on FAILURE (not
+    # just on a normal empty-queue finish, which always runs it either
+    # way) is an explicit ends_session flag the caller passes, never
+    # inferred by comparing `then` against self.session.leave - that
+    # comparison was dead code to begin with (neither _end_session() nor
+    # auto-restore ever passes literally that method) and would in any
+    # case not have covered _request_close()'s own mid-restore
+    # continuation switch to _end_session.
 
-    def _start_sync(self, numbers: list, then: Callable[[], None]) -> None:
+    def _start_sync(self, numbers: list, then: Callable[[], None], *,
+                    ends_session: bool = False) -> None:
         self._sync_then = then
+        self._sync_ends_session = ends_session
         self._sync_total = len(numbers)
         self._sync_done = 0
         if not numbers:
@@ -1341,8 +1381,12 @@ class MailDropDialog(QDialog):
         self.lbl_status.setStyleSheet(f"color: {_muted()};")
         self.session.read(number)
 
-    def _start_restore(self, rows: list, then: Callable[[], None]) -> None:
+    def _start_restore(self, rows: list, then: Callable[[], None], *,
+                       ends_session: bool = False) -> None:
         self._restore_then = then
+        self._restore_ends_session = ends_session
+        self._restore_total = len(rows)
+        self._restore_done = 0
         if not rows:
             then()
             return

@@ -372,6 +372,95 @@ class TestAutoRestore:
         assert ("leave",) in session.calls
 
 
+class TestRestoreFailurePath:
+    """P60, B.2 - a restore's continuation must run on FAILURE exactly
+    when it is the way OUT of the session (auto-restore, or a stopped
+    auto-restore whose continuation _request_close() switched to
+    _end_session), and must NOT run for a manual restore - unchanged
+    from before P59 ever introduced continuations at all. Regresses the
+    dead by-identity comparison against the leave continuation that
+    docs/P60_Archive_Restore_Oneshot_Fix_Spec.md B.2 found (neither
+    _end_session() nor auto-restore ever passes literally that bound
+    method, so the old check never actually fired for either)."""
+
+    def _make_auto(self, tmp_path, scope: str = "all"):
+        session = FakeSession()
+        config = MailDropConfig(
+            archive_enabled=True, archive_path=str(tmp_path / "archive.db"),
+            archive_restore_scope=scope,
+        )
+        dlg = MailDropDialog(
+            FakeSerial(), FakeChannelBar(), "OE3GAS", config, session=session,
+            auto_restore=True,
+        )
+        return dlg, session
+
+    def _make_with_archive_only(self, tmp_path, scope: str = "all"):
+        session = FakeSession()
+        config = MailDropConfig(
+            archive_enabled=True, archive_path=str(tmp_path / "archive.db"),
+            archive_restore_scope=scope,
+        )
+        dlg = MailDropDialog(
+            FakeSerial(), FakeChannelBar(), "OE3GAS", config, session=session,
+        )
+        dlg._archive.add(_ENTRY_1, "body one")
+        dlg._archive.add(_ENTRY_2, "body two")
+        session.state_changed.emit("ACTIVE")
+        session.listing.emit([])   # nothing in the TNC - both archive-only
+        return dlg, session
+
+    def test_auto_restore_first_send_failure_calls_leave_with_incomplete_status(
+        self, tmp_path,
+    ):
+        dlg, session = self._make_auto(tmp_path)
+        dlg._archive.add(_ENTRY_1, "body one")
+        dlg._archive.add(_ENTRY_2, "body two")
+        session.state_changed.emit("ACTIVE")
+        session.listing.emit([])   # both are candidates
+        assert len([c for c in session.calls if c[0] == "send"]) == 1
+
+        session.failed.emit("mailbox full")
+
+        assert ("leave",) in session.calls
+        # No second send once the queue was cleared on failure.
+        assert len([c for c in session.calls if c[0] == "send"]) == 1
+        assert "Restore incomplete: 0 of 2 restored" in dlg.lbl_status.text()
+
+    def test_closing_mid_auto_restore_then_failed_still_calls_leave(
+        self, tmp_path, monkeypatch,
+    ):
+        dlg, session = self._make_auto(tmp_path)
+        dlg._archive.add(_ENTRY_1, "body one")
+        dlg._archive.add(_ENTRY_2, "body two")
+        session.state_changed.emit("ACTIVE")
+        session.listing.emit([])
+        assert len([c for c in session.calls if c[0] == "send"]) == 1
+
+        monkeypatch.setattr(
+            QMessageBox, "question",
+            staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+        )
+        dlg.reject()   # Esc/X during the restore -> continuation becomes
+                       # _end_session, not the original _finish_auto_restore
+
+        session.failed.emit("mailbox full")
+
+        assert ("leave",) in session.calls
+        assert len([c for c in session.calls if c[0] == "send"]) == 1
+
+    def test_manual_restore_failure_does_not_call_leave(self, tmp_path):
+        dlg, session = self._make_with_archive_only(tmp_path)
+        dlg.btn_restore.click()
+        assert len([c for c in session.calls if c[0] == "send"]) == 1
+
+        session.failed.emit("mailbox full")
+
+        # Unchanged from before P59/P60: a manual restore's failure never
+        # ends the session on its own - the operator is right there.
+        assert ("leave",) not in session.calls
+
+
 class TestArchiveGating:
 
     def test_empty_archive_shows_hint_and_locks_restore(self, tmp_path):
