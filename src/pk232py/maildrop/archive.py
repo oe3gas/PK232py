@@ -258,10 +258,13 @@ def filter_restore_scope(
     """Narrow *messages* (archive-only candidates) to what
     MailDropConfig.archive_restore_scope (P59) actually permits
     restoring: 'all' -> unchanged, 'unread' -> only messages whose
-    read_flag was False AT ARCHIVING TIME (mark_read() is not called
-    anywhere in this codebase yet — that is not a bug in this function,
-    it just means 'unread' currently behaves like 'all' until something
-    starts marking messages read), 'none' -> always []. An unknown scope
+    read_flag was False AT ARCHIVING TIME (P60, B.3, correcting an
+    earlier version of this docstring: 'unread' uses the read flag as
+    the TNC listed it when the message was archived. mark_read() is not
+    called anywhere yet, so a message read later inside PK232PY stays
+    'unread' here — that is a real, working filter, not a no-op; see
+    test_maildrop_archive.py::test_unread_excludes_the_read_flag),
+    'none' -> always []. An unknown scope
     raises ValueError rather than silently falling back to 'all' — a
     typo'd or future config value must not restore more than the
     operator asked for.
