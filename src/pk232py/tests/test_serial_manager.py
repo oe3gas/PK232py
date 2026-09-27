@@ -518,6 +518,40 @@ class TestFreshBootDefaults:
         assert sm.tnc_defaults is True
 
 
+class TestConsumeFreshBootDefaults:
+    """P60, A.1 - consume_fresh_boot_defaults() reads fresh_boot_defaults
+    and clears it in one step, so a later host_mode_changed(True) in the
+    same power cycle (leaving a MailDrop session, "Enter Host Mode" from
+    the menu - neither of which runs _init_tnc_thread() again) reads
+    False instead of re-arming an automatic archive restore (P60,
+    B.1)."""
+
+    def test_true_once_then_false_but_tnc_defaults_stays_sticky(self):
+        def responder(data):
+            if data == b"*":
+                return _DEVICE_B_BANNER
+            return b""
+
+        sm, _port, _m = _run_detection(responder)
+
+        assert sm.consume_fresh_boot_defaults() is True
+        assert sm.consume_fresh_boot_defaults() is False
+        assert sm.tnc_defaults is True   # sticky state, untouched by consume
+
+    def test_true_again_after_a_new_init_with_a_fresh_banner(self):
+        def responder(data):
+            if data == b"*":
+                return _DEVICE_B_BANNER
+            return b""
+
+        sm, _port, _m = _run_detection(responder)
+        assert sm.consume_fresh_boot_defaults() is True
+
+        _run_again(sm, responder)   # a genuinely new power-on/init run
+
+        assert sm.consume_fresh_boot_defaults() is True
+
+
 class _StubReader:
     """Records stop()/join() without any real thread - lets a test assert
     ordering (was the reader stopped BEFORE a given write?) without racing

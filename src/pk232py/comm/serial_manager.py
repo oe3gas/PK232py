@@ -629,6 +629,19 @@ class SerialManager(QObject):
         and its MailDrop is empty"."""
         return self._banner_this_init and self.tnc_defaults is True
 
+    def consume_fresh_boot_defaults(self) -> bool:
+        """Return fresh_boot_defaults and clear it (P60). An event is
+        handled once: every later host_mode_changed(True) in the same
+        power cycle - leaving a MailDrop session, "Enter Host Mode" from
+        the menu, neither of which runs _init_tnc_thread() again - must
+        read False afterwards. Only a new init/recovery run with a new
+        banner can set it again. The property above stays available,
+        read-only, for display/tests; this method is the only place
+        that ever clears it."""
+        fresh = self.fresh_boot_defaults
+        self._banner_this_init = False
+        return fresh
+
     def detect_maildrop(self, timeout: float = 3.0) -> Optional[bool]:
         """Actively query MAILDROP (no argument) in verbose mode (P37) and
         cache the result in has_maildrop. Must be called while already in
