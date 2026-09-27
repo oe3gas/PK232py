@@ -3915,15 +3915,24 @@ def test_aprs_query(session: Session, log: RunLog) -> None:
 
 def _aprs_tx_round_spec(round_name: str) -> tuple[str, str, Optional[str]]:
     """Returns (unproto_path, info_field, via_digis_or_None) for one
-    aprs_tx round (P62, Teil B's table). A function, not a static table,
-    because R1/R2/R5's info fields carry the current time (matching
-    T101's own PK232PY T101 <round> HH:MM:SS convention)."""
+    aprs_tx round (P62, Teil B's table; P62a Teil C.3 adds R6). A
+    function, not a static table, because R1/R2/R5's info fields carry
+    the current time (matching T101's own PK232PY T101 <round>
+    HH:MM:SS convention).
+
+    P62a C.4: R1/R2/R5 (the plain timestamp rounds) start with
+    '>Test PK232PY ...', not '>PK232PY ...' - Direwolf misread the
+    latter as a status report with an embedded Maidenhead locator
+    ('PK23' + overlay '2' + symbol 'P', hence "Found 'Y' instead of
+    space", T139, 27.09.2026): an info field whose first four
+    characters are two letters then two digits gets misread this way.
+    R3/R4/R6 do not start with that shape and are unaffected."""
     now = f"{datetime.datetime.now():%H:%M:%S}"
     if round_name == "R1":
-        return "APZ232", f">PK232PY P62 R1 {now}", None
+        return "APZ232", f">Test PK232PY P62 R1 {now}", None
     if round_name == "R2":
         return (
-            "APZ232 VIA WIDE1-1,WIDE2-1", f">PK232PY P62 R2 {now}",
+            "APZ232 VIA WIDE1-1,WIDE2-1", f">Test PK232PY P62 R2 {now}",
             "WIDE1-1,WIDE2-1",
         )
     if round_name == "R3":
@@ -3931,11 +3940,16 @@ def _aprs_tx_round_spec(round_name: str) -> tuple[str, str, Optional[str]]:
     if round_name == "R4":
         return "APZ232", build_aprs_r4_info(), None
     if round_name == "R5":
-        return "APZ232", f">PK232PY P62 R5 {now}", None
+        return "APZ232", f">Test PK232PY P62 R5 {now}", None
+    if round_name == "R6":
+        # P62a C.3: reuses R4's own info field verbatim - R6 measures
+        # whether a HIGHER PACLEN keeps the same payload in ONE frame,
+        # not a new payload.
+        return "APZ232", build_aprs_r4_info(), None
     raise ValueError(round_name)
 
 
-_APRS_TX_ROUNDS = ("R1", "R2", "R3", "R4", "R5")
+_APRS_TX_ROUNDS = ("R1", "R2", "R3", "R4", "R5", "R6")
 
 
 def test_aprs_tx(session: Session, log: RunLog) -> None:
@@ -3980,8 +3994,10 @@ def test_aprs_tx(session: Session, log: RunLog) -> None:
             "[dry-run] would normalize(), check VHF/HBAUD are 1200 Bd "
             "(offering to set them for this run), set UNPROTO via UN "
             "in Host Mode for each round, TRANSMIT a UI frame on "
-            "channel 0, read the decoder output back as one pasted "
-            "block, then restore UNPROTO/CFROM/VHF/HBAUD:"
+            "channel 0 (R3 with PACLEN 128 for itself, R6 with the "
+            "operator-given max PACLEN for itself, both restored right "
+            "after), read the decoder output back as one pasted block, "
+            "then restore UNPROTO/CFROM/VHF/HBAUD:"
         )
         for round_name in _APRS_TX_ROUNDS:
             _path, info, _via = _aprs_tx_round_spec(round_name)
@@ -4053,6 +4069,47 @@ def test_aprs_tx(session: Session, log: RunLog) -> None:
                     session._pump(0.5)
                 finally:
                     session.exit_host_mode()
+
+            # P62a C.2: R3 sets PACLEN 128 for ITSELF ONLY (restored
+            # right after, via run_with_restore) so it measures
+            # character-fidelity alone, never mixed up with whatever
+            # this device's own configured PACLEN happens to be - the
+            # bug that invalidated the first real R3 run (27.09.2026,
+            # Device B, PACLEN 64: the 106-char probe itself split
+            # into 2 frames). R4 deliberately stays at the device's OWN
+            # PACLEN - it measures the split, so changing PACLEN out
+            # from under it would defeat the point of R4 itself.
+            if round_name == "R3":
+                run_with_restore(
+                    command="PACLEN",
+                    query=lambda: session.query("PACLEN"),
+                    restore=lambda v: session.set_verbose("PACLEN", v),
+                    action=lambda: session.set_verbose("PACLEN", "128"),
+                    log=log,
+                )
+
+            # P62a C.3: R6 needs the largest PACLEN A.7 (aprs_query)
+            # found actually accepted, in THIS power-on session - but
+            # aprs_query and aprs_tx are separate process invocations,
+            # so there is no reliable way for this one to know whether
+            # (or what) an earlier aprs_query run found; always asking
+            # is the honest fallback the spec itself describes for
+            # exactly that case, applied unconditionally rather than
+            # attempting to guess session continuity.
+            if round_name == "R6":
+                paclen_max = input(
+                    "R6 needs the largest PACLEN value A.7 (aprs_query) "
+                    "found accepted in this power-on session. If "
+                    "unknown, run aprs_query first, or answer with a "
+                    "known-safe value. PACLEN for R6? [128] "
+                ).strip() or "128"
+                run_with_restore(
+                    command="PACLEN",
+                    query=lambda: session.query("PACLEN"),
+                    restore=lambda v: session.set_verbose("PACLEN", v),
+                    action=lambda v=paclen_max: session.set_verbose("PACLEN", v),
+                    log=log,
+                )
 
             session.enter_host_mode()
             try:
