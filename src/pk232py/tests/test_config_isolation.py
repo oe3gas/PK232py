@@ -80,3 +80,36 @@ class TestRealConfigFileIsNeverTouched:
                 "the real config file's contents changed - the "
                 "isolate_config_path autouse fixture did not take effect"
             )
+
+
+class TestQSettingsIsolation:
+    """P61, Teil B - QSettings("OE3GAS", APP_TITLE) (main_window.py's
+    _save_window_geometry()/_restore_window_geometry(), window
+    position/size and splitter sizes) is the SAME class of gap P48
+    closed for the INI config file, at a SECOND storage location:
+    isolate_config_path only ever redirected ConfigManager's default
+    path, never QSettings, which resolves to the real Windows registry
+    (NativeFormat/UserScope) with no isolation of its own at all - every
+    test that calls MainWindow.close() (closeEvent() -> _save_window_
+    geometry(), unconditional) has been writing there the whole time.
+
+    Deliberately calls `main_window.QSettings(...)` - the module's own
+    attribute, resolved fresh at call time - rather than importing
+    QSettings directly from PyQt6.QtCore: that is exactly the lookup
+    _save_window_geometry() itself performs, and exactly what the
+    isolate_qsettings autouse fixture (conftest.py) monkeypatches; a
+    fresh `from PyQt6.QtCore import QSettings` here would silently miss
+    the redirect and always resolve to the real, unpatched class."""
+
+    def test_qsettings_filename_is_under_tmp_path(self, tmp_path):
+        from pk232py.ui import main_window
+
+        s = main_window.QSettings("OE3GAS", main_window.APP_TITLE)
+        # QSettings.fileName() always uses forward slashes, even on
+        # Windows - compare via as_posix() rather than a raw substring
+        # check against tmp_path's own (backslash, on Windows) str().
+        assert tmp_path.as_posix() in s.fileName(), (
+            f"QSettings resolved to {s.fileName()!r}, not under this "
+            f"test's own tmp_path ({tmp_path}) - the isolate_qsettings "
+            f"autouse fixture did not take effect"
+        )

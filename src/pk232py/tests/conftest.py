@@ -21,7 +21,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtCore import QCoreApplication, QEvent
+from PyQt6.QtCore import QCoreApplication, QEvent, QSettings
 from PyQt6.QtWidgets import QApplication
 
 from pk232py.config import CONFIG_PATH_ENV_VAR
@@ -81,3 +81,51 @@ def isolate_config_path(tmp_path, monkeypatch):
     path being given at all.
     """
     monkeypatch.setenv(CONFIG_PATH_ENV_VAR, str(tmp_path / "pk232py.ini"))
+
+
+@pytest.fixture(autouse=True)
+def isolate_qsettings(tmp_path, monkeypatch):
+    """P61, Teil B - the same gap isolate_config_path closed for the INI
+    config file (P48), at a SECOND storage location: QSettings("OE3GAS",
+    APP_TITLE) (main_window.py's window-geometry/splitter-size
+    persistence, _save_window_geometry()/_restore_window_geometry(),
+    called unconditionally from closeEvent()) has no isolation of its
+    own at all - every test that calls MainWindow.close() has been
+    writing there.
+
+    NOT solvable with QSettings.setDefaultFormat()/setPath() alone
+    (measured directly, both ways, while writing this fixture): the
+    two-argument constructor QSettings(organization, application) - the
+    exact form main_window.py uses - always uses QSettings::NativeFormat
+    regardless of setDefaultFormat(), and on Windows NativeFormat IS the
+    registry, which setPath() cannot redirect at all (there is no
+    filesystem path to redirect - confirmed empty-effect by direct
+    testing). The P61 spec's own setDefaultFormat()/setPath() recipe was
+    measured on Linux, where NativeFormat's registry equivalent is
+    itself just an INI-shaped file setPath() DOES redirect - it silently
+    does nothing on Windows.
+
+    Fixed by monkeypatching the NAME `QSettings` inside
+    pk232py.ui.main_window's own module namespace - Python resolves a
+    bare name at CALL time against the enclosing module's globals, so
+    every QSettings("OE3GAS", APP_TITLE) call _save_window_geometry()/
+    _restore_window_geometry() makes is redirected, with main_window.py
+    itself never edited. The replacement always requests
+    Format.IniFormat/Scope.UserScope explicitly (never relying on
+    defaultFormat()) and always points at THIS test's own tmp_path -
+    genuinely isolated on every platform, not just the ones where the
+    registry-based recipe happens to also be a file.
+    """
+    def _isolated_qsettings(organization: str, application: str) -> QSettings:
+        return QSettings(
+            QSettings.Format.IniFormat, QSettings.Scope.UserScope,
+            organization, application,
+        )
+
+    monkeypatch.setattr(
+        "pk232py.ui.main_window.QSettings", _isolated_qsettings,
+    )
+    QSettings.setPath(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope,
+        str(tmp_path / "qsettings"),
+    )
