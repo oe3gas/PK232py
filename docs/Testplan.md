@@ -2624,6 +2624,81 @@ not transfer (`docs/DEVICES.md`).
 
 ---
 
+### T138 — APRS query: UNPROTO/VIA and `UN`/`CF` in Host Mode (P62)
+
+`tools/hw_check.py aprs_query` — query-only, no transmission at all.
+Measures what P63 (the future APRS mode) needs to know and does not:
+whether a VIA digipeater path survives a verbose UNPROTO set/query
+round-trip, whether the SAME path can be set via the Host Mode `UN`
+frame (`HostModeProtocol.cmd_unproto()`, existing, never called from
+production code before this), whether `UN` can be read back in Host
+Mode at all, and how `CF NONE`/`CF ALL` (`HostModeProtocol.
+build_command(b"CF", ...)`) round-trip through `CFROM`. See
+`docs/P62_APRS_Measure_Spec.md`, Teil A, for the exact step list
+(A.1–A.6).
+
+Run: `python tools/hw_check.py --port COMx aprs_query`
+
+| Device | Result |
+|---|---|
+| A | ⬜ OPEN |
+| B | ⬜ OPEN |
+| C | ⬜ OPEN (optional — see Teil E) |
+
+**Status:** ⬜ OPEN.
+
+---
+
+### T139 — APRS TX: five UI rounds (P62)
+
+`tools/hw_check.py aprs_tx` — **TRANSMITS ON THE AIR.** Needs a second
+receiver with an AX.25 decoder (Direwolf or similar) and, per the
+tool's own printed warning, a simplex frequency with no APRS
+infrastructure (WIDEn-N paths are repeated by real digipeaters and
+gated to APRS-IS) — low power or a dummy load. Five rounds: plain UI
+frame (R1, repeats T101 per device), a VIA digipeater path (R2), a
+full-printable-ASCII-charset probe (R3 — also answers whether the TNC
+appends a CR to the info field), a 200-character length probe (R4 —
+does an over-PACLEN info field split into more than one UI frame?),
+and one round with `CFROM NONE` active (R5). See
+`docs/P62_APRS_Measure_Spec.md`, Teil B, for the exact info-field text
+of each round.
+
+Run: `python tools/hw_check.py --port COMx aprs_tx`
+
+| Device | R1 | R2 | R3 | R4 | R5 |
+|---|---|---|---|---|---|
+| A | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+
+**Status:** ⬜ OPEN.
+
+---
+
+### T140 — APRS reject: incoming connect under `CFROM NONE` (P62)
+
+`tools/hw_check.py aprs_reject` — no transmission of this tool's own; a
+**second station of the operator's choosing** calls this TNC's MYCALL
+first with `CFROM ALL` (C.1, baseline, 60s capture) and then with
+`CFROM NONE` (C.2, 90s capture). Records every Host Mode frame
+verbatim in both phases and asks the operator what the CALLING station
+saw and whether this TNC's own PTT/SEND LED lit up — INFO only, no
+PASS/FAIL (the question is what `CFROM NONE` actually does from both
+sides, not a predicted answer). See `docs/P62_APRS_Measure_Spec.md`,
+Teil C.
+
+Run: `python tools/hw_check.py --port COMx aprs_reject` (needs a second
+station/device — record which one in the log, the tool asks).
+
+| Device | Second station | C.1 (`CFROM ALL`) | C.2 (`CFROM NONE`) |
+|---|---|---|---|
+| A | | ⬜ | ⬜ |
+| B | | ⬜ | ⬜ |
+
+**Status:** ⬜ OPEN.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
