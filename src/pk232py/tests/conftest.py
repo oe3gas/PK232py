@@ -16,9 +16,55 @@ here for good.
 
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import pytest
+from PyQt6.QtCore import QCoreApplication, QEvent
+from PyQt6.QtWidgets import QApplication
 
 from pk232py.config import CONFIG_PATH_ENV_VAR
+from pk232py.ui.main_window import MainWindow
+
+
+@pytest.fixture(autouse=True)
+def dispose_main_windows():
+    """P61, Teil A - every MainWindow a test built is destroyed at
+    teardown, not merely hidden.
+
+    MainWindow.__init__() installs itself as an application-wide event
+    filter (QApplication.instance().installEventFilter(self)) - a window
+    that is only close()d keeps that filter active forever (no
+    WA_DeleteOnClose, and signal connections/closures keep the Python
+    object reachable too), so it goes on filtering EVERY event of EVERY
+    later test. Measured (P61 Befund B.2): building a fresh MainWindow()
+    cost 0.11s with no other live window around, 2.62s with 11
+    undisposed ones still there - a real, measured quadratic cost, not a
+    theoretical one. Loops over topLevelWidgets() (not a per-fixture
+    reference) so it catches every MainWindow regardless of which
+    fixture or test body built it - including one built with no fixture
+    at all, or a fixture using `return` instead of `yield` (no teardown
+    of its own whatsoever).
+
+    Never calls close(): that would run closeEvent(), which pops a real,
+    unclickable QMessageBox.question() under the offscreen QPA platform
+    whenever _serial.is_connected happens to be True on whatever stub a
+    test wired up - exactly the hang test_main_window_packet.py's own
+    wired_vhf fixture already had to work around once (P42). Going
+    straight to removeEventFilter()+deleteLater() skips that path
+    entirely; test_config_isolation.py's own test of closeEvent()'s
+    save-on-close behaviour still calls close() explicitly in its own
+    test body, which this fixture does not interfere with.
+    """
+    yield
+    app = QApplication.instance()
+    if app is None:
+        return
+    for w in [w for w in app.topLevelWidgets() if isinstance(w, MainWindow)]:
+        app.removeEventFilter(w)
+        w.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
 
 
 @pytest.fixture(autouse=True)
