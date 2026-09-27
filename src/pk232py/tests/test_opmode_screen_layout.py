@@ -76,30 +76,27 @@ def _last_row_bottom(screen) -> int:
     "HF Packet", "VHF Packet",
 ])
 def test_screen_fills_the_window_last_row_near_the_bottom(mode_name):
+    # P61: no manual removeEventFilter()/close()/deleteLater() here
+    # anymore - conftest.py's dispose_main_windows autouse fixture does
+    # this generically for every MainWindow any test built.
     w = MainWindow()
-    try:
-        w.resize(1600, 1200)
-        w.show()
-        _app.processEvents()
-        _app.processEvents()
-        w._stack.setCurrentIndex(0)  # Host Mode page (opmode screens live here)
-        w._opmode_stack.setCurrentWidget(w._opmode_screens[mode_name])
-        _app.processEvents()
-        _app.processEvents()
+    w.resize(1600, 1200)
+    w.show()
+    _app.processEvents()
+    _app.processEvents()
+    w._stack.setCurrentIndex(0)  # Host Mode page (opmode screens live here)
+    w._opmode_stack.setCurrentWidget(w._opmode_screens[mode_name])
+    _app.processEvents()
+    _app.processEvents()
 
-        screen = w._opmode_screens[mode_name]
-        bottom = _last_row_bottom(screen)
-        gap = screen.height() - bottom
+    screen = w._opmode_screens[mode_name]
+    bottom = _last_row_bottom(screen)
+    gap = screen.height() - bottom
 
-        assert gap <= _MAX_GAP_PX, (
-            f"{mode_name}: last row bottom={bottom}, "
-            f"screen height={screen.height()}, gap={gap}px"
-        )
-    finally:
-        QApplication.instance().removeEventFilter(w)
-        w.close()
-        w.deleteLater()
-        _app.processEvents()
+    assert gap <= _MAX_GAP_PX, (
+        f"{mode_name}: last row bottom={bottom}, "
+        f"screen height={screen.height()}, gap={gap}px"
+    )
 
 
 def test_packet_screen_status_bar_keeps_its_own_small_height():
@@ -107,24 +104,18 @@ def test_packet_screen_status_bar_keeps_its_own_small_height():
     # absorb the splitter's own extra space - its own natural height,
     # not a share of the leftover window height.
     w = MainWindow()
-    try:
-        w.resize(1600, 1200)
-        w.show()
-        _app.processEvents()
-        _app.processEvents()
-        w._stack.setCurrentIndex(0)
-        w._opmode_stack.setCurrentWidget(w._opmode_screens["HF Packet"])
-        _app.processEvents()
-        _app.processEvents()
+    w.resize(1600, 1200)
+    w.show()
+    _app.processEvents()
+    _app.processEvents()
+    w._stack.setCurrentIndex(0)
+    w._opmode_stack.setCurrentWidget(w._opmode_screens["HF Packet"])
+    _app.processEvents()
+    _app.processEvents()
 
-        screen = w._opmode_screens["HF Packet"]
-        assert screen._status_bar.height() < 60, (
-            f"status bar height={screen._status_bar.height()}px "
-            "- absorbed extra space instead of staying at its own "
-            "small natural height"
-        )
-    finally:
-        QApplication.instance().removeEventFilter(w)
-        w.close()
-        w.deleteLater()
-        _app.processEvents()
+    screen = w._opmode_screens["HF Packet"]
+    assert screen._status_bar.height() < 60, (
+        f"status bar height={screen._status_bar.height()}px "
+        "- absorbed extra space instead of staying at its own "
+        "small natural height"
+    )

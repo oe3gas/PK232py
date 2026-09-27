@@ -99,43 +99,14 @@ def wired_vhf():
     w._wire_mode_callbacks()
     screen = w._opmode_screens["VHF Packet"]
     yield w, screen
-    # Teardown (P41): MainWindow.__init__() installs itself as an
-    # app-wide event filter (QApplication.instance().installEventFilter(
-    # self)) - every filter installed on the QApplication singleton stays
-    # active until explicitly removed, regardless of whether the Python
-    # object that owns it is later garbage-collected. Without this,
-    # every test using this fixture leaves one more stale MainWindow
-    # answering EVERY keypress event for the rest of the pytest session;
-    # by the time enough of them pile up, one of their eventFilter()
-    # calls can throw against its own now-stale state (e.g. a screen a
-    # later test switched away from), which pytest-qt's exception
-    # capturing surfaces as a failure in a LATER, unrelated test -
-    # exactly what made TestKeyboardFocusHandling flaky depending on how
-    # many earlier tests in the full suite had already used this fixture.
-    QApplication.instance().removeEventFilter(w)
-    # closeEvent() asks "TNC is still connected. Exit anyway?" via
-    # QMessageBox.question() whenever _serial.is_connected is True -
-    # _StubSerial.is_connected is a class attribute hardcoded to True (the
-    # test bodies need that to exercise the "connected" TNC commands), so
-    # w.close() would otherwise pop a real modal dialog that never gets a
-    # button click under the offscreen QPA platform - the whole pytest
-    # process hangs forever. Flip it to False for the teardown-only close;
-    # by now the test body is done with it.
-    w._serial.is_connected = False
-    w.close()
-    # deleteLater() + processEvents(), not just close()/hide(): several
-    # TestKeyboardFocusHandling tests call show()/activateWindow() on a
-    # FRESH MainWindow (needed so QTest.keyClick() exercises the real
-    # app-wide event filter under realistic focus/activation state, see
-    # that class's docstring). A merely closed-but-not-destroyed MainWindow
-    # leaves its top-level QWidget (and its running QTimers, e.g. the
-    # Packet screen's UTC clock) alive under the offscreen QPA platform;
-    # once enough of them pile up across the full test run,
-    # qWaitForWindowActive() on a later test's fresh window hangs forever
-    # instead of returning quickly - reproduced 25.09.2026 running this
-    # file's full suite (test 25 of 28 hung; passed in isolation).
-    w.deleteLater()
-    QApplication.instance().processEvents()
+    # P61: teardown used to remove the event filter and call close()/
+    # deleteLater()/processEvents() here itself (P41/P42 - see git
+    # history for the two separate incidents that added each of those
+    # calls). The conftest.py-wide dispose_main_windows autouse fixture
+    # now does this generically for every MainWindow any test built,
+    # never via close() (which would run closeEvent(), popping a real,
+    # unclickable QMessageBox.question() since _StubSerial.is_connected
+    # is a class attribute hardcoded to True).
 
 
 class TestUnprotoUsesChannelZero:

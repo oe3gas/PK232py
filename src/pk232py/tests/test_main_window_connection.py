@@ -90,16 +90,12 @@ def wired_window(monkeypatch):
     w = MainWindow()
     w._serial = _StubSerial()
     yield w, w._serial
-    # Teardown mirrors test_main_window_packet.py's wired_vhf fixture
-    # (P41/P42): remove the app-wide event filter, and flip is_connected
-    # to False before close() - closeEvent() otherwise pops a real
-    # QMessageBox.question() that nothing can click under the offscreen
-    # QPA platform, hanging the whole pytest process.
-    QApplication.instance().removeEventFilter(w)
-    w._serial.is_connected = False
-    w.close()
-    w.deleteLater()
-    QApplication.instance().processEvents()
+    # P61: teardown used to call close()/deleteLater()/processEvents()
+    # here itself - now the conftest.py-wide dispose_main_windows autouse
+    # fixture does this generically for every MainWindow any test built,
+    # never via close() (which would run closeEvent(), popping a real,
+    # unclickable QMessageBox.question() under the offscreen QPA
+    # platform whenever a stub's is_connected happens to read True).
 
 
 class TestConnectingIndicatorNotVerbose:
