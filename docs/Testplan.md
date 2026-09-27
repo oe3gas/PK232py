@@ -2579,14 +2579,26 @@ real hardware.
 
 ---
 
-### T137 — Restore nach dem Einschalten (`ask`, P59)
+### T137 — Restore nach dem Einschalten (`ask`, P59; re-entry steps P60)
 
 `MainWindow._check_archive_restore_trigger()`/`_update_maildrop_gate_ui()`
 (D.1/D.2) and `MailDropDialog(..., auto_restore=True)` (C.4) are
 unit-verified against a fake session/stub serial
 (`test_main_window_packet.py::TestArchiveRestoreTrigger`,
-`test_maildrop_dialog.py::TestAutoRestore`). Not yet run against real
-hardware.
+`test_maildrop_dialog.py::TestAutoRestore`). The re-entry regression
+(steps 3a/3b below) and the auto-restore failure path are also
+unit-verified
+(`test_serial_manager.py::TestConsumeFreshBootDefaults`,
+`test_main_window_packet.py::TestArchiveRestoreTrigger::
+test_second_host_mode_changed_in_same_power_cycle_does_not_rearm` /
+`test_auto_restore_dialog_opens_exactly_once_even_if_its_own_exec_refires_host_mode_changed`,
+`test_maildrop_dialog.py::TestRestoreFailurePath`). Not yet run against
+real hardware.
+
+**Precondition:** run this test with `archive_restore = ask` first.
+Only move on to `auto` once steps 3a/3b have PASSED with `ask` — before
+P60, `auto` looped MailDrop sessions endlessly on real hardware (see
+`docs/P60_Archive_Restore_Oneshot_Fix_Spec.md`, B.1).
 
 1. Archive with >= 2 messages (from T136), `archive_restore = ask`,
    scope `all`.
@@ -2595,6 +2607,11 @@ hardware.
    estimate; after Yes the dialog runs on its own, closes itself,
    packet operation resumes; the messages show as `TNC + archive` in
    the next manual dialog open.
+3a. After the successful restore, open the MailDrop session
+    **manually** and end it again. **Expected:** no renewed
+    confirmation, no renewed restore (P60).
+3b. TNC menu → Leave Host Mode, then Enter Host Mode. **Expected:**
+    likewise no confirmation (P60).
 4. **Counter-check:** disconnect and reconnect the application
    **without** power-cycling the TNC → **no** confirmation.
 5. **Measure:** actual duration against the estimate
