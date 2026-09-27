@@ -2642,10 +2642,24 @@ Run: `python tools/hw_check.py --port COMx aprs_query`
 | Device | Result |
 |---|---|
 | A | ⬜ OPEN |
-| B | ⬜ OPEN |
+| B | ✅ 27.09.2026 — see below (A.6 measurement invalid, see P62a) |
 | C | ⬜ OPEN (optional — see Teil E) |
 
-**Status:** ⬜ OPEN.
+**Device B, 27.09.2026** — `device: unknown (no banner - TNC was
+already awake)`; the device attribution itself is the operator's own
+statement, not read from the log's own `device:` line (P37's own rule:
+believe the `device:` line, never guess — there was none here, so this
+is flagged as operator-supplied, not measured):
+
+| Step | Result | Finding |
+|---|---|---|
+| A.2 | PASS | `UNPROTO APZ232 VIA WIDE1-1,WIDE2-1` accepted verbose |
+| A.3 | PASS | same path set via the Host Mode `UN` frame, confirmed verbose |
+| A.4 | INFO | Host Mode query of `UN` returns `UNAPZ232 via WIDE1-1, WIDE2-1` — **lowercase `via`, a space after the comma** (the TNC reformats the path on readback) |
+| A.5 | PASS | `CF NONE`/`CF ALL` in Host Mode both effective |
+| A.6 | **not evaluable** | after the 9-digipeater attempt, the query showed the PREVIOUS step's 8 digis — truncated vs. rejected cannot be told apart this way; a measurement defect in the P62 spec itself, fixed in P62a Teil B.1 (set UNPROTO to `CQ` first, log the SET response too) |
+
+**Status:** ✅ (Device B) / ⬜ OPEN (A, C).
 
 ---
 
@@ -2669,9 +2683,43 @@ Run: `python tools/hw_check.py --port COMx aprs_tx`
 | Device | R1 | R2 | R3 | R4 | R5 |
 |---|---|---|---|---|---|
 | A | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B | ✅ PASS | ✅ PASS | ⬜ invalid (see below) | ✅ finding (see below) | ⬜ skipped (see below) |
 
-**Status:** ⬜ OPEN.
+**Device B, 27.09.2026, `PACLEN 64`:**
+
+- **R1:** PASS — destination `APZ232`, info field exact, **no CR
+  appended** by the TNC.
+- **R2:** PASS — path `WIDE1-1,WIDE2-1` exact, H-bits unset (Direwolf
+  shown with no `*`).
+- **R3:** **invalid run** — the charset probe is 106 characters,
+  longer than this device's `PACLEN 64`, so it went out as 2 frames;
+  the pasted decoder text was accidentally R2's lines, not R3's.
+  Character-exactness is still **unmeasured**. Fixed in P62a C.2
+  (R3 sets `PACLEN 128` itself, restored afterwards, so it always fits
+  in one frame regardless of the device's own configured value).
+- **R4:** **finding** — 204 characters produced **4 UI frames: 64 + 64
+  + 64 + 12 bytes**, split exactly at PACLEN. Confirmed by the pasted
+  Direwolf lines (the continuation frames start `6789…`, `0123…`,
+  `45678901 END`; Direwolf itself: "Unknown APRS Data Type Indicator"
+  for the continuation frames, since they no longer start with a valid
+  APRS data type character). **This is the key finding for P63:** data
+  sent on channel 0 is split into UI frames of at most PACLEN bytes
+  each; one APRS message needs exactly one frame, so the APRS mode
+  must own PACLEN (query and set it) the same way it owns UNPROTO.
+- **R5:** skipped — the rest of the R4 paste overran into the frame-
+  count question and then the R5 confirmation prompt (P62a Teil A
+  fixes the paste-input termination this exposed).
+
+Side finding (Direwolf, not a TNC finding): `>PK232PY …` is
+misinterpreted as a status report with an embedded Maidenhead locator
+(`PK23` + overlay `2` + symbol `P`), hence "Found 'Y' instead of
+space". Noted for P63: an info field whose first four characters are
+two letters then two digits gets misread this way by Direwolf; P62a
+C.4 changes the affected rounds' prefix to `>Test PK232PY …`.
+
+**Status:** ✅ partial (Device B: R1/R2 PASS, R3 invalid, R4 a real
+finding, R5 skipped) / ⬜ OPEN (Device A; Device B re-run of R3/R5 plus
+the new R6, P62a).
 
 ---
 
