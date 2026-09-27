@@ -248,6 +248,32 @@ class TestBuildAprsR3Info:
         assert info.endswith(" END")
 
 
+class TestClassifyUnprotoDigiLimit:
+    """P62a, Teil B.1 - aprs_query's A.6 resets UNPROTO to CQ before the
+    9-digipeater attempt, so the query result afterwards unambiguously
+    means one of three things."""
+
+    def test_still_cq_is_rejected(self):
+        assert hw_check.classify_unproto_digi_limit("CQ") == "rejected"
+
+    def test_case_insensitive_cq_is_rejected(self):
+        assert hw_check.classify_unproto_digi_limit("cq") == "rejected"
+
+    def test_eight_digis_no_d9_is_truncated(self):
+        parsed = "APZ232 VIA D1,D2,D3,D4,D5,D6,D7,D8"
+        assert hw_check.classify_unproto_digi_limit(parsed) == "truncated"
+
+    def test_nine_digis_with_d9_is_accepted(self):
+        parsed = "APZ232 VIA D1,D2,D3,D4,D5,D6,D7,D8,D9"
+        assert hw_check.classify_unproto_digi_limit(parsed) == "accepted"
+
+    def test_none_is_unknown(self):
+        assert hw_check.classify_unproto_digi_limit(None) == "unknown"
+
+    def test_something_else_entirely_is_unknown(self):
+        assert hw_check.classify_unproto_digi_limit("?What?") == "unknown"
+
+
 class TestBuildAprsR4Info:
     """P62, Teil D - the length probe's body (everything before the
     ' END' end marker) must be exactly 200 characters."""

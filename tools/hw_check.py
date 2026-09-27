@@ -1557,6 +1557,31 @@ def count_aprs_frames(pasted: str) -> int:
     )
 
 
+def classify_unproto_digi_limit(parsed: Optional[str]) -> str:
+    """P62a, Teil B.1 - aprs_query's A.6 resets UNPROTO to CQ before
+    attempting a 9th digipeater, so this classification is unambiguous
+    (Device B, 27.09.2026: without that reset, the query after a
+    9-digi attempt still showed the PREVIOUS step's 8 digis, and
+    'truncated to 8' vs. 'rejected, still showing the old 8-digi value'
+    could not be told apart). *parsed* is the UNPROTO value AFTER the
+    9-digi set attempt, via parse_query_value(). Three answers, plus a
+    defensive 'unknown' for anything that matches none of them:
+      'rejected'  - still CQ, the whole set was refused.
+      'truncated' - 8 digis present, the 9th (D9) is not.
+      'accepted'  - all 9 digis, including D9, are present.
+    """
+    if parsed is None:
+        return "unknown"
+    upper = parsed.strip().upper()
+    if upper == "CQ":
+        return "rejected"
+    if "D9" in upper:
+        return "accepted"
+    if "D8" in upper:
+        return "truncated"
+    return "unknown"
+
+
 def evaluate_aprs_round(
     sent_info: str, sent_path: Optional[str], pasted: str,
 ) -> dict:
@@ -3670,7 +3695,8 @@ def test_aprs_query(session: Session, log: RunLog) -> None:
             "path in Host Mode and verbose-query it afterwards (A.3), "
             "query UN in Host Mode (A.4), set CF NONE then CF ALL in "
             "Host Mode and verbose-query CFROM after each (A.5), probe "
-            "an 8- and a 9-digipeater UNPROTO path verbose (A.6), then "
+            "an 8- and a 9-digipeater UNPROTO path verbose, resetting to "
+            "CQ first so the 9-digi outcome is unambiguous (A.6), then "
             "restore UNPROTO/CFROM:"
         )
         session.send_frame(un_frame, note="A.3 UN")
@@ -3809,11 +3835,23 @@ def test_aprs_query(session: Session, log: RunLog) -> None:
         log.line(f"A.6 UNPROTO 8-digi query: {q8!r}")
         log.result("T138 A.6 8-digi", "INFO", f"raw={q8!r}")
 
+        # P62a B.1: reset to CQ FIRST, so the 9-digi attempt's own
+        # outcome is unambiguous. Device B, 27.09.2026, without this
+        # reset the query after the 9-digi attempt still showed the
+        # PREVIOUS step's 8 digis - truncated-to-8 and rejected-still-
+        # showing-the-old-value could not be told apart. The SET
+        # response (not just the query) is logged too.
+        session.set_verbose("UNPROTO", "CQ")
         nine_digis = "APZ232 VIA D1,D2,D3,D4,D5,D6,D7,D8,D9"
-        session.set_verbose("UNPROTO", nine_digis)
+        set_resp_9 = session.set_verbose("UNPROTO", nine_digis)
+        log.line(f"A.6 UNPROTO 9-digi set response: {set_resp_9!r}")
         q9 = session.query("UNPROTO")
+        q9_parsed = parse_query_value("UNPROTO", q9)
         log.line(f"A.6 UNPROTO 9-digi query: {q9!r}")
-        log.result("T138 A.6 9-digi", "INFO", f"raw={q9!r}")
+        log.result(
+            "T138 A.6 9-digi", "INFO",
+            f"{classify_unproto_digi_limit(q9_parsed)} -- raw={q9!r}"
+        )
     finally:
         for cmd in commands:
             verify_restore(
