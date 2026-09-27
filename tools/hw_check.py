@@ -3977,9 +3977,11 @@ def test_aprs_tx(session: Session, log: RunLog) -> None:
 
     if session.dry_run:
         log.line(
-            "[dry-run] would set UNPROTO via UN in Host Mode for each "
-            "round, TRANSMIT a UI frame on channel 0, ask the operator "
-            "to paste the decoder line, then restore UNPROTO/CFROM:"
+            "[dry-run] would normalize(), check VHF/HBAUD are 1200 Bd "
+            "(offering to set them for this run), set UNPROTO via UN "
+            "in Host Mode for each round, TRANSMIT a UI frame on "
+            "channel 0, read the decoder output back as one pasted "
+            "block, then restore UNPROTO/CFROM/VHF/HBAUD:"
         )
         for round_name in _APRS_TX_ROUNDS:
             _path, info, _via = _aprs_tx_round_spec(round_name)
@@ -3993,11 +3995,18 @@ def test_aprs_tx(session: Session, log: RunLog) -> None:
         log.result("T139", "INFO", "dry-run, nothing sent")
         return
 
+    # P62a C.1: aprs_tx used to skip normalize() entirely - after a
+    # fresh power-on (no RAM battery, CLAUDE.md) MYCALL would still be
+    # the factory default PK232, transmitting with no real callsign at
+    # all. normalize() also sets MYCALL from AppConfig when it detects
+    # this (see its own docstring).
+    session.normalize()
+
     if input("Ready to continue? [y/N] ").strip().lower() != "y":
         log.result("T139", "INFO", "skipped by operator")
         return
 
-    commands = ["UNPROTO", "CFROM"]
+    commands = ["UNPROTO", "CFROM", "VHF", "HBAUD"]
     originals: dict[str, Optional[str]] = {
         cmd: parse_query_value(cmd, session.query(cmd)) for cmd in commands
     }
@@ -4009,6 +4018,26 @@ def test_aprs_tx(session: Session, log: RunLog) -> None:
             f"not touching them: {missing}"
         )
         return
+
+    log.line(
+        f"VHF (current): {originals['VHF']!r}, "
+        f"HBAUD (current): {originals['HBAUD']!r}"
+    )
+    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
+    hbaud_ok = originals["HBAUD"].strip() == "1200"
+    if not (vhf_ok and hbaud_ok):
+        answer = input(
+            f"TNC is not on VHF 1200 Bd (VHF={originals['VHF']!r}, "
+            f"HBAUD={originals['HBAUD']!r}). Set VHF ON and HBAUD 1200 "
+            f"for this run? [y/N] "
+        ).strip().lower()
+        if answer != "y":
+            log.result(
+                "T139", "INFO", "aborted - TNC not on VHF 1200 Bd"
+            )
+            return
+        session.set_verbose("VHF", "ON")
+        session.set_verbose("HBAUD", "1200")
 
     log.line(f"PACLEN (unchanged): {parse_query_value('PACLEN', session.query('PACLEN'))!r}")
 
@@ -4056,20 +4085,13 @@ def test_aprs_tx(session: Session, log: RunLog) -> None:
             finally:
                 session.exit_host_mode()
 
-            if input(
-                f"Round {round_name}: did the second decoder show a "
-                f"frame? [y/n] "
-            ).strip().lower() != "y":
-                log.result(
-                    f"T139 {round_name}", "FAIL", "decoder showed no frame"
-                )
-                continue
-
             pasted = read_pasted_block(
                 "Paste the decoder output (Direwolf's own non-"
                 "printable-byte notation included - blank lines "
                 "between frames are part of the paste, not a "
-                'terminator), then a line with a single "." to finish:'
+                'terminator; leave empty and just enter "." if the '
+                'decoder showed nothing), then a line with a single '
+                '"." to finish:'
             )
 
             outcome = evaluate_aprs_round(info, via_digis, pasted)
@@ -4102,21 +4124,60 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
 
     if session.dry_run:
         log.line(
-            "[dry-run] would ask which second station/device is calling, "
-            "record all Host Mode frames for 60s while it connects and "
-            "disconnects (CFROM ALL baseline, C.1), ask the operator "
-            "what the calling station and this TNC's own PTT/SEND LED "
-            "showed, set CF NONE in Host Mode, record 90s while the "
-            "second station calls again (C.2), ask the same questions, "
-            "then restore CFROM:"
+            "[dry-run] would normalize(), check VHF/HBAUD are 1200 Bd "
+            "(offering to set them for this run), ask which second "
+            "station/device is calling, record all Host Mode frames "
+            "for 60s while it connects and disconnects (CFROM ALL "
+            "baseline, C.1), ask the operator what the calling station "
+            "and this TNC's own PTT/SEND LED showed, set CF NONE in "
+            "Host Mode, record 90s while the second station calls "
+            "again (C.2), ask the same questions, then restore "
+            "CFROM/VHF/HBAUD:"
         )
         session.send_frame(cf_none_frame, note="C.2 CF NONE")
         log.result("T140", "INFO", "dry-run, nothing sent")
         return
 
+    # P62a C.1: same reasoning as aprs_tx - a fresh power-on TNC has no
+    # real callsign set until normalize() puts one there.
+    session.normalize()
+
     if input("Ready to continue? [y/N] ").strip().lower() != "y":
         log.result("T140", "INFO", "skipped by operator")
         return
+
+    commands = ["CFROM", "VHF", "HBAUD"]
+    originals: dict[str, Optional[str]] = {
+        cmd: parse_query_value(cmd, session.query(cmd)) for cmd in commands
+    }
+    missing = [c for c in commands if originals[c] is None]
+    if missing:
+        log.result(
+            "T140", "SKIPPED",
+            f"original value(s) not parseable via parse_query_value() -- "
+            f"not touching them: {missing}"
+        )
+        return
+
+    log.line(
+        f"VHF (current): {originals['VHF']!r}, "
+        f"HBAUD (current): {originals['HBAUD']!r}"
+    )
+    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
+    hbaud_ok = originals["HBAUD"].strip() == "1200"
+    if not (vhf_ok and hbaud_ok):
+        answer = input(
+            f"TNC is not on VHF 1200 Bd (VHF={originals['VHF']!r}, "
+            f"HBAUD={originals['HBAUD']!r}). Set VHF ON and HBAUD 1200 "
+            f"for this run? [y/N] "
+        ).strip().lower()
+        if answer != "y":
+            log.result(
+                "T140", "INFO", "aborted - TNC not on VHF 1200 Bd"
+            )
+            return
+        session.set_verbose("VHF", "ON")
+        session.set_verbose("HBAUD", "1200")
 
     other_station = input("Calling station's callsign? ").strip()
     other_device = input(
@@ -4179,13 +4240,17 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
         record_phase("C.2", 90.0)
         results["c2"] = ask_operator("C.2")
 
-    run_with_restore(
-        command="CFROM",
-        query=lambda: session.query("CFROM"),
-        restore=lambda v: session.set_verbose("CFROM", v),
-        action=action,
-        log=log,
-    )
+    try:
+        action()
+    finally:
+        for cmd in commands:
+            verify_restore(
+                cmd,
+                lambda c=cmd: session.query(c),
+                lambda v, c=cmd: session.set_verbose(c, v),
+                originals[cmd],
+                log,
+            )
 
     log.result(
         "T140", "INFO",
