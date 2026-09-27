@@ -401,6 +401,26 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   TNC-firmware for the full writeup. Testplan.md T137 gained steps
   3a/3b (re-entry after a successful restore must not re-offer) — run
   with `ask` first, only move to `auto` once those pass.
+- **APRS measurement package (P62, 2026-09-27; follow-up P62a,
+  2026-09-27, unit-verified).** `tools/hw_check.py` gained three
+  MEASURE-ONLY subcommands (`aprs_query`, `aprs_tx`, `aprs_reject`) for
+  the future APRS TX mode (P63) — no shipped code changed. First real
+  hardware run (Device B) found the actual key finding for P63: data
+  sent on channel 0 splits into UI frames of at most PACLEN bytes each
+  (T139 R4), so the APRS mode must own PACLEN the same way it owns
+  UNPROTO — see the two new gotchas under Known Gotchas / Packet
+  (HF/VHF). P62a fixed two measurement-tool defects the same run
+  exposed: a blank-line-terminated decoder paste truncated a real
+  multi-frame paste (`read_pasted_block()` now ends only on a line
+  containing exactly `.`; frame counts are derived from the paste
+  itself, `count_aprs_frames()`, never operator-typed), and A.6's
+  9-digipeater probe couldn't tell "truncated" from "rejected" without
+  first resetting UNPROTO to `CQ`. Added `aprs_query` A.7 (verbose
+  PACLEN range probe)/A.8 (`PL` in Host Mode) and `aprs_tx` R6 (single
+  frame at a probed-safe PACLEN); `aprs_reject` now assumes Direwolf/
+  AGW as the calling station (the operator has one physical PK-232),
+  not a second device. See `docs/P62_APRS_Measure_Spec.md` and
+  `docs/P62a_APRS_Measure_Followup_Spec.md`; Testplan T138/T139/T140.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -1953,6 +1973,32 @@ Grows over time.
 ### Packet (HF / VHF)
 
 - **PASSALL = `PX`, not `PA` and not `PS`** — see the mnemonic-table note above.
+- **Data sent on channel 0 is split into UI frames of at most PACLEN
+  bytes each — hardware-confirmed, Device B, 27.09.2026 (P62/P62a,
+  T139 R4).** 204 characters sent in one `send_data()` call, with
+  `PACLEN` at its then-current value of 64, arrived as **4 separate UI
+  frames: 64 + 64 + 64 + 12 bytes**, split exactly at the PACLEN
+  boundary (confirmed via a real AX.25 decoder capture — the
+  continuation frames no longer start with a valid APRS data type
+  character, so Direwolf logs "Unknown APRS Data Type Indicator" for
+  each, but still shows one frame per split). **Consequence for the
+  future APRS mode (P63): APRS needs exactly ONE frame per message, so
+  the mode must own PACLEN — query and set it — the same way it
+  already owns UNPROTO** (`tools/hw_check.py aprs_query`'s A.7/A.8 probe
+  the verbose range and the Host Mode `PL` mnemonic for this reason;
+  `aprs_tx`'s R3/R6 rounds measure character-fidelity and single-frame
+  behaviour separately, at PACLEN 128 and at a probed-safe maximum,
+  never at whatever value happens to be configured for something
+  else). Not yet measured on Device A or C.
+- **The Host Mode `UN` query reformats the UNPROTO path it echoes back
+  — hardware-confirmed, Device B, 27.09.2026 (P62, T138 A.4).** Setting
+  `UNPROTO APZ232 VIA WIDE1-1,WIDE2-1` verbose, then querying `UN` in
+  Host Mode, returned `UNAPZ232 via WIDE1-1, WIDE2-1` — lowercase
+  `via`, and a space inserted after the comma between digipeaters —
+  not a byte-for-byte echo of what was sent. Any future code that
+  reads `UN` back in Host Mode (P63) must parse this tolerant of case
+  and whitespace, never compare it against the exact string that was
+  set.
 - **HF/VHF init-frame inheritance trap.** `HFPacketMode.get_init_frames()` now
   emits `VH N` + `HB 300` + `MX <maxframe>` + `SL <slottime>` + `MN Y` (selects
   the 300 Bd HF FSK modem and resets MAXFRAME/SLOTTIME to HF Packet's own
