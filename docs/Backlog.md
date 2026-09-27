@@ -790,13 +790,50 @@ MailDrop work used the VERBOSE-mode local terminal (`MDCHECK` at the
 command prompt) — whether/how the mailbox is reachable from Host Mode is
 a separate, later measurement.
 
+### APRS mode (P63) — waiting on T138–T140 (P62, 2026-09-27)
+
+The APRS TX mode itself (own screen, HF/VHF switch inside it, app-side
+beacon `QTimer`, own UNPROTO ownership — decisions recorded at the top
+of `docs/P62_APRS_Measure_Spec.md`) is **not started**. It needs Device
+A and Device B measurements from `tools/hw_check.py aprs_query`/
+`aprs_tx`/`aprs_reject` (Testplan T138–T140) first — VIA-path handling,
+byte-exact info-field transmission, whether an over-PACLEN info field
+splits into more than one UI frame, and how `CFROM NONE` actually
+behaves from both sides, none of which were ever measured before this
+package. Device C is optional (T138 only, per the spec's own Teil E).
+
+### CONOK comment in `packet_hf.py` is misleading (P62, 2026-09-27)
+
+`modes/packet_hf.py:361`'s comment ("if CONOK is OFF (no auto-accept)")
+implies the PK-232 has a CONOK parameter that gates auto-accepting
+Packet connects. **It does not** — `CONOK` does not exist anywhere in
+the PK-232 command set (checked against the full 194-command STABO
+superset, `docs/PK232_firmware_matrix.md` §4; see P62's own "Korrektur
+zur Chat-Vorarbeit"). Not fixed here (hw_check's own rule 6: measure,
+don't correct main-line code from a measurement session) — correct the
+comment once T140 (`aprs_reject`, this package) actually shows what
+"Connect request" and a real incoming-connect attempt look like on
+this firmware, rather than guessing a replacement explanation now.
+
+### Tech debt — two `build_command()` implementations (P62, 2026-09-27)
+
+`comm/hostmode.py:145` (`HostModeProtocol.build_command()`, a thin
+static wrapper) and `comm/frame.py`'s own `build_command()` (which the
+wrapper delegates to) are two names for the same frame-building
+concept, in two files — found while adding `aprs_query`/`aprs_tx` to
+`tools/hw_check.py` (P62), which deliberately reuses the existing
+`HostModeProtocol.cmd_unproto()`/`.build_command()` surface rather than
+adding a THIRD builder. Not fixed here — a real cleanup needs checking
+every existing call site of both, which is its own package, not a side
+effect of an APRS measurement session.
+
 ### APRS — Phase 2
 
 | Item | Notes |
 |------|-------|
 | MHEARD panel: show APRS stations | Populate from received Mic-E + Position frames |
-| Beacon TX | UNPROTO APRS VIA WIDE1-1,WIDE2-1; periodic timer |
-| Beacon config UI | Position (lat/lon from INI), symbol, comment, interval |
+| ~~Beacon TX~~ | **SUPERSEDED (P62, 2026-09-27).** "UNPROTO APRS VIA WIDE1-1,WIDE2-1; periodic timer" bolted onto the Packet screen is replaced by a dedicated APRS mode design (own screen, HF/VHF switch inside it, an app-side `QTimer` beacon timer rather than TNC `BEACON`/`BTEXT`, UNPROTO owned by whichever mode is active) — see the operator decisions recorded at the top of `docs/P62_APRS_Measure_Spec.md`. The mode itself is P63, built on P62's measurements (`aprs_query`/`aprs_tx`/`aprs_reject`, Testplan T138–T140). |
+| ~~Beacon config UI~~ | **SUPERSEDED (P62, 2026-09-27)** — same reason as Beacon TX; a beacon config UI belongs to the P63 APRS mode's own screen, not the Packet screen. |
 | Mic-E lon decode verify | Test with west-of-0° and lon > 100° stations |
 | Testplan T65 — APRS buffer cleared on mode switch | ⬜ OPEN. Switch VHF Packet → Baudot RTTY → back to VHF Packet; expect RX display empty, `_packet_raw_frames` cleared, APRS button reset to inactive. Not yet run. |
 
