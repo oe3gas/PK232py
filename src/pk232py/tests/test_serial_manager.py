@@ -15,8 +15,10 @@ import logging
 import threading
 import time
 
+import pytest
 from PyQt6.QtCore import Qt
 
+import pk232py.comm.serial_manager as serial_manager
 from pk232py.comm.constants import FRAME_HOST_OFF, FRAME_RECOVERY
 from pk232py.comm.frame import build_command
 from pk232py.comm.params_uploader import ParamsUploader
@@ -31,6 +33,56 @@ from pk232py.comm.serial_manager import (
     _wakeup_log_message,
 )
 from pk232py.config import AppConfig
+
+# P61, Teil C.2 - every real production wait time the detection chain
+# (_init_tnc_thread()), recovery (_recovery_thread()) and
+# exit_host_mode() use, scaled down by this ONE shared factor via the
+# fast_serial_timing fixture below - a single factor keeps the RATIO
+# between e.g. a single-step timeout and a settle delay exactly what
+# production uses, so a test still exercises the same relative sequence
+# shape, just compressed in wall-clock time.
+_FAST_TIMING_FACTOR = 1 / 30
+_FAST_TIMING_CONSTANTS = (
+    "_TNC_STATE_STEP_TIMEOUT",
+    "_XON_SETTLE_DELAY",
+    "_HPOLL_POLL_INTERVAL",
+    "_FRAME_WRITE_SETTLE_DELAY",
+    "_PORT_SETTLE_DELAY",
+    "_HPOLL_OFF_SETTLE_DELAY",
+    "_WORKER_FLUSH_DELAY",
+)
+
+
+@pytest.fixture
+def fast_serial_timing(monkeypatch):
+    """P61, Teil C.2 - scales every constant in _FAST_TIMING_CONSTANTS
+    by _FAST_TIMING_FACTOR for the duration of one test. Apply to a
+    whole class via `pytestmark = [pytest.mark.usefixtures(
+    "fast_serial_timing")]` (see the classes below that do), not
+    per-test - the fixture itself is generic, only its APPLICATION is
+    per-class.
+
+    Every one of these constants is read at CALL time, not bound once
+    at import/definition time - the "Stolperfalle" the spec's C.1 warns
+    about (a module- or class-level `def f(x=_SOME_CONSTANT):` binds the
+    default when the def statement runs, so a monkeypatch afterwards has
+    no effect on it) does not apply to any of them: _init_tnc_thread()'s
+    own `def read_until(marker, timeout=_TNC_STATE_STEP_TIMEOUT):` is a
+    NESTED function, freshly defined - and its default freshly
+    evaluated - every time _init_tnc_thread() itself runs, and every
+    other reference is a plain module-global lookup at the `time.sleep(
+    _CONSTANT)` call site itself. Confirmed by the fixture actually
+    working (test_serial_manager.py's own suite runs roughly 30x faster
+    with it applied - see the P61 spec's own before/after measurement),
+    not merely assumed from reading the code.
+
+    Only affects test_serial_manager.py's own process-local import of
+    the serial_manager module - never production code, which imports
+    and reads the same names but is never running inside a test.
+    """
+    for name in _FAST_TIMING_CONSTANTS:
+        original = getattr(serial_manager, name)
+        monkeypatch.setattr(serial_manager, name, original * _FAST_TIMING_FACTOR)
 
 # Real fixture, hw_logs/20260924_181446_maildrop_session.log (Device B,
 # MBX, 01.08.1991) -- the exact 176-byte wakeup response, banner included.
@@ -227,6 +279,10 @@ class TestTncStateDetectionChain:
     Mode from a previous session on a fresh SerialManager instance - only
     actively asking (steps 1-3) can."""
 
+    # P61, Teil C.2 - scales every real wait time in the chain by
+    # _FAST_TIMING_FACTOR; see fast_serial_timing's own docstring.
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
+
     def test_step1_banner_and_cmd_confirms_verbose(self):
         def responder(data):
             if data == b"*":
@@ -357,6 +413,9 @@ class TestRecoverySequence:
     determines and reports the resulting state via the EXISTING P43/P44
     detection chain (no second version of it)."""
 
+    # P61, Teil C.2 - see fast_serial_timing's own docstring.
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
+
     def test_cmd_confirmed_reports_success(self):
         # The recovery bytes themselves get no direct reply, but the
         # chain's own step 1 ('*') sees cmd: right away afterwards.
@@ -440,6 +499,12 @@ class TestFreshBootDefaults:
     being that a restore trigger checking it can never fire twice for
     the same power-on, and never fires at all for a later reconnect/
     recovery against a TNC that has been running fine the whole time."""
+
+    # P61, Teil C.2 - two cases here send an unanswered '*' before their
+    # own bare CR succeeds, paying a full, unscaled step-1 timeout
+    # (1.65-1.81s measured) without this; see fast_serial_timing's own
+    # docstring.
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
 
     def test_true_after_init_with_defaults_banner(self):
         def responder(data):
@@ -932,6 +997,9 @@ class TestStep3EchoDetection:
     5 bytes right back - an echo, not the 6-byte '01 4f 48 50 00 17'
     form a real answer carries (same capture, 23:30:09)."""
 
+    # P61, Teil C.2 - see fast_serial_timing's own docstring.
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
+
     def test_echo_of_own_query_falls_through_to_recovery_not_host_mode_exit(self):
         # Crafted so the two interpretations diverge in outcome, not just
         # in a log line: if the echo were mistaken for a genuine answer,
@@ -1161,6 +1229,9 @@ class TestConverseModeDetection:
     exactly the same "echo, no cmd:" shape a genuinely unresponsive TNC
     would produce - real console capture, 26.09.2026, 13:13-13:16."""
 
+    # P61, Teil C.2 - see fast_serial_timing's own docstring.
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
+
     def test_step2b_command_char_confirms_verbose_after_converse_mode(self):
         # Real bytes from the capture: '*' -> echo only, CR -> echo only,
         # neither ever reaching cmd: - only the COMMAND char (+ CR)
@@ -1271,6 +1342,9 @@ class TestXonFlowControlDetection:
     generates itself - the identical "echo, no cmd:" shape steps 1/2/2b
     already see. Real console capture, 26.09.2026, 13:13-13:16: steps
     1/2/2b all got only an echo."""
+
+    # P61, Teil C.2 - see fast_serial_timing's own docstring.
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
 
     def test_step2c_xon_then_cr_releases_a_stopped_tnc(self):
         xon_sent = {"yes": False}
