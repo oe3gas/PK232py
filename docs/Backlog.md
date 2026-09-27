@@ -246,8 +246,43 @@ the CONFIGURABLE automatic behaviour unwired. P59 closes this:
   Stopping it mid-restore never aborts the in-flight message (no
   `abort()` — the `/EX` rule).
 See Testplan.md T136 (sync)/T137 (restore) — both OPEN, need Device B.
+**Follow-up: P60 (2026-09-27)** found and fixed a real bug in the D.1
+trigger itself — see the next entry.
 
-### MailDrop archive (message_store.py schema gap) — ✅ DONE (P38, 2026-09-24)
+### MailDrop dialog — restore trigger one-shot fix — ✅ DONE (P60, 2026-09-27)
+
+Review of P59 (`docs/P60_Archive_Restore_Oneshot_Fix_Spec.md`) found
+that `fresh_boot_defaults` was an EVENT flag in name only —
+`_check_archive_restore_trigger()` kept reading the live property
+instead of consuming it, and `host_mode_changed(True)` fires from more
+places than an init/recovery run (leaving a MailDrop session, "Enter
+Host Mode" from the menu, both via
+`SerialManager._enter_host_mode_thread()`, never
+`_init_tnc_thread()`). With `archive_restore = "auto"` this meant an
+**endless loop of MailDrop sessions** on real hardware — never caught
+by P59's own tests, which never exercised a *second*
+`host_mode_changed(True)` in the same power cycle. Two smaller findings
+in the same review: a restore's failure path left the session stuck
+ACTIVE forever if it was the way OUT of the session (auto-restore, or a
+stopped auto-restore), because the old check compared the continuation
+against `self.session.leave` by identity — dead code, since neither
+call site ever passes literally that method; and
+`filter_restore_scope()`'s own docstring wrongly claimed `unread`
+"currently behaves like `all`" (it does not — `read_flag` is a real,
+working filter, set from the TNC's own N/Y at archiving time).
+- `SerialManager.consume_fresh_boot_defaults()` reads
+  `fresh_boot_defaults` and clears it in the same call — the only place
+  that ever does. `_check_archive_restore_trigger()` calls it FIRST,
+  unconditionally, before checking whether the settings even want a
+  restore — a later switch from `never` to `ask` mid-session must not
+  retroactively arm a restore for a power-on that has already passed.
+- `MailDropDialog._start_sync()`/`_start_restore()` gained an explicit
+  `ends_session: bool` kwarg; `_on_failed()` now branches on that flag
+  instead of comparing `then` against `self.session.leave` by identity.
+- `filter_restore_scope()`'s docstring corrected.
+See Testplan.md T137 steps 3a/3b (re-entry after a successful restore
+must not re-offer) — **run with `ask` first; only move to `auto` once
+3a/3b pass**, per the spec's own warning.
 
 P27.3 found `message_store.py`'s `MailMessage`/SQLite schema did not
 match what a real archive needs (own durable ID ✅, but no TNC message
