@@ -81,16 +81,22 @@ required except for T101:
             Mode 'CF' frame, and a verbose 8-/9-digipeater UNPROTO
             length probe. No transmission at all. See
             docs/P62_APRS_Measure_Spec.md.
+    aprs_tx TRANSMITS ON THE AIR - five UI-frame rounds on the
+            unconnected channel 0 (plain, a VIA path, a full-ASCII-
+            charset probe, a 200-character length probe, and one with
+            CFROM NONE active), each needs a second receiver with an
+            AX.25 decoder (Direwolf or similar) and the operator to
+            paste back what it showed. See docs/P62_APRS_Measure_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
             and recorded individually), and NOT
             mi/maildrop/maildrop_host/mdcheck_scan/maildrop_session/
-            aprs_query (mi is fine alone but grouped with its guided
-            counterpart; maildrop, maildrop_host, mdcheck_scan and
-            maildrop_session are interactive/exploratory; aprs_query is
-            run and recorded individually), so each must be run on its
-            own.
+            aprs_query/aprs_tx (mi is fine alone but grouped with its
+            guided counterpart; maildrop, maildrop_host, mdcheck_scan
+            and maildrop_session are interactive/exploratory; aprs_tx
+            transmits and aprs_query is run and recorded individually),
+            so each must be run on its own.
 
 Usage::
 
@@ -110,6 +116,7 @@ Usage::
     python tools/hw_check.py --port COM6 maildrop_session --abort-test
     python tools/hw_check.py --dry-run maildrop_session
     python tools/hw_check.py --port COM6 aprs_query
+    python tools/hw_check.py --port COM6 aprs_tx
     python tools/hw_check.py --dry-run aprs_query
     python tools/hw_check.py --dry-run all      # no port opened at all
 
@@ -3745,6 +3752,198 @@ def test_aprs_query(session: Session, log: RunLog) -> None:
             )
 
 
+def _aprs_tx_round_spec(round_name: str) -> tuple[str, str, Optional[str]]:
+    """Returns (unproto_path, info_field, via_digis_or_None) for one
+    aprs_tx round (P62, Teil B's table). A function, not a static table,
+    because R1/R2/R5's info fields carry the current time (matching
+    T101's own PK232PY T101 <round> HH:MM:SS convention)."""
+    now = f"{datetime.datetime.now():%H:%M:%S}"
+    if round_name == "R1":
+        return "APZ232", f">PK232PY P62 R1 {now}", None
+    if round_name == "R2":
+        return (
+            "APZ232 VIA WIDE1-1,WIDE2-1", f">PK232PY P62 R2 {now}",
+            "WIDE1-1,WIDE2-1",
+        )
+    if round_name == "R3":
+        return "APZ232", build_aprs_r3_info(), None
+    if round_name == "R4":
+        return "APZ232", build_aprs_r4_info(), None
+    if round_name == "R5":
+        return "APZ232", f">PK232PY P62 R5 {now}", None
+    raise ValueError(round_name)
+
+
+_APRS_TX_ROUNDS = ("R1", "R2", "R3", "R4", "R5")
+
+
+def test_aprs_tx(session: Session, log: RunLog) -> None:
+    log.line(
+        "--- APRS TX: five UI rounds incl. VIA path, charset, length, "
+        "CFROM ---"
+    )
+    print()
+    print("T139 TRANSMITS on the air. Before continuing:")
+    print(
+        "  - Do NOT run this on 144.800 MHz or any APRS frequency. Test "
+        "frames with"
+    )
+    print(
+        "    WIDEn-N paths are repeated by digipeaters and gated to "
+        "APRS-IS. Use a"
+    )
+    print(
+        "    simplex frequency with no APRS infrastructure, low power "
+        "or a dummy load."
+    )
+    print(
+        "  - Tune a second receiver running an AX.25 decoder (Direwolf) "
+        "to that frequency."
+    )
+
+    # Built ONCE per round, referenced by both the dry-run preview below
+    # and the real per-round send further down - a single source of
+    # truth per round, so the preview can never silently diverge from
+    # what actually gets sent
+    # (test_hw_check_aprs.py::TestUnFrameComesFromHostModeProtocol).
+    # Only the path (never the info field's own timestamp) is fixed here -
+    # the real loop below re-derives info fresh each round.
+    un_frames = {
+        name: HostModeProtocol.cmd_unproto(_aprs_tx_round_spec(name)[0])
+        for name in _APRS_TX_ROUNDS
+    }
+    cf_none_frame = HostModeProtocol.build_command(b"CF", b"NONE")
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would set UNPROTO via UN in Host Mode for each "
+            "round, TRANSMIT a UI frame on channel 0, ask the operator "
+            "to paste the decoder line, then restore UNPROTO/CFROM:"
+        )
+        for round_name in _APRS_TX_ROUNDS:
+            _path, info, _via = _aprs_tx_round_spec(round_name)
+            if round_name == "R5":
+                session.send_frame(cf_none_frame, note="R5 CF NONE")
+            session.send_frame(un_frames[round_name], note=f"{round_name} UN")
+            log.line(
+                f"[dry-run] would TRANSMIT on channel 0 ({round_name}): "
+                f"{info!r}"
+            )
+        log.result("T139", "INFO", "dry-run, nothing sent")
+        return
+
+    if input("Ready to continue? [y/N] ").strip().lower() != "y":
+        log.result("T139", "INFO", "skipped by operator")
+        return
+
+    commands = ["UNPROTO", "CFROM"]
+    originals: dict[str, Optional[str]] = {
+        cmd: parse_query_value(cmd, session.query(cmd)) for cmd in commands
+    }
+    missing = [c for c in commands if originals[c] is None]
+    if missing:
+        log.result(
+            "T139", "SKIPPED",
+            f"original value(s) not parseable via parse_query_value() -- "
+            f"not touching them: {missing}"
+        )
+        return
+
+    log.line(f"PACLEN (unchanged): {parse_query_value('PACLEN', session.query('PACLEN'))!r}")
+
+    try:
+        for round_name in _APRS_TX_ROUNDS:
+            path, info, via_digis = _aprs_tx_round_spec(round_name)
+
+            if round_name == "R5":
+                session.enter_host_mode()
+                try:
+                    session.drain_pending_frames()
+                    session.send_frame(cf_none_frame, note="R5 CF NONE")
+                    session._pump(0.5)
+                finally:
+                    session.exit_host_mode()
+
+            session.enter_host_mode()
+            try:
+                session.drain_pending_frames()
+                session.send_frame(un_frames[round_name], note=f"{round_name} UN")
+                session._pump(0.5)
+
+                if not confirm_tx(
+                    f"Round {round_name}: transmit a UI frame on the "
+                    f"unconnected channel 0, UNPROTO path {path!r}.\n"
+                    f"Info field: {info!r}"
+                ):
+                    log.result(
+                        f"T139 {round_name}", "INFO", "skipped by operator"
+                    )
+                    continue
+
+                session.send_data_channel0(info)
+                captured: list = []
+                session.sm.frame_received.connect(captured.append)
+                try:
+                    session._pump(2.0)
+                finally:
+                    session.sm.frame_received.disconnect(captured.append)
+                for f in captured:
+                    log.line(
+                        f"<< ctl=0x{f.ctl:02X} ch={f.channel} "
+                        f"data={f.data!r} text={f.text!r}"
+                    )
+            finally:
+                session.exit_host_mode()
+
+            if input(
+                f"Round {round_name}: did the second decoder show a "
+                f"frame? [y/n] "
+            ).strip().lower() != "y":
+                log.result(
+                    f"T139 {round_name}", "FAIL", "decoder showed no frame"
+                )
+                continue
+
+            print(
+                "Paste the decoder line(s) exactly as shown (Direwolf's "
+                "own non-printable-byte notation included), end with a "
+                "blank line:"
+            )
+            pasted_lines: list = []
+            while True:
+                line = input()
+                if line == "":
+                    break
+                pasted_lines.append(line)
+            pasted = "\n".join(pasted_lines)
+
+            frames_raw = input(
+                f"Round {round_name}: how many frames did the decoder "
+                f"show for this round? "
+            ).strip()
+            try:
+                frames_n = int(frames_raw)
+            except ValueError:
+                frames_n = 0
+
+            outcome = evaluate_aprs_round(info, via_digis, pasted, frames_n)
+            log.result(
+                f"T139 {round_name}", outcome["verdict"],
+                f"info_exact={outcome['info_exact']} "
+                f"trailing_cr={outcome['trailing_cr']} "
+                f"path_ok={outcome['path_ok']} frames={outcome['frames']}"
+            )
+    finally:
+        for cmd in commands:
+            verify_restore(
+                cmd,
+                lambda c=cmd: session.query(c),
+                lambda v, c=cmd: session.set_verbose(c, v),
+                originals[cmd],
+                log,
+            )
+
+
 # ===========================================================================
 # CLI
 # ===========================================================================
@@ -3768,7 +3967,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=[
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
-            "maildrop_session", "aprs_query",
+            "maildrop_session", "aprs_query", "aprs_tx",
             "all",
         ],
     )
@@ -3871,6 +4070,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             lambda s, l: test_maildrop_session(s, l, app_config, args.abort_test)
         ],
         "aprs_query":  [lambda s, l: test_aprs_query(s, l)],
+        "aprs_tx":     [lambda s, l: test_aprs_tx(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
