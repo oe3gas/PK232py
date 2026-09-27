@@ -4173,6 +4173,20 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
     log.line(
         "--- APRS reject: incoming connect with CFROM ALL vs NONE ---"
     )
+    print()
+    print(
+        "Calling station: Direwolf on the second radio, connected mode "
+        "via AGW."
+    )
+    print(
+        "  - direwolf.conf needs PTT configured (Direwolf must "
+        "transmit),"
+    )
+    print(
+        "    MYCALL different from this TNC (e.g. OE3GAS-1), AGWPORT "
+        "8000."
+    )
+    print("  - Terminal (e.g. QtTermTCP) connected to localhost:8000.")
 
     # Single source of truth for both the dry-run preview and the real
     # C.2 send below (test_hw_check_aprs.py::
@@ -4182,8 +4196,9 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
     if session.dry_run:
         log.line(
             "[dry-run] would normalize(), check VHF/HBAUD are 1200 Bd "
-            "(offering to set them for this run), ask which second "
-            "station/device is calling, record all Host Mode frames "
+            "(offering to set them for this run), ask for the calling "
+            "station's callsign and software (Direwolf/AGW), record "
+            "all Host Mode frames "
             "for 60s while it connects and disconnects (CFROM ALL "
             "baseline, C.1), ask the operator what the calling station "
             "and this TNC's own PTT/SEND LED showed, set CF NONE in "
@@ -4236,11 +4251,21 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
         session.set_verbose("VHF", "ON")
         session.set_verbose("HBAUD", "1200")
 
+    # P62a Teil D: the operator has only one physical PK-232, so the
+    # calling station is Direwolf via AGW, not a second device - MYCALL
+    # comes from the SAME query normalize() itself just ran (P43/P34.2's
+    # own MYCALL check), never hardcoded, so the printed instruction is
+    # always correct even if the TNC's own MYCALL differs from what
+    # AppConfig has configured.
+    mycall = parse_query_value("MYCALL", session.query("MYCALL")) or "MYCALL"
     other_station = input("Calling station's callsign? ").strip()
-    other_device = input(
-        "Calling station's device (A/B/C/other)? "
+    other_software = input(
+        "Calling station software (e.g. Direwolf 1.7 + QtTermTCP)? "
     ).strip()
-    log.line(f"Second station: {other_station!r} (device {other_device!r})")
+    log.line(
+        f"Second station: {other_station!r} "
+        f"(software {other_software!r})"
+    )
 
     def record_phase(label: str, seconds: float) -> list:
         session.enter_host_mode()
@@ -4263,24 +4288,28 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
         return captured
 
     def ask_operator(label: str) -> dict:
-        calling_line = input(
-            f"{label}: what did the CALLING station show "
-            f"(e.g. '*** busy', 'Retry count exceeded', nothing)? "
-        ).strip()
+        # P62a Teil D: read_pasted_block() (Teil A), not a single
+        # input() line - the terminal's own connect attempt/reply can
+        # itself be multi-line (e.g. QtTermTCP echoing several lines).
+        calling_text = read_pasted_block(
+            f'{label}: paste what the CALLING station showed (e.g. '
+            f'"*** busy", "Retry count exceeded", nothing), then a '
+            f'line with a single "." to finish:'
+        )
         ptt_lit = input(
             f"{label}: did this TNC's own PTT/SEND LED light up? [y/n] "
         ).strip().lower()
         log.line(
-            f"{label} operator: calling station showed {calling_line!r}, "
+            f"{label} operator: calling station showed {calling_text!r}, "
             f"PTT lit={ptt_lit!r}"
         )
-        return {"calling": calling_line, "ptt": ptt_lit}
+        return {"calling": calling_text, "ptt": ptt_lit}
 
     results: dict = {}
 
     def action() -> None:
         log.line("C.1 baseline: CFROM ALL (unchanged)")
-        print(f"Let {other_station or '(unnamed)'} connect to MYCALL, then disconnect immediately.")
+        print(f"From the terminal, connect to {mycall} now, then disconnect immediately.")
         record_phase("C.1", 60.0)
         results["c1"] = ask_operator("C.1")
 
@@ -4293,7 +4322,7 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
             session.exit_host_mode()
 
         log.line("C.2: CFROM NONE")
-        print(f"Let {other_station or '(unnamed)'} try to connect again.")
+        print(f"From the terminal, connect to {mycall} now.")
         record_phase("C.2", 90.0)
         results["c2"] = ask_operator("C.2")
 
@@ -4311,7 +4340,7 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
 
     log.result(
         "T140", "INFO",
-        f"second station={other_station!r} ({other_device!r}) -- "
+        f"second station={other_station!r} ({other_software!r}) -- "
         f"C.1(ALL) operator={results.get('c1')}; "
         f"C.2(NONE) operator={results.get('c2')}"
     )
