@@ -554,6 +554,7 @@ class MainWindow(QMainWindow):
         # shows the operating-mode selector, the firmware label and the
         # mode-indicator status, none of which have that ambiguity.
         tb = QToolBar("Main", self)
+        tb.setObjectName("mainToolBar")
         tb.setMovable(False)
         self.addToolBar(tb)
 

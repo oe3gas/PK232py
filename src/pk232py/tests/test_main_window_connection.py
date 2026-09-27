@@ -32,7 +32,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox, QToolBar
 
 from pk232py.ui.main_window import MainWindow
 
@@ -551,3 +551,22 @@ class TestBannerCollection:
         w._finish_banner_collection()
 
         assert w._lbl_firmware.text() == "Release 01.AUG.91"
+
+
+class TestMainToolBarHasAnObjectName:
+    """P61, Teil D - every QToolBar needs its own objectName() or
+    QMainWindow::restoreState() cannot match it back up on the next
+    start; Qt itself warns about this on close
+    ("QMainWindow::saveState(): 'objectName' not set for QToolBar ...
+    'Main'") - found as a side effect of profiling the test suite for
+    speed, not something anyone was actively debugging."""
+
+    def test_every_toolbar_has_a_nonempty_object_name(self):
+        w = MainWindow()
+        toolbars = w.findChildren(QToolBar)
+        assert toolbars, "expected at least one QToolBar"
+        for tb in toolbars:
+            assert tb.objectName(), (
+                f"QToolBar {tb.windowTitle()!r} has no objectName() - "
+                f"restoreState() cannot match it up on the next start"
+            )
