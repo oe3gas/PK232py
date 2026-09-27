@@ -87,16 +87,23 @@ required except for T101:
             CFROM NONE active), each needs a second receiver with an
             AX.25 decoder (Direwolf or similar) and the operator to
             paste back what it showed. See docs/P62_APRS_Measure_Spec.md.
+    aprs_reject
+            Records this TNC's own Host Mode frames while a SECOND
+            station (of the operator's choosing) tries to connect,
+            first with CFROM ALL (baseline) then CFROM NONE - no
+            transmission of this tool's own. INFO only, no PASS/FAIL:
+            the question is what CFROM NONE actually does, not a
+            predicted answer. See docs/P62_APRS_Measure_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
             and recorded individually), and NOT
             mi/maildrop/maildrop_host/mdcheck_scan/maildrop_session/
-            aprs_query/aprs_tx (mi is fine alone but grouped with its
-            guided counterpart; maildrop, maildrop_host, mdcheck_scan
-            and maildrop_session are interactive/exploratory; aprs_tx
-            transmits and aprs_query is run and recorded individually),
-            so each must be run on its own.
+            aprs_query/aprs_tx/aprs_reject (mi is fine alone but grouped
+            with its guided counterpart; maildrop, maildrop_host,
+            mdcheck_scan and maildrop_session are interactive/
+            exploratory; aprs_tx/aprs_reject transmit or need a second
+            station), so each must be run on its own.
 
 Usage::
 
@@ -117,6 +124,7 @@ Usage::
     python tools/hw_check.py --dry-run maildrop_session
     python tools/hw_check.py --port COM6 aprs_query
     python tools/hw_check.py --port COM6 aprs_tx
+    python tools/hw_check.py --port COM6 aprs_reject
     python tools/hw_check.py --dry-run aprs_query
     python tools/hw_check.py --dry-run all      # no port opened at all
 
@@ -3944,6 +3952,111 @@ def test_aprs_tx(session: Session, log: RunLog) -> None:
             )
 
 
+def test_aprs_reject(session: Session, log: RunLog) -> None:
+    log.line(
+        "--- APRS reject: incoming connect with CFROM ALL vs NONE ---"
+    )
+
+    # Single source of truth for both the dry-run preview and the real
+    # C.2 send below (test_hw_check_aprs.py::
+    # TestUnFrameComesFromHostModeProtocol).
+    cf_none_frame = HostModeProtocol.build_command(b"CF", b"NONE")
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would ask which second station/device is calling, "
+            "record all Host Mode frames for 60s while it connects and "
+            "disconnects (CFROM ALL baseline, C.1), ask the operator "
+            "what the calling station and this TNC's own PTT/SEND LED "
+            "showed, set CF NONE in Host Mode, record 90s while the "
+            "second station calls again (C.2), ask the same questions, "
+            "then restore CFROM:"
+        )
+        session.send_frame(cf_none_frame, note="C.2 CF NONE")
+        log.result("T140", "INFO", "dry-run, nothing sent")
+        return
+
+    if input("Ready to continue? [y/N] ").strip().lower() != "y":
+        log.result("T140", "INFO", "skipped by operator")
+        return
+
+    other_station = input("Calling station's callsign? ").strip()
+    other_device = input(
+        "Calling station's device (A/B/C/other)? "
+    ).strip()
+    log.line(f"Second station: {other_station!r} (device {other_device!r})")
+
+    def record_phase(label: str, seconds: float) -> list:
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            captured: list = []
+            session.sm.frame_received.connect(captured.append)
+            try:
+                print(f"{label}: recording for {seconds:.0f}s ...")
+                session._pump(seconds)
+            finally:
+                session.sm.frame_received.disconnect(captured.append)
+        finally:
+            session.exit_host_mode()
+        for f in captured:
+            log.line(
+                f"{label} << ctl=0x{f.ctl:02X} ch={f.channel} "
+                f"data={f.data!r} text={f.text!r}"
+            )
+        return captured
+
+    def ask_operator(label: str) -> dict:
+        calling_line = input(
+            f"{label}: what did the CALLING station show "
+            f"(e.g. '*** busy', 'Retry count exceeded', nothing)? "
+        ).strip()
+        ptt_lit = input(
+            f"{label}: did this TNC's own PTT/SEND LED light up? [y/n] "
+        ).strip().lower()
+        log.line(
+            f"{label} operator: calling station showed {calling_line!r}, "
+            f"PTT lit={ptt_lit!r}"
+        )
+        return {"calling": calling_line, "ptt": ptt_lit}
+
+    results: dict = {}
+
+    def action() -> None:
+        log.line("C.1 baseline: CFROM ALL (unchanged)")
+        print(f"Let {other_station or '(unnamed)'} connect to MYCALL, then disconnect immediately.")
+        record_phase("C.1", 60.0)
+        results["c1"] = ask_operator("C.1")
+
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            session.send_frame(cf_none_frame, note="C.2 CF NONE")
+            session._pump(0.5)
+        finally:
+            session.exit_host_mode()
+
+        log.line("C.2: CFROM NONE")
+        print(f"Let {other_station or '(unnamed)'} try to connect again.")
+        record_phase("C.2", 90.0)
+        results["c2"] = ask_operator("C.2")
+
+    run_with_restore(
+        command="CFROM",
+        query=lambda: session.query("CFROM"),
+        restore=lambda v: session.set_verbose("CFROM", v),
+        action=action,
+        log=log,
+    )
+
+    log.result(
+        "T140", "INFO",
+        f"second station={other_station!r} ({other_device!r}) -- "
+        f"C.1(ALL) operator={results.get('c1')}; "
+        f"C.2(NONE) operator={results.get('c2')}"
+    )
+
+
 # ===========================================================================
 # CLI
 # ===========================================================================
@@ -3967,7 +4080,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=[
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
-            "maildrop_session", "aprs_query", "aprs_tx",
+            "maildrop_session", "aprs_query", "aprs_tx", "aprs_reject",
             "all",
         ],
     )
@@ -4071,6 +4184,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         ],
         "aprs_query":  [lambda s, l: test_aprs_query(s, l)],
         "aprs_tx":     [lambda s, l: test_aprs_tx(s, l)],
+        "aprs_reject": [lambda s, l: test_aprs_reject(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
