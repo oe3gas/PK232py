@@ -304,6 +304,65 @@ about this already said a future archive must do). See
 **Still open, deliberately, per P38.3's scope cut:** nothing calls
 `archive.add()` yet — see the "MailDrop session mask" item above.
 
+### Test suite speed — ✅ DONE (P61, 2026-09-27)
+
+`docs/P61_Test_Suite_Speed_Spec.md`. Full suite: 618s -> 42s (measured
+on the same machine, before/after, `--durations=15` both times — see
+the session's own final report for the two full outputs), test count
+708 -> 712 (four new tests, none removed).
+- `conftest.py`'s new autouse `dispose_main_windows` destroys every
+  `MainWindow` any test built at teardown (`removeEventFilter()` +
+  `deleteLater()`, never `close()`) instead of leaving it merely
+  hidden with its application-wide event filter still installed — the
+  single biggest cost (a real, measured quadratic slowdown: 0.11s to
+  build a fresh `MainWindow()` with none alive, 2.62s with 11
+  undisposed ones still around). Caught two genuinely leaking fixtures
+  in the process: `test_main_window_packet.py`'s `TestModeInstanceFactory.
+  window` (`return w`, no teardown at all) and a bare `MainWindow()` in
+  `test_signal_screen.py` with no cleanup whatsoever.
+- `conftest.py`'s new autouse `isolate_qsettings` closes the SAME class
+  of gap P48 closed for the INI config file, at QSettings's own
+  window-geometry/splitter-size persistence — `QSettings("OE3GAS",
+  APP_TITLE)`'s two-argument form always uses `NativeFormat` regardless
+  of `setDefaultFormat()`, and on Windows that is the registry, which
+  `setPath()` cannot redirect at all (confirmed by direct testing —
+  the P61 spec's own recipe was measured on Linux, where it happens to
+  work). Fixed by monkeypatching the name `QSettings` inside
+  `pk232py.ui.main_window`'s own module namespace instead.
+- `serial_manager.py`'s literal `time.sleep(<number>)` calls inside the
+  detection chain (`_init_tnc_thread()`), recovery (`_recovery_thread()`),
+  Host Mode entry (`_enter_host_mode_thread()`) and exit
+  (`exit_host_mode()`) are now named module constants (same values).
+  `test_serial_manager.py`'s new `fast_serial_timing` fixture
+  (`pytestmark`, applied to `TestTncStateDetectionChain`/
+  `TestRecoverySequence`/`TestXonFlowControlDetection`/
+  `TestStep3EchoDetection`/`TestConverseModeDetection`/
+  `TestFreshBootDefaults`) scales every one of them by one shared
+  factor (1/30) via `monkeypatch.setattr` — verified, not assumed, that
+  the fixture still catches a real regression: 14 of the 15 targeted
+  tests were each deliberately broken in production code, one at a
+  time, and confirmed red with the fixture active, then restored (the
+  15th test's own class only has two tests total). One break (removing
+  a redundant retry's own write, rather than disabling its recognition)
+  did NOT go red on the first attempt — the chain's own fallback
+  structure silently compensated via a different step; worth knowing
+  as a general lesson about testing redundant/self-healing code, not a
+  defect.
+- `main_window.py`'s main `QToolBar` gained `setObjectName("mainToolBar")` -
+  found as a side effect of profiling (`QMainWindow::saveState():
+  'objectName' not set for QToolBar ... 'Main'`), unrelated to the
+  speed work itself but free to fix alongside it.
+**Noted, not fixed (out of scope — a different module, already has its
+own scaling mechanism):** `test_maildrop_session.py`'s
+`TestRecoveryPath::test_ends_in_failed_when_host_mode_never_confirms`
+(1.26s) and `TestHappyPathLifecycle::test_open_list_read_send_kill_leave`
+(0.52s) surfaced at the top of the "after" `--durations=15` output
+purely because everything else got so much faster — they were already
+this slow before P61. `maildrop/session.py`'s own `_fast()` test helper
+already shrinks `MailDropSession`'s class-attribute timeouts to a 1.0s
+floor per constant; lowering that floor further is a separate,
+unrequested change to a module P61's own spec never named.
+
 ### MDMON eavesdropped traffic — could it be archived without a session at all? (P38.3, open, unmeasured)
 
 `MDMON` (already a MailDropConfig field, sent during upload) makes the
