@@ -73,14 +73,24 @@ required except for T101:
             the subject is accepted, confirm the recovery path runs and
             reports failure, never success. See
             docs/P28_MailDrop_Session_Harness_Spec.md.
+    aprs_query
+            Query-only measurement for the future APRS mode (P62/P63) -
+            UNPROTO with a VIA digipeater path, verbose AND via the
+            Host Mode 'UN' frame (HostModeProtocol.cmd_unproto(), never
+            called anywhere in production code), CFROM via the Host
+            Mode 'CF' frame, and a verbose 8-/9-digipeater UNPROTO
+            length probe. No transmission at all. See
+            docs/P62_APRS_Measure_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
             and recorded individually), and NOT
-            mi/maildrop/maildrop_host/mdcheck_scan/maildrop_session (mi is
-            fine alone but grouped with its guided counterpart; maildrop,
-            maildrop_host, mdcheck_scan and maildrop_session are
-            interactive/exploratory), so each must be run on its own.
+            mi/maildrop/maildrop_host/mdcheck_scan/maildrop_session/
+            aprs_query (mi is fine alone but grouped with its guided
+            counterpart; maildrop, maildrop_host, mdcheck_scan and
+            maildrop_session are interactive/exploratory; aprs_query is
+            run and recorded individually), so each must be run on its
+            own.
 
 Usage::
 
@@ -99,6 +109,8 @@ Usage::
     python tools/hw_check.py --port COM6 maildrop_session
     python tools/hw_check.py --port COM6 maildrop_session --abort-test
     python tools/hw_check.py --dry-run maildrop_session
+    python tools/hw_check.py --port COM6 aprs_query
+    python tools/hw_check.py --dry-run aprs_query
     python tools/hw_check.py --dry-run all      # no port opened at all
 
 ------------------------------------------------------------------------------
@@ -159,6 +171,7 @@ from PyQt6.QtCore import QCoreApplication, QObject, QTimer, pyqtSignal  # noqa: 
 from pk232py.comm.serial_manager import SerialManager  # noqa: E402
 from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
 from pk232py.comm.frame import build_command, _dle_escape  # noqa: E402
+from pk232py.comm.hostmode import HostModeProtocol  # noqa: E402
 from pk232py.comm.constants import SOH, ETB  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
 from pk232py.maildrop import MailDropSession, SerialManagerChannel  # noqa: E402
@@ -1459,6 +1472,107 @@ def evaluate_t101(target_a: Optional[str], target_b: Optional[str]) -> str:
     if target_a == target_b:
         return "FAIL"
     return "INCONCLUSIVE"
+
+
+# ===========================================================================
+# P62 -- APRS measurement pure logic (evaluate_aprs_round + the two fixed
+# test payloads aprs_tx sends). No serial interface, unit-testable directly.
+# ===========================================================================
+
+# Punctuation-only fragment from docs/P62_APRS_Measure_Spec.md's own R3
+# example, kept verbatim (it deliberately exercises characters an AX.25/
+# APRS parser could choke on: backslash, backtick, brace, tilde, ...).
+# The spec's own literal example text does NOT by itself cover every
+# printable ASCII character (no digits, almost no letters) despite its
+# own Teil D asking for exactly that coverage - digits and both letter
+# cases are appended below so the actual R3 payload satisfies its own
+# test (test_hw_check_aprs.py::TestBuildAprsR3Info), not just resembles it.
+_APRS_R3_PUNCTUATION = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+_APRS_R3_DIGITS = "0123456789"
+_APRS_R3_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_APRS_R3_LOWER = "abcdefghijklmnopqrstuvwxyz"
+_APRS_R3_CHARSET = (
+    _APRS_R3_PUNCTUATION + _APRS_R3_DIGITS + _APRS_R3_UPPER + _APRS_R3_LOWER
+)
+
+_APRS_R4_PREFIX = ">P62 R4 "
+_APRS_R4_DIGITS = "0123456789"
+_APRS_R4_BODY_LEN = 200
+
+
+def build_aprs_r3_info() -> str:
+    """R3's character-set probe info field (P62, Teil B) - one UI frame
+    carrying every printable ASCII character 0x21-0x7E at least once, so
+    a byte a naive parser chokes on (backslash, backtick, a brace) shows
+    up here rather than silently mangling a later real APRS position/
+    status report."""
+    return ">P62 R3 " + _APRS_R3_CHARSET + " END"
+
+
+def build_aprs_r4_info(body_len: int = _APRS_R4_BODY_LEN) -> str:
+    """R4's length probe info field (P62, Teil B): the prefix plus a
+    repeating digit sequence, trimmed to exactly *body_len* characters,
+    with ' END' appended afterwards as an unambiguous end marker for the
+    operator pasting the decoder's line back in - APRS needs the whole
+    payload in ONE UI frame, so 'END' must never be split off by
+    PACLEN-driven fragmentation for this to mean anything."""
+    body = _APRS_R4_PREFIX
+    while len(body) < body_len:
+        body += _APRS_R4_DIGITS
+    return body[:body_len] + " END"
+
+
+def evaluate_aprs_round(
+    sent_info: str, sent_path: Optional[str], pasted: str, frames: int,
+) -> dict:
+    """Compare what a second station's AX.25 decoder actually showed for
+    one aprs_tx round against what was sent (P62, Teil B/D). Pure - no
+    serial interface, so this is unit-testable without hardware.
+
+    *sent_path*, when given, is the comma-separated VIA digipeater list
+    (e.g. 'WIDE1-1,WIDE2-1') - only R2 passes one; every other round
+    passes None, and path_ok then stays None too (nothing to check).
+
+    Reports each check SEPARATELY rather than folding everything into
+    one opaque boolean, so a FAIL names exactly what did not match:
+      info_exact  - sent_info appears verbatim, byte-for-byte, in pasted.
+      trailing_cr - pasted shows a Direwolf-style '<0x0d>' control-byte
+                    marker - whether the TNC appends a CR to the info
+                    field is exactly what R3 exists to answer.
+      path_ok     - every digipeater callsign in sent_path appears in
+                    pasted, or None if sent_path itself was None.
+      frames      - the operator-reported frame count, echoed back
+                    unchanged (APRS needs exactly one frame per message).
+
+    An empty/whitespace-only *pasted* means the round was skipped (the
+    operator already answered 'n' to "did the decoder show a frame?"
+    before ever being asked to paste anything) - verdict is 'INFO',
+    never a silently-wrong PASS or FAIL with no evidence behind it.
+    """
+    if not pasted.strip():
+        return {
+            "verdict": "INFO", "info_exact": None, "trailing_cr": None,
+            "path_ok": None, "frames": frames,
+        }
+
+    info_exact = sent_info in pasted
+    trailing_cr = "<0x0d>" in pasted
+
+    if sent_path is not None:
+        digis = [
+            d.strip() for d in sent_path.split("VIA", 1)[-1].split(",")
+            if d.strip()
+        ]
+        path_ok = all(d in pasted for d in digis)
+    else:
+        path_ok = None
+
+    ok = info_exact and frames == 1 and (path_ok is None or path_ok)
+    return {
+        "verdict": "PASS" if ok else "FAIL",
+        "info_exact": info_exact, "trailing_cr": trailing_cr,
+        "path_ok": path_ok, "frames": frames,
+    }
 
 
 def verify_restore(
@@ -3447,6 +3561,191 @@ def test_maildrop_session(
 
 
 # ===========================================================================
+# P62 -- APRS measurement (aprs_query/aprs_tx/aprs_reject). MEASURES ONLY
+# (hw_check rule 6) - the APRS mode itself is P63's job, built on these
+# findings, not this package's. No new frame builder anywhere below: UN
+# comes from HostModeProtocol.cmd_unproto(), CF from HostModeProtocol.
+# build_command() - both existing, both otherwise unused in production.
+# ===========================================================================
+
+def test_aprs_query(session: Session, log: RunLog) -> None:
+    log.line(
+        "--- APRS query: UNPROTO/CFROM verbose and Host Mode, no TX ---"
+    )
+
+    via_path = "APZ232 VIA WIDE1-1,WIDE2-1"
+    # Built ONCE, referenced by both the dry-run preview below and the
+    # real A.3/A.5 sends further down - a single source of truth, so the
+    # preview can never silently diverge from what actually gets sent
+    # (test_hw_check_aprs.py::TestUnFrameComesFromHostModeProtocol).
+    un_frame = HostModeProtocol.cmd_unproto(via_path)
+    cf_none_frame = HostModeProtocol.build_command(b"CF", b"NONE")
+    cf_all_frame = HostModeProtocol.build_command(b"CF", b"ALL")
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would query UNPROTO/CFROM/PACLEN/VHF/HBAUD/MONITOR "
+            "verbose, set UNPROTO with a VIA path verbose and query it "
+            "back (A.2), set UNPROTO CQ then send UN with the same VIA "
+            "path in Host Mode and verbose-query it afterwards (A.3), "
+            "query UN in Host Mode (A.4), set CF NONE then CF ALL in "
+            "Host Mode and verbose-query CFROM after each (A.5), probe "
+            "an 8- and a 9-digipeater UNPROTO path verbose (A.6), then "
+            "restore UNPROTO/CFROM:"
+        )
+        session.send_frame(un_frame, note="A.3 UN")
+        session.send_frame(cf_none_frame, note="A.5 CF NONE")
+        session.send_frame(cf_all_frame, note="A.5 CF ALL")
+        log.result("T138", "INFO", "dry-run, nothing sent")
+        return
+
+    session.normalize()
+
+    commands = ["UNPROTO", "CFROM"]
+    originals: dict[str, Optional[str]] = {}
+    for cmd in commands:
+        originals[cmd] = parse_query_value(cmd, session.query(cmd))
+        log.line(f"{cmd} (original): {originals[cmd]!r}")
+    missing = [c for c in commands if originals[c] is None]
+    if missing:
+        log.result(
+            "T138", "SKIPPED",
+            f"original value(s) not parseable via parse_query_value() -- "
+            f"not touching them: {missing}"
+        )
+        return
+
+    try:
+        # A.1
+        for cmd in ("PACLEN", "VHF", "HBAUD", "MONITOR"):
+            log.line(
+                f"{cmd} (unchanged): "
+                f"{parse_query_value(cmd, session.query(cmd))!r}"
+            )
+
+        # A.2
+        session.set_verbose("UNPROTO", via_path)
+        a2_query = session.query("UNPROTO")
+        a2_parsed = parse_query_value("UNPROTO", a2_query)
+        log.line(f"A.2 UNPROTO query after VIA set: {a2_query!r}")
+        a2_pass = (
+            a2_parsed is not None
+            and "APZ232" in a2_parsed
+            and "WIDE1-1" in a2_parsed and "WIDE2-1" in a2_parsed
+        )
+        log.result(
+            "T138 A.2", "PASS" if a2_pass else "FAIL", f"parsed={a2_parsed!r}"
+        )
+
+        # A.3
+        session.set_verbose("UNPROTO", "CQ")
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            captured: list = []
+            session.sm.frame_received.connect(captured.append)
+            try:
+                session.send_frame(un_frame, note="A.3 UN")
+                session._pump(2.0)
+            finally:
+                session.sm.frame_received.disconnect(captured.append)
+            for f in captured:
+                log.line(
+                    f"A.3 << ctl=0x{f.ctl:02X} ch={f.channel} "
+                    f"data={f.data!r} text={f.text!r}"
+                )
+        finally:
+            session.exit_host_mode()
+        a3_query = session.query("UNPROTO")
+        a3_parsed = parse_query_value("UNPROTO", a3_query)
+        log.line(f"A.3 UNPROTO verbose query after Host Mode UN: {a3_query!r}")
+        a3_pass = (
+            a3_parsed is not None
+            and "APZ232" in a3_parsed
+            and "WIDE1-1" in a3_parsed and "WIDE2-1" in a3_parsed
+        )
+        log.result(
+            "T138 A.3", "PASS" if a3_pass else "FAIL", f"parsed={a3_parsed!r}"
+        )
+
+        # A.4
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            un_frame = session.query_host(b"UN")
+        finally:
+            session.exit_host_mode()
+        un_text = un_frame.text if un_frame else "<no matching response>"
+        log.line(f"A.4 UN Host Mode query result: {un_text!r}")
+        log.result("T138 A.4", "INFO", f"raw={un_text!r}")
+
+        # A.5
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            session.send_frame(cf_none_frame, note="A.5 CF NONE")
+            session._pump(0.5)
+        finally:
+            session.exit_host_mode()
+        cf_query_none = session.query("CFROM")
+        cf_parsed_none = parse_query_value("CFROM", cf_query_none)
+        log.line(
+            f"A.5 CFROM verbose query after Host Mode CF NONE: "
+            f"{cf_query_none!r}"
+        )
+        a5_none_pass = (
+            cf_parsed_none is not None and "NONE" in cf_parsed_none.upper()
+        )
+        log.result(
+            "T138 A.5 NONE", "PASS" if a5_none_pass else "FAIL",
+            f"parsed={cf_parsed_none!r}"
+        )
+
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            session.send_frame(cf_all_frame, note="A.5 CF ALL")
+            session._pump(0.5)
+        finally:
+            session.exit_host_mode()
+        cf_query_all = session.query("CFROM")
+        cf_parsed_all = parse_query_value("CFROM", cf_query_all)
+        log.line(
+            f"A.5 CFROM verbose query after Host Mode CF ALL: "
+            f"{cf_query_all!r}"
+        )
+        a5_all_pass = (
+            cf_parsed_all is not None and "ALL" in cf_parsed_all.upper()
+        )
+        log.result(
+            "T138 A.5 ALL", "PASS" if a5_all_pass else "FAIL",
+            f"parsed={cf_parsed_all!r}"
+        )
+
+        # A.6 -- report only, per spec ("keine Bewertung nötig")
+        eight_digis = "APZ232 VIA D1,D2,D3,D4,D5,D6,D7,D8"
+        session.set_verbose("UNPROTO", eight_digis)
+        q8 = session.query("UNPROTO")
+        log.line(f"A.6 UNPROTO 8-digi query: {q8!r}")
+        log.result("T138 A.6 8-digi", "INFO", f"raw={q8!r}")
+
+        nine_digis = "APZ232 VIA D1,D2,D3,D4,D5,D6,D7,D8,D9"
+        session.set_verbose("UNPROTO", nine_digis)
+        q9 = session.query("UNPROTO")
+        log.line(f"A.6 UNPROTO 9-digi query: {q9!r}")
+        log.result("T138 A.6 9-digi", "INFO", f"raw={q9!r}")
+    finally:
+        for cmd in commands:
+            verify_restore(
+                cmd,
+                lambda c=cmd: session.query(c),
+                lambda v, c=cmd: session.set_verbose(c, v),
+                originals[cmd],
+                log,
+            )
+
+
+# ===========================================================================
 # CLI
 # ===========================================================================
 
@@ -3469,7 +3768,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=[
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
-            "maildrop_session", "all",
+            "maildrop_session", "aprs_query",
+            "all",
         ],
     )
     p.add_argument("--port", help="Serial port, e.g. COM3 (default: pk232py.ini)")
@@ -3570,6 +3870,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "maildrop_session": [
             lambda s, l: test_maildrop_session(s, l, app_config, args.abort_test)
         ],
+        "aprs_query":  [lambda s, l: test_aprs_query(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
