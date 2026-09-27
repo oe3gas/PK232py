@@ -73,6 +73,40 @@ _POLL_TIMEOUT    = 3.0   # wait for GG poll ACK
 # 68 x 5s = ~6 minutes of silent, unexecuted parameter uploads).
 _TNC_STATE_STEP_TIMEOUT = 1.5
 
+# P61: literal time.sleep() calls inside the detection chain
+# (_init_tnc_thread()), recovery (_recovery_thread()), Host Mode entry
+# (_enter_host_mode_thread()) and exit (exit_host_mode()) named as
+# module constants, same values — pure renaming, no behaviour change.
+# This is what lets test_serial_manager.py's fast_serial_timing fixture
+# scale every one of them by a single factor via monkeypatch.setattr();
+# see the fixture's own docstring for why a bare literal cannot be
+# patched at all.
+_XON_SETTLE_DELAY = 0.1
+# Step 2c (P54.3): after sending XON, before the follow-up CR — give a
+# TNC that was genuinely stopped by a stray XOFF a moment to actually
+# resume before asking it anything.
+_HPOLL_POLL_INTERVAL = 0.02
+# Step 3: how often the HPOLL-response poll loop re-checks
+# port.in_waiting while its own _TNC_STATE_STEP_TIMEOUT deadline has not
+# yet passed — a busy-poll interval, not a timeout of its own.
+_FRAME_WRITE_SETTLE_DELAY = 0.2
+# After writing a Host-Mode-exit-shaped frame (FRAME_HOST_OFF or
+# FRAME_RECOVERY) directly to the port, before treating the TNC as back
+# in verbose mode and reading again — steps 3/3b of the detection chain,
+# _recovery_thread()'s own preamble, and exit_host_mode()'s post-worker
+# wait all use this identical value for the identical reason.
+_PORT_SETTLE_DELAY = 0.3
+# _enter_host_mode_thread(): after closing the port, and again after
+# reopening it with a fresh Serial object (CLAUDE.md §3) — "bewiesene
+# Sequenz" from pk232_minimal_qt.py, not re-derived here.
+_HPOLL_OFF_SETTLE_DELAY = 0.5
+# _enter_host_mode_thread(): after sending HP N (HPOLL OFF) via the
+# freshly started HostModeWorker — same "bewiesene Sequenz" as above.
+_WORKER_FLUSH_DELAY = 0.5
+# exit_host_mode(): after handing FRAME_HOST_OFF to the still-running
+# HostModeWorker, before stopping it — lets the worker actually send the
+# frame and read its response first.
+
 # Byte sequences
 _WAKEUP       = b"*"                               # no CR — autobaud trigger
 _CMD_AWLEN    = b"AWLEN 8\r\n"
@@ -1137,7 +1171,7 @@ class SerialManager(QObject):
             logger.info("Init: step 2c - XON, then CR (TNC may be flow-stopped)")
             port.write(bytes([_XON_BYTE]))
             port.flush()
-            time.sleep(0.1)
+            time.sleep(_XON_SETTLE_DELAY)
             port.write(b"\r")
             port.flush()
             resp2c = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
@@ -1209,7 +1243,7 @@ class SerialManager(QObject):
                            for ctl, payload in frames):
                         break  # got a genuine answer - no need to wait out the timeout
                 else:
-                    time.sleep(0.02)
+                    time.sleep(_HPOLL_POLL_INTERVAL)
             logger.debug(
                 "Init: step 3 raw (%d B): %s -- %d frame(s)",
                 len(raw), bytes(raw).hex(' '), len(frames),
@@ -1240,7 +1274,7 @@ class SerialManager(QObject):
                 logger.debug("Init: step 3 exit TX: %s", FRAME_HOST_OFF.hex(' '))
                 port.write(FRAME_HOST_OFF)
                 port.flush()
-                time.sleep(0.2)
+                time.sleep(_FRAME_WRITE_SETTLE_DELAY)
                 self._in_host_mode = False
                 logger.info("Init: repeating step 2 after Host Mode exit")
                 logger.debug("Init: step 3 post-exit TX: %s", b"\r".hex(' '))
@@ -1285,11 +1319,11 @@ class SerialManager(QObject):
                 logger.debug("Init: step 3b TX: %s", FRAME_RECOVERY.hex(' '))
                 port.write(FRAME_RECOVERY)
                 port.flush()
-                time.sleep(0.2)
+                time.sleep(_FRAME_WRITE_SETTLE_DELAY)
                 logger.debug("Init: step 3b exit TX: %s", FRAME_HOST_OFF.hex(' '))
                 port.write(FRAME_HOST_OFF)
                 port.flush()
-                time.sleep(0.2)
+                time.sleep(_FRAME_WRITE_SETTLE_DELAY)
                 self._in_host_mode = False
                 logger.info("Init: repeating step 2 after recovery sequence")
                 logger.debug("Init: step 3b post-recovery TX: %s", b"\r".hex(' '))
@@ -1451,7 +1485,7 @@ class SerialManager(QObject):
                 self._reader = None
             self._serial.close()
             logger.debug("Port closed for Host Mode entry")
-            time.sleep(0.3)
+            time.sleep(_PORT_SETTLE_DELAY)
 
             # Run the proven Host Mode entry sequence.
             if _is_compiled:
@@ -1485,7 +1519,7 @@ class SerialManager(QObject):
                 return
 
             # Reopen port — new Serial object like pk232_minimal_qt.py
-            time.sleep(0.3)
+            time.sleep(_PORT_SETTLE_DELAY)
             import serial as _serial
             new_port = _serial.Serial(
                 port     = port_name,
@@ -1526,7 +1560,7 @@ class SerialManager(QObject):
 
             # HP N senden + 500ms warten — bewiesene Sequenz
             self._worker.send(HPOLL_OFF)
-            time.sleep(0.5)
+            time.sleep(_HPOLL_OFF_SETTLE_DELAY)
             logger.info("HPOLL OFF sent — TNC pushes data spontaneously")
 
             self.host_mode_changed.emit(True)
@@ -1558,7 +1592,7 @@ class SerialManager(QObject):
             # Send HOST OFF via Worker — guarantees serialization after pending TX
             if self._worker and self._worker.is_alive():
                 self._worker.send(FRAME_HOST_OFF)
-                time.sleep(0.5)  # let worker send HOST OFF and read response
+                time.sleep(_WORKER_FLUSH_DELAY)  # let worker send HOST OFF and read response
 
             # Stop Worker
             if self._worker:
@@ -1568,7 +1602,7 @@ class SerialManager(QObject):
 
             self._in_host_mode  = False
             self._verbose_ready = False
-            time.sleep(0.2)  # wait for TNC to switch back to verbose
+            time.sleep(_FRAME_WRITE_SETTLE_DELAY)  # wait for TNC to switch back to verbose
 
             # Start fresh ReaderThread for verbose mode
             self._reader = _ReaderThread(
@@ -1654,9 +1688,9 @@ class SerialManager(QObject):
             logger.info("Recovery: sending recovery sequence")
             self.status_message.emit("Recovery: sending recovery frames...")
             self._write_raw(FRAME_RECOVERY)
-            time.sleep(0.2)
+            time.sleep(_FRAME_WRITE_SETTLE_DELAY)
             self._write_raw(FRAME_HOST_OFF)
-            time.sleep(0.2)
+            time.sleep(_FRAME_WRITE_SETTLE_DELAY)
             self._in_host_mode = False
 
             self.status_message.emit("Recovery: determining TNC state...")
