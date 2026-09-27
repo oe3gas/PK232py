@@ -52,6 +52,7 @@ class _StubSerial:
     is_connected = True
     is_host_mode = False
     has_pactor = True
+    fresh_boot_defaults = False
 
     def __init__(self):
         self.writes: list[bytes] = []
@@ -61,6 +62,14 @@ class _StubSerial:
         self.recovery_called = True
         self.recovery_args = (port_name, baudrate)
         return True
+
+    def consume_fresh_boot_defaults(self) -> bool:
+        """P60, A.1 - _on_recovery_finished(True, ...) calls
+        MainWindow._check_archive_restore_trigger(), which now consumes
+        this event unconditionally on every call."""
+        fresh = self.fresh_boot_defaults
+        self.fresh_boot_defaults = False
+        return fresh
 
     def write_verbose_wait(self, *args, **kwargs) -> bool:
         return True

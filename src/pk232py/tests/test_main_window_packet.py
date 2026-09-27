@@ -51,9 +51,20 @@ class _FakeLinkMsgFrame:
 class _StubSerial:
     is_connected = True
     is_host_mode = True
+    fresh_boot_defaults = False
 
     def __init__(self):
         self.calls: list[tuple] = []
+
+    def consume_fresh_boot_defaults(self) -> bool:
+        """P60, A.1 - mirrors the real SerialManager: read the event and
+        clear it in one step, so a test's own direct
+        `w._serial.fresh_boot_defaults = True` still behaves as a
+        one-shot event once consumed, exactly like the real property/
+        _banner_this_init pair."""
+        fresh = self.fresh_boot_defaults
+        self.fresh_boot_defaults = False
+        return fresh
 
     def send_channel_command(self, ch, mnemonic, args=b""):
         self.calls.append(("ch_cmd", ch, mnemonic, args))
@@ -988,3 +999,119 @@ class TestArchiveRestoreTrigger:
 
         w._update_connection_ui(False)
         assert w._archive_restore_pending is False
+
+    def test_second_host_mode_changed_in_same_power_cycle_does_not_rearm(
+        self, wired_vhf,
+    ):
+        """P60, B.1 regression - leaving a MailDrop session, or "Enter
+        Host Mode" from the TNC menu, re-fires host_mode_changed(True)
+        via SerialManager._enter_host_mode_thread() without ever running
+        _init_tnc_thread() again. Before P60 this re-armed the trigger
+        every time, because _check_archive_restore_trigger() re-read the
+        live fresh_boot_defaults property (never consumed) instead of a
+        one-shot event - the exact endless MailDrop-session loop
+        docs/P60_Archive_Restore_Oneshot_Fix_Spec.md B.1 describes."""
+        w, _screen = wired_vhf
+        self._armed(w)
+        calls = []
+        w._offer_archive_restore = lambda: calls.append(1)
+
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is True
+        w._update_maildrop_gate_ui()
+        _app.processEvents()
+        assert calls == [1]
+        assert w._archive_restore_pending is False
+
+        # Simulates leaving a MailDrop session (or "Enter Host Mode" from
+        # the menu): host_mode_changed(True) fires again with NO new
+        # init/recovery run in between, so the physical banner was never
+        # re-read.
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is False
+        w._update_maildrop_gate_ui()
+        _app.processEvents()
+        assert calls == [1]   # still exactly one offer for this power cycle
+
+    def test_auto_restore_dialog_opens_exactly_once_even_if_its_own_exec_refires_host_mode_changed(
+        self, wired_vhf, monkeypatch,
+    ):
+        """Same regression as above, but against the REAL
+        _offer_archive_restore() and a fake MailDropDialog whose exec()
+        does what the real dialog's auto-restore does on the device -
+        ends the session, which re-enters Host Mode and re-fires
+        host_mode_changed(True) with no new init in between (P60,
+        B.1)."""
+        w, _screen = wired_vhf
+        self._armed(w, restore="auto")
+
+        class _FakeArchivedMessage:
+            def __init__(self):
+                self.read_flag = False
+
+        class _FakeArchive:
+            def all(self):
+                return [_FakeArchivedMessage()]
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "pk232py.maildrop.open_archive", lambda cfg: _FakeArchive(),
+        )
+
+        dialogs = []
+
+        class _FakeAutoDialog:
+            def __init__(self, *a, **kw):
+                dialogs.append(self)
+                self.last_have_mail = None
+
+            def exec(self):
+                # What leaving a real auto-restore session does on the
+                # device: enter_host_mode() -> host_mode_changed(True),
+                # never through _init_tnc_thread().
+                w._check_archive_restore_trigger()
+
+        monkeypatch.setattr(
+            "pk232py.ui.dialogs.maildrop_dialog.MailDropDialog",
+            _FakeAutoDialog,
+        )
+
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is True
+        w._update_maildrop_gate_ui()
+        # Drain the event queue fully, not just once - a still-buggy
+        # trigger re-arms _archive_restore_pending from INSIDE the first
+        # dialog's exec(), which only schedules its own follow-up offer
+        # via QTimer.singleShot(0, ...) once _offer_archive_restore()
+        # itself gets back to _update_maildrop_gate_ui() - that follow-up
+        # event needs a LATER processEvents() call to fire, so a single
+        # call here would pass even against the unfixed code.
+        for _ in range(10):
+            _app.processEvents()
+
+        assert len(dialogs) == 1
+
+    def test_never_then_switched_to_ask_does_not_retroactively_arm(
+        self, wired_vhf,
+    ):
+        """P60, A.2 - the event must be consumed the FIRST time
+        _check_archive_restore_trigger() runs, even if 'never' means no
+        restore is armed that time - otherwise switching the setting to
+        'ask'/'auto' later in the same power cycle would arm a restore
+        for a power-on that has already been and gone."""
+        w, _screen = wired_vhf
+        self._armed(w, restore="never")
+        calls = []
+        w._offer_archive_restore = lambda: calls.append(1)
+
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is False
+
+        w._app_config.maildrop.archive_restore = "ask"
+        w._check_archive_restore_trigger()
+        assert w._archive_restore_pending is False
+        w._update_maildrop_gate_ui()
+        _app.processEvents()
+        assert calls == []

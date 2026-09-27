@@ -106,9 +106,11 @@ class MailDropParamsDialog(QDialog):
         # ARE wired up as of P59: 'on_session_end' collects TNC-only
         # messages when the MailDrop session ends; 'ask'/'auto' restore
         # from the archive when MainWindow detects the TNC came up at
-        # factory defaults (fresh_boot_defaults, from the boot banner)
+        # factory defaults (a one-shot power-on event derived from the
+        # boot banner, consumed exactly once per power cycle - P60)
         # and a MailDrop session is possible (docs/P38_MailDrop_
-        # Archive_Spec.md P38.3, docs/P59_MailDrop_Archive_Auto_Spec.md).
+        # Archive_Spec.md P38.3, docs/P59_MailDrop_Archive_Auto_Spec.md,
+        # docs/P60_Archive_Restore_Oneshot_Fix_Spec.md).
         archive_group = QGroupBox("Local archive (PC side)")
         archive_layout = QVBoxLayout(archive_group)
 

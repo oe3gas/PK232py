@@ -3316,20 +3316,32 @@ class MainWindow(QMainWindow):
         recovery_finished(True, ...) slots. Flags an automatic archive
         restore as pending (never opens anything itself - see D.2/D.3)
         the first time THIS connection's init/recovery run captured a
-        boot banner saying the TNC is at factory defaults
-        (fresh_boot_defaults - an EVENT, reset every run, unlike the
-        sticky tnc_defaults/tnc_release/has_pactor state flags) and the
-        configuration actually wants a restore. Idempotent: does nothing
-        if a restore is already pending, so calling it from both slots
-        in the same connection cycle (e.g. Recovery succeeds, then the
-        operator enters Host Mode) never logs the notice twice.
+        boot banner saying the TNC is at factory defaults, and the
+        configuration actually wants a restore.
+
+        P60, B.1/A.2: host_mode_changed(True) does not only follow an
+        init/recovery run — it also fires from
+        SerialManager._enter_host_mode_thread(), which every MailDrop
+        session leave() (maildrop/session.py) and "Enter Host Mode"
+        (P49) go through without ever calling _init_tnc_thread() again.
+        Left unconsumed, the underlying event would still read True for
+        the rest of that power cycle and re-arm on every one of those —
+        an auto-restore session leaving would re-trigger itself
+        endlessly. consume_fresh_boot_defaults() is therefore called
+        FIRST, unconditionally, before any of the settings below are
+        even looked at — the event is used up exactly once per power
+        cycle regardless of whether archive_enabled/archive_restore
+        happen to want a restore right now (a later switch from 'never'
+        to 'ask' mid-session must not retroactively arm a restore for a
+        power-on that has already been and gone).
         """
+        serial = self._serial
+        fresh = serial.consume_fresh_boot_defaults()
         if self._archive_restore_pending:
             return
-        serial = self._serial
         md = self._app_config.maildrop
         if not (
-            getattr(serial, "fresh_boot_defaults", False)
+            fresh
             and md.archive_enabled
             and md.archive_restore in ("ask", "auto")
             and md.archive_restore_scope != "none"
@@ -3361,7 +3373,13 @@ class MainWindow(QMainWindow):
         auto_restore mode) re-derives its own candidate list from the
         TNC's first listing, which is authoritative (D.3's own note:
         the TNC is empty right after a factory-default power-on, but
-        this count is still only a pre-estimate)."""
+        this count is still only a pre-estimate).
+
+        P60, A.3: counting candidates from the archive alone (never the
+        TNC) is only correct here because _check_archive_restore_trigger()
+        (via consume_fresh_boot_defaults()) only ever schedules this call
+        right after a power-on with a still-empty mailbox — never on an
+        arbitrary later gate-open."""
         from ..maildrop import open_archive
         from ..maildrop.archive import filter_restore_scope
         md = self._app_config.maildrop
@@ -5051,9 +5069,10 @@ class MainWindow(QMainWindow):
             self._sb_mode.setText("Mode: OFFLINE")
             self._mode_combo.setEnabled(False)
             self._set_mode_indicator("offline")
-            # P59, D.1/D.2: the next connection decides fresh_boot_defaults
-            # again from scratch - a pending offer from a connection that
-            # just ended must not carry over to a different TNC/session.
+            # P59, D.1/D.2: the next connection decides the power-on
+            # event again from scratch - a pending offer from a
+            # connection that just ended must not carry over to a
+            # different TNC/session.
             self._archive_restore_pending = False
         self._update_maildrop_gate_ui()
 
