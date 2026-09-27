@@ -3686,6 +3686,10 @@ def test_aprs_query(session: Session, log: RunLog) -> None:
     un_frame = HostModeProtocol.cmd_unproto(via_path)
     cf_none_frame = HostModeProtocol.build_command(b"CF", b"NONE")
     cf_all_frame = HostModeProtocol.build_command(b"CF", b"ALL")
+    # P62a B.3 - PL is a hypothesis (Konfidenz M,
+    # docs/PK232_firmware_matrix.md), not confirmed; A.8 below IS the
+    # confirmation attempt.
+    pl_frame = HostModeProtocol.build_command(b"PL", b"128")
 
     if session.dry_run:
         log.line(
@@ -3696,18 +3700,22 @@ def test_aprs_query(session: Session, log: RunLog) -> None:
             "query UN in Host Mode (A.4), set CF NONE then CF ALL in "
             "Host Mode and verbose-query CFROM after each (A.5), probe "
             "an 8- and a 9-digipeater UNPROTO path verbose, resetting to "
-            "CQ first so the 9-digi outcome is unambiguous (A.6), then "
-            "restore UNPROTO/CFROM:"
+            "CQ first so the 9-digi outcome is unambiguous (A.6), probe "
+            "the PACLEN range 128/255/256/0 verbose (A.7), set PACLEN "
+            "128 via the Host Mode PL frame and verbose-query it back, "
+            "then query PL in Host Mode too (A.8), then restore "
+            "UNPROTO/CFROM/PACLEN:"
         )
         session.send_frame(un_frame, note="A.3 UN")
         session.send_frame(cf_none_frame, note="A.5 CF NONE")
         session.send_frame(cf_all_frame, note="A.5 CF ALL")
+        session.send_frame(pl_frame, note="A.8 PL 128")
         log.result("T138", "INFO", "dry-run, nothing sent")
         return
 
     session.normalize()
 
-    commands = ["UNPROTO", "CFROM"]
+    commands = ["UNPROTO", "CFROM", "PACLEN"]
     originals: dict[str, Optional[str]] = {}
     for cmd in commands:
         originals[cmd] = parse_query_value(cmd, session.query(cmd))
@@ -3722,8 +3730,8 @@ def test_aprs_query(session: Session, log: RunLog) -> None:
         return
 
     try:
-        # A.1
-        for cmd in ("PACLEN", "VHF", "HBAUD", "MONITOR"):
+        # A.1 (PACLEN is now in `commands` above - logged there already)
+        for cmd in ("VHF", "HBAUD", "MONITOR"):
             log.line(
                 f"{cmd} (unchanged): "
                 f"{parse_query_value(cmd, session.query(cmd))!r}"
@@ -3852,6 +3860,48 @@ def test_aprs_query(session: Session, log: RunLog) -> None:
             "T138 A.6 9-digi", "INFO",
             f"{classify_unproto_digi_limit(q9_parsed)} -- raw={q9!r}"
         )
+
+        # A.7 (P62a B.2): PACLEN range probe - exploratory, INFO only.
+        # What is the real upper bound, and what does 0 mean?
+        for value in ("128", "255", "256", "0"):
+            set_resp = session.set_verbose("PACLEN", value)
+            query_resp = session.query("PACLEN")
+            parsed = parse_query_value("PACLEN", query_resp)
+            log.line(
+                f"A.7 PACLEN {value} -- set response: {set_resp!r} -- "
+                f"query: {query_resp!r}"
+            )
+            log.result(f"T138 A.7 PACLEN {value}", "INFO", f"parsed={parsed!r}")
+
+        # A.8 (P62a B.3): PACLEN in Host Mode, same pattern as A.5's CF -
+        # P63 needs this since the mode switch itself happens there.
+        session.set_verbose("PACLEN", "128")
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            session.send_frame(pl_frame, note="A.8 PL 128")
+            session._pump(0.5)
+        finally:
+            session.exit_host_mode()
+        a8_query = session.query("PACLEN")
+        a8_parsed = parse_query_value("PACLEN", a8_query)
+        log.line(
+            f"A.8 PACLEN verbose query after Host Mode PL 128: {a8_query!r}"
+        )
+        log.result(
+            "T138 A.8 PL set", "PASS" if a8_parsed == "128" else "FAIL",
+            f"parsed={a8_parsed!r}"
+        )
+
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            pl_response = session.query_host(b"PL")
+        finally:
+            session.exit_host_mode()
+        pl_text = pl_response.text if pl_response else "<no matching response>"
+        log.line(f"A.8 PL Host Mode query result: {pl_text!r}")
+        log.result("T138 A.8 PL query", "INFO", f"raw={pl_text!r}")
     finally:
         for cmd in commands:
             verify_restore(
