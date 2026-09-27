@@ -39,13 +39,23 @@ def _dry_run_session() -> tuple["hw_check.Session", "hw_check.RunLog"]:
     return session, log
 
 
+def _frame_line(info: str, path: str = "APZ232") -> str:
+    """One Direwolf/AGW-style monitor line, the real shape
+    count_aprs_frames()/evaluate_aprs_round() parse (P62a, Teil A) -
+    '[<channel>] <SRC>><DST>...:<info>'."""
+    return f"[0.5] WB1ABC>{path}:{info}"
+
+
 class TestEvaluateAprsRound:
-    """P62, Teil B/D - the pure comparison every aprs_tx round runs
-    against what the operator pasted back from a real decoder."""
+    """P62, Teil B/D; P62a Teil A - the pure comparison every aprs_tx
+    round runs against what the operator pasted back from a real
+    decoder. Frame count is derived from *pasted* itself
+    (count_aprs_frames()), never a separate operator-typed number - a
+    real error source on real hardware (T139 R4, 27.09.2026)."""
 
     def test_exact_match_one_frame_is_pass(self):
         sent = ">PK232PY P62 R1 12:00:00"
-        result = hw_check.evaluate_aprs_round(sent, None, f"WB1ABC>APZ232:{sent}", 1)
+        result = hw_check.evaluate_aprs_round(sent, None, _frame_line(sent))
         assert result["verdict"] == "PASS"
         assert result["info_exact"] is True
         assert result["frames"] == 1
@@ -53,58 +63,166 @@ class TestEvaluateAprsRound:
     def test_missing_character_from_the_probe_is_not_exact(self):
         sent = hw_check.build_aprs_r3_info()
         pasted_missing_one_char = sent[:-5] + sent[-4:]  # drop one char near the end
-        result = hw_check.evaluate_aprs_round(sent, None, pasted_missing_one_char, 1)
+        result = hw_check.evaluate_aprs_round(
+            sent, None, _frame_line(pasted_missing_one_char)
+        )
         assert result["info_exact"] is False
         assert result["verdict"] == "FAIL"
 
     def test_trailing_cr_marker_is_detected_independently_of_the_verdict(self):
         sent = ">PK232PY P62 R3 test"
-        pasted = f"WB1ABC>APZ232:{sent}<0x0d>"
-        result = hw_check.evaluate_aprs_round(sent, None, pasted, 1)
+        pasted = _frame_line(sent) + "<0x0d>"
+        result = hw_check.evaluate_aprs_round(sent, None, pasted)
         assert result["trailing_cr"] is True
         assert result["info_exact"] is True
         assert result["verdict"] == "PASS"
 
     def test_no_trailing_cr_marker(self):
         sent = ">PK232PY P62 R1 12:00:00"
-        result = hw_check.evaluate_aprs_round(sent, None, f"WB1ABC>APZ232:{sent}", 1)
+        result = hw_check.evaluate_aprs_round(sent, None, _frame_line(sent))
         assert result["trailing_cr"] is False
 
     def test_two_frames_is_not_pass_even_with_exact_text(self):
         sent = ">PK232PY P62 R1 12:00:00"
-        result = hw_check.evaluate_aprs_round(sent, None, f"WB1ABC>APZ232:{sent}", 2)
+        pasted = _frame_line(sent) + "\n" + _frame_line(sent)
+        result = hw_check.evaluate_aprs_round(sent, None, pasted)
         assert result["verdict"] != "PASS"
         assert result["frames"] == 2
 
     def test_r2_path_missing_wide2_1_is_path_not_ok(self):
         sent = ">PK232PY P62 R2 12:00:00"
-        pasted = f"WB1ABC>APZ232,WIDE1-1:{sent}"  # WIDE2-1 never made it in
-        result = hw_check.evaluate_aprs_round(sent, "WIDE1-1,WIDE2-1", pasted, 1)
+        # WIDE2-1 never made it into the digipeater list.
+        pasted = _frame_line(sent, path="APZ232,WIDE1-1")
+        result = hw_check.evaluate_aprs_round(sent, "WIDE1-1,WIDE2-1", pasted)
         assert result["path_ok"] is False
         assert result["verdict"] == "FAIL"
 
     def test_r2_path_with_both_digis_is_path_ok(self):
         sent = ">PK232PY P62 R2 12:00:00"
-        pasted = f"WB1ABC>APZ232,WIDE1-1,WIDE2-1:{sent}"
-        result = hw_check.evaluate_aprs_round(sent, "WIDE1-1,WIDE2-1", pasted, 1)
+        pasted = _frame_line(sent, path="APZ232,WIDE1-1,WIDE2-1")
+        result = hw_check.evaluate_aprs_round(sent, "WIDE1-1,WIDE2-1", pasted)
         assert result["path_ok"] is True
         assert result["verdict"] == "PASS"
 
     def test_no_path_check_requested_leaves_path_ok_none(self):
         sent = ">PK232PY P62 R1 12:00:00"
-        result = hw_check.evaluate_aprs_round(sent, None, f"WB1ABC>APZ232:{sent}", 1)
+        result = hw_check.evaluate_aprs_round(sent, None, _frame_line(sent))
         assert result["path_ok"] is None
 
     def test_empty_pasted_text_is_info_not_pass_or_fail(self):
-        result = hw_check.evaluate_aprs_round(">PK232PY P62 R1 x", None, "", 0)
+        result = hw_check.evaluate_aprs_round(">PK232PY P62 R1 x", None, "")
         assert result["verdict"] == "INFO"
         assert result["info_exact"] is None
         assert result["path_ok"] is None
         assert result["trailing_cr"] is None
+        assert result["frames"] == 0
 
     def test_whitespace_only_pasted_text_is_also_info(self):
-        result = hw_check.evaluate_aprs_round(">PK232PY P62 R1 x", None, "   \n  ", 0)
+        result = hw_check.evaluate_aprs_round(">PK232PY P62 R1 x", None, "   \n  ")
         assert result["verdict"] == "INFO"
+
+
+class TestCountAprsFrames:
+    """P62a, Teil A/D - real Direwolf lines (T139 R4, 27.09.2026, Device
+    B) as test data: 1/2/4 frame headers must count as 1/2/4, and an
+    info field's own text (which can contain colons, brackets, '>' -
+    R3's own charset probe has all three) must never be miscounted as
+    an extra frame header."""
+
+    def test_one_frame(self):
+        assert hw_check.count_aprs_frames(_frame_line("hello")) == 1
+
+    def test_two_frames(self):
+        pasted = _frame_line("first") + "\n" + _frame_line("second")
+        assert hw_check.count_aprs_frames(pasted) == 2
+
+    def test_four_frames_real_r4_continuation_lines(self):
+        # The real R4 finding (204 chars, PACLEN 64): one header line per
+        # UI frame, continuation frames no longer start with a valid
+        # APRS data type character - Direwolf still shows a monitor
+        # header for each, just with its own "Unknown APRS Data Type
+        # Indicator" note attached, which must not affect the count.
+        lines = [
+            "[0.5] WB1ABC>APZ232:>P62 R4 0123456789...",
+            "[0.5] WB1ABC>APZ232:6789012345... (Unknown APRS Data Type Indicator)",
+            "[0.5] WB1ABC>APZ232:0123456789...",
+            "[0.5] WB1ABC>APZ232:45678901 END",
+        ]
+        assert hw_check.count_aprs_frames("\n".join(lines)) == 4
+
+    def test_blank_lines_between_frames_do_not_affect_the_count(self):
+        pasted = _frame_line("first") + "\n\n\n" + _frame_line("second")
+        assert hw_check.count_aprs_frames(pasted) == 2
+
+    def test_info_field_with_colons_and_brackets_is_not_an_extra_frame(self):
+        # R3's own charset probe contains ':', '[', ']', '>' - none of
+        # that is a SECOND frame header unless it starts the line.
+        info = hw_check.build_aprs_r3_info()
+        assert ":" in info and "[" in info
+        assert hw_check.count_aprs_frames(_frame_line(info)) == 1
+
+    def test_no_frame_headers_at_all_is_zero(self):
+        assert hw_check.count_aprs_frames("nothing decoder-shaped here") == 0
+        assert hw_check.count_aprs_frames("") == 0
+
+
+class TestReadPastedBlock:
+    """P62a, Teil A - the ONE multi-line paste reader, ending on a
+    line containing exactly '.', never a blank line (Direwolf inserts
+    blank lines of its own between decoded packets - a blank-line
+    terminator truncated a real multi-frame paste on hardware, T139
+    R4/R5, 27.09.2026)."""
+
+    def test_reads_a_block_with_blank_lines_between_frames_in_full(self):
+        typed = iter([
+            "[0.5] WB1ABC>APZ232:first frame",
+            "",
+            "[0.5] WB1ABC>APZ232:second frame",
+            "",
+            ".",
+        ])
+        result = hw_check.read_pasted_block("prompt", read_line=lambda: next(typed))
+        assert result == (
+            "[0.5] WB1ABC>APZ232:first frame\n"
+            "\n"
+            "[0.5] WB1ABC>APZ232:second frame\n"
+        )
+
+    def test_empty_paste_is_a_single_dot(self):
+        typed = iter(["."])
+        result = hw_check.read_pasted_block("prompt", read_line=lambda: next(typed))
+        assert result == ""
+
+    def test_prints_the_prompt_before_reading(self, capsys):
+        typed = iter(["."])
+        hw_check.read_pasted_block("MY PROMPT", read_line=lambda: next(typed))
+        assert "MY PROMPT" in capsys.readouterr().out
+
+
+class TestConfirmTx:
+    """P62a, Teil A - re-asks until the answer is exactly 'y', 'n', or
+    empty; a stray decoder line landing here (the tail of what used to
+    be an overrun paste) must never silently count as an answer."""
+
+    def test_plain_y_confirms(self):
+        typed = iter(["y"])
+        assert hw_check.confirm_tx("go", read_line=lambda _p: next(typed)) is True
+
+    def test_plain_n_declines(self):
+        typed = iter(["n"])
+        assert hw_check.confirm_tx("go", read_line=lambda _p: next(typed)) is False
+
+    def test_empty_answer_declines(self):
+        typed = iter([""])
+        assert hw_check.confirm_tx("go", read_line=lambda _p: next(typed)) is False
+
+    def test_a_decoder_shaped_line_is_rejected_and_asked_again(self):
+        typed = iter(["[0.5] OE3GAS>APZ232:garbage from an earlier paste", "y"])
+        assert hw_check.confirm_tx("go", read_line=lambda _p: next(typed)) is True
+
+    def test_case_and_whitespace_are_tolerated(self):
+        typed = iter([" Y "])
+        assert hw_check.confirm_tx("go", read_line=lambda _p: next(typed)) is True
 
 
 class TestBuildAprsR3Info:

@@ -1537,12 +1537,34 @@ def build_aprs_r4_info(body_len: int = _APRS_R4_BODY_LEN) -> str:
     return body[:body_len] + " END"
 
 
+# Direwolf/AGW-style monitor line: '[<channel>] <SRC>><DST>...:<info>'
+# - e.g. '[0.5] OE3GAS>APZ232,WIDE1-1,WIDE2-1:>PK232PY P62 R2 12:00:00'.
+# Matched at the START of a line only, so an info field that happens to
+# contain a similar-looking substring (R3's own charset probe has colons
+# and angle brackets in it) is never miscounted as a second frame
+# header (P62a, Teil A - the operator no longer counts frames by hand).
+_APRS_FRAME_HEADER_RE = re.compile(r"^\[[^\]]*\]\s*\S+>\S+.*:")
+
+
+def count_aprs_frames(pasted: str) -> int:
+    """How many separate AX.25 frame headers appear in a decoder paste
+    (P62a, Teil A) - replaces asking the operator to count by hand,
+    itself a real error source on real hardware (T139 R4, 27.09.2026:
+    the operator-typed count was the SECOND thing that went wrong in
+    that round, after the paste itself got cut off)."""
+    return sum(
+        1 for line in pasted.splitlines() if _APRS_FRAME_HEADER_RE.match(line)
+    )
+
+
 def evaluate_aprs_round(
-    sent_info: str, sent_path: Optional[str], pasted: str, frames: int,
+    sent_info: str, sent_path: Optional[str], pasted: str,
 ) -> dict:
     """Compare what a second station's AX.25 decoder actually showed for
-    one aprs_tx round against what was sent (P62, Teil B/D). Pure - no
-    serial interface, so this is unit-testable without hardware.
+    one aprs_tx round against what was sent (P62, Teil B/D; P62a Teil A
+    - frame count is now derived from *pasted* itself via
+    count_aprs_frames(), never a separate operator-typed number). Pure -
+    no serial interface, so this is unit-testable without hardware.
 
     *sent_path*, when given, is the comma-separated VIA digipeater list
     (e.g. 'WIDE1-1,WIDE2-1') - only R2 passes one; every other round
@@ -1556,20 +1578,21 @@ def evaluate_aprs_round(
                     field is exactly what R3 exists to answer.
       path_ok     - every digipeater callsign in sent_path appears in
                     pasted, or None if sent_path itself was None.
-      frames      - the operator-reported frame count, echoed back
-                    unchanged (APRS needs exactly one frame per message).
+      frames      - count_aprs_frames(pasted) (APRS needs exactly one
+                    frame per message).
 
     An empty/whitespace-only *pasted* means the round was skipped (the
-    operator already answered 'n' to "did the decoder show a frame?"
-    before ever being asked to paste anything) - verdict is 'INFO',
-    never a silently-wrong PASS or FAIL with no evidence behind it.
+    operator entered '.' immediately, with nothing pasted in between) -
+    verdict is 'INFO', never a silently-wrong PASS or FAIL with no
+    evidence behind it.
     """
     if not pasted.strip():
         return {
             "verdict": "INFO", "info_exact": None, "trailing_cr": None,
-            "path_ok": None, "frames": frames,
+            "path_ok": None, "frames": 0,
         }
 
+    frames = count_aprs_frames(pasted)
     info_exact = sent_info in pasted
     trailing_cr = "<0x0d>" in pasted
 
@@ -2331,13 +2354,55 @@ class Session:
         self.sm.send_data(text.encode("ascii", errors="replace"), channel=0)
 
 
-def confirm_tx(prompt: str) -> bool:
-    """The one gate every actual transmission must pass (hard rule #3)."""
+def confirm_tx(prompt: str, read_line: Callable[[str], str] = input) -> bool:
+    """The one gate every actual transmission must pass (hard rule #3).
+
+    P62a: re-asks until the answer is exactly 'y', 'n', or empty,
+    instead of silently treating anything else as "no" - found
+    necessary 27.09.2026 (Device B): a paste that ran past its own
+    terminator (fixed at the root by read_pasted_block() below) left a
+    stray decoder line sitting in the input buffer, which a single
+    input() call here would have silently read as the y/N answer to
+    the NEXT round's transmit confirmation.
+
+    *read_line* is injectable (same reasoning as read_pasted_block()
+    below) so this is unit-testable without mocking input() itself.
+    """
     print()
     print("*** THIS WILL KEY THE TRANSMITTER ***")
     print(prompt)
-    answer = input("Proceed? [y/N] ").strip().lower()
-    return answer == "y"
+    while True:
+        answer = read_line("Proceed? [y/N] ").strip().lower()
+        if answer in ("y", "n", ""):
+            return answer == "y"
+        print(f"Please answer y or n (got {answer!r}) - asking again.")
+
+
+def read_pasted_block(
+    prompt: str, read_line: Callable[[], str] = input,
+) -> str:
+    """The ONE place in this file that reads a multi-line decoder paste
+    (P62a, Teil A). Ends on a line containing exactly '.', never a
+    blank line - Direwolf inserts blank lines of its own between
+    decoded packets, so a blank-line-terminated read (the original P62
+    design) truncates a multi-frame paste mid-block: exactly what
+    happened to T139 R4/R5 on real hardware (27.09.2026, Device B) -
+    the rest of the paste ran on into the next question, the next
+    confirm_tx() prompt, and finally into the shell itself. Blank
+    lines are content, not a terminator.
+
+    *read_line* is injectable (same reasoning as run_maildrop_
+    interactive()'s own read_line callable) so this is unit-testable
+    without mocking input() itself.
+    """
+    print(prompt)
+    lines: list[str] = []
+    while True:
+        line = read_line()
+        if line == ".":
+            break
+        lines.append(line)
+    return "\n".join(lines)
 
 
 # ===========================================================================
@@ -3912,29 +3977,14 @@ def test_aprs_tx(session: Session, log: RunLog) -> None:
                 )
                 continue
 
-            print(
-                "Paste the decoder line(s) exactly as shown (Direwolf's "
-                "own non-printable-byte notation included), end with a "
-                "blank line:"
+            pasted = read_pasted_block(
+                "Paste the decoder output (Direwolf's own non-"
+                "printable-byte notation included - blank lines "
+                "between frames are part of the paste, not a "
+                'terminator), then a line with a single "." to finish:'
             )
-            pasted_lines: list = []
-            while True:
-                line = input()
-                if line == "":
-                    break
-                pasted_lines.append(line)
-            pasted = "\n".join(pasted_lines)
 
-            frames_raw = input(
-                f"Round {round_name}: how many frames did the decoder "
-                f"show for this round? "
-            ).strip()
-            try:
-                frames_n = int(frames_raw)
-            except ValueError:
-                frames_n = 0
-
-            outcome = evaluate_aprs_round(info, via_digis, pasted, frames_n)
+            outcome = evaluate_aprs_round(info, via_digis, pasted)
             log.result(
                 f"T139 {round_name}", outcome["verdict"],
                 f"info_exact={outcome['info_exact']} "
