@@ -2813,6 +2813,74 @@ Grows over time.
   importing QtCore` for every module that touches `comm/serial_manager.py`
   — a red herring that looks like a code regression. Always run
   `.venv\Scripts\python.exe -m pytest` (or activate the venv first).
+- **Test-run workflow (P61, 2026-09-27):** while working on one package,
+  run only the affected file(s) (e.g. `.venv\Scripts\python.exe -m
+  pytest src/pk232py/tests/test_maildrop_dialog.py`) — the full suite is
+  for before a push. Before every push, run the full suite with
+  `--durations=15` and put that output in the session's own final
+  report. **Rule: no single test over 1 second without a docstring
+  reason.** A test that legitimately needs more (a real subprocess, a
+  real thread join with a generous timeout) documents why right there,
+  rather than leaving a silent multi-second test for the next profiling
+  pass to rediscover.
+- **Every `MainWindow` a test builds is destroyed at teardown, never
+  merely `close()`d, and this is conftest.py's job, not each test
+  file's own (P61, 2026-09-27).** `MainWindow.__init__()` installs
+  itself as an application-wide event filter
+  (`QApplication.instance().installEventFilter(self)`, §6). `close()`
+  alone only hides the widget — no `WA_DeleteOnClose`, and signal
+  connections/closures keep the Python object reachable regardless — so
+  it keeps filtering EVERY event of EVERY later test, and stays in
+  `QApplication.topLevelWidgets()` forever. Measured: a fresh
+  `MainWindow()` cost 0.11s with no other live window around, 2.62s
+  with 11 undisposed ones still there (a real, quadratic cost — one
+  leaked `MainWindow` per test fixture, not per file, and this repo had
+  several: `test_main_window_packet.py`'s `TestModeInstanceFactory.
+  window` fixture used `return w` instead of `yield w` — no teardown of
+  any kind — and a bare `test_signal_screen.py::
+  test_wire_mode_callbacks_connects_on_result_parsed` built one with no
+  cleanup at all). `conftest.py`'s autouse `dispose_main_windows`
+  fixture now catches every one of these generically, regardless of
+  which fixture or test body built it, by looping over
+  `topLevelWidgets()` at teardown — `removeEventFilter()` +
+  `deleteLater()`, **never** `close()` (which would run `closeEvent()`,
+  popping a real, unclickable `QMessageBox.question()` whenever a
+  stub's `is_connected` happens to read `True`). The handful of
+  fixtures that used to do this per-file (`wired_vhf`, the various
+  `wired_window`s) had their now-redundant teardown code removed — one
+  place, not N. `test_config_isolation.py`'s own test of `closeEvent()`'s
+  save-on-close behaviour is unaffected — it still calls `close()`
+  itself, inside the test body, to exercise exactly that.
+- **QSettings("OE3GAS", APP_TITLE) needed the SAME isolation P48 gave
+  the INI config file, at a SECOND storage location — and the obvious
+  fix (`QSettings.setDefaultFormat()`/`setPath()`) silently does not
+  work on Windows for this exact call shape (P61, 2026-09-27).**
+  `main_window.py`'s `_save_window_geometry()`/`_restore_window_
+  geometry()` call the TWO-ARGUMENT constructor,
+  `QSettings(organization, application)` — confirmed by direct testing
+  (not assumed) that this specific constructor always uses
+  `QSettings::NativeFormat` regardless of `setDefaultFormat()`, and on
+  Windows `NativeFormat` IS the registry, which `setPath()` cannot
+  redirect at all (there is no filesystem path to redirect). The P61
+  spec's own `setDefaultFormat()`/`setPath()` recipe was measured on
+  Linux, where `NativeFormat`'s registry equivalent is itself just an
+  INI-shaped file `setPath()` DOES redirect — it silently does nothing
+  on Windows, so a fixture written against that recipe alone would
+  report success (no exception) while still writing to the real
+  registry. Fixed by monkeypatching the NAME `QSettings` inside
+  `pk232py.ui.main_window`'s own module namespace (`conftest.py`'s
+  `isolate_qsettings` fixture) — Python resolves a bare name at CALL
+  time against the enclosing module's globals, so every
+  `QSettings("OE3GAS", APP_TITLE)` call those two methods make is
+  redirected to an explicit `Format.IniFormat`/`Scope.UserScope`
+  instance under that test's own `tmp_path`, with `main_window.py`
+  itself never edited — the same technique
+  `test_main_window_packet.py::TestPacketRxTxSplitterPersistence`
+  already used at the single-test level (`monkeypatch.setattr(mw,
+  "QSettings", _FakeQSettings)`), just applied once, for every test.
+  **Rule: verify a Qt persistence-isolation recipe by direct testing on
+  the actual target platform before trusting it — "it didn't raise" is
+  not "it wrote where I told it to."**
 - **The `Sources2Text.ps1` export is not evidence that a file is
   tracked by git — it reads the filesystem, not git.** A module can be
   fully present in `pk232py_sources.txt` and in the Claude project
