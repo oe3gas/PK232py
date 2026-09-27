@@ -802,6 +802,18 @@ splits into more than one UI frame, and how `CFROM NONE` actually
 behaves from both sides, none of which were ever measured before this
 package. Device C is optional (T138 only, per the spec's own Teil E).
 
+**Key finding, Device B, 27.09.2026 (T139 R4, P62a):** confirmed — an
+over-PACLEN info field DOES split into more than one UI frame (204
+chars at PACLEN 64 → 4 frames, split exactly at the PACLEN boundary).
+**The APRS mode must therefore own PACLEN, querying and setting it the
+same way it already owns UNPROTO** — it cannot assume whatever value
+the TNC happens to have configured for something else. Use the largest
+value `tools/hw_check.py aprs_query`'s A.7 finds actually accepted
+(from that run's own log — A.7 probes 128/255/256/0 verbose; A.8
+probes the Host Mode `PL` mnemonic, still only Konfidenz M in the
+firmware matrix) as the mode's own configured PACLEN, not a guessed
+constant.
+
 ### CONOK comment in `packet_hf.py` is misleading (P62, 2026-09-27)
 
 `modes/packet_hf.py:361`'s comment ("if CONOK is OFF (no auto-accept)")
