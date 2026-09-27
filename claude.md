@@ -374,6 +374,33 @@ All 10 opmode screens are implemented and integrated into `MainWindow` via
   gotchas under Known Gotchas / TNC-firmware and / Packet for the full
   writeup. Hardware test cases T136/T137 (Testplan.md) are OPEN —
   needs Device B.
+- **Archive restore trigger — one-shot fix (P60, 2026-09-27, unit-
+  verified).** Review of P59 found `fresh_boot_defaults` was read but
+  never consumed: `host_mode_changed(True)` also fires from
+  `SerialManager._enter_host_mode_thread()` (leaving a MailDrop
+  session, "Enter Host Mode" from the menu — neither runs
+  `_init_tnc_thread()` again), so with `archive_restore = "auto"` the
+  trigger re-armed itself every time a restore session ended, looping
+  MailDrop sessions endlessly on real hardware (`docs/
+  P60_Archive_Restore_Oneshot_Fix_Spec.md`, B.1 — **not yet reproduced
+  on real hardware, found by review and confirmed by a unit test that
+  fires the signal twice within one simulated power cycle**). New
+  `SerialManager.consume_fresh_boot_defaults()` reads and clears the
+  event in one call; `MainWindow._check_archive_restore_trigger()` now
+  calls it unconditionally, first, before checking whether the current
+  settings even want a restore. Also fixed: `MailDropDialog._on_failed()`'s
+  restore branch compared its continuation against `self.session.leave`
+  by identity — dead code, since neither call site ever passes exactly
+  that method — replaced with an explicit `ends_session: bool` kwarg on
+  `_start_sync()`/`_start_restore()`, so a restore that is itself the
+  way OUT of the session (auto-restore, or a stopped auto-restore) now
+  actually ends the session on failure too, instead of leaving it stuck
+  ACTIVE. `filter_restore_scope()`'s docstring corrected (`unread` was
+  never a no-op — `read_flag` is a real filter from the TNC's own N/Y
+  at archiving time). See the new gotcha under Known Gotchas /
+  TNC-firmware for the full writeup. Testplan.md T137 gained steps
+  3a/3b (re-entry after a successful restore must not re-offer) — run
+  with `ask` first, only move to `auto` once those pass.
 - PACTOR capability detection: `b"PACTOR"` in boot banner → `SerialManager.has_pactor = True`
 - `write_verbose_wait()` race condition fixed: 120 ms idle detection (`_IDLE_S = 0.12`)
 - APRS decoder: Mic-E, Position, Telemetry, Weather (T# / WX chips confirmed OK)
@@ -1658,6 +1685,42 @@ Grows over time.
   therefore fire on EVERY later reconnect or Recovery too, not just the
   one that actually followed a power-on — `fresh_boot_defaults` is the
   only one of the four that is safe to gate an automatic action on.
+- **An EVENT must be CONSUMED, not just separated from a sticky state —
+  P59 did the latter but not the former, and it cost a real endless
+  loop on real hardware (P60, 2026-09-27).**
+  `docs/P60_Archive_Restore_Oneshot_Fix_Spec.md`. `fresh_boot_defaults`
+  (previous bullet) correctly resets every init/recovery run — but
+  `MainWindow._check_archive_restore_trigger()` kept reading the LIVE
+  property on every call instead of clearing it once read, and
+  `host_mode_changed(True)` fires from more places than an init run:
+  `SerialManager._enter_host_mode_thread()` (never
+  `_init_tnc_thread()`) also emits it, and every MailDrop session
+  `leave()` (`maildrop/session.py`) plus "Enter Host Mode" (P49) go
+  through exactly that path. Result with `archive_restore = "auto"`:
+  finishing the restore ends the session → re-enters Host Mode →
+  `host_mode_changed(True)` fires again → the still-armed event
+  re-triggers another restore offer → another session → forever, one
+  MailDrop session after another, packet operation never actually
+  resuming. **Merkregel: a signal like `host_mode_changed(True)` means
+  "Host Mode is active now", never "the TNC was just powered on" — it
+  has more than one source, and only ONE of them is preceded by a fresh
+  banner read.** Fixed with `SerialManager.consume_fresh_boot_defaults()`
+  — reads `fresh_boot_defaults` and clears the underlying
+  `_banner_this_init` flag in the same call, the only place that ever
+  does either. `_check_archive_restore_trigger()` calls it FIRST, before
+  any of `archive_enabled`/`archive_restore`/`archive_restore_scope` are
+  even looked at — the event is used up exactly once per power cycle
+  regardless of whether the current settings want a restore, so a later
+  switch from `never` to `ask` mid-session cannot retroactively arm a
+  restore for a power-on that has already passed. No test in P59 caught
+  this — every existing test called the trigger once per scenario;
+  catching it needed a test that fires `host_mode_changed(True)` (or,
+  end to end, a fake dialog's `exec()`) a SECOND time within the same
+  simulated power cycle. Same review also found `MailDropDialog.
+  _on_failed()`'s restore branch used a dead `then == self.session.leave`
+  identity comparison (neither call site ever passes literally that
+  method, so it never actually fired) — replaced with an explicit
+  `ends_session: bool` kwarg on `_start_sync()`/`_start_restore()`.
 - **MailDrop archive sync/restore automation (P59, 2026-09-26).**
   `docs/P59_MailDrop_Archive_Auto_Spec.md` closes the P39.3/Backlog
   "not wired up yet" gap for `MailDropConfig.archive_sync`/
