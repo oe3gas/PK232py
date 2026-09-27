@@ -790,6 +790,90 @@ MailDrop work used the VERBOSE-mode local terminal (`MDCHECK` at the
 command prompt) — whether/how the mailbox is reachable from Host Mode is
 a separate, later measurement.
 
+### Betriebsart und Verbindung gehen beim Wechsel verbose <-> Host Mode verloren — open (P64, 2026-09-27)
+
+**Beobachtung (Betreiber, 27.09.2026, Geraet unbekannt — beim Nachtest
+festhalten):** Im verbose Modus mit VHF Packet eine BBS (TinyBox)
+connected, dann `TNC -> Enter Host Mode` (Ctrl+H, P49).
+1. Die App zeigt danach **nicht** die VHF-Packet-Maske, sondern Baudot
+   RTTY.
+2. Die bestehende Verbindung wird **nicht** erkannt — kein Kanal-Chip
+   "connected", keine Partneranzeige.
+
+**Ursache im Code (gelesen, nicht gemessen):**
+- `_update_host_mode_ui(True)` aktiviert bei fehlendem aktivem Modus fest
+  **Baudot RTTY** als Standard ("If no mode is active yet, activate Baudot
+  as default"). Im verbose Modus fuehrt die App keinen ModeManager-Modus,
+  also greift dieser Standard immer.
+- Umgekehrt (Host -> verbose) setzt derselbe Slot beide Packet-Masken per
+  `reset_channels()` zurueck und deaktiviert den aktiven Modus
+  (`_modes._active_mode = None`). Beim naechsten Host-Eintritt ist die
+  Information damit ebenfalls weg.
+- Der Kanalzustand der Packet-Maske entsteht nur aus `$5x`-Link-Meldungen,
+  die **nach** dem Host-Eintritt kommen. Eine Verbindung, die schon vorher
+  bestand, meldet der TNC nicht erneut — die App erfaehrt nie davon.
+
+**Gesichert (Betreiber, 27.09.2026):** Die AX.25-Verbindung bleibt beim
+Umschalten bestehen — nach verbose -> Host -> verbose ging die Sitzung mit
+der BBS normal weiter. Geraet beim naechsten Lauf festhalten
+(`docs/DEVICES.md`).
+
+**Soll — interne Verbindungstabelle (Vorgabe des Betreibers):**
+Die App fuehrt eine eigene Tabelle der Verbindungen je Kanal (0-9:
+Zustand free/calling/connected, Partnerrufzeichen, Pfad, seit wann) als
+Parallelstatus zum TNC. Sie wird in **beiden** Modi fortgeschrieben und
+bei jedem Wechsel mitgenommen:
+- verbose: aus den Textmeldungen `*** CONNECTED to ...`,
+  `*** DISCONNECTED: ...`, `*** ... busy`, `*** Retry count exceeded`
+- Host Mode: aus den `$5x`-Link-Meldungen (heute schon ausgewertet, aber
+  nur fuer die ChannelBar)
+- Die ChannelBar und alle anderen Anzeigen lesen **nur** aus dieser
+  Tabelle — eine Sache, eine Stelle; kein zweiter Zustand in der Maske.
+- Die gewaehlte Betriebsart wird genauso gefuehrt und bei jedem Wechsel
+  (verbose -> Host, Host -> verbose, Recovery) mitgenommen. Baudot RTTY nur
+  noch, wenn nie eine Betriebsart gewaehlt wurde.
+- `reset_channels()` beim Verlassen des Host Mode entfaellt; geleert wird
+  die Tabelle nur bei echtem Verlust (Trennen vom TNC, TNC-Neustart /
+  Banner, Recovery ohne Bestaetigung).
+
+**Risiko: die Tabelle ist eine Annahme, der TNC ist die Wahrheit.**
+Waehrend des Umschaltens (HOST 3 / Recovery) liest die App kurz nicht mit;
+eine Trennung genau in diesem Fenster (Gegenstation trennt, Retry
+exceeded) ginge verloren und die Tabelle zeigte "connected", obwohl der
+Kanal frei ist. Deshalb:
+- Bei jedem Wechsel einen **Abgleich** mit dem TNC, sofern eine
+  Abfragemoeglichkeit existiert (siehe Messpunkte).
+- Ohne gemessene Abfrage: Eintraege nach einem Wechsel als "unbestaetigt"
+  kennzeichnen (sichtbar, z. B. gestrichelter Chip), bis eine Link-Meldung
+  oder empfangene Daten sie bestaetigen.
+
+**Unbekannt — zuerst messen (hw_check), nicht raten:**
+1. Auf welchem Kanal liegt eine im verbose Modus aufgebaute Verbindung im
+   Host Mode? (Annahme Kanal 0 — ungemessen.) Und umgekehrt: welcher
+   Kanal ist nach Host -> verbose der aktive?
+2. Wie fragt man den Verbindungszustand je Kanal ab? Kandidaten: im Host
+   Mode Link-Status `$40`-`$4E` (siehe Backlog-Eintrag
+   "`_make_host_frame()` misclassifies LINK_STATUS"), im verbose Modus
+   `CONNECT` ohne Argument ("Link state is: ...") bzw. `CSTATUS` (STABO:
+   "zeigt den Connect-Status von allen zehn Kanaelen"). Jeder Kandidat
+   braucht einen Messnachweis je Geraet.
+3. Welche Betriebsart ist im TNC nach `HOST 3` aktiv? Duerfen die
+   Moduswechsel-Frames (`PA`, `VH`, `HB` ...) bei bestehender Verbindung
+   erneut gesendet werden, ohne sie zu stoeren?
+4. Wie sehen die verbose Meldungen bei mehreren Kanaelen aus (mit und ohne
+   `CHCALL ON`) — steht die Kanalnummer im Text?
+
+**Vorgehen:** zuerst ein Messpaket fuer `tools/hw_check.py` (Verbindung im
+verbose Modus aufbauen lassen, umschalten, alle Frames aufzeichnen,
+Kandidaten aus Punkt 2 abfragen, zurueckschalten), dann die Umsetzung:
+Verbindungstabelle als Qt-freie Klasse mit eigenen Tests, danach
+Anbindung an verbose-Textausgabe, Host-Link-Meldungen und ChannelBar.
+Gegenstation: Direwolf + QtTermTCP ueber AGW (wie P62a Teil D) oder eine
+erreichbare BBS.
+
+**Reihenfolge:** nach P62a/P63 (APRS), sofern der Betreiber nichts anderes
+festlegt.
+
 ### APRS mode (P63) — waiting on T138–T140 (P62, 2026-09-27)
 
 The APRS TX mode itself (own screen, HF/VHF switch inside it, app-side
