@@ -34,6 +34,7 @@ import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
 from pk232py.comm.frame import build_command, build_ch_cmd, build_data, FrameKind
+from pk232py.comm.link_status import extract_partner as _extract_partner
 from pk232py.config import HFPacketConfig
 from pk232py.modes.base_mode import BaseMode
 
@@ -42,46 +43,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-def _extract_partner(text: str) -> str:
-    """Best-effort far-end callsign extraction from a link-message string.
-
-    Handles the two message shapes seen in the TRM / mock TNC:
-      "CONNECTED to OE1XYZ-5"   -> "OE1XYZ-5"   (" to " marker)
-      "Connect request: OE1XYZ" -> "OE1XYZ"     (":" marker)
-    Falls back to the first whitespace-separated token, e.g. "OE1XYZ busy".
-    Returns "" if nothing usable is found — callers must tolerate that.
-
-    P55.A: with CONSTAMP/DAYSTAMP both ON (the default, params_uploader.py
-    uploads both) a real message is prefixed with the TNC's own date/time,
-    e.g. "*** 25-Sep-26 21:04:36 DISCONNECTED: OE3TEC-1 ***" - and that
-    stamp's own "HH:MM:SS" contributes TWO colons of its own, both ahead
-    of the ':' that actually marks the callsign. Splitting on the FIRST
-    colon in the whole string (the old `text.split(":", 1)`) landed
-    inside the timestamp instead - e.g. "04:36" read as the partner
-    callsign, reproducing the MHEARD screenshot's date/time-shaped
-    entries. rsplit() on the LAST colon is what the callsign marker
-    itself actually needs, since nothing legitimate ever follows a real
-    callsign with a colon.
-    """
-    lower = text.lower()
-    if " to " in lower:
-        tail = text[lower.index(" to ") + 4:].strip()
-        # Some firmware variants send "CONNECTED to: OE1XYZ-5" (colon before
-        # the callsign, per the STABO manual chapter 12) instead of the TRM
-        # 4.4.4 "CONNECTED to OE1XYZ-5" form. Strip one optional leading ':'
-        # (and the whitespace around it) before taking the first token, or
-        # the colon itself gets misread as the callsign. A trailing
-        # " via ..." digipeater path is already dropped by split()[0] either
-        # way, with or without the colon.
-        if tail.startswith(":"):
-            tail = tail[1:].strip()
-        return tail.split()[0] if tail else ""
-    if ":" in text:
-        tail = text.rsplit(":", 1)[1].strip()
-        return tail.split()[0] if tail else ""
-    tokens = text.strip().split()
-    return tokens[0] if tokens else ""
+# P67, Teil B: _extract_partner() moved to comm/link_status.py's own
+# extract_partner() - comm/link_table.py's LinkTable needs the SAME
+# extraction on_host_link_message()/on_verbose_line() do, and comm/
+# must not depend on modes/. Re-exported under the old name here so
+# every existing call site (and test_packet_hf.py's own import) keeps
+# working unchanged.
 
 
 # Link message substrings used to classify incoming $5x frames
