@@ -1,12 +1,15 @@
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
 # Copyright (C) 2026  OE3GAS  —  GPL v2
 """Unit tests for tools/hw_check.py's link/mode carry-over measurement
-package (P65).
+package (P65/P66/P66a/P66b/P67).
 
-Covers the pure-logic piece (decode_link_status) and the two new
-subcommands' --dry-run path (no port opened, nothing sent) - the same
-"measures only" boundary the rest of hw_check.py already has
-(docs/P14_HW_Solo_Check_Spec.md hard rule #4/#6).
+Covers the two new subcommands' --dry-run path (no port opened,
+nothing sent) - the same "measures only" boundary the rest of
+hw_check.py already has (docs/P14_HW_Solo_Check_Spec.md hard rule
+#4/#6). decode_link_status()/LinkStatus/parse_cstatus() moved to
+comm/link_status.py (P67, Teil A) and are covered by
+test_link_status.py instead - hw_check.py no longer defines its own
+copy, so testing it here would test the wrong layer.
 
 tools/ has no __init__.py and is not part of the installed package -
 see test_hw_check.py's own docstring for why sys.path is extended here
@@ -38,82 +41,6 @@ def _dry_run_session() -> tuple["hw_check.Session", "hw_check.RunLog"]:
     log = hw_check.RunLog(None)
     session = hw_check.Session("DRYRUN", 9600, True, log, AppConfig())
     return session, log
-
-
-class TestDecodeLinkStatus:
-    """P65, Teil A.6/C - TRM 4.3.3's Link Status response,
-    SOH $4x 'C' 'O' a b c d e <path> ETB."""
-
-    def test_trm_example_state_5_with_path(self):
-        # TRM 4.3.3's own worked example: ctl byte $34 -> link state
-        # S05 (state 5), path "W6CUS-1 via K6LLK, WD6CMU-1".
-        data = b"CO" + bytes([0x34, 0, 0, 0, 0]) + b"W6CUS-1 via K6LLK, WD6CMU-1"
-        result = hw_check.decode_link_status(0x41, data)
-        assert result["state"] == 5
-        assert result["path"] == "W6CUS-1 via K6LLK, WD6CMU-1"
-        assert "unparsed" not in result
-
-    def test_channel_comes_from_the_ctl_nibble_not_send_order(self):
-        data = b"CO" + bytes([0x34, 0, 0, 0, 0])
-        assert hw_check.decode_link_status(0x43, data)["channel"] == 3
-        assert hw_check.decode_link_status(0x40, data)["channel"] == 0
-        assert hw_check.decode_link_status(0x49, data)["channel"] == 9
-
-    def test_free_channel_has_an_empty_path(self):
-        # A well-shaped response (7+ bytes, CO-prefixed) with no
-        # partner callsign following the five status bytes - still
-        # decodes cleanly, just with an empty path.
-        data = b"CO" + bytes([0x30, 0, 0, 0, 0])
-        result = hw_check.decode_link_status(0x40, data)
-        assert result["path"] == ""
-        assert "unparsed" not in result
-
-    def test_too_short_is_unparsed(self):
-        result = hw_check.decode_link_status(0x41, b"CO")
-        assert result["unparsed"] is True
-        assert result["channel"] == 1
-        assert result["raw"] == b"CO"
-
-    def test_wrong_mnemonic_prefix_is_unparsed(self):
-        result = hw_check.decode_link_status(0x41, b"XX" + bytes(5))
-        assert result["unparsed"] is True
-
-    def test_v2_unacked_retries_conperm_are_masked_and_typed(self):
-        # P66, B.5/Teil B - all five status bytes are "value OR $30"
-        # (TRM), not raw byte values as the pre-P66 docstring assumed;
-        # v2/conperm are single-bit flags -> bool, unacked/retries stay
-        # counts -> int.
-        data = b"CO" + bytes([0x31, 0x31, 0x32, 0x33, 0x31])
-        result = hw_check.decode_link_status(0x41, data)
-        assert result["v2"] is True
-        assert result["unacked"] == 2
-        assert result["retries"] == 3
-        assert result["conperm"] is True
-
-    def test_t142_real_bytes_connected_channel_1(self):
-        # Real capture, T142, Device B, 28.09.2026,
-        # 20260928_094231_link_carry_host.log: channel 1 connected to
-        # OE3GAS-1 -> 'CO41000OE3GAS-1', path with NO separator.
-        result = hw_check.decode_link_status(0x41, b"CO41000OE3GAS-1")
-        assert result["channel"] == 1
-        assert result["state"] == 5
-        assert result["v2"] is True
-        assert result["unacked"] == 0
-        assert result["retries"] == 0
-        assert result["conperm"] is False
-        assert result["path"] == "OE3GAS-1"
-        assert "unparsed" not in result
-
-    def test_t142_real_bytes_free_channel(self):
-        # Same capture, a free channel: 'CO00000'.
-        result = hw_check.decode_link_status(0x43, b"CO00000")
-        assert result["channel"] == 3
-        assert result["state"] == 1
-        assert result["v2"] is False
-        assert result["unacked"] == 0
-        assert result["retries"] == 0
-        assert result["conperm"] is False
-        assert result["path"] == ""
 
 
 class TestChswitchByte:
