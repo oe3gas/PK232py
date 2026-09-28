@@ -18,7 +18,10 @@ import time
 import pytest
 from PyQt6.QtCore import Qt
 
+import serial
+
 import pk232py.comm.serial_manager as serial_manager
+import pk232py.comm.pk232_hostmode_sub as pk232_hostmode_sub
 from pk232py.comm.constants import FRAME_HOST_OFF, FRAME_RECOVERY
 from pk232py.comm.frame import build_command
 from pk232py.comm.params_uploader import ParamsUploader
@@ -1507,3 +1510,86 @@ class TestPortConfiguration:
             "dtr=", "rts=", "timeout=", "write_timeout=",
         ):
             assert field in at_close, f"{field!r} missing from {at_close!r}"
+
+
+class TestEnterHostModeThreadRejectsFailedHandshake:
+    """P66, Teil E - _enter_host_mode_thread() must not emit
+    host_mode_changed(True) when the Teil-A handshake
+    (pk232_hostmode_sub.enter_host_mode()) reports failure. Forces the
+    in-process (compiled-build) code path by injecting a module-level
+    __compiled__ name Nuitka would otherwise provide, so the real
+    enter_host_mode() free function is called directly and can be
+    monkeypatched - no real subprocess, no real serial port."""
+
+    # P61, Teil C.2 - see fast_serial_timing's own docstring; the
+    # success companion below reopens the port and starts the worker,
+    # costing _PORT_SETTLE_DELAY twice plus _HPOLL_OFF_SETTLE_DELAY.
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
+
+    def test_failed_handshake_never_emits_host_mode_changed_true(self, monkeypatch):
+        monkeypatch.setattr(serial_manager, "__compiled__", True, raising=False)
+        monkeypatch.setattr(
+            pk232_hostmode_sub, "enter_host_mode",
+            lambda port_name, baud, command_char=b"\x03": (False, b"echo only"),
+        )
+
+        sm = SerialManager()
+        port = _FakePort(lambda data: b"")
+        sm._serial = port
+        # Also monkeypatched on the failure path (not just the success
+        # companion test below) - otherwise a wrongly-hardcoded
+        # "always succeed" check would still fail closed here for an
+        # UNRELATED reason (a real serial.Serial("COM_TEST") open
+        # failing), and the test would pass for the wrong reason.
+        # Confirmed by deliberately hardcoding entry_ok = True in
+        # _enter_host_mode_thread(): without this monkeypatch, both
+        # tests stayed green; with it, this one goes red as it should.
+        monkeypatch.setattr(serial, "Serial", lambda **kwargs: port)
+        events: list[bool] = []
+        sm.host_mode_changed.connect(events.append)
+        try:
+            sm._enter_host_mode_thread()
+        finally:
+            if sm._worker:
+                sm._worker.stop()
+                sm._worker.join(timeout=1.0)
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+        assert True not in events
+        assert sm.is_host_mode is False
+
+    def test_successful_handshake_emits_host_mode_changed_true(self, monkeypatch):
+        # Companion case - the same forced code path must still reach
+        # host_mode_changed(True) on a genuine success, so the test
+        # above is proven to discriminate on the handshake result, not
+        # on the in-process path itself.
+        monkeypatch.setattr(serial_manager, "__compiled__", True, raising=False)
+        monkeypatch.setattr(
+            pk232_hostmode_sub, "enter_host_mode",
+            lambda port_name, baud, command_char=b"\x03": (True, b"OPPA"),
+        )
+
+        sm = SerialManager()
+        port = _FakePort(lambda data: b"")
+        sm._serial = port
+        # _enter_host_mode_thread() reopens the port with a FRESH
+        # serial.Serial() object on success (CLAUDE.md §3) - the real
+        # constructor would try to open a real "COM_TEST" device, so it
+        # is monkeypatched to hand back the same FakePort instead.
+        monkeypatch.setattr(serial, "Serial", lambda **kwargs: port)
+        events: list[bool] = []
+        sm.host_mode_changed.connect(events.append)
+        try:
+            sm._enter_host_mode_thread()
+        finally:
+            if sm._worker:
+                sm._worker.stop()
+                sm._worker.join(timeout=1.0)
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+        assert True in events
+        assert sm.is_host_mode is True

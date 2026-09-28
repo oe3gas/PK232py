@@ -78,13 +78,42 @@ class TestDecodeLinkStatus:
         result = hw_check.decode_link_status(0x41, b"XX" + bytes(5))
         assert result["unparsed"] is True
 
-    def test_v2_unacked_retries_conperm_are_raw_byte_values(self):
-        data = b"CO" + bytes([0x31, 1, 2, 3, 4])
+    def test_v2_unacked_retries_conperm_are_masked_and_typed(self):
+        # P66, B.5/Teil B - all five status bytes are "value OR $30"
+        # (TRM), not raw byte values as the pre-P66 docstring assumed;
+        # v2/conperm are single-bit flags -> bool, unacked/retries stay
+        # counts -> int.
+        data = b"CO" + bytes([0x31, 0x31, 0x32, 0x33, 0x31])
         result = hw_check.decode_link_status(0x41, data)
-        assert result["v2"] == 1
+        assert result["v2"] is True
         assert result["unacked"] == 2
         assert result["retries"] == 3
-        assert result["conperm"] == 4
+        assert result["conperm"] is True
+
+    def test_t142_real_bytes_connected_channel_1(self):
+        # Real capture, T142, Device B, 28.09.2026,
+        # 20260928_094231_link_carry_host.log: channel 1 connected to
+        # OE3GAS-1 -> 'CO41000OE3GAS-1', path with NO separator.
+        result = hw_check.decode_link_status(0x41, b"CO41000OE3GAS-1")
+        assert result["channel"] == 1
+        assert result["state"] == 5
+        assert result["v2"] is True
+        assert result["unacked"] == 0
+        assert result["retries"] == 0
+        assert result["conperm"] is False
+        assert result["path"] == "OE3GAS-1"
+        assert "unparsed" not in result
+
+    def test_t142_real_bytes_free_channel(self):
+        # Same capture, a free channel: 'CO00000'.
+        result = hw_check.decode_link_status(0x43, b"CO00000")
+        assert result["channel"] == 3
+        assert result["state"] == 1
+        assert result["v2"] is False
+        assert result["unacked"] == 0
+        assert result["retries"] == 0
+        assert result["conperm"] is False
+        assert result["path"] == ""
 
 
 class TestLinkCarryDryRun:
