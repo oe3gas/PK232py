@@ -2747,6 +2747,59 @@ station/device — record which one in the log, the tool asks).
 
 ---
 
+### T141 — Link carry: verbose connect survives Host Mode, CO and OP queries (P65)
+
+`tools/hw_check.py link_carry` — connects to a real counterpart from the
+tool's own verbose `CONNECT` prompt, takes a verbose baseline
+(`OPMODE`/`CSTATUS`/`CONNECT`), enters Host Mode and records 3s of
+unsolicited traffic, queries `OPMODE` (Host Mode `OP`) and TRM 4.3.3
+link status on every channel 0–9 (`HostModeProtocol.cmd_link_status()`,
+never called by production code), sends a single `\r` data frame on
+whichever channel looks connected, re-sends `VHFPacketMode`'s own
+`get_activate_frames()`/`get_init_frames()` and re-checks link status,
+leaves Host Mode and re-checks the verbose baseline, then offers to
+disconnect. See `docs/P65_Link_Carryover_Measure_Spec.md`, Teil A.
+Follows on from the P64 Backlog observation (Betreiber, 27.09.2026):
+BBS connection survived an `Enter Host Mode` round trip in the app
+itself, unconfirmed whether the operating mode did too.
+
+Run: `python tools/hw_check.py --port COMx link_carry` (needs a real
+counterpart station — a BBS, or Direwolf/QtTermTCP over AGW as in
+T140 — record which one in the log, the tool asks).
+
+| Device | Counterpart | A.6 (link status) | A.8 (survives mode-switch frames) | A.9 (verbose sees it again) |
+|---|---|---|---|---|
+| A | | ⬜ | ⬜ | ⬜ |
+| B | | ⬜ | ⬜ | ⬜ |
+
+**Status:** ⬜ OPEN.
+
+---
+
+### T142 — Link carry (Host → verbose): Host Mode connect seen from verbose (P65)
+
+`tools/hw_check.py link_carry_host` — mirror of T141: connects **in Host
+Mode** on channel 1 via `HostModeProtocol.cmd_connect()` (the same call
+production code makes), waits for the `$5x` `CONNECTED to` link
+message, checks `OPMODE`/link status there, leaves Host Mode and
+queries verbose `OPMODE`/`CSTATUS`/`CONNECT` to see whether — and on
+which channel — the connection is visible from that side, then
+re-enters Host Mode to confirm it is still on channel 1 before
+cleaning up with a Host Mode `DI`. See
+`docs/P65_Link_Carryover_Measure_Spec.md`, Teil B.
+
+Run: `python tools/hw_check.py --port COMx link_carry_host` (needs a
+real counterpart station).
+
+| Device | Counterpart | Connect seen (Host) | Verbose shows same channel | Still ch1 after re-entry |
+|---|---|---|---|---|
+| A | | ⬜ | ⬜ | ⬜ |
+| B | | ⬜ | ⬜ | ⬜ |
+
+**Status:** ⬜ OPEN.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
