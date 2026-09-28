@@ -116,6 +116,35 @@ class TestDecodeLinkStatus:
         assert result["path"] == ""
 
 
+class TestChswitchByte:
+    """P66a, B.1 - parse_query_value()'s own '$xx' hex-STRING format
+    (e.g. CANLINE's 'CANline   $18 (CTRL-X)' -> '$18') must be decoded
+    into the actual byte before it goes on the wire - the pre-fix code
+    sent the three literal characters '$', '7', 'C' instead of the
+    single byte $7C, which was never a valid channel-switch command."""
+
+    def test_hex_value_decodes_to_its_byte(self):
+        assert hw_check.chswitch_byte("$7C") == b"|"
+
+    def test_zero_means_not_set(self):
+        # $00 is not "no character" - it must not be guessed as one.
+        assert hw_check.chswitch_byte("$00") is None
+
+    def test_missing_dollar_prefix_is_unparsed(self):
+        assert hw_check.chswitch_byte("7C") is None
+
+    def test_empty_string_is_unparsed(self):
+        assert hw_check.chswitch_byte("") is None
+
+    def test_non_hex_digits_are_unparsed(self):
+        assert hw_check.chswitch_byte("$ZZ") is None
+
+    def test_none_input_is_unparsed(self):
+        # An unanswered CHSWITCH query (parse_query_value() itself
+        # returned None) must not be guessed either.
+        assert hw_check.chswitch_byte(None) is None
+
+
 class TestLinkCarryDryRun:
     """P65, Definition of Done - --dry-run opens no port and sends
     nothing for both new subcommands."""
@@ -163,3 +192,14 @@ class TestLinkCarryDryRunFramesComeFromRealBuilders:
         out = capsys.readouterr().out
         frame = hw_check.HostModeProtocol.cmd_connect("OE3GAS-1", channel=1)
         assert frame.hex(" ").upper() in out
+
+    def test_link_carry_host_preview_shows_the_decoded_chswitch_byte(self, capsys):
+        # P66a DoD: --dry-run link_carry_host shows the CONVERTED
+        # character in D.2.3, not the three literal '$'/'7'/'C' bytes
+        # the pre-fix code would have sent.
+        session, log = _dry_run_session()
+        hw_check.test_link_carry_host(session, log)
+        out = capsys.readouterr().out
+        expected = (hw_check.chswitch_byte("$7C") + b"1" + b"CONVERSE\r\n\r")
+        assert expected.hex(" ").upper() in out
+        assert "24 37 43" not in out  # the literal '$','7','C' bytes

@@ -426,6 +426,35 @@ def parse_query_value(command: str, response: str) -> Optional[str]:
     return None
 
 
+def chswitch_byte(value: Optional[str]) -> Optional[bytes]:
+    """Decode a verbose CHSWITCH query's value - parse_query_value()'s
+    own '$xx' hex text (e.g. CANLINE's 'CANline   $18 (CTRL-X)' ->
+    '$18', confirmed shape) - into the actual byte the TNC expects on
+    the wire: '$7C' -> b'|'. P66a, B.1: the pre-fix code sent the
+    THREE CHARACTERS '$', '7', 'C' instead - `chswitch_char.encode() +
+    b"1CONVERSE"` looked plausible but was never a valid channel-switch
+    command, so D.2.3 measured a broken tool, not the TNC.
+
+    '$00' means the channel-switch character is not set at all - no
+    verbose channel switch by character is possible then, so this
+    returns None rather than a guessed byte (chr(0) is not "no
+    character"). Anything that is not exactly a two-hex-digit '$xx'
+    value (including an unanswered query, *value* is None) is
+    likewise None - never guessed."""
+    if value is None:
+        return None
+    value = value.strip()
+    if not (value.startswith("$") and len(value) == 3):
+        return None
+    try:
+        n = int(value[1:], 16)
+    except ValueError:
+        return None
+    if n == 0:
+        return None
+    return bytes([n])
+
+
 def query_error(response: str) -> Optional[str]:
     """Return the TNC's error text ('?What?', '?bad', '?EXPERT command',
     ...) if *response* contains one, else None (P21.1). Verbose-side
@@ -4835,6 +4864,16 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
             session.send_channel_frame(
                 ch, link_status_frames[ch], note=f"B CO ch{ch}"
             )
+        # D.2.3 (P66a): CHSWITCH's own query value ('$xx', a hex STRING)
+        # is decoded into the actual byte before it is sent - worked
+        # example, no port needed, so --dry-run itself shows the fix
+        # (previously the three literal characters '$'/'7'/'C', never a
+        # valid channel-switch command):
+        _example_send = chswitch_byte("$7C") + b"1" + b"CONVERSE\r\n\r"
+        log.line(
+            f"[dry-run] D.2.3 example (CHSWITCH='$7C'): would send "
+            f"{_example_send.hex(' ').upper()}"
+        )
         log.result("T142", "INFO", "dry-run, nothing sent")
         return
 
@@ -4989,20 +5028,31 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
         # D.2.3: switch to channel 1 with the TNC's own CHSWITCH
         # character - not tracked anywhere in SerialManager/AppConfig,
         # so measure it instead of guessing (CLAUDE.md's "never guess"
-        # rule), then CONVERSE there.
+        # rule), then CONVERSE there. CHSWITCH's own query value is a
+        # '$xx' hex string (parse_query_value()'s own format) - decoded
+        # via chswitch_byte() into the real byte to send (P66a, B.1:
+        # sending the three literal characters '$'/'7'/'C' instead of
+        # the byte $7C was never a valid channel-switch command).
         chswitch_raw = session.query("CHSWITCH")
-        chswitch_char = parse_query_value("CHSWITCH", chswitch_raw)
-        log.line(f"D.2.3 CHSWITCH queried: {chswitch_char!r} (raw={chswitch_raw!r})")
-        if chswitch_char:
+        chswitch_value = parse_query_value("CHSWITCH", chswitch_raw)
+        chswitch_char = chswitch_byte(chswitch_value)
+        log.line(
+            f"D.2.3 CHSWITCH queried: {chswitch_value!r} -> "
+            f"{chswitch_char!r} (raw={chswitch_raw!r})"
+        )
+        if chswitch_char is not None:
             d23_resp = session.send_and_read_until_idle(
-                chswitch_char.encode("ascii", errors="replace")
-                + b"1" + b"CONVERSE\r\n\r",
+                chswitch_char + b"1" + b"CONVERSE\r\n\r",
                 note="D.2.3 CHSWITCH+1, CONVERSE, then CR",
                 idle=2.0, max_total=10.0,
             )
             log.result("T142 D.2.3", "INFO", f"raw={d23_resp!r}")
-        else:
+        elif chswitch_value is None:
             log.result("T142 D.2.3", "SKIPPED", "CHSWITCH did not answer - not guessed")
+        elif chswitch_value.strip() == "$00":
+            log.result("T142 D.2.3", "SKIPPED", "CHSWITCH is $00 (not set)")
+        else:
+            log.result("T142 D.2.3", "SKIPPED", f"unparsed value {chswitch_value!r}")
 
         # D.2.4: COMMAND char, cmd:; log CSTATUS.
         _confirm_command_prompt_light(session, "D.2.4", log)
