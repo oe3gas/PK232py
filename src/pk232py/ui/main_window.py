@@ -5171,16 +5171,52 @@ class MainWindow(QMainWindow):
             self._set_mode_indicator("host")
             self._stack.setCurrentIndex(0)
             self._wire_mode_callbacks()
-            # If no mode is active yet, activate Baudot as default.
-            # This sends the BA frame to the TNC, syncs the ComboBox
-            # to 'Baudot RTTY', wires on_data_received and all buttons.
-            # Without this call ModeManager._active_mode stays None
-            # and RX display, SEND/PTT and ComboBox are all broken.
-            if not self._modes.current_mode_name:
+            # If no mode is active yet, activate the operator's last
+            # chosen Packet mode if the LinkTable remembers one (P67,
+            # Teil C.2 - the original P64 case: verbose, connect,
+            # Ctrl+H used to always land on Baudot instead), otherwise
+            # Baudot RTTY as before. This sends the mode's own
+            # activation frames to the TNC, syncs the ComboBox, wires
+            # on_data_received and all buttons. Without this call
+            # ModeManager._active_mode stays None and RX display,
+            # SEND/PTT and ComboBox are all broken. Safe even with an
+            # existing Packet connection (M5, T141 A.8 - the mode-
+            # switch frames do not disturb OPMODE or the link itself).
+            if self._modes.current_mode_name:
+                target_mode_name = self._modes.current_mode_name
+            else:
+                target_mode_name = "Baudot RTTY"
+                if self._link_table.mode_name in ("HF Packet", "VHF Packet"):
+                    target_mode_name = self._link_table.mode_name
                 self._modes.set_mode(
-                    "Baudot RTTY",
-                    mode_instance=self._build_mode_instance("Baudot RTTY"),
+                    target_mode_name,
+                    mode_instance=self._build_mode_instance(target_mode_name),
                 )
+            # P67, Teil C.2: reconcile the LinkTable against the TNC's
+            # own Host Mode state - mark every channel this table
+            # currently believes is connected 'unconfirmed' (a channel
+            # carried over from before this switch is shown as such,
+            # never silently dropped or silently re-trusted), then
+            # query TRM 4.3.3 Link Status (CO) on every channel 0-9
+            # (M2). Responses arrive asynchronously via HFPacketMode.
+            # on_link_status() -> _on_mode_link_status() -> LinkTable.
+            # on_link_status() (already wired in _wire_mode_callbacks()).
+            # Channel 0 last is not needed - it has no meaning in Host
+            # Mode (P10, UI_CHANNEL).
+            #
+            # target_mode_name, not self._modes.current_mode_name, is
+            # checked here - set_mode()'s own activation is ASYNC
+            # (ModeManager._send_init_frames() only runs current_mode_
+            # name/current_mode over on its own 300ms QTimer), so right
+            # after a FRESH set_mode() call above current_mode_name is
+            # still empty; using it here would silently skip the CO
+            # probe on exactly the case this package exists for - a
+            # fresh Host Mode entry that just restored a carried-over
+            # Packet mode via table.mode_name.
+            if target_mode_name in ("HF Packet", "VHF Packet"):
+                self._link_table.mark_unconfirmed()
+                for _ch in range(10):
+                    self._serial.send_channel_command(_ch, b'CO')
         else:
             self._sb_mode.setText("Mode: VERBOSE")
             self._set_mode_indicator("verbose")
