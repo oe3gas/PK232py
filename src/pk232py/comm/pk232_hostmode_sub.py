@@ -47,6 +47,21 @@ _CR_SETTLE_TIMEOUT      = 1.0   # waiting for '\r\n' after the follow-up CR
 _HPOLL_TIMEOUT          = 2.0   # waiting for HPOLL_ACK/HPOLL_Y after HPOLL_Y
 _OPMODE_TIMEOUT         = 2.0   # waiting for the OPMODE query's own answer
 
+# P66b, Teil B: a real hardware run (T141, 28.09.2026, Device B,
+# 13:35, "20260928_133500_link_carry.log") found the command
+# interpreter can lag SECONDS behind the immediate character echo
+# while a connection is active (B.1: the XFLOW OFF response arrived
+# only after the HPOLL_Y echo had already been read) - HOST 3 can
+# still take effect AFTER the OPMODE check above already gave up. An
+# echo proves the TNC was NOT YET in Host Mode at that instant, not
+# that it never will be, so a failed check is retried a few times
+# before concluding failure - this "late entry" retry only ever runs
+# on the failure path, never slowing down the normal (already
+# succeeded) case. Named here, not hardcoded, so a future hardware
+# measurement (P66b, Teil E) can retune them.
+_LATE_ENTRY_RETRIES  = 3
+_LATE_ENTRY_INTERVAL = 1.5
+
 
 # ---------------------------------------------------------------------------
 # Serial helpers
@@ -295,15 +310,25 @@ def enter_host_mode(
       accepted, since that is exactly the byte sequence an echo
       reproduces - AND a genuine OPMODE answer.
 
-    P66b, Teil A: every step (escape_converse, HOST 3, the follow-up
-    CR, HPOLL_Y, the OPMODE check) is timestamped (monotonic, ms since
-    the handshake started) with what was sent and everything that was
-    read for it. On success this goes to logger.debug (cheap, usually
-    discarded); on failure it is written to stderr in full, one line
-    per step - a real hardware run (T141, 28.09.2026, Device B) could
-    not otherwise be resolved from the FAIL: summary alone, which only
-    ever held the LAST few steps' bytes with no timing information at
-    all. No behaviour change in this part.
+    P66b, Teil A/B: a real hardware run (T141, 28.09.2026, Device B)
+    found the A.2 OPMODE check can itself see only an echo, then HOST 3
+    takes effect ANYWAY a few seconds later - the command interpreter
+    can lag seconds behind the immediate character echo while a
+    connection is active (B.1: the delayed 'XFlow was ON' answer to the
+    EARLIER 'XFLOW OFF' arrived only after the HPOLL_Y echo had already
+    been read). So a failed OPMODE check is retried up to
+    _LATE_ENTRY_RETRIES times, _LATE_ENTRY_INTERVAL s apart, before
+    concluding failure - a success on a retry is a genuine "late
+    entry", logged as such with its attempt number, never guessed as
+    the first check's own result. Every step (escape_converse, HOST 3,
+    the follow-up CR, HPOLL_Y, the OPMODE check and each of its
+    retries) is timestamped (monotonic, ms since the handshake started)
+    with what was sent and everything that was read for it - on
+    success this goes to logger.debug (cheap, usually discarded); on
+    failure it is written to stderr in full, one line per step, since
+    B.1 could not otherwise be resolved from the FAIL: summary alone
+    (Teil B.2's own finding - that summary only ever held the LAST few
+    steps' bytes, with no timing information at all).
     """
     import serial
 
@@ -371,6 +396,27 @@ def enter_host_mode(
 
         success = (HPOLL_ACK in r) and got_real_opmode_answer
         raw_all = r + op_raw
+
+        # Teil B (P66b, B.1): HOST 3 may take effect AFTER this check
+        # already gave up - retry the OPMODE query itself a few times
+        # before concluding failure. Only the failure path pays for
+        # this; a normal (already-succeeded) entry is unaffected.
+        late_entry_attempt = 0
+        while not success and late_entry_attempt < _LATE_ENTRY_RETRIES:
+            late_entry_attempt += 1
+            time.sleep(_LATE_ENTRY_INTERVAL)
+            port.write(OPMODE_QUERY)
+            port.flush()
+            retry_raw = read_until(port, bytes([ETB]), timeout=_OPMODE_TIMEOUT)
+            _record(f"opmode retry {late_entry_attempt}", OPMODE_QUERY, retry_raw)
+            raw_all += retry_raw
+            retry_frames, _remaining2 = extract_frames(bytearray(retry_raw))
+            if any(
+                ctl == 0x4F and payload[:2] == b'OP' and len(payload) > 2
+                for ctl, payload in retry_frames
+            ):
+                success = True
+
         if not success:
             logger.warning(
                 "enter_host_mode: echo instead of Host Mode response - "
@@ -378,6 +424,13 @@ def enter_host_mode(
                 "opmode_raw=%s)",
                 HPOLL_ACK in r, op_raw.hex(),
             )
+        elif late_entry_attempt:
+            logger.info(
+                "enter_host_mode: late entry - HOST 3 took effect after "
+                "OPMODE retry attempt %d (P66b, B.1)",
+                late_entry_attempt,
+            )
+
         _log_steps(success)
         return success, raw_all
     finally:
