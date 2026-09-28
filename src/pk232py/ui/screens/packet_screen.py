@@ -202,11 +202,16 @@ UI_CHANNEL = 0   # P10: channel 0 is the UI/unproto/monitor channel, not a QSO
 # Channel/chip states (P44 — named so both this module and its tests can
 # refer to them instead of repeating the raw strings). CH_FAILED is a
 # transient state only ChannelBar.set_channel_state() ever assigns itself
-# (see its docstring) — nothing external sets it directly.
-CH_FREE      = "free"
-CH_CALLING   = "calling"
-CH_CONNECTED = "connected"
-CH_FAILED    = "failed"
+# (see its docstring) — nothing external sets it directly. CH_UNCONFIRMED
+# (P67, Teil C.1) matches comm.link_table.STATE_UNCONFIRMED's own string
+# value exactly, on purpose — MainWindow's LinkTable-subscribe callback
+# passes link.state straight through to set_channel_state() with no
+# translation table of its own to keep in sync.
+CH_FREE        = "free"
+CH_CALLING     = "calling"
+CH_CONNECTED   = "connected"
+CH_FAILED      = "failed"
+CH_UNCONFIRMED = "unconfirmed"
 
 # Chip fill colour per state. CH_CALLING's amber is also the pulse
 # animation's low value (_PULSE_LOW) — this is just what the chip shows
@@ -215,11 +220,17 @@ CH_FAILED    = "failed"
 # for _FAILED_FLASH_MS before ChannelBar reverts the chip to CH_FREE
 # itself (P44 — a failed connect must be visible even on a single
 # screenshot / without colour vision, not just "calling forever").
+# CH_UNCONFIRMED (P67) reuses CH_CONNECTED's own green — a channel this
+# table BELIEVES is connected, carried over from before a verbose<->Host
+# Mode switch, not yet reconfirmed this round — distinguished from a
+# plainly confirmed CH_CONNECTED chip only by its dashed border
+# (_update_chip()), not a different colour language.
 _CHIP_FILL = {
-    CH_FREE:      "#5a5a5a",
-    CH_CALLING:   "#8a6a1e",
-    CH_CONNECTED: "#3a9e3a",
-    CH_FAILED:    "#b03a3a",
+    CH_FREE:        "#5a5a5a",
+    CH_CALLING:     "#8a6a1e",
+    CH_CONNECTED:   "#3a9e3a",
+    CH_FAILED:      "#b03a3a",
+    CH_UNCONFIRMED: "#3a9e3a",
 }
 _CHIP_BORDER_CURRENT = "#ffb400"   # amber, 2px — marks the current channel
 
@@ -247,15 +258,16 @@ _EDIT_STYLE_INVALID = (
 )
 
 
-def _chip_style(fill: str, border: str, border_w: int) -> str:
+def _chip_style(fill: str, border: str, border_w: int, border_style: str = "solid") -> str:
     """Build a chip button's stylesheet (P44 — shared between
     ChannelBar._update_chip()'s normal render and _on_pulse_value()'s
     fast per-tick background-only update, so the two never drift apart
-    on the border/text portion)."""
+    on the border/text portion). *border_style* is Qt stylesheet syntax
+    ('solid' or 'dashed', P67 — CH_UNCONFIRMED's own dashed border)."""
     return (
         "QPushButton {"
         f"  background-color: {fill}; color: white;"
-        f"  border: {border_w}px solid {border}; border-radius: 4px;"
+        f"  border: {border_w}px {border_style} {border}; border-radius: 4px;"
         "}"
     )
 
@@ -867,7 +879,12 @@ class ChannelBar(QWidget):
         fill = _UI_CHANNEL_FILL if is_ui_channel else _CHIP_FILL.get(state, _CHIP_FILL[CH_FREE])
         border = _CHIP_BORDER_CURRENT if is_current else "#333333"
         border_w = 2 if is_current else 1
-        style = _chip_style(fill, border, border_w)
+        # P67: CH_UNCONFIRMED's own dashed border — a channel carried
+        # over from before a verbose<->Host Mode switch, not yet
+        # reconfirmed this round, must not look identical to a plainly
+        # confirmed CH_CONNECTED chip (same green fill otherwise).
+        border_style = "dashed" if state == CH_UNCONFIRMED else "solid"
+        style = _chip_style(fill, border, border_w, border_style)
         if is_ui_channel:
             tip = (
                 "UI / Unproto / Monitor channel.\n"
@@ -885,6 +902,8 @@ class ChannelBar(QWidget):
                 "right-click → Connect…) to type a callsign.\n"
                 "Ctrl+Up / Ctrl+Down steps through channels."
             )
+            if state == CH_UNCONFIRMED:
+                tip += "\ncarried over from verbose - waiting for confirmation"
             if ch > self._user_limit:
                 tip += (
                     f"\nUSERS is set to {self._user_limit} — incoming "
@@ -1439,17 +1458,33 @@ class PacketBaseScreen(QWidget):
         return self.channel_bar.current()
 
     def reset_channels(self) -> None:
-        """Clear all channel state — every chip back to free, MHEARD channel
-        column cleared, every per-channel TX draft discarded (P9.3), every
-        RX document emptied (P50 Teil B). Called by MainWindow when the
-        mode is (re)activated and when leaving Host Mode (see
-        _switch_opmode()/_update_host_mode_ui() in main_window.py) —
-        without this, a CONNECTED/CALLING chip, a stale TX draft, or a
-        previous session's RX history would linger with no frame ever
-        left to clear it.
+        """Clear every per-channel TX draft (P9.3) and RX document (P50
+        Teil B). Called by MainWindow when the mode is (re)activated
+        (see _switch_opmode() in main_window.py) — without this, a
+        stale TX draft or a previous session's RX history would linger
+        with no frame ever left to clear it.
+
+        Deliberately does NOT touch channel_bar's chip state or
+        mheard_panel's channel map any more (P67, Teil C - correcting a
+        regression the CO-reconciliation race exposed): LinkTable is
+        now the one source of truth for connection state, reconciled
+        independently on every fresh Host Mode entry (mark_unconfirmed()
+        + a CO probe of every channel, MainWindow.
+        _update_host_mode_ui(True)) - a blanket channel_bar.reset()
+        here could run AFTER a CO answer had already confirmed a
+        carried-over channel (the mode-activation timer and the TNC's
+        own CO response race each other), silently wiping a connection
+        the LinkTable still correctly remembers as connected. Confirmed
+        via a real repro: without this fix, a CO answer confirming ch1
+        arrives, the chip shows connected, then reset_channels() (fired
+        300ms later by the SAME Host Mode entry's own mode-activation
+        timer) wipes it back to free while LinkTable.channels[1] still
+        says connected.
         """
-        self.channel_bar.reset()
-        self.mheard_panel.set_channel_map({})
+        # P57.1: still closes any open chip editor - an in-progress
+        # connect attempt is meaningless after a reactivation
+        # regardless of what LinkTable does or does not remember.
+        self.channel_bar.close_open_editor()
         self._tx_buffers.clear()
         self.tx_input.blockSignals(True)
         self.tx_input.clear()
