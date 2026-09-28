@@ -107,17 +107,25 @@ required except for T101:
             real counterpart station (a BBS, or Direwolf/QtTermTCP over
             AGW as in aprs_reject). See
             docs/P65_Link_Carryover_Measure_Spec.md.
+    link_carry_host
+            Mirror image of link_carry: connects IN Host Mode
+            (HostModeProtocol.cmd_connect(), channel 1, the same call
+            production code makes), waits for the '$5x' CONNECTED link
+            message, then leaves Host Mode and checks whether verbose
+            OPMODE/CSTATUS/CONNECT shows the same connection on the
+            same channel. Needs a real counterpart station. See
+            docs/P65_Link_Carryover_Measure_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
             and recorded individually), and NOT
             mi/maildrop/maildrop_host/mdcheck_scan/maildrop_session/
-            aprs_query/aprs_tx/aprs_reject/link_carry (mi is fine
-            alone but grouped with its guided counterpart; maildrop,
-            maildrop_host, mdcheck_scan and maildrop_session are
-            interactive/exploratory; aprs_tx/aprs_reject/link_carry
-            transmit or need a second station), so each must be run
-            on its own.
+            aprs_query/aprs_tx/aprs_reject/link_carry/link_carry_host
+            (mi is fine alone but grouped with its guided counterpart;
+            maildrop, maildrop_host, mdcheck_scan and maildrop_session
+            are interactive/exploratory; aprs_tx/aprs_reject/
+            link_carry/link_carry_host transmit or need a second
+            station), so each must be run on its own.
 
 Usage::
 
@@ -4734,6 +4742,168 @@ def test_link_carry(session: Session, log: RunLog) -> None:
                 originals[cmd],
                 log,
             )
+
+
+def test_link_carry_host(session: Session, log: RunLog) -> None:
+    log.line(
+        "--- Link carry (Host -> verbose): Host Mode connect seen "
+        "from verbose ---"
+    )
+
+    link_status_frames = {ch: HostModeProtocol.cmd_link_status(ch) for ch in range(10)}
+    preview_connect_frame = HostModeProtocol.cmd_connect("OE3GAS-1", channel=1)
+    vhf = VHFPacketMode()
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would normalize(), check VHF/HBAUD, connect on "
+            "channel 1 in Host Mode (HostModeProtocol.cmd_connect()), "
+            "wait for a CONNECTED link message, query OPMODE and link "
+            "status on channels 0-9, leave Host Mode and query "
+            "OPMODE/CSTATUS/CONNECT verbose, re-enter Host Mode and "
+            "re-check link status on channel 1, then disconnect on "
+            "the reported channel:"
+        )
+        for frame in vhf.get_activate_frames() + vhf.get_init_frames():
+            session.send_frame(frame, note="activate VHF Packet")
+        session.send_channel_frame(1, preview_connect_frame, note="B connect ch1")
+        for ch in range(10):
+            session.send_channel_frame(
+                ch, link_status_frames[ch], note=f"B CO ch{ch}"
+            )
+        log.result("T142", "INFO", "dry-run, nothing sent")
+        return
+
+    session.normalize()
+
+    if input("Ready to continue? [y/N] ").strip().lower() != "y":
+        log.result("T142", "INFO", "skipped by operator")
+        return
+
+    commands = ["VHF", "HBAUD"]
+    originals: dict[str, Optional[str]] = {
+        cmd: parse_query_value(cmd, session.query(cmd)) for cmd in commands
+    }
+    missing = [c for c in commands if originals[c] is None]
+    if missing:
+        log.result(
+            "T142", "SKIPPED",
+            f"original value(s) not parseable via parse_query_value() -- "
+            f"not touching them: {missing}"
+        )
+        return
+
+    log.line(
+        f"VHF (current): {originals['VHF']!r}, "
+        f"HBAUD (current): {originals['HBAUD']!r}"
+    )
+    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
+    hbaud_ok = originals["HBAUD"].strip() == "1200"
+    if not (vhf_ok and hbaud_ok):
+        answer = input(
+            f"TNC is not on VHF 1200 Bd (VHF={originals['VHF']!r}, "
+            f"HBAUD={originals['HBAUD']!r}). Set VHF ON and HBAUD 1200 "
+            f"for this run? [y/N] "
+        ).strip().lower()
+        if answer != "y":
+            log.result("T142", "INFO", "aborted - TNC not on VHF 1200 Bd")
+            return
+        session.set_verbose("VHF", "ON")
+        session.set_verbose("HBAUD", "1200")
+
+    target_call = input("Counterpart callsign to CONNECT (Host Mode)? ").strip()
+
+    try:
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+
+            for frame in vhf.get_activate_frames() + vhf.get_init_frames():
+                session.send_frame(frame, note="B activate VHF Packet")
+                session._pump(0.3)
+
+            if not confirm_tx(
+                f"Connect to {target_call!r} on channel 1, from Host "
+                f"Mode (HostModeProtocol.cmd_connect())."
+            ):
+                log.result("T142", "INFO", "skipped by operator")
+                return
+
+            connect_frame = HostModeProtocol.cmd_connect(target_call, channel=1)
+            captured: list = []
+            session.sm.frame_received.connect(captured.append)
+            try:
+                session.send_channel_frame(1, connect_frame, note="B connect ch1")
+                session._pump(30.0)
+            finally:
+                session.sm.frame_received.disconnect(captured.append)
+            for f in captured:
+                log.line(
+                    f"B << ctl=0x{f.ctl:02X} ch={f.channel} "
+                    f"data={f.data!r} text={f.text!r}"
+                )
+            connected_seen = any(
+                f.channel == 1 and "connect" in (f.text or "").lower()
+                for f in captured
+            )
+            log.result(
+                "T142 connect", "INFO" if connected_seen else "INCONCLUSIVE",
+                f"CONNECTED-shaped link message seen on channel 1={connected_seen}"
+            )
+
+            op_frame = session.query_host(b"OP")
+            log.line(
+                f"B OPMODE Host Mode: "
+                f"{op_frame.text if op_frame else '<no matching response>'!r}"
+            )
+
+            b_results = _probe_all_channel_links(
+                session, link_status_frames, "B", log
+            )
+        finally:
+            session.exit_host_mode()
+
+        for cmd in ("OPMODE", "CSTATUS"):
+            log.line(f"B (verbose) {cmd}: {session.query(cmd)!r}")
+        verbose_connect = session.query("CONNECT")
+        log.line(f"B (verbose) CONNECT bare: {verbose_connect!r}")
+        b_verbose_shows_it = bool(target_call) and target_call.upper() in verbose_connect.upper()
+        log.result(
+            "T142 verbose", "INFO",
+            f"verbose CONNECT shows target={b_verbose_shows_it} "
+            f"raw={verbose_connect!r}"
+        )
+
+        session.enter_host_mode()
+        try:
+            recheck = _probe_all_channel_links(
+                session, link_status_frames, "B recheck", log
+            )
+            still_ch1 = 1 in _channels_connected_to(recheck, target_call)
+            log.result(
+                "T142", "PASS" if still_ch1 else "INCONCLUSIVE",
+                f"still on channel 1={still_ch1}"
+            )
+
+            if input(
+                "Disconnect now on the reported channel? [Y/n] "
+            ).strip().lower() in ("", "y"):
+                session.send_channel_frame(
+                    1, HostModeProtocol.cmd_disconnect(1), note="B cleanup DI"
+                )
+        finally:
+            session.exit_host_mode()
+    finally:
+        for cmd in commands:
+            verify_restore(
+                cmd,
+                lambda c=cmd: session.query(c),
+                lambda v, c=cmd: session.set_verbose(c, v),
+                originals[cmd],
+                log,
+            )
+
+
 # ===========================================================================
 # CLI
 # ===========================================================================
@@ -4749,11 +4919,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "radio) recording terminal; maildrop_host and mdcheck_scan "
             "are read-only Host Mode probes; maildrop_session drives the "
             "real MailDropSession end to end (T119); t101 TRANSMITS and "
-            "needs a second receiver; link_carry (P65, T141) measures "
-            "whether an AX.25 Packet connection and the active operating "
-            "mode survive a verbose -> Host Mode -> verbose round trip "
-            "-- needs a real counterpart station and is deliberately "
-            "not part of 'all'."
+            "needs a second receiver; link_carry and link_carry_host "
+            "(P65, T141/T142) measure whether an AX.25 Packet connection "
+            "and the active operating mode survive the verbose<->Host "
+            "Mode switch -- both need a real counterpart station and are "
+            "deliberately not part of 'all'."
         ),
     )
     p.add_argument(
@@ -4762,7 +4932,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
             "maildrop_session", "aprs_query", "aprs_tx", "aprs_reject",
-            "link_carry",
+            "link_carry", "link_carry_host",
             "all",
         ],
     )
@@ -4867,7 +5037,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         "aprs_query":  [lambda s, l: test_aprs_query(s, l)],
         "aprs_tx":     [lambda s, l: test_aprs_tx(s, l)],
         "aprs_reject": [lambda s, l: test_aprs_reject(s, l)],
-        "link_carry": [lambda s, l: test_link_carry(s, l)],
+        "link_carry":      [lambda s, l: test_link_carry(s, l)],
+        "link_carry_host": [lambda s, l: test_link_carry_host(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
