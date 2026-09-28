@@ -4642,6 +4642,18 @@ def test_link_carry(session: Session, log: RunLog) -> None:
         connect_wait = session.read_until_idle(idle=2.0, max_total=30.0)
         connect_text = connect_wait.decode("ascii", errors="replace")
         log.line(f"A.2 waiting for *** CONNECTED: {connect_text!r}")
+        # P67, Teil D H.1/A.2: '?already connected' means the TNC is
+        # already linked to this counterpart on some channel - not the
+        # Converse-connect state this test measures. Fail fast here
+        # rather than let later steps (A.3 onward) silently measure the
+        # wrong thing.
+        if "already connected" in (connect_echo + connect_text).lower():
+            log.result(
+                "T141 A.2", "FAIL",
+                "TNC answered '?already connected' - disconnect the "
+                "counterpart first"
+            )
+            return
 
         # A.3 (P66, Teil C): verify the command prompt BEFORE sending
         # anything else - a verbose CONNECT can leave the TNC in
@@ -4757,6 +4769,12 @@ def test_link_carry(session: Session, log: RunLog) -> None:
                     f"before={connected_channels} after={a8_connected} "
                     f"opmode={op_text_after!r}"
                 )
+                # P67, Teil D H.1: track the most recently confirmed
+                # connected channel(s) from the LAST CO query actually
+                # sent (A.8's, when it ran) - A.9/A.10 below use this,
+                # never an assumption about which channel is "active".
+                if a8_connected:
+                    connected_channels = a8_connected
             else:
                 log.result("T141 A.8", "INFO", "skipped by operator")
         finally:
@@ -4769,24 +4787,44 @@ def test_link_carry(session: Session, log: RunLog) -> None:
         if not _confirm_command_prompt_light(session, "A.9", log):
             log.result("T141 A.9", "FAIL", "still in Converse - no queries sent")
         else:
-            for cmd in ("OPMODE", "CSTATUS"):
-                log.line(f"A.9 {cmd}: {session.query(cmd)!r}")
-            a9_connect = session.query("CONNECT")
-            log.line(f"A.9 CONNECT (bare): {a9_connect!r}")
-            a9_pass = bool(target_call) and target_call.upper() in a9_connect.upper()
+            log.line(f"A.9 OPMODE: {session.query('OPMODE')!r}")
+            # P67, Teil D H.2: CSTATUS parsed for the channel(s) A.6/
+            # A.8 actually found connected - a bare CONNECT query shows
+            # the I/O channel, which A.6's own probe loop (0-9) leaves
+            # at channel 9, not necessarily the connected one.
+            a9_cstatus_raw = session.query("CSTATUS")
+            log.line(f"A.9 CSTATUS: {a9_cstatus_raw!r}")
+            a9_parsed = parse_cstatus(a9_cstatus_raw)
+            a9_channels = connected_channels or [carry_channel]
+            a9_pass = any(
+                ch in a9_parsed and target_call.upper() in a9_parsed[ch][2].upper()
+                for ch in a9_channels
+            )
             log.result(
                 "T141 A.9", "PASS" if a9_pass else "INCONCLUSIVE",
-                f"raw={a9_connect!r}"
+                f"checked_channels={a9_channels} parsed={a9_parsed!r}"
             )
 
-        # A.10
-        if input("Disconnect now? [Y/n] ").strip().lower() in ("", "y"):
-            session.verbose("DISCONNECT")
-            disc_resp = session.read_until_idle(idle=2.0, max_total=15.0)
-            log.line(
-                f"A.10 disconnect response: "
-                f"{disc_resp.decode('ascii', errors='replace')!r}"
-            )
+        # A.10 (P67, Teil D H.1): disconnect via Host Mode DI on the
+        # CONNECTED channel from the last CO query - like
+        # link_carry_host's own cleanup, never a verbose DISCONNECT on
+        # whatever the active/IO channel happens to be (A.6's probe
+        # loop leaves that at channel 9, not necessarily where the real
+        # connection is - exactly what made the 28.09.2026 runs 2/3
+        # answer '?already connected' instead of testing Converse).
+        disconnect_channel = connected_channels[0] if connected_channels else carry_channel
+        if input(f"Disconnect channel {disconnect_channel} now? [Y/n] ").strip().lower() in ("", "y"):
+            session.enter_host_mode()
+            try:
+                session.send_channel_frame(
+                    disconnect_channel,
+                    HostModeProtocol.cmd_disconnect(disconnect_channel),
+                    note=f"A.10 DI ch{disconnect_channel}",
+                )
+                session._pump(0.3)
+            finally:
+                session.exit_host_mode()
+            log.line(f"A.10: sent Host Mode DI on channel {disconnect_channel}")
         else:
             log.result("T141 A.10", "INFO", "left connected by operator choice")
     finally:
@@ -4917,19 +4955,42 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
                 session._pump(30.0)
             finally:
                 session.sm.frame_received.disconnect(captured.append)
+            connect_error: Optional[LinkStatus] = None
             for f in captured:
                 log.line(
                     f"B << ctl=0x{f.ctl:02X} ch={f.channel} "
                     f"data={f.data!r} text={f.text!r}"
                 )
+                # P67, Teil D H.3: a CO-shaped frame here is the TNC's
+                # own error answer to the connect attempt (e.g. "already
+                # connected"), not link-message text - decode it via
+                # comm.link_status the same way _probe_all_channel_links
+                # does, and log a one-byte error_code explicitly instead
+                # of letting it fall through as an unrecognised frame.
+                if f.data.startswith(b"CO"):
+                    status = decode_link_status(f.ctl, f.data)
+                    if status.error_code is not None:
+                        connect_error = status
+                        log.line(
+                            f"B << CO error_code=0x{status.error_code:02X} "
+                            f"ch={status.channel} (meaning not guessed)"
+                        )
             connected_seen = any(
                 f.channel == 1 and "connect" in (f.text or "").lower()
                 for f in captured
             )
-            log.result(
-                "T142 connect", "INFO" if connected_seen else "INCONCLUSIVE",
-                f"CONNECTED-shaped link message seen on channel 1={connected_seen}"
-            )
+            if connect_error is not None:
+                log.result(
+                    "T142 connect", "FAIL",
+                    f"CO error_code=0x{connect_error.error_code:02X} on "
+                    f"ch{connect_error.channel} - not a CONNECTED link "
+                    f"message (H.3)"
+                )
+            else:
+                log.result(
+                    "T142 connect", "INFO" if connected_seen else "INCONCLUSIVE",
+                    f"CONNECTED-shaped link message seen on channel 1={connected_seen}"
+                )
 
             op_frame = session.query_host(b"OP")
             log.line(
@@ -4943,15 +5004,21 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
         finally:
             session.exit_host_mode()
 
-        for cmd in ("OPMODE", "CSTATUS"):
-            log.line(f"B (verbose) {cmd}: {session.query(cmd)!r}")
-        verbose_connect = session.query("CONNECT")
-        log.line(f"B (verbose) CONNECT bare: {verbose_connect!r}")
-        b_verbose_shows_it = bool(target_call) and target_call.upper() in verbose_connect.upper()
+        log.line(f"B (verbose) OPMODE: {session.query('OPMODE')!r}")
+        # P67, Teil D H.2: CSTATUS parsed for the channel this test
+        # itself connected (1), not a bare CONNECT query - bare CONNECT
+        # shows the I/O channel, which need not be the connected one.
+        cstatus_b_raw = session.query("CSTATUS")
+        log.line(f"B (verbose) CSTATUS: {cstatus_b_raw!r}")
+        cstatus_b_parsed = parse_cstatus(cstatus_b_raw)
+        b_verbose_shows_it = (
+            bool(target_call) and 1 in cstatus_b_parsed
+            and target_call.upper() in cstatus_b_parsed[1][2].upper()
+        )
         log.result(
             "T142 verbose", "INFO",
-            f"verbose CONNECT shows target={b_verbose_shows_it} "
-            f"raw={verbose_connect!r}"
+            f"verbose CSTATUS shows target on ch1={b_verbose_shows_it} "
+            f"parsed={cstatus_b_parsed!r}"
         )
 
         session.enter_host_mode()
@@ -5082,10 +5149,14 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
             f"the active/IO channel, D.3) - may transmit on the air if "
             f"it turns out not to actually be connected."
         ):
+            # P67, Teil D H.4: the 28.09.2026 run's own TinyBox reply
+            # arrived after the old 2s idle window had already closed
+            # the read (visible only in the following cmd: check) -
+            # widened to 10s idle / 20s max_total.
             d3_converse_resp = session.send_and_read_until_idle(
                 b"CONVERSE\r\n\r",
                 note=f"D.3 CONVERSE (ch{connected_channel}), then CR",
-                idle=2.0, max_total=10.0,
+                idle=10.0, max_total=20.0,
             )
             log.result("T142 D.3 CONVERSE", "INFO", f"raw={d3_converse_resp!r}")
         else:
