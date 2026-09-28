@@ -4842,6 +4842,7 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
 
     link_status_frames = {ch: HostModeProtocol.cmd_link_status(ch) for ch in range(10)}
     preview_connect_frame = HostModeProtocol.cmd_connect("OE3GAS-1", channel=1)
+    preview_disconnect_frame = HostModeProtocol.cmd_disconnect(1)
     vhf = VHFPacketMode()
 
     if session.dry_run:
@@ -4855,7 +4856,9 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
             "then leave Host Mode and see which channel verbose CSTATUS "
             "now calls the active/IO channel), then measure CONVERSE "
             "and a channel switch after Host -> verbose (D.2), then "
-            "offer to disconnect:"
+            "clean up by disconnecting the CONNECTED channel via Host "
+            "Mode DI before HOST OFF (never a verbose DISCONNECT on "
+            "whatever the active channel happens to be, P66b B.6):"
         )
         for frame in vhf.get_activate_frames() + vhf.get_init_frames():
             session.send_frame(frame, note="activate VHF Packet")
@@ -4864,6 +4867,7 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
             session.send_channel_frame(
                 ch, link_status_frames[ch], note=f"B CO ch{ch}"
             )
+        session.send_channel_frame(1, preview_disconnect_frame, note="cleanup DI ch1")
         # D.2.3 (P66a): CHSWITCH's own query value ('$xx', a hex STRING)
         # is decoded into the actual byte before it is sent - worked
         # example, no port needed, so --dry-run itself shows the fix
@@ -4988,6 +4992,15 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
                 f"still on channel 1={still_ch1}"
             )
 
+            # P66b, B.6: the channel to disconnect at cleanup is the
+            # CONNECTED one from THIS CO recheck - never assumed to be
+            # channel 1, and never whatever the active channel happens
+            # to be later (D.1/D.2 deliberately move the active channel
+            # elsewhere).
+            connected_channels_now = _channels_connected_to(recheck, target_call)
+            connected_channel = connected_channels_now[0] if connected_channels_now else 1
+            log.line(f"connected_channel (from CO recheck) = {connected_channel}")
+
             # D.1 (P66, B.4 hypothesis): does the LAST $4x frame sent
             # decide the TNC's own "active channel" concept? Send
             # exactly one more CO query, on a channel known to be free
@@ -5014,13 +5027,23 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
         # nothing here disconnects it; cleanup happens only at the end.
 
         # D.2.1: CONVERSE on whatever the active channel is right now
-        # (D.1's own result), then a bare CR to elicit a response.
-        d21_resp = session.send_and_read_until_idle(
-            b"CONVERSE\r\n\r",
-            note="D.2.1 CONVERSE (active channel), then CR",
-            idle=2.0, max_total=10.0,
-        )
-        log.result("T142 D.2.1", "INFO", f"raw={d21_resp!r}")
+        # (D.1's own result - channel 3, NOT connected), then a bare CR
+        # to elicit a response. P66b, B.5: on an unconnected channel
+        # the TNC sends every line typed in Converse as an UNPROTO UI
+        # frame (TRM) - this transmits, so it needs confirm_tx() like
+        # any other transmission, not just the queries around it.
+        if confirm_tx(
+            "Send CONVERSE + CR on the current (unconnected) active "
+            "channel - may transmit an UNPROTO frame."
+        ):
+            d21_resp = session.send_and_read_until_idle(
+                b"CONVERSE\r\n\r",
+                note="D.2.1 CONVERSE (active channel), then CR",
+                idle=2.0, max_total=10.0,
+            )
+            log.result("T142 D.2.1", "INFO", f"raw={d21_resp!r}")
+        else:
+            log.result("T142 D.2.1", "INFO", "skipped by operator")
 
         # D.2.2: COMMAND char, wait for cmd:.
         _confirm_command_prompt_light(session, "D.2.2", log)
@@ -5059,13 +5082,26 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
         cstatus_after_d2 = session.query("CSTATUS")
         log.result("T142 D.2.4", "INFO", f"CSTATUS={cstatus_after_d2!r}")
 
-        if input("Disconnect now? [Y/n] ").strip().lower() in ("", "y"):
-            session.verbose("DISCONNECT")
-            disc_resp = session.read_until_idle(idle=2.0, max_total=15.0)
-            log.line(
-                f"cleanup disconnect response: "
-                f"{disc_resp.decode('ascii', errors='replace')!r}"
-            )
+        # Cleanup (P66b, B.6): disconnect the CONNECTED channel via a
+        # Host Mode DI, before HOST OFF - never a verbose DISCONNECT on
+        # whatever channel happens to be active (B.6's own finding: that
+        # was channel 3, a free probe channel from D.1, while the real
+        # connection on channel 1 stayed up until the counterpart's own
+        # timeout).
+        if input(
+            f"Disconnect channel {connected_channel} now? [Y/n] "
+        ).strip().lower() in ("", "y"):
+            session.enter_host_mode()
+            try:
+                session.send_channel_frame(
+                    connected_channel,
+                    HostModeProtocol.cmd_disconnect(connected_channel),
+                    note=f"cleanup DI ch{connected_channel}",
+                )
+                session._pump(0.3)
+            finally:
+                session.exit_host_mode()
+            log.line(f"cleanup: sent DI on channel {connected_channel}")
         else:
             log.result("T142 cleanup", "INFO", "left connected by operator choice")
     finally:
