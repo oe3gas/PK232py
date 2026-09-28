@@ -1680,10 +1680,18 @@ def decode_link_status(ctl: int, data: bytes) -> dict:
     $0F) + 1 - confirmed against the TRM's own 4.3.3 example, ctl
     $34 -> state 5, "S05"); b = AX.25 v2 flag; c = unacknowledged
     packet count; d = retry count; e = CONPERM flag; the remaining
-    bytes are the partner callsign and any digipeaters, as ASCII text.
-    b/c/d/e are reported as their raw byte values - this function does
-    not guess what a given number of retries or CONPERM byte MEANS,
-    only what TRM 4.3.3 says how to extract them.
+    bytes are the partner callsign and any digipeaters, as ASCII text,
+    with NO separator between the five status bytes and the path.
+
+    P66, B.5/Teil B: measured against real hardware (T142, Device B,
+    28.09.2026, 20260928_094231_link_carry_host.log - channel 1
+    connected: 'CO41000OE3GAS-1'; a free channel: 'CO00000') - all five
+    status bytes are, like *a*, "value OR'd with $30" (TRM), so b/c/d/e
+    are masked with & 0x0F too, not returned raw as the pre-P66 version
+    of this function did ('raw byte values' was correct as a statement
+    about what was NOT yet measured, not a final format). v2/conperm
+    are single-bit flags per the TRM and are reported as bool; unacked/
+    retries are counts and stay int.
 
     Returns {'channel', 'state', 'v2', 'unacked', 'retries', 'conperm',
     'path'} on a recognised CO-prefixed, long-enough payload, or
@@ -1698,10 +1706,10 @@ def decode_link_status(ctl: int, data: bytes) -> dict:
     return {
         "channel": channel,
         "state": (a & 0x0F) + 1,
-        "v2": b,
-        "unacked": c,
-        "retries": d,
-        "conperm": e,
+        "v2": bool(b & 0x0F),
+        "unacked": c & 0x0F,
+        "retries": d & 0x0F,
+        "conperm": bool(e & 0x0F),
         "path": path,
     }
 
