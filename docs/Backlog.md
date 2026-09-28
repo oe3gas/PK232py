@@ -432,7 +432,7 @@ first CMD_RESP, or it will inherit the same T86-class bug.
 `frame.mnemonic == b'MH'` before treating it as an MHEARD line — a stray
 frame in that window is dropped, not misattributed.
 
-### `_make_host_frame()` misclassifies LINK_STATUS ($40–$4E) as CMD_RESP — open
+### `_make_host_frame()` misclassifies LINK_STATUS ($40–$4E) as CMD_RESP — done (P67, 2026-09-28)
 
 Discovered 2026-09-20 while fixing the channel-nibble bug (see the
 "Fix channel nibble extraction for 4x and 5x frames" commit and the
@@ -452,10 +452,18 @@ alone since it is a different bug with a different blast radius:
 - **Possibly the same root cause as** the existing "Known issues" entry
   `HFPacket/VHFPacket: CMD_RESP reaches mode | Minor | handle_frame() logs
   "unhandled frame" for ACKs — harmless" — that note is about general `$4F`
-  ACKs, not `$40–$4E` specifically, so it may be a related-but-distinct
-  symptom rather than the identical bug. **Needs a hardware test** (or at
-  least a byte-level trace of a real CONNECT-query LINK_STATUS reply) to
-  confirm before touching the elif chain — do not guess-fix this one.
+  ACKs, not `$40–$4E` specifically, so it was a related-but-distinct
+  symptom rather than the identical bug.
+- **Fixed, P67 Teil A (`comm/serial_manager.py::_make_host_frame()`,
+  commit 633fece):** `0x40 <= ctl <= 0x49` now builds `FrameKind.
+  LINK_STATUS` (`0x4F` stays `CMD_RESP`, unaffected) — confirmed via
+  hardware measurement first (P66/T142, not a guess-fix): `tools/
+  hw_check.py link_carry_host` proved a real CO answer arrives in
+  exactly this CTL range (`CO41000OE3GAS-1` on channel 1, ctl `0x41`).
+  `HFPacketMode.handle_frame()`'s own LINK_STATUS branch now actually
+  receives these frames and feeds `LinkTable.on_link_status()` via
+  `on_link_status`/`MainWindow._on_mode_link_status()` (P67, Teil C) —
+  see CLAUDE.md's "Link table" gotcha under Packet.
 
 ### Tech debt — two parallel Host Mode frame decoders
 
@@ -790,7 +798,7 @@ MailDrop work used the VERBOSE-mode local terminal (`MDCHECK` at the
 command prompt) — whether/how the mailbox is reachable from Host Mode is
 a separate, later measurement.
 
-### Betriebsart und Verbindung gehen beim Wechsel verbose <-> Host Mode verloren — open (P64, 2026-09-27)
+### Betriebsart und Verbindung gehen beim Wechsel verbose <-> Host Mode verloren — done for Packet (P67, 2026-09-28); open for PACTOR/AMTOR (see the new entry below)
 
 **Beobachtung (Betreiber, 27.09.2026, Geraet unbekannt — beim Nachtest
 festhalten):** Im verbose Modus mit VHF Packet eine BBS (TinyBox)
@@ -885,6 +893,46 @@ Code: TRM 4.3.3 Link Status Request (`HostModeProtocol.
 cmd_link_status()`, baut den Frame schon, wird aber nirgends
 aufgerufen) und TRM 4.3.2 `OPMODE` (`query_host(b"OP")`) fuer Punkt 3 —
 beide jetzt Teil des Messpakets statt nur vermutet.
+
+**Umgesetzt fuer Packet, P67 (2026-09-28,
+`docs/docsP67_Link_Table_Packet_Spec.md`):** `comm/link_table.py::
+LinkTable` ist die im Vorschlag oben beschriebene Verbindungstabelle —
+eine Instanz in `MainWindow`, gefuellt aus `$5x`-Link-Meldungen, Host
+Mode `CO`-Antworten (TRM 4.3.3, jetzt tatsaechlich verwendet) und
+verbose-Text, mit `mark_unconfirmed()` + Abgleichrunde bei jedem
+Host-Eintritt (das oben beschriebene "unbestaetigt"-Kennzeichen ist der
+neue Chip-Zustand `unconfirmed`, gestrichelter Rand). Betriebsart wird
+in `LinkTable.mode_name` gefuehrt und beim Host-Eintritt wiederhergestellt
+("Baudot RTTY nur noch, wenn nie eine Betriebsart gewaehlt wurde" — genau
+so implementiert). `reset_channels()` beim Host-Mode-Ausstieg entfaellt,
+wie gefordert. Siehe CLAUDE.md's "Link table"-Abschnitt unter Packet fuer
+die volle Beschreibung. **Nur Packet** — PACTOR/AMTOR bewusst nicht
+angefasst, siehe die neue Backlog-Eintrag darunter.
+
+### P64 fuer PACTOR und AMTOR — open (P67 Folgepaket, 2026-09-28)
+
+P67 hat die Verbindungstabelle (`comm/link_table.py::LinkTable`) und die
+verbose<->Host-Mode-Abgleichlogik bewusst nur fuer Packet umgesetzt — der
+urspruengliche P64-Befund (Betriebsart und Verbindung gehen beim Wechsel
+verloren) gilt genauso fuer PACTOR ARQ/FEC und AMTOR ARQ/FEC, die beide
+einen eigenen Link-Zustand kennen (PACTOR/AMTOR-Verbindung ueber
+`_make_link_handler()`), aber keinen Kanal-Begriff (immer Kanal 0, TRM
+4.3 — anders als Packet's 0-9). Fuer dieses Paket noch zu klaeren, zuerst
+messen statt raten:
+- Gibt es fuer PACTOR/AMTOR ein Aequivalent zur Host Mode `CO`-Abfrage
+  (TRM 4.3.3 ist Packet-spezifisch beschrieben) — oder ist der einzige
+  Nachweis eine verbose `CONNECT`/`CSTATUS`-Abfrage?
+- `LinkTable`s Kanalmodell (0-9, `CHANNEL_COUNT`) passt nicht direkt —
+  PACTOR/AMTOR brauchen wahrscheinlich nur ein einzelnes `ChannelLink`
+  (Kanal 0) statt der vollen Tabelle; eine gemeinsame Basisklasse oder
+  eine zweite, kleinere Klasse ist noch offen.
+- Ob die Betriebsart-Mitnahme (`mode_name`) PACTOR/AMTOR ueberhaupt
+  betrifft, oder ob `_update_host_mode_ui(True)`s bestehendes
+  `default_mode`-Verhalten (heute nur HF/VHF Packet abgefragt) einfach um
+  diese beiden Namen erweitert werden kann.
+
+Kein Code in diesem Backlog-Eintrag — reine Bestandsaufnahme fuer das
+naechste Paket.
 
 **Ursache gefunden, P66 (2026-09-28):** Der erste `link_carry`-Lauf
 (T141, Geraet B) zeigte: die eigentliche Ursache fuer "Verbindung
