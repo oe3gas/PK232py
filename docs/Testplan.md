@@ -2770,20 +2770,35 @@ T140 — record which one in the log, the tool asks).
 | Device | Counterpart | A.6 (link status) | A.8 (survives mode-switch frames) | A.9 (verbose sees it again) |
 |---|---|---|---|---|
 | A | | ⬜ | ⬜ | ⬜ |
-| B | TinyBox BBS | ❌ INVALID | ❌ INVALID | ❌ INVALID |
+| B | TinyBox BBS | ❌ FAIL | — | — |
 
-**Device B, 28.09.2026 (`20260928_094001_link_carry.log`) — run marked
-INVALID, not FAIL:** after the verbose `CONNECT`, the TNC was in
+**Device B, 28.09.2026 09:40 (`20260928_094001_link_carry.log`) — run
+marked INVALID, not FAIL:** after the verbose `CONNECT`, the TNC was in
 Converse, not the command prompt — `enter_host_mode()`'s old handshake
 (pre-P66) mistook Converse's own echo of `HOST 3`/`HPOLL Y` for a real
 Host Mode entry, so A.4 onward ran against a TNC that was never
 actually in Host Mode at all (see `docs/P66_HostMode_Entry_From_
-Converse_Spec.md`, B.1/B.2). **Re-run needed after P66's fix** (the
-handshake now escapes Converse first and requires a genuine OPMODE
-answer, not just an echo).
+Converse_Spec.md`, B.1/B.2).
 
-**Status:** ⬜ OPEN — needs re-run on Device B (P66); still unmeasured
-on A/C.
+**Re-run, 28.09.2026 13:35 (after P66's own fix, before P66b) — real
+FAIL, and a new finding (`docs/P66b_HostEntry_Lag_And_IO_Channel_Spec
+.md`, B.1):** A.3 now works (Ctrl-C → `cmd:`; `OPMODE` → `PAcket`;
+`CSTATUS` → `Ch. 0 - IO CONNECTED to OE3GAS-1; v2`), but the handshake
+itself still reported failure — and then went into Host Mode ANYWAY, a
+few seconds later: the delayed response to the EARLIER `XFLOW OFF`
+arrived only after the `HPOLL_Y` echo had already been read (the
+command interpreter lagging seconds behind the immediate character
+echo while a connection is active), and `HOST 3` then ran once the
+interpreter caught up — after the handshake's own OPMODE check had
+already given up. P66b's retried OPMODE check (up to 3 attempts, 1.5s
+apart) is meant to catch exactly this; the same-session T143 app test
+(Ctrl+H, same starting state) succeeded, confirming the behaviour is
+TIME-DEPENDENT, not a hard failure. **Re-run needed after P66b, three
+times**, to see whether the retry actually catches the late entry and
+how much the timing varies run to run.
+
+**Status:** ⬜ OPEN — needs three re-runs on Device B (P66b); still
+unmeasured on A/C.
 
 ---
 
@@ -2820,14 +2835,38 @@ the switch in both directions, provided the TNC is in the command
 mode (not Converse) at the moment of the switch.** This settles
 `CLAUDE.md`'s pre-P66 "no CSTATUS poll in Host Mode" claim as
 superseded for Device B — TRM 4.3.3's Link Status query works.
-**B.4 (open):** the same run's `CSTATUS` after leaving Host Mode
-showed the ACTIVE channel as 9, not the connected channel 1 — the
-last channel a `$4x` frame had been sent to (see T142's own P66 D.1/
-D.2 follow-up steps, still open below).
+**B.4 (open, then confirmed):** the same run's `CSTATUS` after leaving
+Host Mode showed the ACTIVE channel as 9, not the connected channel 1
+— the last channel a `$4x` frame had been sent to.
 
-**Status:** ✅ PASS (Device B). Still open on A/C. D.1 (active-channel
-hypothesis) and D.2 (CONVERSE + channel switch after Host → verbose)
-need their own hardware run.
+**Re-runs, 28.09.2026 13:38 and 13:40 (P66's own D.1/D.2 additions;
+`docs/P66b_HostEntry_Lag_And_IO_Channel_Spec.md`) — PASS, B.4/B.3
+CONFIRMED:** both runs sent `CO` on channel 3 as the last `$4x` frame
+before `HOST OFF`; verbose `CSTATUS` showed `Ch. 3 - IO` both times
+(without the D.1 probe, the earlier run's own last `CO` had been
+channel 9, and `CSTATUS` called THAT channel IO) — **the active
+verbose channel after `HOST OFF` is the channel of the last `$4x`
+frame sent, confirmed for Device B.** Also found: `CHSWITCH` reads
+`$00` on Device B (no channel-switch character set, B.4 of P66b) —
+`CONVERSE` on the free probe channel (3) sent nothing but got echoed,
+no prompt, no error (B.5) — the TNC transmits UNPROTO UI frames there
+per TRM, so D.2.1 needed `confirm_tx()` (added, P66b). D.2.3 (the
+CHSWITCH channel-switch attempt) is **INVALID for this run** — it ran
+before P66a's fix and sent the literal text `$001CONVERSE` instead of
+a real channel-switch command, so it never tested anything real;
+CHSWITCH being `$00` on this device means D.2.3 has nothing to test
+here regardless (P66a's own `chswitch_byte()` now correctly returns
+`None` for `$00`). Cleanup disconnected the WRONG channel (3, the
+active one) — the real connection on channel 1 stayed up until the
+counterpart's own timeout (B.6, fixed by P66b: cleanup now uses the
+connected channel from the last CO recheck, via a Host Mode `DI`, not
+a verbose `DISCONNECT` on the active channel).
+
+**Status:** ✅ PASS (Device B) for the base connect/survive/re-entry
+measurement, and for B.3/B.4 (active channel follows the last `$4x`
+frame). D.2.3 invalid for this device (CHSWITCH `$00`). D.3 (the P66b
+technique check building on B.3) still needs its own hardware run.
+Still open on A/C.
 
 ---
 
@@ -2843,12 +2882,25 @@ protocol allows this on Device B), but the app's own connection-table
 display is **not** expected to show it yet — that is P67's job, built
 on this package's findings, not this one's.
 
-| Device | Result |
-|---|---|
-| A | ⬜ OPEN |
-| B | ⬜ OPEN |
+| Device | Entry | Connection preserved | Connection display |
+|---|---|---|---|
+| A | ⬜ OPEN | ⬜ OPEN | ⬜ OPEN |
+| B | ✅ PASS | ✅ PASS | ⬜ OPEN (P67) |
 
-**Status:** ⬜ OPEN — needs a real app run, not just `hw_check.py`.
+**Device B, 28.09.2026 (same session as T141 13:35/T142 13:38-13:40;
+`docs/P66b_HostEntry_Lag_And_IO_Channel_Spec.md`, B.7) — Entry and
+connection preservation PASS:** after Ctrl+H (same starting state as
+T141: verbose, VHF Packet, connected to the BBS), the VHF Packet mask
+appeared with **no** connection display, even though the TNC was
+genuinely connected — after `Leave Host Mode`, verbose `CSTATUS`
+still showed channel 0 `CONNECTED to OE3GAS-1`, confirming Host Mode
+was genuinely entered (not the T141-shaped false entry) and the
+connection itself survived the whole round trip. **Connection
+display is still open — expected, that is P67's job**, not this
+package's.
+
+**Status:** ✅ PASS (Device B) for entry and connection preservation.
+Display: OPEN, tracked as P67. Still unmeasured on A/C.
 
 ---
 
