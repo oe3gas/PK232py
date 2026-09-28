@@ -2770,9 +2770,20 @@ T140 — record which one in the log, the tool asks).
 | Device | Counterpart | A.6 (link status) | A.8 (survives mode-switch frames) | A.9 (verbose sees it again) |
 |---|---|---|---|---|
 | A | | ⬜ | ⬜ | ⬜ |
-| B | | ⬜ | ⬜ | ⬜ |
+| B | TinyBox BBS | ❌ INVALID | ❌ INVALID | ❌ INVALID |
 
-**Status:** ⬜ OPEN.
+**Device B, 28.09.2026 (`20260928_094001_link_carry.log`) — run marked
+INVALID, not FAIL:** after the verbose `CONNECT`, the TNC was in
+Converse, not the command prompt — `enter_host_mode()`'s old handshake
+(pre-P66) mistook Converse's own echo of `HOST 3`/`HPOLL Y` for a real
+Host Mode entry, so A.4 onward ran against a TNC that was never
+actually in Host Mode at all (see `docs/P66_HostMode_Entry_From_
+Converse_Spec.md`, B.1/B.2). **Re-run needed after P66's fix** (the
+handshake now escapes Converse first and requires a genuine OPMODE
+answer, not just an echo).
+
+**Status:** ⬜ OPEN — needs re-run on Device B (P66); still unmeasured
+on A/C.
 
 ---
 
@@ -2794,9 +2805,50 @@ real counterpart station).
 | Device | Counterpart | Connect seen (Host) | Verbose shows same channel | Still ch1 after re-entry |
 |---|---|---|---|---|
 | A | | ⬜ | ⬜ | ⬜ |
-| B | | ⬜ | ⬜ | ⬜ |
+| B | TinyBox BBS | ✅ PASS | ✅ PASS | ✅ PASS |
 
-**Status:** ⬜ OPEN.
+**Device B, 28.09.2026 (`20260928_094231_link_carry_host.log`) — PASS.**
+Connecting IN Host Mode and querying `OP`/`CO` there both work exactly
+as TRM 4.3.2/4.3.3 document (`OP` → `OPPA`; `CO` on the connected
+channel → `CO41000OE3GAS-1`, a free channel → `CO00000` — see
+`docs/P66_HostMode_Entry_From_Converse_Spec.md`, B.3, for the byte
+layout `decode_link_status()` now decodes). Leaving Host Mode via
+`exit_host_mode()` (which sends the COMMAND character itself, P53.B)
+and querying verbose `CSTATUS` shows the same connection; re-entering
+Host Mode confirms it is still on channel 1 — **a connection survives
+the switch in both directions, provided the TNC is in the command
+mode (not Converse) at the moment of the switch.** This settles
+`CLAUDE.md`'s pre-P66 "no CSTATUS poll in Host Mode" claim as
+superseded for Device B — TRM 4.3.3's Link Status query works.
+**B.4 (open):** the same run's `CSTATUS` after leaving Host Mode
+showed the ACTIVE channel as 9, not the connected channel 1 — the
+last channel a `$4x` frame had been sent to (see T142's own P66 D.1/
+D.2 follow-up steps, still open below).
+
+**Status:** ✅ PASS (Device B). Still open on A/C. D.1 (active-channel
+hypothesis) and D.2 (CONVERSE + channel switch after Host → verbose)
+need their own hardware run.
+
+---
+
+### T143 — Ctrl+H after a verbose connect actually enters Host Mode (P66)
+
+The original P64 case, in the application itself, not `hw_check.py`:
+verbose, VHF Packet, connect to a BBS, then `TNC → Enter Host Mode`
+(Ctrl+H). Expected, after P66's fix: the handshake escapes Converse
+(the state a verbose `CONNECT` can leave the TNC in, B.1) and Host
+Mode is genuinely entered — confirmed by a real OPMODE answer, not an
+echo. The connection ITSELF should carry over (T142 confirms the
+protocol allows this on Device B), but the app's own connection-table
+display is **not** expected to show it yet — that is P67's job, built
+on this package's findings, not this one's.
+
+| Device | Result |
+|---|---|
+| A | ⬜ OPEN |
+| B | ⬜ OPEN |
+
+**Status:** ⬜ OPEN — needs a real app run, not just `hw_check.py`.
 
 ---
 
