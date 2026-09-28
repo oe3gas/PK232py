@@ -139,8 +139,6 @@ class TestResetChannelsClearsAllBuffers:
 
     def test_reset_clears_buffers_and_widget(self):
         screen = _make_screen()
-        screen.channel_bar.set_current(2)
-        screen.channel_bar.set_channel_state(2, "connected", "OE1ABC")
         screen.channel_bar.set_current(5)
         screen.tx_input.setPlainText("stale draft")
 
@@ -148,9 +146,22 @@ class TestResetChannelsClearsAllBuffers:
 
         assert screen._tx_buffers == {}
         assert screen.tx_input.toPlainText() == ""
-        for ch in range(10):
-            assert screen.channel_bar.state(ch) == "free"
-            assert screen.channel_bar.partner(ch) == ""
+
+    def test_reset_does_not_wipe_channel_bar_state(self):
+        """P67, Teil C: reset_channels() used to also call
+        channel_bar.reset(), wiping every chip back to free - LinkTable
+        is now the one source of truth for connection state (reconciled
+        independently on Host Mode entry), so a channel this screen
+        already shows connected must survive a reset_channels() call
+        exactly as it survives the Host Mode exit path (see
+        test_main_window_packet.py::TestLinkTableHostModeCarryOver)."""
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(2, "connected", "OE1ABC")
+
+        screen.reset_channels()
+
+        assert screen.channel_bar.state(2) == "connected"
+        assert screen.channel_bar.partner(2) == "OE1ABC"
 
 
 class TestUiChannelZero:

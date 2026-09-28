@@ -78,6 +78,13 @@ class _StubSerial:
         self.calls.append(("cmd", mnemonic, args))
         return True
 
+    def exit_host_mode(self, io_channel=None):
+        self.calls.append(("exit_host_mode", io_channel))
+
+    def write_verbose(self, data):
+        self.calls.append(("write_verbose", data))
+        return True
+
 
 @pytest.fixture
 def wired_vhf():
@@ -646,6 +653,155 @@ class TestModeInstanceFactory:
 
         assert w._modes.current_mode_name == "Baudot RTTY"
         assert self._mx_sl_commands(w) == []
+
+
+class TestLinkTableHostModeCarryOver:
+    """P67, Teil C.2/C.3/E: the LinkTable-driven mode-name and channel
+    carry-over across a verbose<->Host Mode switch, at the MainWindow
+    level (comm/link_table.py and comm/link_status.py have their own
+    unit tests - this checks MainWindow's own wiring of them)."""
+
+    @pytest.fixture
+    def window(self):
+        w = MainWindow()
+        stub = _StubSerial()
+        w._serial = stub
+        w._modes._serial = stub
+        return w
+
+    def test_host_entry_restores_last_packet_mode_not_baudot(self, window):
+        w = window
+        w._link_table.mode_name = "VHF Packet"
+        assert not w._modes.current_mode_name
+
+        w._update_host_mode_ui(True)
+        w._modes._send_init_frames()
+
+        assert w._modes.current_mode_name == "VHF Packet"
+        cmds = [c for c in w._serial.calls if c[0] == "cmd"]
+        assert ("cmd", b'PA', b'') in cmds
+        assert ("cmd", b'BA', b'') not in cmds
+
+    def test_host_entry_queries_link_status_on_every_channel(self, window):
+        w = window
+        w._link_table.mode_name = "VHF Packet"
+
+        w._update_host_mode_ui(True)
+
+        ch_cmds = [c for c in w._serial.calls if c[0] == "ch_cmd" and c[2] == b'CO']
+        assert sorted(c[1] for c in ch_cmds) == list(range(10))
+
+    def test_co_confirmation_survives_the_delayed_mode_activation(self, window):
+        """A real race: the CO answer confirming a carried-over channel
+        can arrive on the SAME Host Mode entry BEFORE the 300ms mode-
+        activation timer fires _send_init_frames() -> _on_mode_changed()
+        -> _switch_opmode() -> screen.reset_channels() - which used to
+        unconditionally wipe the chip back to free right after LinkTable
+        had just confirmed it connected (found via direct repro, fixed
+        by removing reset_channels()'s own channel_bar.reset() call -
+        see PacketBaseScreen.reset_channels()'s docstring)."""
+        w = window
+        w._link_table.mode_name = "VHF Packet"
+        w._update_host_mode_ui(True)
+        w._on_mode_link_status(0x41, b"CO41000OE3GAS-1")
+        screen = w._opmode_screens["VHF Packet"]
+        assert screen.channel_bar.state(1) == "connected"
+
+        w._modes._send_init_frames()   # fires the 300ms activation timer now
+
+        assert screen.channel_bar.state(1) == "connected"
+        assert screen.channel_bar.partner(1) == "OE3GAS-1"
+        assert w._link_table.channels[1].state == "connected"
+
+    def test_co_response_confirms_channel_and_reaches_the_chip(self, window):
+        w = window
+        w._link_table.mode_name = "VHF Packet"
+        w._update_host_mode_ui(True)
+
+        # ctl=0x41 -> channel 1 (never channel 0/UI_CHANNEL - P10's own
+        # TestUiChannelZero::test_channel_zero_state_never_sticks
+        # deliberately keeps chip 0 free no matter what set_channel_
+        # state() is told, so a LinkTable-driven confirmation is
+        # exercised on an ordinary QSO channel instead). Data shape
+        # ("CO41000OE3GAS-1") is the real hardware answer from P67 M2.
+        w._on_mode_link_status(0x41, b"CO41000OE3GAS-1")
+
+        link1 = w._link_table.channels[1]
+        assert link1.state == "connected"
+        assert link1.partner == "OE3GAS-1"
+
+        screen = w._opmode_screens["VHF Packet"]
+        assert screen.channel_bar.state(1) == "connected"
+        assert screen.channel_bar.partner(1) == "OE3GAS-1"
+
+    def test_user_exit_does_not_reset_channels_chip_survives(self, window):
+        w = window
+        w._link_table.mode_name = "VHF Packet"
+        w._update_host_mode_ui(True)
+        w._modes._send_init_frames()
+        w._on_mode_link_status(0x41, b"CO41000OE3GAS-1")
+        screen = w._opmode_screens["VHF Packet"]
+        assert screen.channel_bar.state(1) == "connected"
+
+        w._on_host_mode_exit()
+        w._update_host_mode_ui(False)
+
+        # P67, Teil C.3: reset_channels() no longer runs on a user
+        # exit - the chip must still show the carried-over connection.
+        assert screen.channel_bar.state(1) == "connected"
+        assert screen.channel_bar.partner(1) == "OE3GAS-1"
+
+    def test_exit_with_connected_visible_channel_sends_co_via_exit_host_mode(self, window):
+        w = window
+        w._link_table.mode_name = "VHF Packet"
+        w._update_host_mode_ui(True)
+        w._modes._send_init_frames()
+        w._on_mode_link_status(0x41, b"CO41000OE3GAS-1")
+        screen = w._opmode_screens["VHF Packet"]
+        screen.channel_bar.set_current(1)
+        w._link_table.converse = True
+
+        w._on_host_mode_exit()
+
+        # exit_host_mode() itself is responsible for the actual write
+        # ORDER (CO on io_channel before HOST OFF - see
+        # test_serial_manager.py::TestExitHostModeIoChannel); this is
+        # MainWindow's own responsibility - passing the right channel.
+        assert ("exit_host_mode", 1) in w._serial.calls
+        assert w._link_table.io_channel == 1
+        # was_converse was True and the channel is connected -> CONVERSE
+        # is sent to return to it.
+        assert ("write_verbose", b"CONVERSE\r\n") in w._serial.calls
+
+    def test_exit_with_free_channel_never_sends_converse(self, window):
+        w = window
+        w._link_table.mode_name = "VHF Packet"
+        w._update_host_mode_ui(True)
+        w._modes._send_init_frames()
+        # No CO response arrives - channel 1 stays free.
+        screen = w._opmode_screens["VHF Packet"]
+        screen.channel_bar.set_current(1)
+        w._link_table.converse = True
+
+        w._on_host_mode_exit()
+
+        assert ("exit_host_mode", None) in w._serial.calls
+        assert not any(c[0] == "write_verbose" for c in w._serial.calls)
+
+    def test_exit_without_prior_converse_never_sends_converse(self, window):
+        w = window
+        w._link_table.mode_name = "VHF Packet"
+        w._update_host_mode_ui(True)
+        w._modes._send_init_frames()
+        w._on_mode_link_status(0x41, b"CO41000OE3GAS-1")
+        screen = w._opmode_screens["VHF Packet"]
+        screen.channel_bar.set_current(1)
+        w._link_table.converse = False
+
+        w._on_host_mode_exit()
+
+        assert ("exit_host_mode", 1) in w._serial.calls
+        assert not any(c[0] == "write_verbose" for c in w._serial.calls)
 
 
 class TestMaildropGate:

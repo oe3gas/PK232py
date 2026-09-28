@@ -23,12 +23,13 @@ import serial
 import pk232py.comm.serial_manager as serial_manager
 import pk232py.comm.pk232_hostmode_sub as pk232_hostmode_sub
 from pk232py.comm.constants import FRAME_HOST_OFF, FRAME_RECOVERY
-from pk232py.comm.frame import build_command
+from pk232py.comm.frame import FrameKind, build_ch_cmd, build_command
 from pk232py.comm.params_uploader import ParamsUploader
 from pk232py.comm.serial_manager import (
     SerialManager,
     _ReaderThread,
     _classify_maildrop_response,
+    _make_host_frame,
     _parse_defaults_flag,
     _parse_release,
     _parse_verbose_query_value,
@@ -1337,6 +1338,79 @@ class TestConverseModeDetection:
                 sm._reader.join(timeout=1.0)
 
 
+class TestExitHostModeIoChannel:
+    """P67, Teil C.3 - exit_host_mode(io_channel=...) sends a TRM 4.3.3
+    Link Status query (CO) on that channel as the LAST $4x frame before
+    HOST OFF - P66b's own hardware finding (T142 D.1/D.3) is that the
+    verbose I/O channel afterwards follows whichever channel the last
+    $4x frame targeted."""
+
+    # P61, Teil C.2 - see fast_serial_timing's own docstring; without
+    # it each test here pays the real _FRAME_WRITE_SETTLE_DELAY/
+    # _WORKER_FLUSH_DELAY sleeps exit_host_mode() itself uses.
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
+
+    def test_writes_co_before_host_off_when_io_channel_given(self):
+        from pk232py.comm.pk232_hostmode_sub import HostModeWorker
+
+        # Answers every write with 'cmd:' so exit_host_mode()'s own
+        # trailing COMMAND-char resync completes immediately instead
+        # of waiting out its full timeout - irrelevant to what this
+        # test checks (frame write order), so it is not left to slow
+        # the test down for no reason.
+        port = _FakePort(lambda data: b"\r\ncmd:")
+        sm = SerialManager()
+        sm._serial = port
+        sm._in_host_mode = True
+        sm._worker = HostModeWorker(port, sm._on_frame_received, raw_callback=sm._on_raw_data)
+        sm._worker.start()
+        try:
+            sm.exit_host_mode(io_channel=2)
+
+            deadline = time.monotonic() + 2.0
+            while len(port.writes) < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+            co_frame = build_ch_cmd(2, b'CO')
+            assert co_frame in port.writes
+            assert FRAME_HOST_OFF in port.writes
+            assert port.writes.index(co_frame) < port.writes.index(FRAME_HOST_OFF)
+        finally:
+            if sm._worker:
+                sm._worker.stop()
+                sm._worker.join(timeout=1.0)
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+    def test_without_io_channel_skips_the_co_frame(self):
+        from pk232py.comm.pk232_hostmode_sub import HostModeWorker
+
+        port = _FakePort(lambda data: b"\r\ncmd:")
+        sm = SerialManager()
+        sm._serial = port
+        sm._in_host_mode = True
+        sm._worker = HostModeWorker(port, sm._on_frame_received, raw_callback=sm._on_raw_data)
+        sm._worker.start()
+        try:
+            sm.exit_host_mode()
+
+            deadline = time.monotonic() + 2.0
+            while len(port.writes) < 1 and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+            assert FRAME_HOST_OFF in port.writes
+            co_ch2 = build_ch_cmd(2, b'CO')
+            assert co_ch2 not in port.writes
+        finally:
+            if sm._worker:
+                sm._worker.stop()
+                sm._worker.join(timeout=1.0)
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+
+
 class TestXonFlowControlDetection:
     """P54.3/P54.4 - the PK-232 uses software flow control (its own boot
     banner proves it: '... 0d 0a 11 41 45 41 ...', that $11 right before
@@ -1593,3 +1667,27 @@ class TestEnterHostModeThreadRejectsFailedHandshake:
 
         assert True in events
         assert sm.is_host_mode is True
+
+
+class TestMakeHostFrameLinkStatusClassification:
+    """P67, Teil A - $40-$49 (TRM 4.3.3 Link Status / CO responses)
+    were falling through to CMD_RESP here (the OTHER Host Mode frame
+    decoder, comm/frame.py's own FrameParser/_classify(), already got
+    this right - CLAUDE.md's "two parallel Host Mode frame decoders"
+    gotcha, and the long-standing Backlog entry this closes). $4F
+    (generic command responses) must stay CMD_RESP."""
+
+    def test_co_response_is_link_status(self):
+        frame = _make_host_frame(0x43, b"CO00000")
+        assert frame.kind == FrameKind.LINK_STATUS
+        assert frame.channel == 3
+
+    def test_every_channel_0_to_9_is_link_status(self):
+        for ch in range(10):
+            frame = _make_host_frame(0x40 | ch, b"CO00000")
+            assert frame.kind == FrameKind.LINK_STATUS
+            assert frame.channel == ch
+
+    def test_0x4f_stays_cmd_resp(self):
+        frame = _make_host_frame(0x4F, b"MYcall  OE3GAS")
+        assert frame.kind == FrameKind.CMD_RESP
