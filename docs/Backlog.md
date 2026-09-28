@@ -895,7 +895,8 @@ verbose `CONNECT` gar nie wirklich stattfand — der TNC stand in
 Converse, `HOST 3`/`HPOLL Y` erreichten den Kommandointerpreter nie,
 und der alte Erfolgstest akzeptierte das eigene Echo als Erfolg (siehe
 `docs/P66_HostMode_Entry_From_Converse_Spec.md`, B.1/B.2). Behoben:
-COMMAND-Zeichen vor `HOST 3` (escaped Converse/Transparent), Erfolg
+COMMAND-Zeichen vor `HOST 3` (escaped Converse — **nicht** Transparent,
+Korrektur P66a B.2, siehe eigener Eintrag unten), Erfolg
 erst mit echter OPMODE-Antwort. `link_carry_host` (T142, Geraet B)
 bestaetigt danach: die Verbindung selbst uebersteht den Wechsel in
 beide Richtungen, **sofern** der TNC beim Wechsel tatsaechlich im
@@ -909,6 +910,25 @@ verbose folgt offenbar dem letzten `$4x`-Frame, noch nicht bestaetigt,
 Teil D von P66 misst das) — nicht mehr "zuerst messen, dann bauen"
 fuer Punkt 2/3 selbst, die sind jetzt gemessen; nur der aktive-Kanal-
 Mechanismus (B.4) bleibt vor P67 offen.
+
+### `escape_converse()` verlaesst Transparent nicht (P66a B.2, 2026-09-28)
+
+`comm/pk232_hostmode_sub.py::escape_converse()` sendet je Versuch
+`command_char + b"\r"` und wartet zwischen den Versuchen bis zu 2 s.
+Fuer Converse ist das richtig (ein COMMAND-Zeichen genuegt). Fuer
+Transparent verlangt der TNC **drei COMMAND-Zeichen innerhalb von
+CMDTIME, ohne andere Zeichen dazwischen** — das `\r` nach jedem Zeichen
+und die Pausen zwischen den Versuchen verhindern das gerade. PK232PY
+schaltet heute nirgends in Transparent; fuer Packet ist das **kein**
+akuter Fehler (siehe `docs/P66a_CHSWITCH_Value_Fix_Spec.md`, B.2).
+
+**Relevant, sobald ein Modus Transparent nutzt oder die
+Erkennungskette (`SerialManager._init_tnc_thread()`, Schritt 2b)
+Transparent zuverlaessig erkennen soll.** Vorher messen, nicht raten:
+Zeitverhalten von drei COMMAND-Zeichen ohne Zwischenzeichen, die
+noetigen Guard-Zeiten, und der tatsaechliche `CMDTIME`-Wert je Geraet
+(Factory-Default unbekannt, PK-232 hat keine RAM-Pufferbatterie — siehe
+die entsprechende CLAUDE.md-Gotcha).
 
 ### APRS mode (P63) — waiting on T138–T140 (P62, 2026-09-27)
 
