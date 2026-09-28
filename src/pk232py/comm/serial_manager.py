@@ -1664,11 +1664,26 @@ class SerialManager(QObject):
                 pass
 
 
-    def exit_host_mode(self) -> None:
-        """Send HOST OFF binary frame — return TNC to verbose mode."""
+    def exit_host_mode(self, io_channel: Optional[int] = None) -> None:
+        """Send HOST OFF binary frame — return TNC to verbose mode.
+
+        P67, Teil C.3: if *io_channel* is given, a TRM 4.3.3 Link
+        Status query (CO, harmless - the same frame link_carry_host's
+        own D.3 uses) is sent on that channel FIRST, as the LAST $4x
+        frame before HOST OFF - P66b's own hardware finding (B.3/B.4,
+        T142 D.1/D.3) is that the verbose I/O channel after HOST OFF
+        follows whichever channel the last $4x frame targeted. The
+        ORDER (CO then HOST OFF) lives here, not in the caller, so
+        every caller gets it right by construction - passing
+        *io_channel* is the only thing a caller decides.
+        """
         if not self.is_connected or not self._in_host_mode:
             return
         try:
+            if io_channel is not None and self._worker and self._worker.is_alive():
+                self._worker.send(build_ch_cmd(io_channel, b'CO'))
+                time.sleep(_FRAME_WRITE_SETTLE_DELAY)
+
             # Send HOST OFF via Worker — guarantees serialization after pending TX
             if self._worker and self._worker.is_alive():
                 self._worker.send(FRAME_HOST_OFF)
