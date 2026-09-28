@@ -47,6 +47,7 @@ _FAST_TIMING_CONSTANTS = (
     "_CR_SETTLE_TIMEOUT",
     "_HPOLL_TIMEOUT",
     "_OPMODE_TIMEOUT",
+    "_LATE_ENTRY_INTERVAL",
 )
 
 
@@ -188,6 +189,64 @@ class TestEnterHostModeRejectsConverseEcho:
         # ...but the OPMODE query's own echo carries no value byte, so
         # it is never mistaken for a genuine answer.
         assert _REAL_OPMODE_ANSWER not in raw
+
+
+class TestEnterHostModeLateEntry:
+    """P66b, Teil B - a real hardware run (T141, 28.09.2026, Device B,
+    13:35) found HOST 3 can take effect AFTER the OPMODE check already
+    saw only an echo - the command interpreter lagged seconds behind
+    the character echo while a connection was active. A retried OPMODE
+    check catches this instead of reporting a false failure."""
+
+    def test_late_entry_on_a_later_opmode_attempt_succeeds(self, monkeypatch, caplog):
+        base = _make_command_mode_responder(b"\x03")
+        opmode_attempts = [0]
+
+        def responder(data: bytes) -> bytes:
+            if data == OPMODE_QUERY:
+                opmode_attempts[0] += 1
+                if opmode_attempts[0] < 3:
+                    return data  # still just an echo - not yet in Host Mode
+                return _REAL_OPMODE_ANSWER  # HOST 3 took effect meanwhile
+            return base(data)
+
+        port = _FakePort(responder)
+        monkeypatch.setattr(serial, "Serial", lambda *a, **kw: port)
+
+        with caplog.at_level("INFO", logger="pk232py.comm.pk232_hostmode_sub"):
+            ok, raw = enter_host_mode("COM_TEST", 9600)
+
+        assert ok is True
+        assert opmode_attempts[0] == 3
+        assert _REAL_OPMODE_ANSWER in raw
+        assert any("late entry" in r.message for r in caplog.records)
+
+    def test_persistent_echo_gives_up_after_one_initial_plus_three_retries(
+        self, monkeypatch,
+    ):
+        port = _FakePort(_echo_responder)
+        monkeypatch.setattr(serial, "Serial", lambda *a, **kw: port)
+
+        ok, _raw = enter_host_mode("COM_TEST", 9600)
+
+        assert ok is False
+        assert port.writes.count(OPMODE_QUERY) == 4  # 1 initial + 3 retries
+
+    def test_failure_writes_every_step_to_stderr_with_timestamps(
+        self, monkeypatch, capsys,
+    ):
+        port = _FakePort(_echo_responder)
+        monkeypatch.setattr(serial, "Serial", lambda *a, **kw: port)
+
+        enter_host_mode("COM_TEST", 9600)
+
+        err = capsys.readouterr().err
+        for label in (
+            "'escape_converse'", "'host3'", "'cr'", "'hpoll'", "'opmode'",
+            "'opmode retry 1'", "'opmode retry 2'", "'opmode retry 3'",
+        ):
+            assert label in err, f"{label} missing from stderr log"
+        assert "+0ms" in err or "ms tx=" in err  # every line carries a timestamp
 
 
 class TestEnterHostModeAcceptsRealHostMode:

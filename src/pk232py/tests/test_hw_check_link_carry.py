@@ -203,3 +203,17 @@ class TestLinkCarryDryRunFramesComeFromRealBuilders:
         expected = (hw_check.chswitch_byte("$7C") + b"1" + b"CONVERSE\r\n\r")
         assert expected.hex(" ").upper() in out
         assert "24 37 43" not in out  # the literal '$','7','C' bytes
+
+    def test_link_carry_host_preview_shows_d3_and_correct_cleanup(self, capsys):
+        # P66b DoD: --dry-run link_carry_host shows correct cleanup
+        # (a Host Mode DI on the connected channel, never a verbose
+        # DISCONNECT on whatever the active channel happens to be,
+        # B.6) and the new D.3 CO-on-connected-channel probe.
+        session, log = _dry_run_session()
+        hw_check.test_link_carry_host(session, log)
+        out = capsys.readouterr().out
+        d3_frame = hw_check.HostModeProtocol.cmd_link_status(1)
+        cleanup_frame = hw_check.HostModeProtocol.cmd_disconnect(1)
+        assert d3_frame.hex(" ").upper() in out
+        assert cleanup_frame.hex(" ").upper() in out
+        assert "D.3" in out
