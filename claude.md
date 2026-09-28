@@ -995,6 +995,25 @@ Grows over time.
   spirit and remains the plan (now P67), but building it directly on
   top of a Host Mode entry that silently never happened would have
   fixed nothing.
+- **With an active connection, the command interpreter can lag SECONDS
+  behind the immediate character echo — `HOST 3` can take effect well
+  after a handshake's own check already gave up (P66b, B.1, Device B,
+  2026-09-28).** Real capture, T141 13:35: the delayed answer to an
+  EARLIER `XFLOW OFF` command arrived only AFTER the `HPOLL_Y` echo
+  that came after it had already been read — proof the interpreter was
+  processing commands well behind real time, not instantly as every
+  earlier measurement in this project assumed. `enter_host_mode()`'s
+  own OPMODE check saw only an echo and reported failure, but `HOST 3`
+  then ran anyway once the interpreter caught up, leaving the TNC in
+  Host Mode while the app/tool still believed it was in verbose — the
+  same class of state mismatch P66 fixed, just in the opposite
+  direction. The SAME starting state reached Host Mode successfully in
+  the app itself (T143, Ctrl+H) moments later — **this is timing-
+  dependent, not a hard failure**, so a single measurement run cannot
+  characterise it; treat as an open question needing several repeated
+  runs, not a fixed constant. `enter_host_mode()`'s own OPMODE check
+  now retries up to 3 times, 1.5s apart, specifically to give a lagging
+  interpreter time to catch up before reporting failure (P66b, Teil B).
 
 ### TNC / firmware v7.1
 
@@ -2144,6 +2163,47 @@ Grows over time.
   `_on_chip_connect_requested`/`_on_chip_disconnect_requested`/`_on_packet_tx_enter`
   (P42, 2026-09-24, renamed from `_on_packet_connect`/`_on_packet_disconnect`
   — see the "connect in the chip" bullet below).
+- **The active verbose channel after `HOST OFF` is the channel of the
+  LAST `$4x` frame sent, not necessarily the connected one — confirmed
+  for Device B, P66b, B.3/B.4 (2026-09-28).** T142's own D.1 probe
+  proved this directly: sending `CO` on a known-free channel (3) as
+  the very last `$4x` frame before `HOST OFF` made verbose `CSTATUS`
+  call channel 3 — not the actually-connected channel 1 — the active
+  ("IO") one afterwards; a run without that final probe left channel 9
+  (the last channel `_probe_all_channel_links()` had queried) as the
+  active one instead. **Rule for any future code that returns to
+  verbose expecting to land on a specific channel (P67's own
+  connection table): send a `$4x` frame (e.g. `CO`, the harmless
+  Link Status query) on the TARGET channel as the LAST Host Mode frame
+  before leaving Host Mode — this is the only known way to choose the
+  active verbose channel, since `CHSWITCH` is often not usable (next
+  bullet).** Still unmeasured on Device A/C.
+- **`CHSWITCH` reads `$00` on Device B — no channel-switch character is
+  set, so a verbose-mode channel switch by typing a character is not
+  possible there at all (P66b, B.4, 2026-09-28).** Not tracked anywhere
+  in `SerialManager`/`AppConfig` (pk232py never uploads it); confirmed
+  by querying it directly, twice, in the same hardware session
+  (`docs/P66b_HostEntry_Lag_And_IO_Channel_Spec.md`). `tools/hw_check.py
+  ::chswitch_byte()` (P66a) already treats `$00` as "not set" and
+  refuses to guess a character for it — this is the hardware finding
+  that confirms `$00` is a real, expected value on this device, not
+  just a defensive edge case. **Consequence:** the "last `$4x` frame"
+  technique above (B.3) is the only verbose-side channel-selection
+  method known to work on Device B — a `CHSWITCH`-character approach
+  cannot be relied on in general.
+- **`CONVERSE` on a channel with no connection sends every input line
+  as an UNPROTO UI frame — confirmed for Device B, P66b, B.5
+  (2026-09-28).** Sending `CONVERSE` on a free channel, then a bare
+  `CR`, produced only an echo — no prompt, no error message — which
+  looks harmless but is not: per the TRM, `CONVERSE` on an unconnected
+  channel is exactly the UI/UNPROTO mode, and anything typed there
+  goes out over the air along the configured `UNPROTO` path.
+  **Rule:** any code (the app or `tools/hw_check.py`) that sends
+  `CONVERSE` must know whether the target channel is actually
+  connected — on an unconnected channel this is a real transmission
+  and needs the same `confirm_tx()`-style gate as any other TX, not
+  just the queries around it (`tools/hw_check.py`'s own D.2.1 needed
+  this fix, P66b).
 - **Every `$5x` link message carries its own channel number in the CTL
   nibble — three consumers now use it, not two (P47, 2026-09-25).**
   `HFPacketMode._handle_link_msg()` reads `frame.channel` and calls
