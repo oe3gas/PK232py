@@ -886,6 +886,30 @@ cmd_link_status()`, baut den Frame schon, wird aber nirgends
 aufgerufen) und TRM 4.3.2 `OPMODE` (`query_host(b"OP")`) fuer Punkt 3 —
 beide jetzt Teil des Messpakets statt nur vermutet.
 
+**Ursache gefunden, P66 (2026-09-28):** Der erste `link_carry`-Lauf
+(T141, Geraet B) zeigte: die eigentliche Ursache fuer "Verbindung
+nicht erkannt" (die urspruengliche Betreiberbeobachtung, B.1 oben) ist
+**nicht** die Verbindungstabelle selbst, sondern dass der Host-Mode-
+Eintritt (`pk232_hostmode_sub.py::enter_host_mode()`) nach einem
+verbose `CONNECT` gar nie wirklich stattfand — der TNC stand in
+Converse, `HOST 3`/`HPOLL Y` erreichten den Kommandointerpreter nie,
+und der alte Erfolgstest akzeptierte das eigene Echo als Erfolg (siehe
+`docs/P66_HostMode_Entry_From_Converse_Spec.md`, B.1/B.2). Behoben:
+COMMAND-Zeichen vor `HOST 3` (escaped Converse/Transparent), Erfolg
+erst mit echter OPMODE-Antwort. `link_carry_host` (T142, Geraet B)
+bestaetigt danach: die Verbindung selbst uebersteht den Wechsel in
+beide Richtungen, **sofern** der TNC beim Wechsel tatsaechlich im
+Kommandomodus ist (nicht Converse) — genau das P66 jetzt sicherstellt.
+
+**P67 = Verbindungstabelle mit CO-Abgleich**, aufbauend auf P66: die
+interne Verbindungstabelle (Zustand/Partner je Kanal, siehe Soll oben)
+wird jetzt gebaut, mit TRM 4.3.3 `CO` als Abgleichspunkt bei jedem
+Wechsel (P66's eigener B.4-Befund — der aktive Kanal nach Host →
+verbose folgt offenbar dem letzten `$4x`-Frame, noch nicht bestaetigt,
+Teil D von P66 misst das) — nicht mehr "zuerst messen, dann bauen"
+fuer Punkt 2/3 selbst, die sind jetzt gemessen; nur der aktive-Kanal-
+Mechanismus (B.4) bleibt vor P67 offen.
+
 ### APRS mode (P63) — waiting on T138–T140 (P62, 2026-09-27)
 
 The APRS TX mode itself (own screen, HF/VHF switch inside it, app-side
