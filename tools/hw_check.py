@@ -1715,6 +1715,15 @@ def decode_link_status(ctl: int, data: bytes) -> dict:
     }
 
 
+def parse_cstatus_io_channel(text: str) -> Optional[int]:
+    """Which channel a verbose CSTATUS response marks as the TNC's own
+    active ('I/O') channel, distinct from any channel a CONNECTED line
+    names (P66, B.4) - e.g. a line reading 'Ch. 9 - IO' -> 9. None if no
+    such line is present (measured, never guessed)."""
+    m = re.search(r"Ch\.\s*(\d+)\s*-\s*IO\b", text)
+    return int(m.group(1)) if m else None
+
+
 def verify_restore(
     command: str,
     query: Callable[[], str],
@@ -4813,8 +4822,11 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
             "wait for a CONNECTED link message, query OPMODE and link "
             "status on channels 0-9, leave Host Mode and query "
             "OPMODE/CSTATUS/CONNECT verbose, re-enter Host Mode and "
-            "re-check link status on channel 1, then disconnect on "
-            "the reported channel:"
+            "re-check link status on channel 1 (D.1: probe channel 3, "
+            "then leave Host Mode and see which channel verbose CSTATUS "
+            "now calls the active/IO channel), then measure CONVERSE "
+            "and a channel switch after Host -> verbose (D.2), then "
+            "offer to disconnect:"
         )
         for frame in vhf.get_activate_frames() + vhf.get_init_frames():
             session.send_frame(frame, note="activate VHF Packet")
@@ -4937,14 +4949,75 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
                 f"still on channel 1={still_ch1}"
             )
 
-            if input(
-                "Disconnect now on the reported channel? [Y/n] "
-            ).strip().lower() in ("", "y"):
-                session.send_channel_frame(
-                    1, HostModeProtocol.cmd_disconnect(1), note="B cleanup DI"
-                )
+            # D.1 (P66, B.4 hypothesis): does the LAST $4x frame sent
+            # decide the TNC's own "active channel" concept? Send
+            # exactly one more CO query, on a channel known to be free
+            # (3), and nothing else on $4x before leaving Host Mode.
+            session.send_channel_frame(
+                3, link_status_frames[3],
+                note="D.1 CO ch3 (active-channel probe)",
+            )
         finally:
             session.exit_host_mode()
+
+        cstatus_after_d1 = session.query("CSTATUS")
+        io_channel = parse_cstatus_io_channel(cstatus_after_d1)
+        log.result(
+            "T142 D.1", "INFO",
+            f"io_channel_after_exit={io_channel} last_co_channel=3 "
+            f"raw={cstatus_after_d1!r}"
+        )
+
+        # D.2 (P66): the operator's own observation, 28.09.2026 - after
+        # Host -> verbose, getting back to Converse on the CONNECTED
+        # channel needs an explicit channel switch, not just CONVERSE.
+        # The connection on channel 1 is still up throughout D.1/D.2 -
+        # nothing here disconnects it; cleanup happens only at the end.
+
+        # D.2.1: CONVERSE on whatever the active channel is right now
+        # (D.1's own result), then a bare CR to elicit a response.
+        d21_resp = session.send_and_read_until_idle(
+            b"CONVERSE\r\n\r",
+            note="D.2.1 CONVERSE (active channel), then CR",
+            idle=2.0, max_total=10.0,
+        )
+        log.result("T142 D.2.1", "INFO", f"raw={d21_resp!r}")
+
+        # D.2.2: COMMAND char, wait for cmd:.
+        _confirm_command_prompt_light(session, "D.2.2", log)
+
+        # D.2.3: switch to channel 1 with the TNC's own CHSWITCH
+        # character - not tracked anywhere in SerialManager/AppConfig,
+        # so measure it instead of guessing (CLAUDE.md's "never guess"
+        # rule), then CONVERSE there.
+        chswitch_raw = session.query("CHSWITCH")
+        chswitch_char = parse_query_value("CHSWITCH", chswitch_raw)
+        log.line(f"D.2.3 CHSWITCH queried: {chswitch_char!r} (raw={chswitch_raw!r})")
+        if chswitch_char:
+            d23_resp = session.send_and_read_until_idle(
+                chswitch_char.encode("ascii", errors="replace")
+                + b"1" + b"CONVERSE\r\n\r",
+                note="D.2.3 CHSWITCH+1, CONVERSE, then CR",
+                idle=2.0, max_total=10.0,
+            )
+            log.result("T142 D.2.3", "INFO", f"raw={d23_resp!r}")
+        else:
+            log.result("T142 D.2.3", "SKIPPED", "CHSWITCH did not answer - not guessed")
+
+        # D.2.4: COMMAND char, cmd:; log CSTATUS.
+        _confirm_command_prompt_light(session, "D.2.4", log)
+        cstatus_after_d2 = session.query("CSTATUS")
+        log.result("T142 D.2.4", "INFO", f"CSTATUS={cstatus_after_d2!r}")
+
+        if input("Disconnect now? [Y/n] ").strip().lower() in ("", "y"):
+            session.verbose("DISCONNECT")
+            disc_resp = session.read_until_idle(idle=2.0, max_total=15.0)
+            log.line(
+                f"cleanup disconnect response: "
+                f"{disc_resp.decode('ascii', errors='replace')!r}"
+            )
+        else:
+            log.result("T142 cleanup", "INFO", "left connected by operator choice")
     finally:
         for cmd in commands:
             verify_restore(
