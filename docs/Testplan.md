@@ -2770,7 +2770,7 @@ T140 — record which one in the log, the tool asks).
 | Device | Counterpart | A.6 (link status) | A.8 (survives mode-switch frames) | A.9 (verbose sees it again) |
 |---|---|---|---|---|
 | A | | ⬜ | ⬜ | ⬜ |
-| B | TinyBox BBS | ❌ FAIL | — | — |
+| B | TinyBox BBS | ✅ PASS (14:57) | ✅ PASS (14:57) | ✅ PASS (14:57) |
 
 **Device B, 28.09.2026 09:40 (`20260928_094001_link_carry.log`) — run
 marked INVALID, not FAIL:** after the verbose `CONNECT`, the TNC was in
@@ -2797,8 +2797,31 @@ TIME-DEPENDENT, not a hard failure. **Re-run needed after P66b, three
 times**, to see whether the retry actually catches the late entry and
 how much the timing varies run to run.
 
-**Status:** ⬜ OPEN — needs three re-runs on Device B (P66b); still
-unmeasured on A/C.
+**Re-run, 28.09.2026 14:57 (P67 basis run,
+`docs/docsP67_Link_Table_Packet_Spec.md`, M1) — PASS:** Host Mode
+entry from Converse with the connection already up succeeds cleanly —
+`HP $00`, `OPPA`, no late-entry lag this time (P66b's own retry logic
+never needed to fire). A.6 confirmed the connection on channel 0
+(`CO41000OE3GAS-1`); A.7/A.8 (data frame, VHF mode-switch frames while
+connected) both PASS, matching M4/M5.
+
+**Same session, 14:59/15:00 — limited validity, tool bug (H.1, fixed
+P67 Teil D):** A.10's own verbose `DISCONNECT` disconnected the
+active/IO channel (9, left there by A.6/A.8's own 0–9 probe loop), not
+the actually-connected channel 0 — so runs 2 and 3 both got
+`?already connected` back on their own A.2 CONNECT attempt instead of
+testing a fresh Converse-connect at all. Only the 14:57 run is a real
+Converse-carry measurement; 14:59/15:00 tested "connect to an already-
+connected station" by accident, not Converse. Fixed in `tools/
+hw_check.py`: A.10 now disconnects via Host Mode `DI` on the connected
+channel from the last `CO` query (like `link_carry_host`'s own
+cleanup), and A.2 now FAILs fast on `?already connected` instead of
+continuing into a run that measures the wrong thing.
+
+**Status:** ✅ PASS (Device B, 14:57 run) for Host-Mode-entry-from-
+Converse with an existing connection. 14:59/15:00 INVALID (tool bug,
+H.1) — no longer possible to repeat now that the fix is in place,
+since A.10 correctly cleans up after itself. Still unmeasured on A/C.
 
 ---
 
@@ -2862,10 +2885,31 @@ counterpart's own timeout (B.6, fixed by P66b: cleanup now uses the
 connected channel from the last CO recheck, via a Host Mode `DI`, not
 a verbose `DISCONNECT` on the active channel).
 
+**Re-run, 28.09.2026 15:02 (P67 basis run,
+`docs/docsP67_Link_Table_Packet_Spec.md`, M6/M7) — D.1/D.3 PASS,
+Connect portion INVALID (pre-existing connection from the T141 14:57
+run, never cleaned up before this run started):** this run's own B
+step ("Connect to target, from Host Mode") got `?already connected`
+back instead of a fresh `CONNECTED to` link message — the counterpart
+was still connected from T141's own 14:57 session, so B/B-recheck's
+own PASS/INCONCLUSIVE verdicts are not meaningful here (same tool bug
+as T141's H.1/H.2, fixed P67 Teil D — B now decodes a CO-shaped error
+response explicitly instead of reporting "inconclusive", and A.9/B's
+own verbose check now uses `parse_cstatus()` for the connected channel
+instead of a bare `CONNECT` query). D.1 and D.3 do NOT depend on the
+Connect step's own verdict, only on there BEING a connection somewhere
+— confirmed PASS: D.1 (last `CO` on a free probe channel becomes the
+active/IO channel afterward) and D.3 (`CO` on the CONNECTED channel as
+the last `$4x` frame makes verbose `CSTATUS` show `IO` there, and
+`CONVERSE` on it gets the counterpart's own prompt back) both matched
+B.3/B.4/M7 again, on the pre-existing connection. D.3's own `CONVERSE`
+response needed the widened 10s idle window (H.4, fixed P67 Teil D) —
+the 2s window used until now would have missed the TinyBox's reply.
+
 **Status:** ✅ PASS (Device B) for the base connect/survive/re-entry
-measurement, and for B.3/B.4 (active channel follows the last `$4x`
-frame). D.2.3 invalid for this device (CHSWITCH `$00`). D.3 (the P66b
-technique check building on B.3) still needs its own hardware run.
+measurement (13:38/13:40 runs), B.3/B.4 (active channel follows the
+last `$4x` frame), and now D.3 (15:02 run, CO-then-CONVERSE technique
+confirmed end to end). D.2.3 invalid for this device (CHSWITCH `$00`).
 Still open on A/C.
 
 ---
@@ -2901,6 +2945,46 @@ package's.
 
 **Status:** ✅ PASS (Device B) for entry and connection preservation.
 Display: OPEN, tracked as P67. Still unmeasured on A/C.
+
+---
+
+### T144 — LinkTable carry-over end to end, in the application (P67)
+
+Closes T143's own "Display: OPEN (P67)" — the same starting state, now
+checking the connection DISPLAY, not just that Host Mode was genuinely
+entered. App-level, Device B, needs a real counterpart (TinyBox BBS or
+equivalent).
+
+Steps (`docs/docsP67_Link_Table_Packet_Spec.md`, Teil F):
+1. Verbose, VHF Packet, `CONNECT OE3GAS-1`, wait for the counterpart's
+   own prompt.
+2. Ctrl+H → **expected:** VHF Packet mask, chip 0 dashed
+   (`unconfirmed`) at first, then "connected OE3GAS-1" once the CO
+   reconciliation round answers; typing `H` into channel 0's TX
+   window reaches the counterpart and its own help text comes back.
+3. Leave Host Mode → **expected:** verbose terminal, typing `H` gets
+   an answer from the counterpart directly (Converse on channel 0,
+   no extra step needed).
+4. Ctrl+H again → chip 0 shows connected again; "Disconnect" in the
+   chip's context menu → chip goes free.
+5. Counter-check: with no connection at all, Ctrl+H then Leave Host
+   Mode → verbose stays at the command prompt (`cmd:`), and **no**
+   `CONVERSE` is sent (the free-channel case — P66b B.5 — must never
+   fire here).
+6. Re-run `link_carry` once, after the Teil D fixes (H.1–H.4) — a
+   genuine Converse-carry measurement with clean cleanup, not another
+   "already connected" false start.
+
+| Device | Step 2 (chip shows connected) | Step 3 (Converse without extra step) | Step 4 (re-entry + disconnect) | Step 5 (no CONVERSE on free channel) | Step 6 (clean link_carry re-run) |
+|---|---|---|---|---|---|
+| A | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+
+**Status:** ⬜ OPEN — needs a real hardware session on Device B; the
+unit-level equivalent of steps 2/4/5 (mode-name/CO-probe/no-reset-on-
+exit/write-order/CONVERSE-only-if-was-converse) is covered by
+`test_main_window_packet.py::TestLinkTableHostModeCarryOver`
+(software-verified, P67 Teil E).
 
 ---
 
