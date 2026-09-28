@@ -13,8 +13,11 @@ Initialisation flow (3 phases):
       Called externally after verbose_mode_ready.
 
   Phase 3 — enter_host_mode():
-      Sends the COMMAND character first (escaping Converse/Transparent,
-      P66 Teil A.1), then HOST 3, then HPOLL Y.
+      Sends the COMMAND character (escaping Converse/Transparent first,
+      P66), then HOST 3, then HPOLL Y - success requires a genuine
+      OPMODE answer, not just HP $00/HP Y in the response (P66, Teil A;
+      corrects this comment's own previous "HOST 3 (XON + CANLINE +
+      COMMAND + HOST Y)", which named a sequence the code never sent).
       Emits host_mode_changed(True) when complete.
 
 This separation allows running in verbose mode only (for diagnostics)
@@ -605,6 +608,11 @@ class SerialManager(QObject):
         # or a SerialManager built before any config exists still gets
         # the documented factory value.
         self.command_char: int = 0x03
+        # P66, Teil D (A.4a): raw bytes of the last Host Mode entry
+        # handshake (pk232_hostmode_sub.enter_host_mode()'s own return
+        # value) - diagnostic only, mirrors last_verbose_init_response's
+        # own reasoning for the init phase.
+        self._last_enter_host_mode_raw: bytes = b""
 
     # ------------------------------------------------------------------
     # TNC capability detection
@@ -922,6 +930,15 @@ class SerialManager(QObject):
         banner, if the TNC had just booted) it represents was already
         consumed inside the chain and never otherwise reaches the UI."""
         return self._last_verbose_init_resp
+
+    @property
+    def last_enter_host_mode_raw(self) -> bytes:
+        """Raw bytes the last Host Mode entry handshake actually saw
+        (P66, A.4a) - empty until _enter_host_mode_thread() has run at
+        least once this session. On success this is the OPMODE answer
+        proving Host Mode was genuinely entered (not just echoed, P66
+        Teil A); on failure it is whatever was seen instead."""
+        return self._last_enter_host_mode_raw
 
     # ------------------------------------------------------------------
     # Phase 1 — TNC initialisation → verbose mode
@@ -1526,7 +1543,7 @@ class SerialManager(QObject):
                 ok, raw = enter_host_mode(
                     port_name, baudrate, bytes([self.command_char])
                 )
-                output = "OK" if ok else "FAIL:" + raw.hex()
+                output = ("OK:" if ok else "FAIL:") + raw.hex()
                 stderr = ""
             else:
                 result = subprocess.run(
@@ -1542,7 +1559,19 @@ class SerialManager(QObject):
             if stderr:
                 logger.error("Subprocess stderr: %s", stderr)
 
-            if output != "OK":
+            # P66, A.4a: the raw handshake bytes (whatever they were -
+            # success or failure) reach the UI/hw_check diagnostically,
+            # never just the OK/FAIL text.
+            entry_ok = output.startswith("OK:")
+            if ":" in output:
+                try:
+                    self._last_enter_host_mode_raw = bytes.fromhex(
+                        output.split(":", 1)[1]
+                    )
+                except ValueError:
+                    self._last_enter_host_mode_raw = b""
+
+            if not entry_ok:
                 logger.error("Subprocess failed: %r / %s", output, stderr)
                 self._serial.open()
                 self._reader = _ReaderThread(

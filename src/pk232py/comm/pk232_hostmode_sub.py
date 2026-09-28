@@ -28,6 +28,12 @@ HPOLL_Y   = bytes([SOH, 0x4F, ord('H'), ord('P'), ord('Y'), ETB])
 HPOLL_ACK = bytes([SOH, 0x4F, ord('H'), ord('P'), 0x00,     ETB])
 HPOLL_OFF = bytes([SOH, 0x4F, ord('H'), ord('P'), ord('N'), ETB])
 HOST_OFF  = bytes([SOH, 0x4F, ord('H'), ord('O'), ord('N'), ETB])
+# P66, Teil A.2: OPMODE query (TRM 4.3.2) - a genuine Host Mode answer
+# carries a value byte after the mnemonic (e.g. 'OPPA' for Packet); the
+# query itself never does, so a byte-identical echo (Converse, P52.2's
+# rule applied here) is distinguishable from a real answer by length
+# alone, same as the P43 detection chain's own is_hpoll_echo().
+OPMODE_QUERY = bytes([SOH, 0x4F, ord('O'), ord('P'), ETB])
 
 # P66, Teil A: literal timeouts named as module constants (P61's own
 # convention - see serial_manager.py's _FAST_TIMING_CONSTANTS) so tests
@@ -38,6 +44,7 @@ _ESCAPE_CONVERSE_TIMEOUT = 2.0  # per COMMAND-char attempt in escape_converse()
 _HOST3_SETTLE_TIMEOUT   = 2.0   # waiting for 'cmd:cmd:' after HOST 3
 _CR_SETTLE_TIMEOUT      = 1.0   # waiting for '\r\n' after the follow-up CR
 _HPOLL_TIMEOUT          = 2.0   # waiting for HPOLL_ACK/HPOLL_Y after HPOLL_Y
+_OPMODE_TIMEOUT         = 2.0   # waiting for the OPMODE query's own answer
 
 
 # ---------------------------------------------------------------------------
@@ -255,16 +262,32 @@ def enter_host_mode(
     subprocess (unchanged, proven). The handshake uses direct ``port.read()``
     so the Prolific ACK path is unaffected (CLAUDE.md §3).
 
-    P66, Teil A.1: the previous version assumed the TNC was already at
-    the 'cmd:' prompt. Confirmed wrong by a real hardware run (T141,
-    28.09.2026, Device B, 20260928_094001_link_carry.log): after a
-    verbose CONNECT the TNC was in Converse, not the command prompt -
-    HOST 3 was never seen by the command interpreter at all.
-    escape_converse() sends *command_char* first and waits for a real
-    'cmd:' prompt before HOST 3 is sent at all. Its own result is not
-    itself required below (an already-idle TNC may answer nothing
-    recognisable to a bare COMMAND char either) - HOST 3 is sent
-    regardless.
+    P66, Teil A: the previous version assumed the TNC was already at the
+    'cmd:' prompt and treated HPOLL_Y in the response as success on its
+    own. Confirmed wrong by a real hardware run (T141, 28.09.2026, Device
+    B, 20260928_094001_link_carry.log): after a verbose CONNECT the TNC
+    was in Converse, not the command prompt - HOST 3 was never seen by
+    the command interpreter at all, and every "response" below (HPOLL_Y
+    included) was Converse echoing the exact bytes just sent back
+    verbatim (CLAUDE.md, "In Converse echot der TNC auch Host-Frames").
+    Two independent fixes:
+
+      A.1 - escape_converse() sends *command_char* first and waits for a
+      real 'cmd:' prompt before HOST 3 is sent at all. Its own result is
+      not itself required for success below (an already-idle TNC may
+      answer nothing recognisable to a bare COMMAND char either) - HOST
+      3 is sent regardless, and A.2's OPMODE check is what actually
+      proves something happened.
+
+      A.2 - HPOLL_Y/HPOLL_ACK in the response is no longer sufficient:
+      Converse echoes those bytes back exactly, HPOLL_Y included. An
+      OPMODE query (TRM 4.3.2) is sent as a THIRD check - a real Host
+      Mode answer carries a value byte the query itself never has (e.g.
+      'OPPA'), so an echo is distinguishable from a genuine answer by
+      length alone (see OPMODE_QUERY's own comment). Success now
+      requires BOTH HPOLL_ACK (HP $00) - HPOLL_Y alone is no longer
+      accepted, since that is exactly the byte sequence an echo
+      reproduces - AND a genuine OPMODE answer.
     """
     import serial
 
@@ -294,8 +317,27 @@ def enter_host_mode(
         port.flush()
         r = read_until(port, [HPOLL_ACK, HPOLL_Y], timeout=_HPOLL_TIMEOUT)
 
-        # Accept both HP $00 (ACK) and HP Y (already in HPOLL ON) as success.
-        return (HPOLL_ACK in r or HPOLL_Y in r), r
+        # A.2: HP $00 stays required; HP Y alone is no longer accepted
+        # (it is exactly what an echo reproduces - see the docstring).
+        port.write(OPMODE_QUERY)
+        port.flush()
+        op_raw = read_until(port, bytes([ETB]), timeout=_OPMODE_TIMEOUT)
+        op_frames, _remaining = extract_frames(bytearray(op_raw))
+        got_real_opmode_answer = any(
+            ctl == 0x4F and payload[:2] == b'OP' and len(payload) > 2
+            for ctl, payload in op_frames
+        )
+
+        success = (HPOLL_ACK in r) and got_real_opmode_answer
+        raw_all = r + op_raw
+        if not success:
+            logger.warning(
+                "enter_host_mode: echo instead of Host Mode response - "
+                "TNC probably in Converse/Transparent (hpoll_ack=%s "
+                "opmode_raw=%s)",
+                HPOLL_ACK in r, op_raw.hex(),
+            )
+        return success, raw_all
     finally:
         port.close()
 
@@ -305,4 +347,4 @@ if __name__ == "__main__":
 
     _command_char = bytes([int(sys.argv[3])]) if len(sys.argv) > 3 else b"\x03"
     ok, resp = enter_host_mode(sys.argv[1], int(sys.argv[2]), _command_char)
-    print("OK" if ok else "FAIL:" + resp.hex())
+    print(("OK:" if ok else "FAIL:") + resp.hex())
