@@ -874,6 +874,18 @@ erreichbare BBS.
 **Reihenfolge:** nach P62a/P63 (APRS), sofern der Betreiber nichts anderes
 festlegt.
 
+**Messung ausgelagert nach P65 (2026-09-28):** Punkt 2 dieses Eintrags
+(Verbindungszustand je Kanal abfragen) und Punkt 3 (Betriebsart, und ob
+die Moduswechsel-Frames eine bestehende Verbindung stoeren) werden durch
+`tools/hw_check.py link_carry`/`link_carry_host`
+(`docs/P65_Link_Carryover_Measure_Spec.md`, Testplan T141/T142) konkret
+gemessen — **noch offen (T141/T142 OPEN), keine Umsetzung in diesem
+Schritt.** Neu gefundene Kandidaten fuer Punkt 2, bisher ungenutzt im
+Code: TRM 4.3.3 Link Status Request (`HostModeProtocol.
+cmd_link_status()`, baut den Frame schon, wird aber nirgends
+aufgerufen) und TRM 4.3.2 `OPMODE` (`query_host(b"OP")`) fuer Punkt 3 —
+beide jetzt Teil des Messpakets statt nur vermutet.
+
 ### APRS mode (P63) — waiting on T138–T140 (P62, 2026-09-27)
 
 The APRS TX mode itself (own screen, HF/VHF switch inside it, app-side
