@@ -13,9 +13,11 @@ Initialisation flow (3 phases):
       Called externally after verbose_mode_ready.
 
   Phase 3 — enter_host_mode():
-      Sends the COMMAND character (escaping Converse/Transparent first,
-      P66), then HOST 3, then HPOLL Y - success requires a genuine
-      OPMODE answer, not just HP $00/HP Y in the response (P66, Teil A;
+      Sends the COMMAND character first (escaping Converse - not
+      Transparent, which needs three within CMDTIME with nothing else
+      in between, P66a B.2), then HOST 3, then HPOLL Y - success
+      requires a genuine OPMODE answer, not just HP $00/HP Y in the
+      response (P66, Teil A;
       corrects this comment's own previous "HOST 3 (XON + CANLINE +
       COMMAND + HOST Y)", which named a sequence the code never sent).
       Emits host_mode_changed(True) when complete.
@@ -1014,22 +1016,25 @@ class SerialManager(QObject):
           2. CR   -> 'cmd:'            -> verbose, already awake -> done.
              (tried before step 3: the already-awake, verbose TNC is the
              more common case and is settled by a single CR)
-          2b. (P53.B; retry count P66) COMMAND char (self.command_char,
-             default $03/Ctrl-C) + CR, up to 3 attempts via the shared
-             escape_converse() -> 'cmd:' -> verbose, was in Converse or
-             Transparent mode. Real console capture, 26.09.2026,
-             13:13-13:16: steps 1 and 2 both got only an ECHO of what was
-             sent, no 'cmd:' either time - the TNC was in the Converse
-             state of whichever operating mode (Baudot RTTY, that run)
-             was active before this disconnect, since HOST OFF returns
-             the TNC to its LAST active mode, not to the command prompt
-             (TRM); Converse echoes every character and shows no prompt
-             at all, which steps 1/2 alone cannot tell apart from "TNC
-             not responding" - only the COMMAND character actually
-             escapes it. Three attempts because TRANSPARENT needs three
-             COMMAND characters within CMDTIME where CONVERSE needs only
-             one (TRM) - a single attempt (this step's own behaviour
-             before P66) could never reach a TNC in TRANSPARENT. Matches
+          2b. (P53.B; retry count P66, corrected P66a) COMMAND char
+             (self.command_char, default $03/Ctrl-C) + CR, up to 3
+             attempts via the shared escape_converse() -> 'cmd:' ->
+             verbose, was in Converse mode. Real console capture,
+             26.09.2026, 13:13-13:16: steps 1 and 2 both got only an
+             ECHO of what was sent, no 'cmd:' either time - the TNC was
+             in the Converse state of whichever operating mode (Baudot
+             RTTY, that run) was active before this disconnect, since
+             HOST OFF returns the TNC to its LAST active mode, not to
+             the command prompt (TRM); Converse echoes every character
+             and shows no prompt at all, which steps 1/2 alone cannot
+             tell apart from "TNC not responding" - only the COMMAND
+             character actually escapes it. escape_converse() cannot
+             reach Transparent, despite trying 3 times: Transparent
+             needs three COMMAND characters within CMDTIME with NO
+             other bytes in between, but this function sends a CR
+             after each attempt and waits between attempts - corrected
+             P66a, B.2 (the P66 claim that 3 attempts covers Transparent
+             too was never actually measured). Matches
              what tools/hw_check.py's Session.normalize() has done since
              P21 for exactly this reason, and the SAME escape_converse()
              pk232_hostmode_sub.enter_host_mode() (Teil A.1) and
@@ -1163,11 +1168,11 @@ class SerialManager(QObject):
             # the TNC has", not a guaranteed value. escape_converse()
             # (P66) is the SAME shared function pk232_hostmode_sub.
             # enter_host_mode()'s own Converse-escape step (Teil A.1) and
-            # tools/hw_check.py's link_carry (Teil C) use — up to three
-            # attempts, since TRANSPARENT needs three COMMAND characters
-            # within CMDTIME where CONVERSE needs only one (TRM;
-            # CLAUDE.md P53.B) — not the single-attempt version this step
-            # used before P66. ─────────────────────────────────────────
+            # tools/hw_check.py's link_carry (Teil C) use — not the
+            # single-attempt version this step used before P66. The 3
+            # attempts do NOT reach Transparent (P66a, B.2 — see
+            # escape_converse()'s own corrected docstring); this step
+            # only ever escapes Converse. ─────────────────────────────
             logger.info(
                 "Init: step 2b - COMMAND char (Ctrl-C, up to 3x) - "
                 "TNC may be in converse/transparent mode"

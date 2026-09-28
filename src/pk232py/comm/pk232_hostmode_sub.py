@@ -106,7 +106,7 @@ def extract_frames(buf):
 
 
 # ---------------------------------------------------------------------------
-# Converse/Transparent escape (P66, Teil A.1)
+# Converse escape (P66, Teil A.1; corrected P66a B.2 - Converse only)
 # ---------------------------------------------------------------------------
 
 def escape_converse(
@@ -116,9 +116,14 @@ def escape_converse(
     timeout: float = _ESCAPE_CONVERSE_TIMEOUT,
 ) -> tuple[bool, bytes]:
     """Send the TNC's own COMMAND character (plus CR) up to *attempts*
-    times to escape back to the 'cmd:' prompt from Converse (needs one)
-    or Transparent (needs three - TRM; CLAUDE.md P53.B) before anything
-    else is sent.
+    times to escape back to the 'cmd:' prompt from Converse (needs one
+    - TRM; CLAUDE.md P53.B) before anything else is sent.
+
+    Converse only. Transparent needs three COMMAND characters within
+    CMDTIME with no other bytes in between - this function sends a CR
+    after each one and waits between attempts, so it cannot leave
+    Transparent. See Backlog (P66a, B.2) - not a fix here, since
+    pk232py switches into Transparent nowhere today.
 
     *send_and_wait(data, timeout)* is the caller's own write-then-read
     primitive - a raw pyserial port for
@@ -297,7 +302,8 @@ def enter_host_mode(
         time.sleep(_PRE_HANDSHAKE_SETTLE)
         port.reset_input_buffer()
 
-        # A.1: leave Converse/Transparent before HOST 3 is even sent.
+        # A.1: leave Converse before HOST 3 is even sent (P66a, B.2:
+        # not Transparent - see escape_converse()'s own docstring).
         def _send_and_wait(data: bytes, timeout: float) -> bytes:
             port.write(data)
             port.flush()
