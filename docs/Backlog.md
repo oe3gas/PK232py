@@ -911,6 +911,25 @@ Teil D von P66 misst das) — nicht mehr "zuerst messen, dann bauen"
 fuer Punkt 2/3 selbst, die sind jetzt gemessen; nur der aktive-Kanal-
 Mechanismus (B.4) bleibt vor P67 offen.
 
+**B.4 jetzt bestaetigt (P66b, Geraet B, 2026-09-28):** `link_carry_host`
+D.1 hat die Hypothese direkt geprueft — `CO` auf einem freien Kanal (3)
+als letzter `$4x`-Frame vor `HOST OFF` gesendet, verbose `CSTATUS`
+zeigte danach `Ch. 3 - IO`. **P67 nutzt genau diese Technik als "zurueck
+auf den verbundenen Kanal"-Mechanismus:** beim Wechsel Host → verbose
+den letzten `$4x`-Frame gezielt auf den Kanal legen, auf dem die
+Verbindungstabelle den echten verbundenen Kanal fuehrt (statt wie
+bisher den zuletzt aus anderen Gruenden abgefragten Kanal aktiv zu
+lassen) — kein CHSWITCH-Zeichen noetig, gut so: `CHSWITCH` steht auf
+Geraet B ohnehin auf `$00` (nicht gesetzt, P66b B.4). Ebenfalls aus
+P66b uebernehmen: `CONVERSE` nur auf einem tatsaechlich verbundenen
+Kanal senden (B.5 — auf einem freien Kanal sendet der TNC jede
+Eingabezeile als UNPROTO-UI-Frame); und dass der Befehlsinterpreter bei
+bestehender Verbindung Sekunden hinter dem Zeichen-Echo liegen kann
+(B.1) — die Verbindungstabelle darf nach einem Host-Mode-Wechsel nicht
+sofort als "bestaetigt" gelten, sondern muss mit einer aktiven
+Nachfrage (z. B. `CO`) abgeglichen werden, statt sich auf den Zeitpunkt
+der eigenen Aussendung zu verlassen.
+
 ### `escape_converse()` verlaesst Transparent nicht (P66a B.2, 2026-09-28)
 
 `comm/pk232_hostmode_sub.py::escape_converse()` sendet je Versuch
