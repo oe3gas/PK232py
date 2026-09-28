@@ -94,16 +94,30 @@ required except for T101:
             transmission of this tool's own. INFO only, no PASS/FAIL:
             the question is what CFROM NONE actually does, not a
             predicted answer. See docs/P62_APRS_Measure_Spec.md.
+    link_carry
+            Does a verbose-mode AX.25 Packet connection, and Packet as
+            the active operating mode, survive a verbose -> Host Mode
+            -> verbose round trip (P64/P65, T141)? Connects from THIS
+            program's own verbose CONNECT prompt, queries OPMODE
+            (Host Mode 'OP') and TRM 4.3.3 link status on every channel
+            (HostModeProtocol.cmd_link_status(), never called by
+            production code) before and after re-sending VHFPacketMode's
+            own activate+init frames, then checks the connection is
+            still visible in verbose OPMODE/CSTATUS/CONNECT. Needs a
+            real counterpart station (a BBS, or Direwolf/QtTermTCP over
+            AGW as in aprs_reject). See
+            docs/P65_Link_Carryover_Measure_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
             and recorded individually), and NOT
             mi/maildrop/maildrop_host/mdcheck_scan/maildrop_session/
-            aprs_query/aprs_tx/aprs_reject (mi is fine alone but grouped
-            with its guided counterpart; maildrop, maildrop_host,
-            mdcheck_scan and maildrop_session are interactive/
-            exploratory; aprs_tx/aprs_reject transmit or need a second
-            station), so each must be run on its own.
+            aprs_query/aprs_tx/aprs_reject/link_carry (mi is fine
+            alone but grouped with its guided counterpart; maildrop,
+            maildrop_host, mdcheck_scan and maildrop_session are
+            interactive/exploratory; aprs_tx/aprs_reject/link_carry
+            transmit or need a second station), so each must be run
+            on its own.
 
 Usage::
 
@@ -187,7 +201,7 @@ from pk232py.comm.serial_manager import SerialManager  # noqa: E402
 from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
 from pk232py.comm.frame import build_command, _dle_escape  # noqa: E402
 from pk232py.comm.hostmode import HostModeProtocol  # noqa: E402
-from pk232py.comm.constants import SOH, ETB  # noqa: E402
+from pk232py.comm.constants import SOH, ETB, ctl_channel  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
 from pk232py.maildrop import MailDropSession, SerialManagerChannel  # noqa: E402
 from pk232py.maildrop.protocol import find_prompt  # noqa: E402
@@ -1638,6 +1652,52 @@ def evaluate_aprs_round(
     }
 
 
+# ===========================================================================
+# P65 -- link/mode carry-over measurement pure logic. No serial interface,
+# unit-testable directly.
+# ===========================================================================
+
+def decode_link_status(ctl: int, data: bytes) -> dict:
+    """Decode a TRM 4.3.3 Link Status response: SOH $4x 'C' 'O' a b c d
+    e <path> ETB (P65, A.6). *ctl* is the frame's own CTL byte - the
+    channel comes from its low nibble (ctl_channel(), P16.2's own rule:
+    never assumed from send order, always read back off the response
+    itself). *data* is the frame's payload exactly as _make_host_frame()
+    delivers it - regardless of its (wrong, see the Backlog entry
+    "_make_host_frame() misclassifies LINK_STATUS as CMD_RESP") .kind
+    classification, the raw CTL/data bytes themselves are unaffected by
+    that mislabeling.
+
+    Per the TRM: a = link state - 1, OR'd with $30 (so state = (a &
+    $0F) + 1 - confirmed against the TRM's own 4.3.3 example, ctl
+    $34 -> state 5, "S05"); b = AX.25 v2 flag; c = unacknowledged
+    packet count; d = retry count; e = CONPERM flag; the remaining
+    bytes are the partner callsign and any digipeaters, as ASCII text.
+    b/c/d/e are reported as their raw byte values - this function does
+    not guess what a given number of retries or CONPERM byte MEANS,
+    only what TRM 4.3.3 says how to extract them.
+
+    Returns {'channel', 'state', 'v2', 'unacked', 'retries', 'conperm',
+    'path'} on a recognised CO-prefixed, long-enough payload, or
+    {'channel', 'unparsed': True, 'raw': data} otherwise - never a
+    guessed value for a payload that does not match the documented
+    shape (hw_check rule 6: measure, never invent)."""
+    channel = ctl_channel(ctl)
+    if not data.startswith(b"CO") or len(data) < 7:
+        return {"channel": channel, "unparsed": True, "raw": data}
+    a, b, c, d, e = data[2], data[3], data[4], data[5], data[6]
+    path = data[7:].decode("ascii", errors="replace")
+    return {
+        "channel": channel,
+        "state": (a & 0x0F) + 1,
+        "v2": b,
+        "unacked": c,
+        "retries": d,
+        "conperm": e,
+        "path": path,
+    }
+
+
 def verify_restore(
     command: str,
     query: Callable[[], str],
@@ -2337,6 +2397,50 @@ class Session:
         self.log.line(f">> HOST frame {frame.hex(' ').upper()}{label}")
         self.sm.send_command(frame[2:4], frame[4:-1])
 
+    def send_channel_frame(self, channel: int, frame: bytes, note: str = "") -> None:
+        """Like send_frame(), for a channel-specific ($4x) frame built
+        by e.g. HostModeProtocol.cmd_link_status()/.cmd_connect() (P65)
+        - dispatches via SerialManager.send_channel_command(), the
+        channel-aware counterpart send_command() (send_frame()'s own
+        target) has no use for. Same frame[2:4]/frame[4:-1] split as
+        send_frame() - the channel itself is already encoded in the
+        frame's own CTL byte, but send_channel_command() needs it
+        again as a plain int to rebuild that same CTL byte itself.
+        """
+        label = f"  ({note})" if note else ""
+        if self.dry_run:
+            self.log.line(f"[dry-run] >> {frame.hex(' ').upper()}{label}")
+            return
+        self.log.line(f">> HOST frame {frame.hex(' ').upper()}{label}")
+        self.sm.send_channel_command(channel, frame[2:4], frame[4:-1])
+
+    def query_channel_frame(
+        self, channel: int, frame: bytes, note: str = "", timeout: float = 1.0,
+    ) -> list:
+        """Send an already-built channel-specific frame (P65's
+        cmd_link_status()) and return EVERY frame captured for
+        *timeout* seconds, unfiltered - LINK_STATUS responses ($40-$4E)
+        are misclassified as CMD_RESP by _make_host_frame() (Backlog:
+        '_make_host_frame() misclassifies LINK_STATUS as CMD_RESP'),
+        so this must never filter by .kind, only log the raw bytes for
+        decode_link_status() to work with afterwards."""
+        if self.dry_run:
+            self.send_channel_frame(channel, frame, note=note)
+            return []
+        captured: list = []
+        self.sm.frame_received.connect(captured.append)
+        try:
+            self.send_channel_frame(channel, frame, note=note)
+            self._pump(timeout)
+        finally:
+            self.sm.frame_received.disconnect(captured.append)
+        for f in captured:
+            self.log.line(
+                f"<< ctl=0x{f.ctl:02X} ch={f.channel} data={f.data!r} "
+                f"text={f.text!r}"
+            )
+        return captured
+
     def send_maildrop_host_frame(self, data: bytes, seconds: float = 3.0) -> list:
         """Send one MailDrop-over-Host-Mode data frame (CTL $60, P24.2)
         and capture every frame the reader thread decodes for *seconds*.
@@ -2377,6 +2481,20 @@ class Session:
             return
         self.log.line(f">> TX ch0: {text!r}")
         self.sm.send_data(text.encode("ascii", errors="replace"), channel=0)
+
+    def send_data_channel(self, channel: int, text: str) -> None:
+        """Like send_data_channel0(), any channel - P65's A.7 sends on
+        whichever channel actually carries the connection, not always
+        channel 0 (which is reserved for UI/unproto frames, CLAUDE.md's
+        own 'channel 0 is the UI channel' rule - a real Packet
+        connection is never on it)."""
+        if self.dry_run:
+            self.log.line(
+                f"[dry-run] would TRANSMIT on channel {channel}: {text!r}"
+            )
+            return
+        self.log.line(f">> TX ch{channel}: {text!r}")
+        self.sm.send_data(text.encode("ascii", errors="replace"), channel=channel)
 
 
 def confirm_tx(prompt: str, read_line: Callable[[str], str] = input) -> bool:
@@ -4347,6 +4465,276 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
 
 
 # ===========================================================================
+# P65 -- link/mode carry-over measurement (link_carry/link_carry_host).
+# MEASURES ONLY (hw_check rule 6) - the implementation (an internal
+# connection table, carried across the verbose<->Host Mode switch) is P66's
+# job, built on these findings, not this package's. No new frame builder
+# anywhere below: link status is HostModeProtocol.cmd_link_status(), Host
+# Mode connect is HostModeProtocol.cmd_connect(), the mode-switch frames are
+# VHFPacketMode's own get_activate_frames()/get_init_frames().
+# ===========================================================================
+
+def _probe_all_channel_links(
+    session: Session, link_status_frames: dict[int, bytes], label: str,
+    log: RunLog,
+) -> dict[int, dict]:
+    """Query TRM 4.3.3 link status on every channel (0-9) and decode
+    each via decode_link_status() (P65, A.6/B) - shared by
+    link_carry/link_carry_host so both measure the exact same way.
+    Logs every decoded result, labelled, for the raw hardware capture
+    - never just the summary."""
+    results: dict[int, dict] = {}
+    for ch in range(10):
+        captured = session.query_channel_frame(
+            ch, link_status_frames[ch], note=f"{label} CO ch{ch}",
+        )
+        match = next(
+            (f for f in captured if f.channel == ch and f.data.startswith(b"CO")),
+            None,
+        )
+        if match is not None:
+            results[ch] = decode_link_status(match.ctl, match.data)
+        else:
+            results[ch] = {"channel": ch, "unparsed": True, "raw": b""}
+        log.line(f"{label} ch{ch} decoded: {results[ch]!r}")
+    return results
+
+
+def _channels_connected_to(results: dict[int, dict], target_call: str) -> list[int]:
+    """Which channels' decoded link status (see above) shows *target_call*
+    in the partner/path text - the measurement's own stand-in for
+    "connected", since the numeric link-state value's exact meaning per
+    state is not documented in what this tool has measured so far
+    (only that state = (a & 0x0F) + 1 - P65's own decode_link_status()
+    docstring). Never guesses beyond that."""
+    call = target_call.strip().upper()
+    if not call:
+        return []
+    return [
+        ch for ch, r in results.items()
+        if not r.get("unparsed") and r.get("path") and call in r["path"].upper()
+    ]
+
+
+def test_link_carry(session: Session, log: RunLog) -> None:
+    log.line(
+        "--- Link carry: verbose connect survives Host Mode, CO and "
+        "OP queries ---"
+    )
+
+    # Built ONCE, referenced by both the dry-run preview below and the
+    # real sends further down (test_hw_check_link_carry.py::
+    # TestLinkCarryDryRunFramesComeFromRealBuilders).
+    link_status_frames = {ch: HostModeProtocol.cmd_link_status(ch) for ch in range(10)}
+    vhf = VHFPacketMode()
+    mode_switch_frames = vhf.get_activate_frames() + vhf.get_init_frames()
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would normalize(), check VHF/HBAUD, ask the "
+            "operator to connect to a counterpart from this program's "
+            "own CONNECT prompt, query OPMODE/CSTATUS/CONNECT verbose "
+            "(A.3), enter Host Mode and record 3s of unsolicited "
+            "traffic (A.4), query OPMODE in Host Mode (A.5), query "
+            "link status on channels 0-9 (A.6), send a data frame on "
+            "the channel that looks connected (A.7), re-send VHF "
+            "Packet's own activate+init frames and re-check link "
+            "status (A.8), leave Host Mode and re-check verbose (A.9), "
+            "then offer to disconnect (A.10):"
+        )
+        for ch in range(10):
+            session.send_channel_frame(
+                ch, link_status_frames[ch], note=f"A.6 CO ch{ch}"
+            )
+        for frame in mode_switch_frames:
+            session.send_frame(frame, note="A.8 VHF mode switch")
+        log.result("T141", "INFO", "dry-run, nothing sent")
+        return
+
+    session.normalize()
+
+    if input("Ready to continue? [y/N] ").strip().lower() != "y":
+        log.result("T141", "INFO", "skipped by operator")
+        return
+
+    commands = ["VHF", "HBAUD"]
+    originals: dict[str, Optional[str]] = {
+        cmd: parse_query_value(cmd, session.query(cmd)) for cmd in commands
+    }
+    missing = [c for c in commands if originals[c] is None]
+    if missing:
+        log.result(
+            "T141", "SKIPPED",
+            f"original value(s) not parseable via parse_query_value() -- "
+            f"not touching them: {missing}"
+        )
+        return
+
+    log.line(
+        f"VHF (current): {originals['VHF']!r}, "
+        f"HBAUD (current): {originals['HBAUD']!r}"
+    )
+    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
+    hbaud_ok = originals["HBAUD"].strip() == "1200"
+    if not (vhf_ok and hbaud_ok):
+        answer = input(
+            f"TNC is not on VHF 1200 Bd (VHF={originals['VHF']!r}, "
+            f"HBAUD={originals['HBAUD']!r}). Set VHF ON and HBAUD 1200 "
+            f"for this run? [y/N] "
+        ).strip().lower()
+        if answer != "y":
+            log.result("T141", "INFO", "aborted - TNC not on VHF 1200 Bd")
+            return
+        session.set_verbose("VHF", "ON")
+        session.set_verbose("HBAUD", "1200")
+
+    try:
+        # A.2
+        print("Connect to the counterpart now from THIS program's prompt:")
+        target_call = input("Target callsign? ").strip()
+        connect_echo = session.verbose(f"CONNECT {target_call}")
+        log.line(f"A.2 CONNECT command echo: {connect_echo!r}")
+        connect_wait = session.read_until_idle(idle=2.0, max_total=30.0)
+        connect_text = connect_wait.decode("ascii", errors="replace")
+        log.line(f"A.2 waiting for *** CONNECTED: {connect_text!r}")
+
+        # A.3
+        for cmd in ("OPMODE", "CSTATUS"):
+            log.line(f"A.3 {cmd}: {session.query(cmd)!r}")
+        a3_connect = session.query("CONNECT")
+        log.line(f"A.3 CONNECT (bare): {a3_connect!r}")
+
+        session.enter_host_mode()
+        try:
+            # A.4
+            captured_a4: list = []
+            session.sm.frame_received.connect(captured_a4.append)
+            try:
+                session._pump(3.0)
+            finally:
+                session.sm.frame_received.disconnect(captured_a4.append)
+            for f in captured_a4:
+                log.line(
+                    f"A.4 << ctl=0x{f.ctl:02X} ch={f.channel} "
+                    f"data={f.data!r} text={f.text!r}"
+                )
+            log.result(
+                "T141 A.4", "INFO",
+                f"{len(captured_a4)} unsolicited frame(s) seen"
+            )
+
+            # A.5
+            op_frame = session.query_host(b"OP")
+            op_text = op_frame.text if op_frame else "<no matching response>"
+            log.line(f"A.5 OPMODE Host Mode query: {op_text!r}")
+            log.result("T141 A.5", "INFO", f"raw={op_text!r}")
+
+            # A.6
+            a6_results = _probe_all_channel_links(
+                session, link_status_frames, "A.6", log
+            )
+            connected_channels = _channels_connected_to(a6_results, target_call)
+            log.result(
+                "T141 A.6",
+                "PASS" if len(connected_channels) == 1 else "INCONCLUSIVE",
+                f"connected_channels={connected_channels} "
+                f"target={target_call!r}"
+            )
+
+            # A.7
+            carry_channel = connected_channels[0] if connected_channels else 0
+            if confirm_tx(
+                f"Send a single CR data frame on channel {carry_channel} "
+                f"so the counterpart's own terminal shows a prompt - "
+                f"type a short reply there."
+            ):
+                session.send_data_channel(carry_channel, "\r")
+                captured_a7: list = []
+                session.sm.frame_received.connect(captured_a7.append)
+                try:
+                    session._pump(10.0)
+                finally:
+                    session.sm.frame_received.disconnect(captured_a7.append)
+                for f in captured_a7:
+                    log.line(
+                        f"A.7 << ctl=0x{f.ctl:02X} ch={f.channel} "
+                        f"data={f.data!r} text={f.text!r}"
+                    )
+                answer_channels = sorted({
+                    f.channel for f in captured_a7 if 0x30 <= f.ctl <= 0x39
+                })
+                log.result(
+                    "T141 A.7", "INFO",
+                    f"data answer seen on channel(s)={answer_channels}"
+                )
+            else:
+                log.result("T141 A.7", "INFO", "skipped by operator")
+
+            # A.8
+            if confirm_tx(
+                "Re-send VHF Packet's own activate+init frames while "
+                "the link may still be up (Host Mode settings only, "
+                "nothing new on the air)."
+            ):
+                for frame in mode_switch_frames:
+                    session.send_frame(frame, note="A.8 VHF mode switch")
+                    session._pump(0.3)
+
+                op_frame_after = session.query_host(b"OP")
+                op_text_after = (
+                    op_frame_after.text if op_frame_after
+                    else "<no matching response>"
+                )
+                log.line(
+                    f"A.8 OPMODE after mode-switch frames: {op_text_after!r}"
+                )
+
+                a8_results = _probe_all_channel_links(
+                    session, link_status_frames, "A.8", log
+                )
+                a8_connected = _channels_connected_to(a8_results, target_call)
+                a8_pass = bool(a8_connected) and a8_connected == connected_channels
+                log.result(
+                    "T141 A.8", "PASS" if a8_pass else "FAIL",
+                    f"before={connected_channels} after={a8_connected} "
+                    f"opmode={op_text_after!r}"
+                )
+            else:
+                log.result("T141 A.8", "INFO", "skipped by operator")
+        finally:
+            session.exit_host_mode()
+
+        # A.9
+        for cmd in ("OPMODE", "CSTATUS"):
+            log.line(f"A.9 {cmd}: {session.query(cmd)!r}")
+        a9_connect = session.query("CONNECT")
+        log.line(f"A.9 CONNECT (bare): {a9_connect!r}")
+        a9_pass = bool(target_call) and target_call.upper() in a9_connect.upper()
+        log.result(
+            "T141 A.9", "PASS" if a9_pass else "INCONCLUSIVE",
+            f"raw={a9_connect!r}"
+        )
+
+        # A.10
+        if input("Disconnect now? [Y/n] ").strip().lower() in ("", "y"):
+            session.verbose("DISCONNECT")
+            disc_resp = session.read_until_idle(idle=2.0, max_total=15.0)
+            log.line(
+                f"A.10 disconnect response: "
+                f"{disc_resp.decode('ascii', errors='replace')!r}"
+            )
+        else:
+            log.result("T141 A.10", "INFO", "left connected by operator choice")
+    finally:
+        for cmd in commands:
+            verify_restore(
+                cmd,
+                lambda c=cmd: session.query(c),
+                lambda v, c=cmd: session.set_verbose(c, v),
+                originals[cmd],
+                log,
+            )
+# ===========================================================================
 # CLI
 # ===========================================================================
 
@@ -4361,7 +4749,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "radio) recording terminal; maildrop_host and mdcheck_scan "
             "are read-only Host Mode probes; maildrop_session drives the "
             "real MailDropSession end to end (T119); t101 TRANSMITS and "
-            "needs a second receiver."
+            "needs a second receiver; link_carry (P65, T141) measures "
+            "whether an AX.25 Packet connection and the active operating "
+            "mode survive a verbose -> Host Mode -> verbose round trip "
+            "-- needs a real counterpart station and is deliberately "
+            "not part of 'all'."
         ),
     )
     p.add_argument(
@@ -4370,6 +4762,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
             "maildrop_session", "aprs_query", "aprs_tx", "aprs_reject",
+            "link_carry",
             "all",
         ],
     )
@@ -4474,6 +4867,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "aprs_query":  [lambda s, l: test_aprs_query(s, l)],
         "aprs_tx":     [lambda s, l: test_aprs_tx(s, l)],
         "aprs_reject": [lambda s, l: test_aprs_reject(s, l)],
+        "link_carry": [lambda s, l: test_link_carry(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
