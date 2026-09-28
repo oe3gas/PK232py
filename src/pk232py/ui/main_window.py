@@ -1562,12 +1562,48 @@ class MainWindow(QMainWindow):
         self._sb_mode.setText("Mode: Switching to Host Mode...")
         self._serial.enter_host_mode()
 
+    def _packet_visible_connected_channel(self) -> Optional[int]:
+        """The Packet screen's currently VISIBLE channel, if a Packet
+        mode is active AND that channel is CONNECTED per the LinkTable
+        (P67, Teil C.3) - None otherwise (no Packet mode active, or the
+        visible channel is not connected). Deliberately checks the
+        LinkTable, not the chip's own displayed colour, so this always
+        agrees with the ONE source of truth (Teil C.1)."""
+        name = self._modes.current_mode_name
+        if name not in ("HF Packet", "VHF Packet"):
+            return None
+        screen = self._opmode_screens.get(name)
+        if screen is None or not hasattr(screen, "channel_bar"):
+            return None
+        ch = screen.channel_bar.current()
+        if 0 <= ch < len(self._link_table.channels) and self._link_table.channels[ch].state == "connected":
+            return ch
+        return None
+
     def _on_host_mode_exit(self) -> None:
         if self._serial.is_connected:
             # Signal _update_host_mode_ui that this is a genuine
             # user-initiated exit — always show verbose terminal.
             self._exiting_host_mode_by_user = True
-            self._serial.exit_host_mode()
+            # P67, Teil C.3: if the Packet screen's visible channel is
+            # connected, send CO on it as the LAST $4x frame before
+            # HOST OFF - the TNC's own verbose I/O channel afterwards
+            # follows it (P66b, B.3/B.4, T142 D.1/D.3). exit_host_mode()
+            # runs synchronously (P43/P53's own resync included), so by
+            # the time this call returns the TNC is confirmed back in
+            # verbose mode.
+            visible_channel = self._packet_visible_connected_channel()
+            was_converse = self._link_table.converse
+            self._serial.exit_host_mode(io_channel=visible_channel)
+            self._link_table.io_channel = visible_channel if visible_channel is not None else 0
+            # Only return to Converse on a channel that both (a) was in
+            # Converse before this Host Mode session started, and (b)
+            # is actually connected NOW - never on a free channel,
+            # which sends every further line as an UNPROTO UI frame
+            # instead (P66b, B.5). Otherwise stay at the command prompt
+            # exit_host_mode() already confirmed.
+            if was_converse and visible_channel is not None:
+                self._serial.write_verbose(b"CONVERSE\r\n")
 
     def _on_recovery(self) -> None:
         """Emergency Reconnect (P45.1 / P46.B) - kick off the async
@@ -5220,20 +5256,27 @@ class MainWindow(QMainWindow):
         else:
             self._sb_mode.setText("Mode: VERBOSE")
             self._set_mode_indicator("verbose")
-            # Host Mode is gone - any Packet channel state is now stale (no
-            # frame will ever arrive to clear a CONNECTED/CALLING chip).
-            # Reset both screens regardless of which one (if either) was
-            # active, and regardless of user-exit vs. temporary exit below.
-            for _pkt_name in ("HF Packet", "VHF Packet"):
-                _pkt_screen = self._opmode_screens.get(_pkt_name)
-                if _pkt_screen is not None and hasattr(_pkt_screen, "reset_channels"):
-                    _pkt_screen.reset_channels()
+            # P67, Teil C.3: reset_channels() removed here - the
+            # LinkTable is the app's own parallel record of channel
+            # state and survives a Host Mode exit on purpose (that is
+            # the entire point of P64/P67); wiping every chip back to
+            # free on every exit is exactly the state loss this package
+            # closes. A genuine loss of basis (TNC disconnect, a fresh
+            # boot banner) still clears it, via LinkTable.reset() at
+            # those call sites, not here.
             if self._exiting_host_mode_by_user:
                 # Genuine user exit: always show verbose terminal
                 # and deactivate the current mode so the next
                 # Host Mode entry starts clean.
                 self._exiting_host_mode_by_user = False
+                # P67, Teil C.3.5: the operator's last chosen operating
+                # mode must not be forgotten just because Host Mode was
+                # left - save it BEFORE deactivate() (which itself does
+                # not touch the LinkTable) so the next Host Mode entry
+                # (C.2 above) can restore it instead of always falling
+                # back to Baudot RTTY.
                 if self._modes.current_mode is not None:
+                    self._link_table.mode_name = self._modes.current_mode_name
                     self._modes.current_mode.deactivate()
                     self._modes._active_mode = None
                 self._stack.setCurrentIndex(1)
@@ -5536,6 +5579,28 @@ class MainWindow(QMainWindow):
         # Insert blank line before cmd: to separate response blocks
         text = text.replace('cmd:', '\ncmd:')
         self._vt_append(text, color="#cccccc")
+        # P67, Teil C.4: every RECEIVED verbose line feeds the
+        # LinkTable - a typed CONVERSE/CONV/K or Ctrl-C only changes
+        # .converse once the TNC's own response confirms it (an echo
+        # with no cmd:, or cmd: itself), never on the keypress that
+        # sent it - LinkTable.on_verbose_line()'s own docstring covers
+        # exactly this; nothing here needs its own confirm/keypress
+        # distinction since this method only ever sees what the TNC
+        # actually sent back. A CSTATUS-shaped line ('Ch. N - ...') is
+        # routed through parse_cstatus()/on_verbose_cstatus() instead -
+        # its own partner extraction is exact (strips trailing
+        # punctuation like the ';' after a callsign, which the generic
+        # on_verbose_line()/extract_partner() path does not), and it is
+        # the only input that sets io_channel from a CSTATUS 'IO'
+        # marker.
+        for _line in text.splitlines():
+            if not _line:
+                continue
+            _cstatus_here = parse_cstatus(_line)
+            if _cstatus_here:
+                self._link_table.on_verbose_cstatus(_cstatus_here)
+            else:
+                self._link_table.on_verbose_line(_line)
 
     def _on_raw_data_received(self, data: bytes) -> None:
         """Display raw serial data in verbose terminal (only when in verbose mode).
