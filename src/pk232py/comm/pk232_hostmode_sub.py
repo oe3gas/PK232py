@@ -16,6 +16,7 @@ import logging
 import queue
 import threading
 import time
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,16 @@ HPOLL_Y   = bytes([SOH, 0x4F, ord('H'), ord('P'), ord('Y'), ETB])
 HPOLL_ACK = bytes([SOH, 0x4F, ord('H'), ord('P'), 0x00,     ETB])
 HPOLL_OFF = bytes([SOH, 0x4F, ord('H'), ord('P'), ord('N'), ETB])
 HOST_OFF  = bytes([SOH, 0x4F, ord('H'), ord('O'), ord('N'), ETB])
+
+# P66, Teil A: literal timeouts named as module constants (P61's own
+# convention - see serial_manager.py's _FAST_TIMING_CONSTANTS) so tests
+# can scale every one of them down via monkeypatch instead of paying
+# real hardware wait times.
+_PRE_HANDSHAKE_SETTLE   = 0.3   # after opening the port, before the first write
+_ESCAPE_CONVERSE_TIMEOUT = 2.0  # per COMMAND-char attempt in escape_converse()
+_HOST3_SETTLE_TIMEOUT   = 2.0   # waiting for 'cmd:cmd:' after HOST 3
+_CR_SETTLE_TIMEOUT      = 1.0   # waiting for '\r\n' after the follow-up CR
+_HPOLL_TIMEOUT          = 2.0   # waiting for HPOLL_ACK/HPOLL_Y after HPOLL_Y
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +96,45 @@ def extract_frames(buf):
                 j += 1
         frames.append((ctl, bytes(payload)))
     return frames, remaining
+
+
+# ---------------------------------------------------------------------------
+# Converse/Transparent escape (P66, Teil A.1)
+# ---------------------------------------------------------------------------
+
+def escape_converse(
+    send_and_wait: Callable[[bytes, float], bytes],
+    command_char: bytes,
+    attempts: int = 3,
+    timeout: float = _ESCAPE_CONVERSE_TIMEOUT,
+) -> tuple[bool, bytes]:
+    """Send the TNC's own COMMAND character (plus CR) up to *attempts*
+    times to escape back to the 'cmd:' prompt from Converse (needs one)
+    or Transparent (needs three - TRM; CLAUDE.md P53.B) before anything
+    else is sent.
+
+    *send_and_wait(data, timeout)* is the caller's own write-then-read
+    primitive - a raw pyserial port for
+    pk232_hostmode_sub.enter_host_mode() (Teil A), the detection chain's
+    own direct-read closure for SerialManager._init_tnc_thread()'s step
+    2b, or Session's write_verbose()/read_until_idle() combo for
+    tools/hw_check.py's link_carry (Teil C) - so this stays a pure
+    decision function with no port/Qt dependency of its own, callable
+    from all three without three separate implementations of "send the
+    COMMAND character and check for cmd:".
+
+    Returns (cmd_prompt_seen, all_bytes_seen_across_every_attempt) -
+    'found' is True the instant one attempt's response contains 'cmd:',
+    without trying further attempts; False only once every attempt has
+    been tried and none saw it.
+    """
+    raw = bytearray()
+    for _ in range(attempts):
+        resp = send_and_wait(command_char + b"\r", timeout)
+        raw.extend(resp)
+        if b"cmd:" in resp:
+            return True, bytes(raw)
+    return False, bytes(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +238,9 @@ class HostModeWorker(threading.Thread):
 # Subprocess entry point
 # ---------------------------------------------------------------------------
 
-def enter_host_mode(port_name: str, baud: int) -> tuple[bool, bytes]:
+def enter_host_mode(
+    port_name: str, baud: int, command_char: bytes = b"\x03",
+) -> tuple[bool, bytes]:
     """Run the proven Host Mode entry handshake on a freshly opened port.
 
     Opens its OWN ``serial.Serial`` object, runs the exact byte sequence
@@ -202,26 +254,45 @@ def enter_host_mode(port_name: str, baud: int) -> tuple[bool, bytes]:
     normal interpreter, ``serial_manager`` still spawns ``__main__`` as a
     subprocess (unchanged, proven). The handshake uses direct ``port.read()``
     so the Prolific ACK path is unaffected (CLAUDE.md §3).
+
+    P66, Teil A.1: the previous version assumed the TNC was already at
+    the 'cmd:' prompt. Confirmed wrong by a real hardware run (T141,
+    28.09.2026, Device B, 20260928_094001_link_carry.log): after a
+    verbose CONNECT the TNC was in Converse, not the command prompt -
+    HOST 3 was never seen by the command interpreter at all.
+    escape_converse() sends *command_char* first and waits for a real
+    'cmd:' prompt before HOST 3 is sent at all. Its own result is not
+    itself required below (an already-idle TNC may answer nothing
+    recognisable to a bare COMMAND char either) - HOST 3 is sent
+    regardless.
     """
     import serial
 
     port = serial.Serial(port_name, baud, bytesize=8, parity='N', stopbits=1,
                          timeout=0.1, xonxoff=False, rtscts=False)
     try:
-        time.sleep(0.3)
+        time.sleep(_PRE_HANDSHAKE_SETTLE)
         port.reset_input_buffer()
+
+        # A.1: leave Converse/Transparent before HOST 3 is even sent.
+        def _send_and_wait(data: bytes, timeout: float) -> bytes:
+            port.write(data)
+            port.flush()
+            return read_until(port, b"cmd:", timeout)
+
+        escape_converse(_send_and_wait, command_char)
 
         port.write(b"\rXFLOW OFF\r\rHOST 3")
         port.flush()
-        read_until(port, b"cmd:cmd:", timeout=2.0)
+        read_until(port, b"cmd:cmd:", timeout=_HOST3_SETTLE_TIMEOUT)
 
         port.write(b"\r")
         port.flush()
-        read_until(port, b"\r\n", timeout=1.0)
+        read_until(port, b"\r\n", timeout=_CR_SETTLE_TIMEOUT)
 
         port.write(HPOLL_Y)
         port.flush()
-        r = read_until(port, [HPOLL_ACK, HPOLL_Y], timeout=2.0)
+        r = read_until(port, [HPOLL_ACK, HPOLL_Y], timeout=_HPOLL_TIMEOUT)
 
         # Accept both HP $00 (ACK) and HP Y (already in HPOLL ON) as success.
         return (HPOLL_ACK in r or HPOLL_Y in r), r
@@ -232,5 +303,6 @@ def enter_host_mode(port_name: str, baud: int) -> tuple[bool, bytes]:
 if __name__ == "__main__":
     import sys
 
-    ok, resp = enter_host_mode(sys.argv[1], int(sys.argv[2]))
+    _command_char = bytes([int(sys.argv[3])]) if len(sys.argv) > 3 else b"\x03"
+    ok, resp = enter_host_mode(sys.argv[1], int(sys.argv[2]), _command_char)
     print("OK" if ok else "FAIL:" + resp.hex())

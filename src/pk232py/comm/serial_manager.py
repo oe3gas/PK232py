@@ -13,7 +13,8 @@ Initialisation flow (3 phases):
       Called externally after verbose_mode_ready.
 
   Phase 3 — enter_host_mode():
-      Sends HOST 3 (XON + CANLINE + COMMAND + HOST Y).
+      Sends the COMMAND character first (escaping Converse/Transparent,
+      P66 Teil A.1), then HOST 3, then HPOLL Y.
       Emits host_mode_changed(True) when complete.
 
 This separation allows running in verbose mode only (for diagnostics)
@@ -46,6 +47,7 @@ from .constants import (
     ctl_channel,
 )
 from .pk232_hostmode_sub import HostModeWorker as _HostModeWorker
+from .pk232_hostmode_sub import escape_converse as _escape_converse
 from .frame import (
     HostFrame,
     FrameKind,
@@ -995,19 +997,28 @@ class SerialManager(QObject):
           2. CR   -> 'cmd:'            -> verbose, already awake -> done.
              (tried before step 3: the already-awake, verbose TNC is the
              more common case and is settled by a single CR)
-          2b. (P53.B) COMMAND char (self.command_char, default $03/
-             Ctrl-C) + CR -> 'cmd:' -> verbose, was in Converse mode.
-             Real console capture, 26.09.2026, 13:13-13:16: steps 1 and 2
-             both got only an ECHO of what was sent, no 'cmd:' either
-             time - the TNC was in the Converse state of whichever
-             operating mode (Baudot RTTY, that run) was active before
-             this disconnect, since HOST OFF returns the TNC to its
-             LAST active mode, not to the command prompt (TRM); Converse
-             echoes every character and shows no prompt at all, which
-             steps 1/2 alone cannot tell apart from "TNC not responding"
-             - only the COMMAND character actually escapes it. Matches
+          2b. (P53.B; retry count P66) COMMAND char (self.command_char,
+             default $03/Ctrl-C) + CR, up to 3 attempts via the shared
+             escape_converse() -> 'cmd:' -> verbose, was in Converse or
+             Transparent mode. Real console capture, 26.09.2026,
+             13:13-13:16: steps 1 and 2 both got only an ECHO of what was
+             sent, no 'cmd:' either time - the TNC was in the Converse
+             state of whichever operating mode (Baudot RTTY, that run)
+             was active before this disconnect, since HOST OFF returns
+             the TNC to its LAST active mode, not to the command prompt
+             (TRM); Converse echoes every character and shows no prompt
+             at all, which steps 1/2 alone cannot tell apart from "TNC
+             not responding" - only the COMMAND character actually
+             escapes it. Three attempts because TRANSPARENT needs three
+             COMMAND characters within CMDTIME where CONVERSE needs only
+             one (TRM) - a single attempt (this step's own behaviour
+             before P66) could never reach a TNC in TRANSPARENT. Matches
              what tools/hw_check.py's Session.normalize() has done since
-             P21 for exactly this reason.
+             P21 for exactly this reason, and the SAME escape_converse()
+             pk232_hostmode_sub.enter_host_mode() (Teil A.1) and
+             hw_check.py's link_carry (Teil C) use — not three separate
+             implementations of "send the COMMAND character and check
+             for cmd:".
           2c. (P54.3) XON ($11) + CR, then a second bare CR if that
              alone did not reach 'cmd:' (P54.4) -> 'cmd:' -> verbose,
              was stopped by software flow control (XOFF). The PK-232
@@ -1117,36 +1128,52 @@ class SerialManager(QObject):
                 self._finish_verbose_init(resp2)
                 return
 
-            # ── STEP 2b (P53.B): COMMAND char — the TNC may be in
-            # Converse mode, not silent or Host Mode. Every operating
-            # mode has a Converse state that echoes every character typed
-            # at it and shows no cmd: prompt at all — steps 1/2 alone see
-            # exactly the same "echo, no cmd:" shape a genuinely
-            # unresponsive TNC would produce for a byte it does not
-            # recognise, so this step is the only way to tell them apart.
-            # Confirmed by a real console capture, 26.09.2026: HOST OFF
-            # returns the TNC to whichever operating mode was active
-            # before Host Mode was entered (Baudot RTTY, that run), not
-            # to the command prompt — and Converse is that mode's normal
-            # idle state (TRM). self.command_char defaults to $03/Ctrl-C
-            # and mirrors AppConfig.misc.command (P53.B) — the one value
-            # ParamsUploader actually uploads as the real COMMAND
-            # parameter, so this is "what we currently believe the TNC
-            # has", not a guaranteed value. ─────────────────────────────
+            # ── STEP 2b (P53.B, retry count P66) — COMMAND char: the TNC
+            # may be in Converse mode, not silent or Host Mode. Every
+            # operating mode has a Converse state that echoes every
+            # character typed at it and shows no cmd: prompt at all —
+            # steps 1/2 alone see exactly the same "echo, no cmd:" shape
+            # a genuinely unresponsive TNC would produce for a byte it
+            # does not recognise, so this step is the only way to tell
+            # them apart. Confirmed by a real console capture,
+            # 26.09.2026: HOST OFF returns the TNC to whichever operating
+            # mode was active before Host Mode was entered (Baudot RTTY,
+            # that run), not to the command prompt — and Converse is that
+            # mode's normal idle state (TRM). self.command_char defaults
+            # to $03/Ctrl-C and mirrors AppConfig.misc.command (P53.B) —
+            # the one value ParamsUploader actually uploads as the real
+            # COMMAND parameter, so this is "what we currently believe
+            # the TNC has", not a guaranteed value. escape_converse()
+            # (P66) is the SAME shared function pk232_hostmode_sub.
+            # enter_host_mode()'s own Converse-escape step (Teil A.1) and
+            # tools/hw_check.py's link_carry (Teil C) use — up to three
+            # attempts, since TRANSPARENT needs three COMMAND characters
+            # within CMDTIME where CONVERSE needs only one (TRM;
+            # CLAUDE.md P53.B) — not the single-attempt version this step
+            # used before P66. ─────────────────────────────────────────
             logger.info(
-                "Init: step 2b - COMMAND char (Ctrl-C) - "
-                "TNC may be in converse mode"
+                "Init: step 2b - COMMAND char (Ctrl-C, up to 3x) - "
+                "TNC may be in converse/transparent mode"
             )
-            command_bytes = bytes([self.command_char]) + b"\r"
-            logger.debug("Init: step 2b TX: %s", command_bytes.hex(' '))
-            port.write(command_bytes)
-            port.flush()
-            resp2b = read_until(b"cmd:", timeout=_TNC_STATE_STEP_TIMEOUT)
-            logger.debug("Init: step 2b response (%d B): %s", len(resp2b), resp2b.hex(' '))
-            if b"cmd:" in resp2b:
+
+            def _send_and_wait_2b(data: bytes, timeout: float) -> bytes:
+                logger.debug("Init: step 2b TX: %s", data.hex(' '))
+                port.write(data)
+                port.flush()
+                resp = read_until(b"cmd:", timeout=timeout)
+                logger.debug(
+                    "Init: step 2b response (%d B): %s", len(resp), resp.hex(' ')
+                )
+                return resp
+
+            found2b, resp2b = _escape_converse(
+                _send_and_wait_2b, bytes([self.command_char]),
+                timeout=_TNC_STATE_STEP_TIMEOUT,
+            )
+            if found2b:
                 logger.info(
                     "Init: step 2b confirmed verbose (cmd: after COMMAND "
-                    "char) - TNC was in converse mode"
+                    "char) - TNC was in converse/transparent mode"
                 )
                 self._finish_verbose_init(resp2b)
                 return
@@ -1487,17 +1514,26 @@ class SerialManager(QObject):
             logger.debug("Port closed for Host Mode entry")
             time.sleep(_PORT_SETTLE_DELAY)
 
-            # Run the proven Host Mode entry sequence.
+            # Run the proven Host Mode entry sequence. command_char has
+            # exactly one source, self.command_char (P66 DoD) - passed
+            # through to both the in-process call and the subprocess's
+            # own third CLI argument, never re-derived at either call
+            # site.
             if _is_compiled:
                 # In-process: same byte sequence, fresh Serial object (CLAUDE.md §3).
                 from .pk232_hostmode_sub import enter_host_mode
                 logger.info("Host Mode entry in-process (compiled build)")
-                ok, raw = enter_host_mode(port_name, baudrate)
+                ok, raw = enter_host_mode(
+                    port_name, baudrate, bytes([self.command_char])
+                )
                 output = "OK" if ok else "FAIL:" + raw.hex()
                 stderr = ""
             else:
                 result = subprocess.run(
-                    [sys.executable, sub_script, port_name, str(baudrate)],
+                    [
+                        sys.executable, sub_script, port_name, str(baudrate),
+                        str(self.command_char),
+                    ],
                     capture_output=True, text=True, timeout=15
                 )
                 output = result.stdout.strip()
