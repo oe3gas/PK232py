@@ -14,6 +14,7 @@ HostModeWorker (imported by serial_manager.py):
 
 import logging
 import queue
+import sys
 import threading
 import time
 from typing import Callable
@@ -293,8 +294,36 @@ def enter_host_mode(
       requires BOTH HPOLL_ACK (HP $00) - HPOLL_Y alone is no longer
       accepted, since that is exactly the byte sequence an echo
       reproduces - AND a genuine OPMODE answer.
+
+    P66b, Teil A: every step (escape_converse, HOST 3, the follow-up
+    CR, HPOLL_Y, the OPMODE check) is timestamped (monotonic, ms since
+    the handshake started) with what was sent and everything that was
+    read for it. On success this goes to logger.debug (cheap, usually
+    discarded); on failure it is written to stderr in full, one line
+    per step - a real hardware run (T141, 28.09.2026, Device B) could
+    not otherwise be resolved from the FAIL: summary alone, which only
+    ever held the LAST few steps' bytes with no timing information at
+    all. No behaviour change in this part.
     """
     import serial
+
+    t0 = time.monotonic()
+    steps: list[tuple[float, str, bytes, bytes]] = []
+
+    def _record(label: str, sent: bytes, received: bytes) -> None:
+        steps.append((time.monotonic() - t0, label, sent, received))
+
+    def _log_steps(success: bool) -> None:
+        for elapsed, label, sent, received in steps:
+            line = (
+                f"enter_host_mode step {label!r} +{elapsed * 1000:.0f}ms "
+                f"tx={sent.hex(' ')} rx={received.hex(' ')} "
+                f"rx_text={received.decode('ascii', errors='replace')!r}"
+            )
+            if success:
+                logger.debug(line)
+            else:
+                print(line, file=sys.stderr)
 
     port = serial.Serial(port_name, baud, bytesize=8, parity='N', stopbits=1,
                          timeout=0.1, xonxoff=False, rtscts=False)
@@ -309,25 +338,31 @@ def enter_host_mode(
             port.flush()
             return read_until(port, b"cmd:", timeout)
 
-        escape_converse(_send_and_wait, command_char)
+        _escaped, escape_raw = escape_converse(_send_and_wait, command_char)
+        _record("escape_converse", command_char + b"\r", escape_raw)
 
-        port.write(b"\rXFLOW OFF\r\rHOST 3")
+        host3_cmd = b"\rXFLOW OFF\r\rHOST 3"
+        port.write(host3_cmd)
         port.flush()
-        read_until(port, b"cmd:cmd:", timeout=_HOST3_SETTLE_TIMEOUT)
+        host3_resp = read_until(port, b"cmd:cmd:", timeout=_HOST3_SETTLE_TIMEOUT)
+        _record("host3", host3_cmd, host3_resp)
 
         port.write(b"\r")
         port.flush()
-        read_until(port, b"\r\n", timeout=_CR_SETTLE_TIMEOUT)
+        cr_resp = read_until(port, b"\r\n", timeout=_CR_SETTLE_TIMEOUT)
+        _record("cr", b"\r", cr_resp)
 
         port.write(HPOLL_Y)
         port.flush()
         r = read_until(port, [HPOLL_ACK, HPOLL_Y], timeout=_HPOLL_TIMEOUT)
+        _record("hpoll", HPOLL_Y, r)
 
         # A.2: HP $00 stays required; HP Y alone is no longer accepted
         # (it is exactly what an echo reproduces - see the docstring).
         port.write(OPMODE_QUERY)
         port.flush()
         op_raw = read_until(port, bytes([ETB]), timeout=_OPMODE_TIMEOUT)
+        _record("opmode", OPMODE_QUERY, op_raw)
         op_frames, _remaining = extract_frames(bytearray(op_raw))
         got_real_opmode_answer = any(
             ctl == 0x4F and payload[:2] == b'OP' and len(payload) > 2
@@ -343,6 +378,7 @@ def enter_host_mode(
                 "opmode_raw=%s)",
                 HPOLL_ACK in r, op_raw.hex(),
             )
+        _log_steps(success)
         return success, raw_all
     finally:
         port.close()
