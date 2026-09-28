@@ -2149,20 +2149,106 @@ Grows over time.
   channel a frame belongs to lives only in the
   low nibble of that frame's CTL byte (`ctl_channel()` in `comm/constants.py`
   — see the two-decoders gotcha above for where that nibble is actually
-  extracted at runtime). So the UI's channel model is purely local
-  bookkeeping, built entirely from frames that already went by:
-  `HFPacketMode.on_channel_state(channel, state, partner)` derives
-  free/calling/connected from the same $5x link messages `on_link_message`
-  already parses (`_extract_partner()` does best-effort callsign extraction
-  from strings like `"CONNECTED to OE1XYZ-5"`), and feeds
-  `ChannelBar.set_channel_state()` in `packet_screen.py`. `ChannelBar` (10
-  chips, channels 0–9) is the single source of truth for "which channel do
-  Connect/Disconnect/TX act on right now" — `PacketBaseScreen.current_channel()`
-  is a thin proxy to `channel_bar.current()`. MainWindow no longer hardcodes
-  channel 1 anywhere in the Packet connect/disconnect/TX path — see
+  extracted at runtime). **Superseded by the Link table (P67, see the
+  dedicated section below) — `HFPacketMode.on_channel_state()` and
+  `MainWindow._make_channel_state_handler()` no longer exist.** The
+  channel model is still local bookkeeping built entirely from frames
+  that already went by, but it now goes through ONE object
+  (`comm/link_table.py::LinkTable`), fed from $5x link messages AND
+  Host Mode CO (Link Status) answers AND verbose-mode text, not just
+  the $5x messages alone — because P66/P66b proved CO answers reliably
+  (the "no CSTATUS poll" premise this bullet's own P65 correction above
+  already retracted) and a verbose↔Host Mode switch needs to survive on
+  BOTH sides of it, not just within one Host Mode session.
+  `ChannelBar` (10 chips, channels 0–9, `packet_screen.py`) is still the
+  single source of truth for "which channel do Connect/Disconnect/TX
+  act on right now" — `PacketBaseScreen.current_channel()` is a thin
+  proxy to `channel_bar.current()` — but its chip STATE (free/calling/
+  connected/unconfirmed) is now driven exclusively by LinkTable's own
+  `subscribe()` callback, never set directly by a mode or by MainWindow
+  itself. MainWindow no longer hardcodes channel 1 anywhere in the
+  Packet connect/disconnect/TX path — see
   `_on_chip_connect_requested`/`_on_chip_disconnect_requested`/`_on_packet_tx_enter`
   (P42, 2026-09-24, renamed from `_on_packet_connect`/`_on_packet_disconnect`
   — see the "connect in the chip" bullet below).
+- **Link table (P67, 2026-09-28) — one table, its inputs, who resets
+  it.** `MainWindow` owns exactly one `comm/link_table.py::LinkTable`
+  (Qt-free, unit-testable without a `QApplication`) and one
+  `subscribe()` callback (`MainWindow._on_link_table_change()`) — the
+  ONLY place `ChannelBar.set_channel_state()` is ever called, for
+  BOTH Packet screens (only one is visible at a time, but keeping both
+  in sync means switching HF↔VHF never shows a stale chip). Inputs,
+  each its own method, never called from outside `comm/link_table.py`
+  except by name:
+  - `on_host_link_message(ch, text)` — a $5x link message, channel from
+    its own CTL nibble (never guessed from callsign, P47).
+  - `on_link_status(status)` — a Host Mode CO (TRM 4.3.3) answer,
+    decoded via `comm/link_status.py::decode_link_status()` — the
+    only input that marks a channel CONFIRMED, paired with
+    `mark_unconfirmed()` below.
+  - `on_verbose_line(line)` / `on_verbose_cstatus(parsed)` — verbose-
+    mode text (`MainWindow._on_vt_rx_data()` feeds every received line
+    through one or the other, never both for the same line: a
+    `parse_cstatus()`-shaped line goes through `on_verbose_cstatus()`
+    for its own exact partner extraction — no trailing punctuation
+    like a `;` after a callsign — everything else through
+    `on_verbose_line()`).
+  - `on_local_connect_attempt(ch, callsign)` / `on_local_disconnect_
+    request(ch)` — the operator's OWN action (typing a callsign into a
+    chip's editor, or "Disconnect" in its context menu) — optimistic
+    local state (CALLING/FREE) shown immediately, before any TNC
+    answer; confirmed or corrected by the next real input above.
+  - `mark_unconfirmed()` — every channel the table currently believes
+    CONNECTED becomes UNCONFIRMED (dashed chip border, P67 Teil C.1) —
+    called once at the START of every verbose→Host Mode reconciliation
+    round (`MainWindow._update_host_mode_ui(True)`), immediately
+    followed by a Host Mode CO probe of channels 0–9 whose answers
+    (via `on_link_status()`) confirm or correct each one.
+  - `reset()` — clears every channel to FREE. Called ONLY on a genuine
+    loss of basis for believing anything at all: a TNC disconnect, a
+    fresh boot banner (`fresh_boot_defaults`), or a Recovery run with
+    nothing to reconcile against. **Never** on an ordinary verbose↔Host
+    Mode switch, and **never** from `PacketBaseScreen.reset_channels()`
+    on a mode (re)activation either (P67, Teil C — see that method's
+    own docstring for a real race this used to lose to: a CO answer
+    confirming a carried-over channel can arrive on the SAME Host Mode
+    entry BEFORE the 300ms mode-activation timer that used to wipe it
+    straight back to free). `mark_unconfirmed()` + reconciliation is
+    what a verbose↔Host Mode switch uses instead, precisely so a real
+    connection is never forgotten just because the app briefly could
+    not confirm it.
+  `SerialManager.exit_host_mode(io_channel=...)` sends a Link Status
+  `CO` on `io_channel` as the LAST `$4x` frame, itself, before `HOST
+  OFF` (P66b's own finding, next bullet) — `MainWindow._on_host_mode_
+  exit()` decides which channel (the Packet screen's own visible
+  channel, if `LinkTable` confirms it CONNECTED) and whether to follow
+  up with a verbose `CONVERSE` (only if the table's own `.converse` was
+  `True` before Host Mode was entered AND that channel is still
+  connected — never on a free channel, which sends every further line
+  as an UNPROTO UI frame instead, P66b B.5).
+- **Known Facts, Device B, P67 (28.09.2026 14:57–15:04, Release
+  01.AUG.91 — full detail: `docs/docsP67_Link_Table_Packet_Spec.md`).**
+  M1 a Host Mode entry from Converse with a connection already up
+  succeeds with no late-entry handshake needed. M2 Host Mode `CO` per
+  channel reliably reports state and partner: connected
+  `CO41000OE3GAS-1`, free `CO00000` (see `decode_link_status()`). M3 A
+  verbose-built connection lands on the SAME channel (0) once in Host
+  Mode. M4 Data flows on the connected channel's own `$3n` (a `\r` on
+  channel 0 got a counterpart-terminal prompt back on `$30`). M5 VHF
+  Packet's own activation/init frames (`PA`, `VH Y`, `HB 1200`, `MX 4`,
+  `SL 10`, `MN Y`) do not disturb an existing connection; OPMODE stays
+  `PA` throughout. M6 After `HOST OFF`, the verbose I/O channel is the
+  channel of the LAST `$4x` frame sent (see the dedicated bullet
+  above). M7 Sending `CO` on the connected channel as that last `$4x`
+  frame makes verbose `CSTATUS` show `IO` there, and `CONVERSE` + `CR`
+  gets the counterpart's prompt back. M8 The connection survives a
+  Host→verbose→Host round trip. M9 `CHSWITCH` reads `$00` (see the
+  dedicated bullet above). M10 A channel-scoped verbose line can carry
+  a `\x00<digit>: ` prefix (`split_channel_prefix()`), e.g. `\x000:
+  ?already connected …`, `\x009: cmd:` — when exactly this prefix
+  appears is NOT measured (only with several active channels? only for
+  a channel other than the I/O one?); `on_verbose_line()` handles both
+  the prefixed and unprefixed forms. Not yet measured on Device A/C.
 - **The active verbose channel after `HOST OFF` is the channel of the
   LAST `$4x` frame sent, not necessarily the connected one — confirmed
   for Device B, P66b, B.3/B.4 (2026-09-28).** T142's own D.1 probe
