@@ -206,6 +206,7 @@ if str(_SRC) not in sys.path:
 from PyQt6.QtCore import QCoreApplication, QObject, QTimer, pyqtSignal  # noqa: E402
 
 from pk232py.comm.serial_manager import SerialManager  # noqa: E402
+from pk232py.comm.pk232_hostmode_sub import escape_converse  # noqa: E402
 from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
 from pk232py.comm.frame import build_command, _dle_escape  # noqa: E402
 from pk232py.comm.hostmode import HostModeProtocol  # noqa: E402
@@ -4532,6 +4533,30 @@ def _channels_connected_to(results: dict[int, dict], target_call: str) -> list[i
     ]
 
 
+def _confirm_command_prompt_light(session: Session, label: str, log: RunLog) -> bool:
+    """P66, Teil C: send the TNC's own COMMAND character (up to three
+    times, escape_converse() - the SAME shared function Teil A's
+    enter_host_mode() fix and the app's own detection-chain step 2b use,
+    command_char has exactly one source: session.sm.command_char) and
+    report whether 'cmd:' was actually seen.
+
+    Unlike confirm_command_prompt() (P34.1, normalize()'s own hard
+    gate), this NEVER raises - a caller here wants to skip only its OWN
+    next block of verbose queries when the TNC turns out to still be in
+    Converse (B.1: a verbose CONNECT can leave it there), not abort the
+    rest of the subcommand, which still has real Host Mode work to do
+    regardless of whether this particular verbose check succeeds.
+    """
+    def _send_and_wait(data: bytes, timeout: float) -> bytes:
+        del session._raw_buf[:]
+        session.sm.write_verbose(data)
+        return session.read_until_idle(idle=1.0, max_total=timeout)
+
+    found, raw = escape_converse(_send_and_wait, bytes([session.sm.command_char]))
+    log.line(f"{label} command-prompt check: found_cmd={found} raw={raw!r}")
+    return found
+
+
 def test_link_carry(session: Session, log: RunLog) -> None:
     log.line(
         "--- Link carry: verbose connect survives Host Mode, CO and "
@@ -4614,14 +4639,27 @@ def test_link_carry(session: Session, log: RunLog) -> None:
         connect_text = connect_wait.decode("ascii", errors="replace")
         log.line(f"A.2 waiting for *** CONNECTED: {connect_text!r}")
 
-        # A.3
-        for cmd in ("OPMODE", "CSTATUS"):
-            log.line(f"A.3 {cmd}: {session.query(cmd)!r}")
-        a3_connect = session.query("CONNECT")
-        log.line(f"A.3 CONNECT (bare): {a3_connect!r}")
+        # A.3 (P66, Teil C): verify the command prompt BEFORE sending
+        # anything else - a verbose CONNECT can leave the TNC in
+        # Converse (B.1), and queries sent there go to the counterpart,
+        # not the TNC.
+        if not _confirm_command_prompt_light(session, "A.3", log):
+            log.result("T141 A.3", "FAIL", "still in Converse - no queries sent")
+        else:
+            for cmd in ("OPMODE", "CSTATUS"):
+                log.line(f"A.3 {cmd}: {session.query(cmd)!r}")
+            a3_connect = session.query("CONNECT")
+            log.line(f"A.3 CONNECT (bare): {a3_connect!r}")
 
         session.enter_host_mode()
         try:
+            # A.4a (P66): did the Teil-A handshake's own OPMODE check
+            # actually pass, not just "is_host_mode is now True"?
+            log.result(
+                "T141 A.4a", "INFO",
+                f"handshake OPMODE check raw={session.sm.last_enter_host_mode_raw!r}"
+            )
+
             # A.4
             captured_a4: list = []
             session.sm.frame_received.connect(captured_a4.append)
@@ -4720,16 +4758,22 @@ def test_link_carry(session: Session, log: RunLog) -> None:
         finally:
             session.exit_host_mode()
 
-        # A.9
-        for cmd in ("OPMODE", "CSTATUS"):
-            log.line(f"A.9 {cmd}: {session.query(cmd)!r}")
-        a9_connect = session.query("CONNECT")
-        log.line(f"A.9 CONNECT (bare): {a9_connect!r}")
-        a9_pass = bool(target_call) and target_call.upper() in a9_connect.upper()
-        log.result(
-            "T141 A.9", "PASS" if a9_pass else "INCONCLUSIVE",
-            f"raw={a9_connect!r}"
-        )
+        # A.9 (P66, Teil C): same command-prompt check as A.3 - leaving
+        # Host Mode can itself land back in Converse (P53.B) if the exit
+        # sequence's own COMMAND-char resync did not take, e.g. because
+        # the wrong channel was active.
+        if not _confirm_command_prompt_light(session, "A.9", log):
+            log.result("T141 A.9", "FAIL", "still in Converse - no queries sent")
+        else:
+            for cmd in ("OPMODE", "CSTATUS"):
+                log.line(f"A.9 {cmd}: {session.query(cmd)!r}")
+            a9_connect = session.query("CONNECT")
+            log.line(f"A.9 CONNECT (bare): {a9_connect!r}")
+            a9_pass = bool(target_call) and target_call.upper() in a9_connect.upper()
+            log.result(
+                "T141 A.9", "PASS" if a9_pass else "INCONCLUSIVE",
+                f"raw={a9_connect!r}"
+            )
 
         # A.10
         if input("Disconnect now? [Y/n] ").strip().lower() in ("", "y"):
