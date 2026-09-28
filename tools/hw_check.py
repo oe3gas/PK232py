@@ -4856,9 +4856,12 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
             "then leave Host Mode and see which channel verbose CSTATUS "
             "now calls the active/IO channel), then measure CONVERSE "
             "and a channel switch after Host -> verbose (D.2), then "
-            "clean up by disconnecting the CONNECTED channel via Host "
-            "Mode DI before HOST OFF (never a verbose DISCONNECT on "
-            "whatever the active channel happens to be, P66b B.6):"
+            "D.3: re-enter Host Mode, send CO on the CONNECTED channel "
+            "as the last $4x frame, HOST OFF, check CSTATUS now calls "
+            "that channel IO, CONVERSE there - then clean up by "
+            "disconnecting the CONNECTED channel via Host Mode DI "
+            "before HOST OFF (never a verbose DISCONNECT on whatever "
+            "the active channel happens to be, P66b B.6):"
         )
         for frame in vhf.get_activate_frames() + vhf.get_init_frames():
             session.send_frame(frame, note="activate VHF Packet")
@@ -4867,6 +4870,10 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
             session.send_channel_frame(
                 ch, link_status_frames[ch], note=f"B CO ch{ch}"
             )
+        session.send_channel_frame(
+            1, link_status_frames[1],
+            note="D.3 CO ch1 (last $4x before HOST OFF)",
+        )
         session.send_channel_frame(1, preview_disconnect_frame, note="cleanup DI ch1")
         # D.2.3 (P66a): CHSWITCH's own query value ('$xx', a hex STRING)
         # is decoded into the actual byte before it is sent - worked
@@ -4992,11 +4999,11 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
                 f"still on channel 1={still_ch1}"
             )
 
-            # P66b, B.6: the channel to disconnect at cleanup is the
-            # CONNECTED one from THIS CO recheck - never assumed to be
-            # channel 1, and never whatever the active channel happens
-            # to be later (D.1/D.2 deliberately move the active channel
-            # elsewhere).
+            # P66b, B.6: the channel to disconnect at cleanup, and the
+            # channel D.3 probes, is the CONNECTED one from THIS CO
+            # recheck - never assumed to be channel 1, and never
+            # whatever the active channel happens to be later (D.1/D.2
+            # deliberately move the active channel elsewhere).
             connected_channels_now = _channels_connected_to(recheck, target_call)
             connected_channel = connected_channels_now[0] if connected_channels_now else 1
             log.line(f"connected_channel (from CO recheck) = {connected_channel}")
@@ -5081,6 +5088,44 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
         _confirm_command_prompt_light(session, "D.2.4", log)
         cstatus_after_d2 = session.query("CSTATUS")
         log.result("T142 D.2.4", "INFO", f"CSTATUS={cstatus_after_d2!r}")
+
+        # D.3 (P66b, B.3 technique check): does sending CO on the
+        # CONNECTED channel as the LAST $4x frame before HOST OFF make
+        # verbose CSTATUS call that channel IO afterwards - the P67
+        # candidate technique for "back to the connected channel"?
+        session.enter_host_mode()
+        try:
+            session.send_channel_frame(
+                connected_channel, link_status_frames[connected_channel],
+                note=f"D.3 CO ch{connected_channel} (last $4x before HOST OFF)",
+            )
+        finally:
+            session.exit_host_mode()
+
+        cstatus_after_d3 = session.query("CSTATUS")
+        io_channel_d3 = parse_cstatus_io_channel(cstatus_after_d3)
+        log.result(
+            "T142 D.3",
+            "PASS" if io_channel_d3 == connected_channel else "INCONCLUSIVE",
+            f"io_channel={io_channel_d3} connected_channel={connected_channel} "
+            f"raw={cstatus_after_d3!r}"
+        )
+
+        if confirm_tx(
+            f"Send CONVERSE + CR on channel {connected_channel} (now "
+            f"the active/IO channel, D.3) - may transmit on the air if "
+            f"it turns out not to actually be connected."
+        ):
+            d3_converse_resp = session.send_and_read_until_idle(
+                b"CONVERSE\r\n\r",
+                note=f"D.3 CONVERSE (ch{connected_channel}), then CR",
+                idle=2.0, max_total=10.0,
+            )
+            log.result("T142 D.3 CONVERSE", "INFO", f"raw={d3_converse_resp!r}")
+        else:
+            log.result("T142 D.3 CONVERSE", "INFO", "skipped by operator")
+
+        _confirm_command_prompt_light(session, "D.3 recovery", log)
 
         # Cleanup (P66b, B.6): disconnect the CONNECTED channel via a
         # Host Mode DI, before HOST OFF - never a verbose DISCONNECT on
