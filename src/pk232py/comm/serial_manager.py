@@ -440,6 +440,16 @@ def _make_host_frame(ctl: int, payload: bytes):
         kind = FrameKind.STATUS_ERR
     elif 0x50 <= ctl <= 0x5E:
         kind = FrameKind.LINK_MSG
+    elif 0x40 <= ctl <= 0x49:
+        # P67, Teil A: link status responses (CO, TRM 4.3.3) were
+        # falling through to CMD_RESP here - the OTHER Host Mode frame
+        # decoder, comm/frame.py's own FrameParser/_classify(), already
+        # got this right (CLAUDE.md's "two parallel Host Mode frame
+        # decoders" gotcha). comm/link_status.py's decode_link_status()
+        # only needs the raw ctl/data, not this classification, but
+        # anything dispatching on frame.kind (P67's own LinkTable via
+        # on_link_status()) needs it correct.
+        kind = FrameKind.LINK_STATUS
     else:
         kind = FrameKind.CMD_RESP
     ch = ctl_channel(ctl)
