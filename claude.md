@@ -622,7 +622,23 @@ object**. Reusing the old object causes 20–35 second buffering delays.
   or read a `$60`/`$70` frame; `tools/hw_check.py maildrop_host` (P24.2,
   read-only) is the first thing that probes this channel, hardware result
   still OPEN (T117).
-- Both `HP Y` and `HP $00` are valid success responses
+- **Only `HP $00` (HPOLL_ACK) is a valid Host Mode entry success
+  response — correction, P66, 2026-09-28.** The previous claim ("both
+  `HP Y` and `HP $00` are valid success responses") cited no measurement
+  of `HP Y` as the real answer to the SET that enters Host Mode — and
+  turned out to be exactly what an echo produces: in verbose command
+  mode the TNC echoes every byte sent, including binary Host Mode
+  frames (see the new gotcha below), so a TNC still in Converse when
+  `enter_host_mode()` sends `HPOLL_Y` gets that identical frame reflected
+  straight back, byte-for-byte — confirmed by a real hardware run, T141,
+  28.09.2026, Device B (`20260928_094001_link_carry.log`), where this
+  false-positive caused the app to believe Host Mode was entered when
+  the TNC had never left Converse at all (see the "P64/T141 root cause"
+  writeup under Known Gotchas / Serial-Host Mode). `HP $00` alone is now
+  also insufficient on its own — success additionally requires a genuine
+  answer to an OPMODE query (`SOH $4F 'O' 'P' ETB` → `SOH $4F 'O' 'P'
+  <value> ETB`, e.g. `OPPA` for Packet), since the query itself carries
+  no value byte and an echo therefore cannot fake having one.
 - `MOPT` = Morse Option (CW); `ARQTOL` = AMTOR ARQ tolerance
 - `PT` mnemonic = PACTIME, not PACTOR. PACTOR activation = verbose `PACTOR\r\n`
 - FAX mode stays in Host Mode (FA command); does not exit it — there is **no
@@ -935,6 +951,50 @@ Grows over time.
     byte in the buffer) before returning. An `idle_since` timer is reset on
     every new byte; the method returns only after `_IDLE_S = 0.12` s without
     fresh data.
+- **In Converse the TNC echoes Host Mode frames too — any check that
+  waits for bytes it itself just sent is worthless there (P66,
+  2026-09-28).** Not just plain text: a genuinely BINARY Host Mode
+  frame (`HPOLL_Y`, an OPMODE query, anything) written while the TNC is
+  in Converse comes back byte-for-byte identical, exactly like typed
+  text does (P52.2 already established this for the P43 detection
+  chain's own HPOLL query step; P66's root-cause finding, B.1/B.2, is
+  the same mechanism hitting `pk232_hostmode_sub.py::enter_host_mode()`
+  itself — the OLD version accepted `HPOLL_Y` in the response as
+  success, which is EXACTLY what an echo reproduces). **Rule: a
+  success check must look for something the TNC could only have sent
+  ITSELF — a genuine answer carries information the query never had
+  (a value byte after the mnemonic — see the corrected `HP Y`/`HP $00`
+  entry above), never just "the expected bytes came back", since
+  "came back" is exactly what an echo does too.** `escape_converse()`
+  (`comm/pk232_hostmode_sub.py`) sends the TNC's own COMMAND character
+  first, before anything else, specifically to get OUT of Converse
+  before a check like this is even attempted — shared by
+  `enter_host_mode()` (Teil A), the app's own detection-chain step 2b
+  (`SerialManager._init_tnc_thread()`), and `tools/hw_check.py`'s
+  `link_carry` (Teil C), so there is exactly one implementation of
+  "send the COMMAND character and check for cmd:", not three.
+- **P64/T141 root cause: the app's Host Mode entry never actually
+  succeeded — the connection-table bug reported in P64 was a symptom,
+  not the disease (P66, 2026-09-28).** The original observation
+  (verbose, VHF Packet, connected to a BBS, `Enter Host Mode` (Ctrl+H)
+  → app shows Baudot RTTY, connection "not recognised") looked like a
+  UI/state-tracking bug and was provisionally planned as one (P64's own
+  "internal connection table" proposal). The FIRST real hardware
+  measurement of the actual mechanism (`tools/hw_check.py link_carry`,
+  T141, Device B, 28.09.2026) found something upstream of all of that:
+  after a verbose `CONNECT`, the TNC was in Converse, `HOST 3`/`HPOLL Y`
+  never reached the command interpreter at all, and the OLD
+  `enter_host_mode()` mistook Converse's own echo for success (see the
+  two gotchas directly above) — so the app never entered Host Mode in
+  the first place; everything downstream (mode activation, missing
+  link messages, "connection not recognised") followed from that one
+  false positive. **Lesson: when a bug looks like it's in the
+  higher-level feature (a UI's connection display), measure the
+  lower-level mechanism the feature depends on before designing the
+  higher-level fix** — P64's own connection-table design was correct in
+  spirit and remains the plan (now P67), but building it directly on
+  top of a Host Mode entry that silently never happened would have
+  fixed nothing.
 
 ### TNC / firmware v7.1
 
@@ -2047,17 +2107,27 @@ Grows over time.
   fixing (see Backlog.md Priority 1). Consolidating the two decoders into one
   is filed as tech debt, not done in this sprint (serial-layer changes were
   explicitly out of scope beyond the one-line channel-nibble fix).
-- **Channel model (2026-09-20, ChannelBar sprint).** There is **no CSTATUS
-  poll in Host Mode** — the PK-232 never tells the host "channel N is
-  connected to X" on demand. **Unmeasured — TRM 4.3.3 documents a
-  per-channel CO (Link Status) query; see P65/T141
-  (`docs/P65_Link_Carryover_Measure_Spec.md`,
-  `HostModeProtocol.cmd_link_status()`, built but never called by
-  production code before P65's own `tools/hw_check.py link_carry`).**
-  This claim stands as originally written until T141's real hardware
-  result either confirms or replaces it — not deleted here, only
-  flagged, per hw_check rule 6 (measure, don't guess). The channel a
-  frame belongs to lives only in the
+- **Channel model (2026-09-20, ChannelBar sprint). Correction, Device B,
+  P66/T142 (2026-09-28): "no CSTATUS poll in Host Mode" is WRONG — TRM
+  4.3.3's per-channel CO (Link Status) query works exactly as
+  documented.** The original claim ("the PK-232 never tells the host
+  'channel N is connected to X' on demand") stood flagged as unmeasured
+  since P65; `tools/hw_check.py link_carry_host` (T142,
+  `20260928_094231_link_carry_host.log`) measured it directly:
+  `HostModeProtocol.cmd_link_status(ch)` (`comm/hostmode.py`, built long
+  before this but never called by production code) sent per channel,
+  channel 1 (connected to OE3GAS-1) answered `CO41000OE3GAS-1`, a free
+  channel answered `CO00000` — TRM 4.3.3's own byte layout (`SOH $4x
+  'C' 'O' a b c d e <path> ETB`, five status bytes each "value OR'd
+  with $30", path with NO separator) confirmed exactly.
+  `tools/hw_check.py::decode_link_status()` decodes this (P65 A.6,
+  corrected P66 B.5 — all five status bytes masked `& 0x0F`, not
+  returned raw; v2/conperm as `bool`). **Still unmeasured on Device
+  A/C** — treat as confirmed for Device B (MBX, 01.08.1991) only until
+  a run on the other devices says otherwise (P37's own device-
+  attribution rule). P67 will use this query as the connection table's
+  own reconciliation point at every verbose↔Host Mode switch. The
+  channel a frame belongs to lives only in the
   low nibble of that frame's CTL byte (`ctl_channel()` in `comm/constants.py`
   — see the two-decoders gotcha above for where that nibble is actually
   extracted at runtime). So the UI's channel model is purely local
