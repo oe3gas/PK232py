@@ -127,6 +127,11 @@ class HFPacketMode(BaseMode):
         self.on_link_message:  Optional[Callable[[int, str], None]]   = None
         self.on_data_ack:      Optional[Callable[[int], None]]        = None
         self.on_channel_state: Optional[Callable[[int, str, str], None]] = None
+        # P67: TRM 4.3.3 Link Status (CO) response - (ctl, data), the
+        # exact shape comm.link_status.decode_link_status() takes, so a
+        # consumer (MainWindow's own LinkTable feed) never needs a
+        # HostFrame import just to call it.
+        self.on_link_status:   Optional[Callable[[int, bytes], None]] = None
         # One MHEARD line per call (polled line-by-line, TRM §4.11). The raw
         # ASCII line text, e.g. "18:06 OE3GAS*"; end-of-list lines are filtered
         # out before this fires.
@@ -192,11 +197,16 @@ class HFPacketMode(BaseMode):
             self._handle_monitor(frame)
 
         elif kind == FrameKind.LINK_STATUS:
-            # Response to a CONNECT query (SOH $4x 'C' 'O' status ETB)
-            # Logged only at this stage — full link-state parsing in v0.2
+            # Response to a CONNECT query (SOH $4x 'C' 'O' status ETB) -
+            # TRM 4.3.3. Decoding itself is comm.link_status.
+            # decode_link_status()'s job (P67), not this mode's - passed
+            # on as the raw (ctl, data) so on_link_status()'s consumer
+            # (MainWindow's own LinkTable feed) decodes it.
             logger.debug(
                 "Link status ch=%d: %s", frame.channel, frame.data.hex()
             )
+            if self.on_link_status:
+                self.on_link_status(frame.ctl, frame.data)
 
         elif kind == FrameKind.LINK_MSG:
             self._handle_link_msg(frame)

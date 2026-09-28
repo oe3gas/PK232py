@@ -90,12 +90,16 @@ class LinkTable:
     def on_host_link_message(self, channel: int, text: str) -> None:
         """A $5x link message's TEXT, already channel-attributed by its
         own CTL nibble (never by callsign - CLAUDE.md's P47 gotcha).
-        Classifies the known shapes (CONNECTED to/DISCONNECTED/busy/
-        Retry count exceeded) - an unrecognised text leaves the channel
-        untouched rather than guessing."""
+        Classifies the known shapes (CONNECTED to/Connect request
+        (incoming, not yet accepted - TRM; HFPacketMode's own
+        _MSG_CONNECT_REQ rule)/DISCONNECTED/busy/Retry count exceeded)
+        - an unrecognised text leaves the channel untouched rather than
+        guessing."""
         lower = text.lower()
         if "connected to" in lower and "disconnect" not in lower:
             self._set(channel, STATE_CONNECTED, extract_partner(text))
+        elif "connect request" in lower:
+            self._set(channel, STATE_CALLING, extract_partner(text))
         elif "disconnected" in lower or "busy" in lower:
             self._set(channel, STATE_FREE)
         elif "retry count exceeded" in lower:
@@ -153,6 +157,23 @@ class LinkTable:
                 self.io_channel = channel
             if partner:
                 self._set(channel, STATE_CONNECTED, partner)
+
+    def on_local_connect_attempt(self, channel: int, callsign: str) -> None:
+        """The operator just committed a callsign into a channel chip's
+        own inline editor and a CO frame went out (P42) - optimistic
+        local state, shown as CALLING immediately rather than waiting
+        for the TNC's own CONNECTED/failed link message. Confirmed or
+        corrected the same way any other CALLING transition is, by the
+        next on_host_link_message()/on_link_status() call for this
+        channel."""
+        self._set(channel, STATE_CALLING, callsign)
+
+    def on_local_disconnect_request(self, channel: int) -> None:
+        """The operator asked to disconnect a channel (chip context
+        menu or Ctrl+K) and a DI frame went out (P42) - optimistic
+        local state, shown as FREE immediately rather than waiting for
+        the TNC's own DISCONNECTED link message."""
+        self._set(channel, STATE_FREE)
 
     def mark_unconfirmed(self) -> None:
         """Call before every reconciliation round (a verbose<->Host

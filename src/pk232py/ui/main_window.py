@@ -32,6 +32,10 @@ from PyQt6.QtWidgets import (
 from pk232py import __version__
 from ..comm.serial_manager import SerialManager, _parse_release
 from ..comm.frame import HostFrame, FrameKind
+from ..comm.link_table import LinkTable
+from ..comm.link_status import (
+    decode_link_status, extract_partner, parse_cstatus, split_channel_prefix,
+)
 from ..mode_manager import ModeManager
 from ..modes.base_mode import BaseMode
 from ..modes.packet_hf import HFPacketMode
@@ -148,6 +152,15 @@ class MainWindow(QMainWindow):
         self._config: TncConfig = TncConfig()
         self._serial = SerialManager(parent=self)
         self._modes  = ModeManager(self._serial, parent=self)
+        # P67: the ONE LinkTable instance, app-side mirror of the TNC's
+        # own per-channel connection state across verbose<->Host Mode
+        # switches (Packet only - PACTOR/AMTOR follow in a later
+        # package). Qt-free itself; this subscribe() callback is the
+        # ONLY place that translates its changes into Qt widgets -
+        # ChannelBar.set_channel_state() must never be called from
+        # anywhere else (Teil C.1).
+        self._link_table = LinkTable()
+        self._link_table.subscribe(self._on_link_table_change)
         # Application config (parameters for all modes)
         from pk232py.config import ConfigManager
         self._config_mgr = ConfigManager()
@@ -1783,16 +1796,24 @@ class MainWindow(QMainWindow):
             else:
                 mode.on_link_message = self._on_mode_link_message
 
-        # Per-channel link state (P3) — HFPacketMode/VHFPacketMode derive
-        # (channel, state, partner) from the same $5x link messages above and
-        # feed it to ChannelBar, so a chip shows the partner callsign the
-        # moment a connect request/CONNECTED comes in on that channel.
+        # Per-channel link state: P67 removed this as a second consumer
+        # of the same $5x messages - _make_link_handler() (on_link_
+        # message, wired above) now feeds the LinkTable directly from
+        # the SAME raw text, and LinkTable's own subscribe() callback
+        # (_on_link_table_change) is the ONLY place ChannelBar.
+        # set_channel_state() is called (Teil C.1). Never wired, so a
+        # mode that still sets it (none currently do) sends into the void.
         if hasattr(mode, "on_channel_state"):
-            screen = self._opmode_screens.get(mode.name)
-            if screen is not None and hasattr(screen, "channel_bar"):
-                mode.on_channel_state = self._make_channel_state_handler(screen)
-            else:
-                mode.on_channel_state = None
+            mode.on_channel_state = None
+
+        # TRM 4.3.3 Link Status (CO) responses (P67, Teil C.2/D.1) - the
+        # OTHER LinkTable input, alongside on_link_message above. Feeds
+        # comm.link_status.decode_link_status()'s own output into
+        # LinkTable.on_link_status() - the confirming half of every
+        # verbose<->Host Mode reconciliation round (mark_unconfirmed()
+        # + a CO probe of every channel).
+        if hasattr(mode, "on_link_status"):
+            mode.on_link_status = self._on_mode_link_status
 
         # DATA_ACK ($5F) — Packet: flow control; RTTY: colour tracking
         if hasattr(mode, 'on_data_ack'):
@@ -1858,6 +1879,45 @@ class MainWindow(QMainWindow):
             else:
                 self._log_monitor(f"[LINK] {msg}")
                 self._route_packet_link_message(screen, channel, msg)
+                # P67: feed the LinkTable from this SAME raw $5x text -
+                # never a second, independently-derived classification
+                # (the old on_channel_state consumer, _make_channel_
+                # state_handler(), is gone; its MHEARD logic moved here,
+                # since it needs 'prior' captured BEFORE this update).
+                # LinkTable.subscribe()'s own callback
+                # (_on_link_table_change) is the ONLY place
+                # ChannelBar.set_channel_state() is called (Teil C.1).
+                # Channel 15 ($5F, "not channel-scoped", CLAUDE.md P47)
+                # and any other value LinkTable does not track (0-9
+                # only) carries no per-channel connection info - skip
+                # the table/MHEARD update entirely rather than guess.
+                if 0 <= channel < len(self._link_table.channels):
+                    prior_state = self._link_table.channels[channel].state
+                    self._link_table.on_host_link_message(channel, msg)
+                    if hasattr(screen, "mheard_panel"):
+                        new_state = self._link_table.channels[channel].state
+                        screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
+                        # MHEARD wants ANY callsign a link message
+                        # names, even a DISCONNECTED/busy one (P50 Teil
+                        # E) - never guessed on "Retry count exceeded",
+                        # which carries no callsign at all (CLAUDE.md
+                        # P47). Independent of what the LinkTable
+                        # itself keeps for a free channel (nothing -
+                        # see on_host_link_message()'s own docstring).
+                        m_lower = msg.lower()
+                        mheard_partner = (
+                            "" if "retry count exceeded" in m_lower
+                            else extract_partner(msg)
+                        )
+                        if mheard_partner:
+                            from datetime import datetime, timezone
+                            now = datetime.now(timezone.utc).strftime("%H:%M")
+                            screen.mheard_panel.add_entry_if_new(mheard_partner, now)
+                        if new_state == "connected" or (
+                            new_state == "free" and prior_state == "connected"
+                        ):
+                            self._on_packet_mheard()
+                    self._update_maildrop_gate_ui()
             # 2. Update screen status label
             m = msg.lower()
             if "connected" in m and "disconnect" not in m:
@@ -1971,44 +2031,51 @@ class MainWindow(QMainWindow):
                 UI_CHANNEL, f"[ch{channel}] {text}", color=_SYSTEM_MSG_COLOR
             )
 
-    def _make_channel_state_handler(self, screen):
-        """Return a callback for HFPacketMode.on_channel_state(ch, state, partner).
-
-        Keeps ChannelBar and the MHEARD panel's channel column in sync with
-        the link messages already parsed by _make_link_handler() — this is
-        purely a second consumer of the same $5x frames, scoped per channel
-        instead of screen-wide.
-
-        P50 Teil E: MHEARD used to show only stations from a manual
-        Refresh (MH poll) — connection partners were missing until the
-        operator happened to press it. Now:
-          - any channel-scoped link message with a known partner
-            (CONNECTED, DISCONNECTED, busy — never "Retry count
-            exceeded", which carries no callsign at all, see
-            HFPacketMode._handle_link_msg()) adds it to MHEARD
-            immediately if not already there (add_entry_if_new()) —
-            channel number + green colour still come from
-            set_channel_map() below, unchanged.
-          - a real CONNECTED, or a genuine DISCONNECTED of a link that
-            was actually up (prior state "connected" — a CALLING->FREE
-            failed-attempt transition is NOT this), additionally
-            triggers ONE MH poll (the existing Refresh function, not a
-            second implementation) so the list also catches up on any
-            OTHER stations heard in the meantime.
+    def _on_link_table_change(self, channel: int, link) -> None:
+        """The ONLY place ChannelBar.set_channel_state() is called
+        (P67, Teil C.1) - LinkTable.subscribe()'s own callback. Updates
+        BOTH Packet screens' chips (only one is ever visible at a time,
+        via _opmode_stack) so whichever one the operator switches to
+        next is already correct, not stale until its own next event.
+        link.state's string values match ChannelBar's own CH_* constants
+        exactly (comm/link_table.py's own STATE_* naming, chosen for
+        this) - passed straight through, no translation table needed.
         """
-        def handler(channel: int, state: str, partner: str) -> None:
-            prior = screen.channel_bar.state(channel)
-            screen.channel_bar.set_channel_state(channel, state, partner)
-            if hasattr(screen, "mheard_panel"):
-                screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
-                if partner:
-                    from datetime import datetime, timezone
-                    now = datetime.now(timezone.utc).strftime("%H:%M")
-                    screen.mheard_panel.add_entry_if_new(partner, now)
-                if state == "connected" or (state == "free" and prior == "connected"):
-                    self._on_packet_mheard()
-            self._update_maildrop_gate_ui()
-        return handler
+        for pkt_name in ("HF Packet", "VHF Packet"):
+            screen = self._opmode_screens.get(pkt_name)
+            if screen is not None and hasattr(screen, "channel_bar"):
+                screen.channel_bar.set_channel_state(channel, link.state, link.partner)
+        # P67, Teil C.2.3: after a reconciliation round confirms a
+        # channel connected, make it the visible one - but only when
+        # there is exactly ONE connected channel (with more than one,
+        # picking any single one over another would be a guess); with
+        # several, the table's own io_channel (the TNC's last-known
+        # active/IO channel, P66b B.3/B.4) is used instead.
+        if link.state == "connected":
+            self._select_visible_connected_channel()
+
+    def _select_visible_connected_channel(self) -> None:
+        connected = [
+            ch for ch, cl in enumerate(self._link_table.channels)
+            if cl.state == "connected"
+        ]
+        target = connected[0] if len(connected) == 1 else (
+            self._link_table.io_channel if len(connected) > 1 else None
+        )
+        if target is None:
+            return
+        for pkt_name in ("HF Packet", "VHF Packet"):
+            screen = self._opmode_screens.get(pkt_name)
+            if screen is not None and hasattr(screen, "channel_bar"):
+                screen.channel_bar.set_current(target)
+
+    def _on_mode_link_status(self, ctl: int, data: bytes) -> None:
+        """HFPacketMode.on_link_status(ctl, data) - a TRM 4.3.3 Link
+        Status (CO) response in Host Mode (P67, Teil C.2/D.1). Decodes
+        via comm.link_status.decode_link_status() and feeds LinkTable.
+        on_link_status() - the confirming half of a verbose<->Host Mode
+        reconciliation round (paired with mark_unconfirmed(), C.2)."""
+        self._link_table.on_link_status(decode_link_status(ctl, data))
 
     def _wire_screen_buttons(self) -> None:
         """Connect SEND and RECEIVE buttons of the active screen
@@ -3201,8 +3268,12 @@ class MainWindow(QMainWindow):
         # packet screen.)
         if hasattr(screen, "set_link_state"):
             screen.set_link_state("calling")
-        if hasattr(screen, "channel_bar"):
-            screen.channel_bar.set_channel_state(channel, "calling", callsign)
+        # P67, Teil C.1: set_channel_state() is called ONLY from the
+        # LinkTable callback now - route this optimistic local update
+        # through LinkTable.on_local_connect_attempt() instead of
+        # touching channel_bar directly, so both Packet screens' chips
+        # stay in sync via the same one path.
+        self._link_table.on_local_connect_attempt(channel, callsign)
         self._update_maildrop_gate_ui()
 
     def _on_chip_disconnect_requested(self, channel: int) -> None:
@@ -3218,8 +3289,9 @@ class MainWindow(QMainWindow):
         self._log_monitor(f"[PACKET] Disconnect sent ch{channel}")
         if hasattr(screen, "_set_status"):
             screen._set_status("DISCONNECTED")
-        if hasattr(screen, "channel_bar"):
-            screen.channel_bar.set_channel_state(channel, "free")
+        # P67, Teil C.1: route through LinkTable, same reasoning as
+        # _on_chip_connect_requested() above.
+        self._link_table.on_local_disconnect_request(channel)
         self._update_maildrop_gate_ui()
 
     def _on_packet_unproto(self, checked: bool) -> None:
