@@ -2049,7 +2049,15 @@ Grows over time.
   explicitly out of scope beyond the one-line channel-nibble fix).
 - **Channel model (2026-09-20, ChannelBar sprint).** There is **no CSTATUS
   poll in Host Mode** — the PK-232 never tells the host "channel N is
-  connected to X" on demand. The channel a frame belongs to lives only in the
+  connected to X" on demand. **Unmeasured — TRM 4.3.3 documents a
+  per-channel CO (Link Status) query; see P65/T141
+  (`docs/P65_Link_Carryover_Measure_Spec.md`,
+  `HostModeProtocol.cmd_link_status()`, built but never called by
+  production code before P65's own `tools/hw_check.py link_carry`).**
+  This claim stands as originally written until T141's real hardware
+  result either confirms or replaces it — not deleted here, only
+  flagged, per hw_check rule 6 (measure, don't guess). The channel a
+  frame belongs to lives only in the
   low nibble of that frame's CTL byte (`ctl_channel()` in `comm/constants.py`
   — see the two-decoders gotcha above for where that nibble is actually
   extracted at runtime). So the UI's channel model is purely local
