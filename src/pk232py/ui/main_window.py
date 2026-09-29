@@ -1137,6 +1137,7 @@ class MainWindow(QMainWindow):
         self._serial.host_mode_changed.connect(self._update_host_mode_ui)
         self._serial.status_message.connect(self._on_status_message)
         self._serial.verbose_mode_ready.connect(self._on_verbose_mode_ready)
+        self._serial.verbose_resumed.connect(self._update_tnc_menu_gating)
         self._serial.params_upload_required.connect(self._on_params_upload_required)
         self._serial.raw_data_received.connect(self._on_raw_data_received)
         self._serial.init_failed.connect(self._on_init_failed)
