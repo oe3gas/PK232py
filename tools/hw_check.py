@@ -115,12 +115,23 @@ required except for T101:
             OPMODE/CSTATUS/CONNECT shows the same connection on the
             same channel. Needs a real counterpart station. See
             docs/P65_Link_Carryover_Measure_Spec.md.
+    channel_probe
+            P69 (T146/T147): does the TNC send Unproto data on a FREE
+            channel other than 0 (3, 9 - also while another channel is
+            connected) as a UI frame, and on which channel does an
+            INCOMING connect land (USERS as found, then USERS 10)?
+            Transmits and needs Direwolf (all frames, incl. I-frames)
+            plus a QtTermTCP caller; every transmission sits behind
+            confirm_tx(). MEASURES ONLY - P70 (channel bar MON + 0-9)
+            builds on it. Not part of 'all'. See
+            docs/P69_Channel_Probe_Measure_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
             and recorded individually), and NOT
             mi/maildrop/maildrop_host/mdcheck_scan/maildrop_session/
-            aprs_query/aprs_tx/aprs_reject/link_carry/link_carry_host
+            aprs_query/aprs_tx/aprs_reject/link_carry/link_carry_host/
+            channel_probe
             (mi is fine alone but grouped with its guided counterpart;
             maildrop, maildrop_host, mdcheck_scan and maildrop_session
             are interactive/exploratory; aprs_tx/aprs_reject/
@@ -5198,6 +5209,364 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
 
 
 # ===========================================================================
+# P69 -- channel_probe measurement (unproto on free channels 3/9, which
+# channel an incoming connect lands on). MEASURES ONLY (hw_check rule 6) -
+# P70 (channel bar MON + 0-9) is built on these findings, not this
+# package's job. No new frame builder: cmd_unproto()/cmd_connect()/
+# cmd_disconnect()/cmd_link_status() are the app's own; data frames go
+# through Session.send_data_channel(). Every transmission goes through
+# confirm_tx() via the helpers below.
+# ===========================================================================
+
+_CHANNEL_PROBE_PATH = "P69TST"
+_CHANNEL_PROBE_TARGET = "OE3GAS-1"   # TinyBox, the same counterpart as T141/T142
+
+
+def _split_blocks(pasted: str) -> list[str]:
+    """Direwolf separates decoded packets by blank lines - one block is
+    one packet (its header line plus the detail lines around it)."""
+    return [b for b in re.split(r"\n\s*\n", pasted) if b.strip()]
+
+
+def learn_iframe_marker(pasted: str) -> Optional[str]:
+    """Direwolf's own frame-type notation for an I-frame ('<I S0 R0 ...>',
+    as opposed to '<UI ...>') found in *pasted*, or None. B.3's CR on
+    $20 is a known I-frame to the TinyBox, so this is LEARNED from that
+    paste, never hard-coded (P69 Teil B) - the caller logs what it found."""
+    m = re.search(r"<I[ >]", pasted)
+    return m.group(0) if m else None
+
+
+def classify_decoder_line(
+    pasted: str, src: str, dest: str, text: str,
+    iframe_marker: Optional[str] = None,
+) -> str:
+    """What a second station's decoder shows for one transmitted data
+    frame (P69 Teil B). Pure - no serial interface. Results:
+      'ui'        - a packet block has 'SRC>DEST' and *text* (and no
+                    I-frame marking): sent as an UNPROTO UI frame.
+      'connected' - the block with *text* carries *iframe_marker*
+                    (learned via learn_iframe_marker()): an I-frame on
+                    a connection.
+      'absent'    - *text* is nowhere in *pasted* (or nothing pasted).
+      'unknown'   - *text* is there, but in a format that is neither
+                    (e.g. no marker learned yet and not addressed to
+                    *dest*).
+    """
+    if not text or text not in pasted:
+        return "absent"
+    header = re.compile(re.escape(src) + r">" + re.escape(dest) + r"(?![\w-])", re.I)
+    for block in _split_blocks(pasted):
+        if text not in block:
+            continue
+        if iframe_marker and iframe_marker in block:
+            return "connected"
+        if header.search(block):
+            return "ui"
+    return "unknown"
+
+
+def find_incoming_channel(frames: list) -> Optional[int]:
+    """The channel of the first '$5n ... CONNECTED to ...' link message
+    (TRM 4.3.2: CTL $50-$59) in *frames*, or None. The channel comes off
+    the frame's own CTL byte via .channel, never from send order."""
+    for f in frames:
+        if 0x50 <= f.ctl <= 0x59 and "connected to" in (f.text or "").lower():
+            return f.channel
+    return None
+
+
+def format_links_line(results: dict) -> str:
+    """'links: 0=free 1=connected:OE3GAS-1 ...' from
+    _probe_all_channel_links() results. 'free' only for a decoded,
+    error-free, partner-less channel - anything else says what it is,
+    never guessed as free."""
+    parts = []
+    for ch in sorted(results):
+        r = results[ch]
+        if r.unparsed:
+            what = "?"
+        elif r.error_code is not None:
+            what = f"err{r.error_code:02X}"
+        elif r.connected:
+            what = f"connected:{r.partner}"
+        elif r.partner:
+            what = f"state{r.state}:{r.partner}"
+        else:
+            what = "free"
+        parts.append(f"{ch}={what}")
+    return "links: " + " ".join(parts)
+
+
+def _probe_links(session: Session, frames: dict, label: str, log: RunLog) -> dict:
+    """CO on channels 0-9 plus the one-line summary the spec asks for
+    after EVERY step in Host Mode."""
+    results = _probe_all_channel_links(session, frames, label, log)
+    log.line(f"{label} {format_links_line(results)}")
+    return results
+
+
+def _probe_transmit(
+    session: Session, log: RunLog, prompt: str, channel: int, text: str,
+) -> bool:
+    """The only data-frame transmission in channel_probe: confirm_tx()
+    first, then the frame ($2n on *channel*). False if declined."""
+    if not confirm_tx(prompt):
+        log.line(f"skipped by operator: data on ch{channel} {text!r}")
+        return False
+    session.send_data_channel(channel, text)
+    return True
+
+
+def _probe_connect(
+    session: Session, log: RunLog, target: str, channel: int,
+) -> bool:
+    """The only connect in channel_probe (Host Mode CO frame from
+    HostModeProtocol.cmd_connect()), behind confirm_tx()."""
+    if not confirm_tx(f"Connect to {target!r} on channel {channel}, from Host Mode."):
+        log.line(f"skipped by operator: connect {target!r} on ch{channel}")
+        return False
+    session.send_channel_frame(
+        channel, HostModeProtocol.cmd_connect(target, channel=channel),
+        note=f"connect ch{channel}",
+    )
+    return True
+
+
+def _pump_capture(session: Session, seconds: float, log: RunLog, label: str) -> list:
+    """Pump the Qt loop for *seconds*, log and return every frame seen."""
+    captured: list = []
+    session.sm.frame_received.connect(captured.append)
+    try:
+        session._pump(seconds)
+    finally:
+        session.sm.frame_received.disconnect(captured.append)
+    for f in captured:
+        log.line(
+            f"{label} << ctl=0x{f.ctl:02X} ch={f.channel} "
+            f"data={f.data!r} text={f.text!r}"
+        )
+    return captured
+
+
+def _probe_disconnect_all(
+    session: Session, log: RunLog, frames: dict, label: str,
+) -> None:
+    """In Host Mode: DI (behind confirm_tx()) on every channel whose CO
+    shows a connection, then re-check. Never assumes which channel."""
+    results = _probe_links(session, frames, f"{label} before DI", log)
+    busy = [
+        ch for ch, r in sorted(results.items())
+        if not r.unparsed and r.error_code is None and (r.connected or r.partner)
+    ]
+    for ch in busy:
+        if confirm_tx(f"{label}: disconnect channel {ch} (Host Mode DI)."):
+            session.send_channel_frame(
+                ch, HostModeProtocol.cmd_disconnect(ch), note=f"{label} DI ch{ch}",
+            )
+            session._pump(0.5)
+        else:
+            log.line(f"{label}: left ch{ch} connected by operator choice")
+    if busy:
+        _probe_links(session, frames, f"{label} after DI", log)
+
+
+def _channel_probe_vhf_check(session: Session, log: RunLog, tag: str) -> Optional[dict]:
+    """VHF/HBAUD 1200 check as in link_carry/link_carry_host (inline
+    there; the same logic as a helper here). Returns the originals to
+    restore, or None if the run must stop."""
+    commands = ["VHF", "HBAUD"]
+    originals = {c: parse_query_value(c, session.query(c)) for c in commands}
+    missing = [c for c in commands if originals[c] is None]
+    if missing:
+        log.result(tag, "SKIPPED", f"original value(s) not parseable -- not touching: {missing}")
+        return None
+    log.line(f"VHF (current): {originals['VHF']!r}, HBAUD (current): {originals['HBAUD']!r}")
+    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
+    if not (vhf_ok and originals["HBAUD"].strip() == "1200"):
+        answer = input(
+            "TNC is not on VHF 1200 Bd. Set VHF ON and HBAUD 1200 for this run? [y/N] "
+        ).strip().lower()
+        if answer != "y":
+            log.result(tag, "INFO", "aborted - TNC not on VHF 1200 Bd")
+            return None
+        session.set_verbose("VHF", "ON")
+        session.set_verbose("HBAUD", "1200")
+    return originals
+
+
+def _channel_probe_b(
+    session: Session, log: RunLog, mycall: str, target: str, frames: dict,
+    un_frame: bytes,
+) -> None:
+    def stamp() -> str:
+        return datetime.datetime.now().strftime("%H:%M:%S")
+
+    def free_channel_round(step: str, channel: int) -> None:
+        text = f"P69 {step.replace('.', '')} ch{channel} {stamp()}"
+        session.enter_host_mode()
+        sent = False
+        try:
+            session.drain_pending_frames()
+            session.send_frame(un_frame, note=f"{step} UN {_CHANNEL_PROBE_PATH}")
+            session._pump(0.5)
+            _probe_links(session, frames, f"{step} pre", log)
+            sent = _probe_transmit(
+                session, log,
+                f"{step}: data frame ${0x20 + channel:02X} on the FREE channel "
+                f"{channel}, UNPROTO {_CHANNEL_PROBE_PATH} - should go out as "
+                f"a UI frame.\nText: {text!r}",
+                channel, text,
+            )
+            _pump_capture(session, 2.0, log, step)
+            _probe_links(session, frames, f"{step} post", log)
+        finally:
+            session.exit_host_mode()
+        if not sent:
+            log.result(f"T146 {step}", "INFO", "skipped by operator")
+            return
+        pasted = read_pasted_block(
+            "Paste the decoder (Direwolf) output, then a line with a single \".\":"
+        )
+        verdict = classify_decoder_line(pasted, mycall, _CHANNEL_PROBE_PATH, text)
+        log.result(
+            f"T146 {step}", "PASS" if verdict == "ui" else "FAIL",
+            f"classification={verdict} text={text!r}",
+        )
+
+    free_channel_round("B.1", 3)
+    free_channel_round("B.2", 9)
+
+    # B.3: connection on channel 0, data on free channel 3, then CR on $20.
+    text3 = f"P69 B3 ch3 {stamp()}"
+    session.enter_host_mode()
+    sent3 = False
+    try:
+        session.drain_pending_frames()
+        session.send_frame(un_frame, note=f"B.3 UN {_CHANNEL_PROBE_PATH}")
+        session._pump(0.5)
+        if _probe_connect(session, log, target, 0):
+            _pump_capture(session, 30.0, log, "B.3 connect")
+            _probe_links(session, frames, "B.3 connected", log)
+            sent3 = _probe_transmit(
+                session, log,
+                f"B.3: data frame $23 on channel 3 while channel 0 is "
+                f"connected to {target}.\nText: {text3!r}",
+                3, text3,
+            )
+            _pump_capture(session, 2.0, log, "B.3 ch3")
+            _probe_links(session, frames, "B.3 after ch3", log)
+            if _probe_transmit(
+                session, log,
+                f"B.3: a single CR on channel 0 (an I-frame to {target}; "
+                f"its own prompt comes back) - used to LEARN how the "
+                f"decoder marks I-frames.",
+                0, "\r",
+            ):
+                _pump_capture(session, 10.0, log, "B.3 CR")
+        _probe_disconnect_all(session, log, frames, "B.3 cleanup")
+    finally:
+        session.exit_host_mode()
+    _confirm_command_prompt_light(session, "B.3", log)
+    if not sent3:
+        log.result("T146 B.3", "INFO", "skipped by operator")
+        return
+    pasted = read_pasted_block(
+        "Paste the decoder output for B.3 (the ch3 frame AND the CR I-frame), "
+        "then a line with a single \".\":"
+    )
+    marker = learn_iframe_marker(pasted)
+    log.line(f"B.3 I-frame notation learned from the paste: {marker!r}")
+    if marker is None:
+        marker = input(
+            "No '<I ...>' notation found. Enter the decoder's I-frame marker "
+            "text (empty = none): "
+        ).strip() or None
+        log.line(f"B.3 I-frame marker entered by operator: {marker!r}")
+    verdict = classify_decoder_line(pasted, mycall, _CHANNEL_PROBE_PATH, text3, marker)
+    log.result(
+        "T146 B.3", "PASS" if verdict == "ui" else "FAIL",
+        f"classification={verdict} marker={marker!r} text={text3!r}",
+    )
+
+
+def test_channel_probe(session: Session, log: RunLog) -> None:
+    log.line(
+        "--- Channel probe: UNPROTO on free channels 3/9, channel of an "
+        "incoming connect ---"
+    )
+    un_frame = HostModeProtocol.cmd_unproto(_CHANNEL_PROBE_PATH)
+    frames = {ch: HostModeProtocol.cmd_link_status(ch) for ch in range(10)}
+
+    if session.dry_run:
+        log.line(
+            "[dry-run] would normalize(), check VHF/HBAUD 1200, query and "
+            "log UNPROTO/USERS/MYCALL (UNPROTO/USERS restored at the end). "
+            "EVERY transmission below sits behind confirm_tx(); after every "
+            "Host Mode step CO on channels 0-9 is logged as 'links: ...'."
+        )
+        log.line(f"[dry-run] Part B: UN {_CHANNEL_PROBE_PATH}")
+        session.send_frame(un_frame, note=f"UN {_CHANNEL_PROBE_PATH}")
+        for step, ch in (("B.1", 3), ("B.2", 9)):
+            text = f"P69 {step.replace('.', '')} ch{ch} HH:MM:SS"
+            log.line(
+                f"[dry-run] {step}: data frame ${0x20 + ch:02X} on free "
+                f"channel {ch}: {text!r}"
+            )
+            session.send_data_channel(ch, text)
+        session.send_channel_frame(
+            0, HostModeProtocol.cmd_connect(_CHANNEL_PROBE_TARGET, channel=0),
+            note="B.3 connect ch0",
+        )
+        log.line("[dry-run] B.3: data frame $23 on channel 3 while ch0 is connected")
+        session.send_data_channel(3, "P69 B3 ch3 HH:MM:SS")
+        log.line("[dry-run] B.3: CR on $20 (I-frame; learns the decoder's I-frame notation)")
+        session.send_data_channel(0, "\r")
+        log.line("[dry-run] B.3: DI on ch0")
+        session.send_channel_frame(
+            0, HostModeProtocol.cmd_disconnect(0), note="B.3 DI ch0"
+        )
+        for ch in range(10):
+            session.send_channel_frame(ch, frames[ch], note=f"CO ch{ch}")
+        log.result("T146", "INFO", "dry-run, nothing sent")
+        return
+
+    session.normalize()
+    if input("Ready to continue? [y/N] ").strip().lower() != "y":
+        log.result("T146", "INFO", "skipped by operator")
+        return
+
+    vhf_originals = _channel_probe_vhf_check(session, log, "T146")
+    if vhf_originals is None:
+        return
+    for cmd in ("UNPROTO", "USERS", "MYCALL"):
+        log.line(f"{cmd} (found): {session.query(cmd)!r}")
+    originals = {c: parse_query_value(c, session.query(c)) for c in ("UNPROTO", "USERS")}
+    mycall = parse_query_value("MYCALL", session.query("MYCALL")) or ""
+    try:
+        if not mycall or any(v is None for v in originals.values()):
+            log.result(
+                "T146", "SKIPPED",
+                f"MYCALL/UNPROTO/USERS not parseable -- not touching them "
+                f"(mycall={mycall!r} originals={originals!r})",
+            )
+            return
+        target = input(
+            f"Counterpart callsign for the connect on channel 0 [{_CHANNEL_PROBE_TARGET}]? "
+        ).strip() or _CHANNEL_PROBE_TARGET
+
+        _channel_probe_b(session, log, mycall, target, frames, un_frame)
+    finally:
+        for cmd, value in {**originals, **vhf_originals}.items():
+            if value is None:
+                continue
+            verify_restore(
+                cmd, lambda c=cmd: session.query(c),
+                lambda v, c=cmd: session.set_verbose(c, v), value, log,
+            )
+
+
+# ===========================================================================
 # CLI
 # ===========================================================================
 
@@ -5225,7 +5594,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
             "maildrop_session", "aprs_query", "aprs_tx", "aprs_reject",
-            "link_carry", "link_carry_host",
+            "link_carry", "link_carry_host", "channel_probe",
             "all",
         ],
     )
@@ -5332,6 +5701,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "aprs_reject": [lambda s, l: test_aprs_reject(s, l)],
         "link_carry":      [lambda s, l: test_link_carry(s, l)],
         "link_carry_host": [lambda s, l: test_link_carry_host(s, l)],
+        "channel_probe":   [lambda s, l: test_channel_probe(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
