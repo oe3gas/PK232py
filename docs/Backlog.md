@@ -27,7 +27,7 @@ it again, so `is_verbose_mode` (and TNC -> Enter Host Mode) stayed False
 until a reconnect (since P49, seen in T144). Fixed: `_verbose_ready` is
 set after the COMMAND-char resync (both outcomes), `_verbose_confirmed`
 only if `cmd:` was seen, new signal `verbose_resumed` refreshes the TNC
-menu gating. Hardware check: T145 (open).
+menu gating. Hardware check: T145 ✅ PASS (Device B).
 
 ### `maildrop/maildrop.py`'s mnemonic table is unverified and CAN be sent — open (P24.1, 2026-09-22)
 

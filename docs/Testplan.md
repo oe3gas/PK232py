@@ -3002,10 +3002,10 @@ Steps (`docs/P68_Enter_Host_Mode_After_Exit_Spec.md`):
 
 | Device | Step 3 (second entry without reconnect) |
 |---|---|
-| B | ⬜ |
+| B | ✅ |
 
-**Status:** ⬜ OPEN — needs a hardware session on Device B; software-
-verified by `test_serial_manager.py::TestExitHostModeVerboseResumed` and
+**Status:** ✅ PASS (Device B, reported by the operator 2026-09-29);
+also software-verified by `test_serial_manager.py::TestExitHostModeVerboseResumed` and
 `test_main_window_connection.py::TestEnterHostModeEnabledAfterLeaving`.
 
 ---
