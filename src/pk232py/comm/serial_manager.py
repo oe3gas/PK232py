@@ -554,6 +554,7 @@ class SerialManager(QObject):
     raw_data_received      = pyqtSignal(bytes)   # verbose mode raw bytes
     connection_changed     = pyqtSignal(bool)
     verbose_mode_ready     = pyqtSignal()
+    verbose_resumed        = pyqtSignal()        # P68
     host_mode_changed      = pyqtSignal(bool)
     params_upload_required = pyqtSignal()
     status_message         = pyqtSignal(str)
@@ -1730,6 +1731,18 @@ class SerialManager(QObject):
                 "reached cmd: (TNC was in converse mode)" if ok
                 else "got no cmd: (TNC may already be at the prompt)",
             )
+
+            # P68: HOST OFF was sent and the verbose-path reader runs -
+            # the same precondition _finish_verbose_init() sets the flag
+            # under - so is_verbose_mode (and with it TNC -> Enter Host
+            # Mode) is valid again, whichever way the resync ended.
+            # "Actively confirmed" (P43) only if cmd: was really seen.
+            # verbose_resumed, NOT verbose_mode_ready: that one starts
+            # banner collection and the parameter upload.
+            self._verbose_ready = True
+            if ok:
+                self._verbose_confirmed = True
+            self.verbose_resumed.emit()
         except Exception as exc:
             logger.error("exit_host_mode: %s", exc)
 
