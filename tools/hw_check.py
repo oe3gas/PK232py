@@ -1788,6 +1788,37 @@ def run_with_restore(
     return original
 
 
+def ensure_vhf_1200(
+    session: "Session", log: "RunLog", tag: str, originals: dict,
+) -> bool:
+    """The ONE VHF/HBAUD 1200 Bd check for every subcommand that needs
+    the TNC on VHF Packet at 1200 Bd (aprs_tx, aprs_reject, link_carry,
+    link_carry_host, channel_probe). *originals* holds the already
+    queried, parsed 'VHF'/'HBAUD' values (the caller restores them
+    afterwards). If the TNC is not at VHF 1200 Bd the operator is asked
+    before VHF ON / HBAUD 1200 are set for this run. Returns False - after
+    logging an INFO result under *tag* - if the operator declines and the
+    run must stop; True to continue."""
+    log.line(
+        f"VHF (current): {originals['VHF']!r}, "
+        f"HBAUD (current): {originals['HBAUD']!r}"
+    )
+    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
+    hbaud_ok = originals["HBAUD"].strip() == "1200"
+    if not (vhf_ok and hbaud_ok):
+        answer = input(
+            f"TNC is not on VHF 1200 Bd (VHF={originals['VHF']!r}, "
+            f"HBAUD={originals['HBAUD']!r}). Set VHF ON and HBAUD 1200 "
+            f"for this run? [y/N] "
+        ).strip().lower()
+        if answer != "y":
+            log.result(tag, "INFO", "aborted - TNC not on VHF 1200 Bd")
+            return False
+        session.set_verbose("VHF", "ON")
+        session.set_verbose("HBAUD", "1200")
+    return True
+
+
 # ===========================================================================
 # P30 -- port ownership logging and byte-level init-phase capture
 # ===========================================================================
@@ -4179,25 +4210,8 @@ def test_aprs_tx(session: Session, log: RunLog) -> None:
         )
         return
 
-    log.line(
-        f"VHF (current): {originals['VHF']!r}, "
-        f"HBAUD (current): {originals['HBAUD']!r}"
-    )
-    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
-    hbaud_ok = originals["HBAUD"].strip() == "1200"
-    if not (vhf_ok and hbaud_ok):
-        answer = input(
-            f"TNC is not on VHF 1200 Bd (VHF={originals['VHF']!r}, "
-            f"HBAUD={originals['HBAUD']!r}). Set VHF ON and HBAUD 1200 "
-            f"for this run? [y/N] "
-        ).strip().lower()
-        if answer != "y":
-            log.result(
-                "T139", "INFO", "aborted - TNC not on VHF 1200 Bd"
-            )
-            return
-        session.set_verbose("VHF", "ON")
-        session.set_verbose("HBAUD", "1200")
+    if not ensure_vhf_1200(session, log, "T139", originals):
+        return
 
     log.line(f"PACLEN (unchanged): {parse_query_value('PACLEN', session.query('PACLEN'))!r}")
 
@@ -4375,25 +4389,8 @@ def test_aprs_reject(session: Session, log: RunLog) -> None:
         )
         return
 
-    log.line(
-        f"VHF (current): {originals['VHF']!r}, "
-        f"HBAUD (current): {originals['HBAUD']!r}"
-    )
-    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
-    hbaud_ok = originals["HBAUD"].strip() == "1200"
-    if not (vhf_ok and hbaud_ok):
-        answer = input(
-            f"TNC is not on VHF 1200 Bd (VHF={originals['VHF']!r}, "
-            f"HBAUD={originals['HBAUD']!r}). Set VHF ON and HBAUD 1200 "
-            f"for this run? [y/N] "
-        ).strip().lower()
-        if answer != "y":
-            log.result(
-                "T140", "INFO", "aborted - TNC not on VHF 1200 Bd"
-            )
-            return
-        session.set_verbose("VHF", "ON")
-        session.set_verbose("HBAUD", "1200")
+    if not ensure_vhf_1200(session, log, "T140", originals):
+        return
 
     # P62a Teil D: the operator has only one physical PK-232, so the
     # calling station is Direwolf via AGW, not a second device - MYCALL
@@ -4626,23 +4623,8 @@ def test_link_carry(session: Session, log: RunLog) -> None:
         )
         return
 
-    log.line(
-        f"VHF (current): {originals['VHF']!r}, "
-        f"HBAUD (current): {originals['HBAUD']!r}"
-    )
-    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
-    hbaud_ok = originals["HBAUD"].strip() == "1200"
-    if not (vhf_ok and hbaud_ok):
-        answer = input(
-            f"TNC is not on VHF 1200 Bd (VHF={originals['VHF']!r}, "
-            f"HBAUD={originals['HBAUD']!r}). Set VHF ON and HBAUD 1200 "
-            f"for this run? [y/N] "
-        ).strip().lower()
-        if answer != "y":
-            log.result("T141", "INFO", "aborted - TNC not on VHF 1200 Bd")
-            return
-        session.set_verbose("VHF", "ON")
-        session.set_verbose("HBAUD", "1200")
+    if not ensure_vhf_1200(session, log, "T141", originals):
+        return
 
     try:
         # A.2
@@ -4922,23 +4904,8 @@ def test_link_carry_host(session: Session, log: RunLog) -> None:
         )
         return
 
-    log.line(
-        f"VHF (current): {originals['VHF']!r}, "
-        f"HBAUD (current): {originals['HBAUD']!r}"
-    )
-    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
-    hbaud_ok = originals["HBAUD"].strip() == "1200"
-    if not (vhf_ok and hbaud_ok):
-        answer = input(
-            f"TNC is not on VHF 1200 Bd (VHF={originals['VHF']!r}, "
-            f"HBAUD={originals['HBAUD']!r}). Set VHF ON and HBAUD 1200 "
-            f"for this run? [y/N] "
-        ).strip().lower()
-        if answer != "y":
-            log.result("T142", "INFO", "aborted - TNC not on VHF 1200 Bd")
-            return
-        session.set_verbose("VHF", "ON")
-        session.set_verbose("HBAUD", "1200")
+    if not ensure_vhf_1200(session, log, "T142", originals):
+        return
 
     target_call = input("Counterpart callsign to CONNECT (Host Mode)? ").strip()
 
@@ -5372,27 +5339,14 @@ def _probe_disconnect_all(
 
 
 def _channel_probe_vhf_check(session: Session, log: RunLog, tag: str) -> Optional[dict]:
-    """VHF/HBAUD 1200 check as in link_carry/link_carry_host (inline
-    there; the same logic as a helper here). Returns the originals to
-    restore, or None if the run must stop."""
-    commands = ["VHF", "HBAUD"]
-    originals = {c: parse_query_value(c, session.query(c)) for c in commands}
-    missing = [c for c in commands if originals[c] is None]
+    """Query VHF/HBAUD and run ensure_vhf_1200(). Returns the originals
+    to restore, or None if the run must stop."""
+    originals = {c: parse_query_value(c, session.query(c)) for c in ("VHF", "HBAUD")}
+    missing = [c for c, v in originals.items() if v is None]
     if missing:
         log.result(tag, "SKIPPED", f"original value(s) not parseable -- not touching: {missing}")
         return None
-    log.line(f"VHF (current): {originals['VHF']!r}, HBAUD (current): {originals['HBAUD']!r}")
-    vhf_ok = originals["VHF"].strip().upper() in ("Y", "ON", "1")
-    if not (vhf_ok and originals["HBAUD"].strip() == "1200"):
-        answer = input(
-            "TNC is not on VHF 1200 Bd. Set VHF ON and HBAUD 1200 for this run? [y/N] "
-        ).strip().lower()
-        if answer != "y":
-            log.result(tag, "INFO", "aborted - TNC not on VHF 1200 Bd")
-            return None
-        session.set_verbose("VHF", "ON")
-        session.set_verbose("HBAUD", "1200")
-    return originals
+    return originals if ensure_vhf_1200(session, log, tag, originals) else None
 
 
 def _channel_probe_b(
