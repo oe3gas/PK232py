@@ -1411,6 +1411,50 @@ class TestExitHostModeIoChannel:
                 sm._reader.join(timeout=1.0)
 
 
+class TestExitHostModeVerboseResumed:
+    """P68 - exit_host_mode() used to leave _verbose_ready False forever,
+    so is_verbose_mode stayed False and TNC -> Enter Host Mode stayed
+    greyed out until a full reconnect. Both resync outcomes must make the
+    manager verbose-ready again and emit verbose_resumed (never
+    verbose_mode_ready - that one triggers banner collection and the
+    parameter upload)."""
+
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
+
+    def _exit(self, resync_ok: bool):
+        sm = SerialManager()
+        sm._serial = _FakePort(lambda data: b"")
+        sm._in_host_mode = True
+        sm._verbose_confirmed = False
+        # The resync itself (1.5 s literal timeout) is not what is under
+        # test - stubbed so the "no cmd:" case does not sleep for real.
+        sm.write_verbose_wait = lambda *a, **k: resync_ok
+        resumed, ready = [], []
+        sm.verbose_resumed.connect(lambda: resumed.append(True))
+        sm.verbose_mode_ready.connect(lambda: ready.append(True))
+        try:
+            sm.exit_host_mode()
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+        return sm, resumed, ready
+
+    def test_reached_cmd_confirms_and_resumes(self):
+        sm, resumed, ready = self._exit(True)
+        assert sm.is_verbose_mode is True
+        assert sm.verbose_confirmed is True
+        assert len(resumed) == 1
+        assert ready == []
+
+    def test_no_cmd_is_verbose_ready_but_not_confirmed(self):
+        sm, resumed, ready = self._exit(False)
+        assert sm.is_verbose_mode is True
+        assert sm.verbose_confirmed is False
+        assert len(resumed) == 1
+        assert ready == []
+
+
 class TestXonFlowControlDetection:
     """P54.3/P54.4 - the PK-232 uses software flow control (its own boot
     banner proves it: '... 0d 0a 11 41 45 41 ...', that $11 right before

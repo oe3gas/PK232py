@@ -340,6 +340,37 @@ class TestTncMenuGating:
         assert "Host Mode" in w._act_enter_host_mode.toolTip()
 
 
+class TestEnterHostModeEnabledAfterLeaving:
+    """P68 (T144) - after TNC -> Leave Host Mode, Enter Host Mode
+    (Ctrl+H) must be enabled again without a reconnect. Uses the real
+    SerialManager (with a fake port) so the real signal wiring and the
+    real is_verbose_mode property are exercised, not a stub."""
+
+    def test_enter_host_mode_enabled_after_user_exit(self, monkeypatch):
+        from pk232py.comm import serial_manager as sm_mod
+        from pk232py.tests.test_serial_manager import _FakePort
+
+        monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+        monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *a, **k: None))
+        monkeypatch.setattr(sm_mod.time, "sleep", lambda *_: None)
+
+        w = MainWindow()
+        sm = w._serial
+        sm._serial = _FakePort(lambda data: b"")
+        sm._in_host_mode = True
+        sm._verbose_ready = False
+        sm.write_verbose_wait = lambda *a, **k: True
+        try:
+            sm.exit_host_mode()
+            assert sm.is_verbose_mode is True
+            assert w._act_enter_host_mode.isEnabled()
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+            sm._serial = None
+
+
 class TestEnterHostModeFromVerbose:
     """P49.A.2 - "Enter Host Mode" is the last chance to upload
     parameters (no cmd: prompt exists in Host Mode at all, P40/P43)."""
