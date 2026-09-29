@@ -181,7 +181,7 @@
   connected — never on a free channel, which sends every further line
   as an UNPROTO UI frame instead, P66b B.5).
 - **Known Facts, Device B, P67 (28.09.2026 14:57–15:04, Release
-  01.AUG.91 — full detail: `docs/docsP67_Link_Table_Packet_Spec.md`).**
+  01.AUG.91 — full detail: `docs/P67_Link_Table_Packet_Spec.md`).**
   M1 a Host Mode entry from Converse with a connection already up
   succeeds with no late-entry handshake needed. M2 Host Mode `CO` per
   channel reliably reports state and partner: connected

@@ -614,7 +614,7 @@ Grows over time.
     depends on the EPROM, not a fixed shape (P31, 2026-09-23).** 22.09.2026
     (three rounds, P21–P24): round, `` (AEA PK-232M)  18536 free
     (B,E,K,L,R,S) > `` — the operator confirms the **11.09.1995 EPROM**
-    (Gen. 3 / PACTOR, see `docs/PK232_firware_matrrix.md` §2) was installed
+    (Gen. 3 / PACTOR, see `docs/PK232_firmware_matrix.md` §2) was installed
     for those rounds. 23.09.2026, 18:43 (P31,
     `hw_logs/20260923_184302_maildrop_session.log`), after the TNC had
     hung and been power-cycled: square, `` [AEA PK-232M]  18340 free

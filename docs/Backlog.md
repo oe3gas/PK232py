@@ -895,7 +895,7 @@ aufgerufen) und TRM 4.3.2 `OPMODE` (`query_host(b"OP")`) fuer Punkt 3 —
 beide jetzt Teil des Messpakets statt nur vermutet.
 
 **Umgesetzt fuer Packet, P67 (2026-09-28,
-`docs/docsP67_Link_Table_Packet_Spec.md`):** `comm/link_table.py::
+`docs/P67_Link_Table_Packet_Spec.md`):** `comm/link_table.py::
 LinkTable` ist die im Vorschlag oben beschriebene Verbindungstabelle —
 eine Instanz in `MainWindow`, gefuellt aus `$5x`-Link-Meldungen, Host
 Mode `CO`-Antworten (TRM 4.3.3, jetzt tatsaechlich verwendet) und

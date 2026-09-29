@@ -2798,7 +2798,7 @@ times**, to see whether the retry actually catches the late entry and
 how much the timing varies run to run.
 
 **Re-run, 28.09.2026 14:57 (P67 basis run,
-`docs/docsP67_Link_Table_Packet_Spec.md`, M1) — PASS:** Host Mode
+`docs/P67_Link_Table_Packet_Spec.md`, M1) — PASS:** Host Mode
 entry from Converse with the connection already up succeeds cleanly —
 `HP $00`, `OPPA`, no late-entry lag this time (P66b's own retry logic
 never needed to fire). A.6 confirmed the connection on channel 0
@@ -2886,7 +2886,7 @@ connected channel from the last CO recheck, via a Host Mode `DI`, not
 a verbose `DISCONNECT` on the active channel).
 
 **Re-run, 28.09.2026 15:02 (P67 basis run,
-`docs/docsP67_Link_Table_Packet_Spec.md`, M6/M7) — D.1/D.3 PASS,
+`docs/P67_Link_Table_Packet_Spec.md`, M6/M7) — D.1/D.3 PASS,
 Connect portion INVALID (pre-existing connection from the T141 14:57
 run, never cleaned up before this run started):** this run's own B
 step ("Connect to target, from Host Mode") got `?already connected`
@@ -2955,7 +2955,7 @@ checking the connection DISPLAY, not just that Host Mode was genuinely
 entered. App-level, Device B, needs a real counterpart (TinyBox BBS or
 equivalent).
 
-Steps (`docs/docsP67_Link_Table_Packet_Spec.md`, Teil F):
+Steps (`docs/P67_Link_Table_Packet_Spec.md`, Teil F):
 1. Verbose, VHF Packet, `CONNECT OE3GAS-1`, wait for the counterpart's
    own prompt.
 2. Ctrl+H → **expected:** VHF Packet mask, chip 0 dashed
