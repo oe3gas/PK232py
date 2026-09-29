@@ -3010,6 +3010,39 @@ also software-verified by `test_serial_manager.py::TestExitHostModeVerboseResume
 
 ---
 
+### T146 — `channel_probe` B: Unproto on free channels (P69)
+
+`python tools/hw_check.py --port COM6 channel_probe` (Part B). Device B,
+VHF 1200 Bd, Direwolf on the FT-818 decoding ALL frames, TinyBox
+(`OE3GAS-1`) as counterpart. UNPROTO `P69TST`.
+
+| Step | Question | Expected / measured |
+|---|---|---|
+| B.1 | Data on free channel 3 (`$23`), all channels free → UI frame? | ⬜ |
+| B.2 | Data on free channel 9 (`$29`), all channels free → UI frame? | ⬜ |
+| B.3 | Same on ch3 while ch0 is connected to the TinyBox; CR on `$20` teaches Direwolf's I-frame notation | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session on Device B. Software: dry-run and
+evaluation covered by `test_hw_check_channel_probe.py`.
+
+---
+
+### T147 — `channel_probe` C: channel of an incoming connect (P69)
+
+Same subcommand, Part C. QtTermTCP (e.g. `OE3GAS-2`) calls the PK-232's
+MYCALL; 60 s recording per phase. `USERS` is logged first.
+
+| Phase | Question | incoming_channel / accepted |
+|---|---|---|
+| C.1 | All free, USERS as found: which channel? | ⬜ |
+| C.2 | ch0 occupied, second caller (`OE3GAS-3`): accepted? channel? QtTermTCP shows? | ⬜ |
+| C.3 | Same as C.1/C.2 with `USERS 10` | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session on Device B. Findings feed P70
+(channel bar MON · 0–9).
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
