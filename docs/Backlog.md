@@ -20,6 +20,17 @@ tries to execute it, expecting it to describe current work.
 
 ## Priority 1 — Next implementation sprint
 
+### Channel bar MON · 0–9 (P70) — waits for T146/T147 (P69, 2026-09-29)
+
+Channel 0 is the fixed "UI channel" today (P10), so a connection made in
+verbose mode (TNC channel 0) is invisible in the mask (T144). Operator
+decision 29.09.2026: own chip MON (no TNC channel) for monitor/Unproto,
+chips 0–9 one to one; Unproto goes out on the lowest free channel per the
+link table, locked when all ten are busy. P69 (`hw_check channel_probe`,
+built, not yet run on hardware) measures what P70 needs: Unproto on
+channels other than 0, and which channel an incoming connect lands on
+(with USERS as found and USERS 10).
+
 ### Enter Host Mode stays greyed out after Leave Host Mode — ✅ DONE (P68, 2026-09-29)
 
 `SerialManager.exit_host_mode()` cleared `_verbose_ready` and never set
