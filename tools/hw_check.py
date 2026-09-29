@@ -5490,6 +5490,57 @@ def _channel_probe_b(
     )
 
 
+def _channel_probe_incoming_round(
+    session: Session, log: RunLog, frames: dict, target: str, label: str,
+) -> None:
+    """One first call plus a second call with channel 0 occupied (C.1 and
+    C.2, repeated as C.3 with USERS 10). Enters and leaves Host Mode
+    itself."""
+    session.enter_host_mode()
+    try:
+        session.drain_pending_frames()
+        for phase, who in ((f"{label}.1", "first"), (f"{label}.2", "second")):
+            if who == "second":
+                results = _probe_links(session, frames, f"{phase} pre", log)
+                if not (0 in results and (results[0].connected or results[0].partner)):
+                    _probe_connect(session, log, target, 0)
+                    _pump_capture(session, 30.0, log, f"{phase} occupy ch0")
+                    _probe_links(session, frames, f"{phase} ch0 occupied", log)
+            if not confirm_tx(
+                f"{phase}: the TNC will ANSWER an incoming connect (UA) on the "
+                f"air. Now call this TNC's MYCALL from QtTermTCP ({who} call, "
+                f"{'a different callsign, ' if who == 'second' else ''}"
+                f"within 60 s) - recording starts on Y."
+            ):
+                log.result(f"T147 {phase}", "INFO", "skipped by operator")
+                continue
+            captured = _pump_capture(session, 60.0, log, phase)
+            channel = find_incoming_channel(captured)
+            _probe_links(session, frames, f"{phase} post", log)
+            seen = read_pasted_block(
+                f"{phase}: what does QtTermTCP show (connected / busy / "
+                f"timeout, its own text)? End with a line with a single \".\":"
+            )
+            log.result(
+                f"T147 {phase}", "INFO",
+                f"incoming_channel={channel} accepted={channel is not None} "
+                f"operator={seen!r}",
+            )
+        _probe_disconnect_all(session, log, frames, f"{label} cleanup")
+    finally:
+        session.exit_host_mode()
+    _confirm_command_prompt_light(session, f"{label} end", log)
+
+
+def _channel_probe_c(
+    session: Session, log: RunLog, frames: dict, target: str,
+) -> None:
+    _channel_probe_incoming_round(session, log, frames, target, "C")
+    log.line("C.3: USERS 10 (verbose), then the same two calls again")
+    session.set_verbose("USERS", "10")
+    _channel_probe_incoming_round(session, log, frames, target, "C.3")
+
+
 def test_channel_probe(session: Session, log: RunLog) -> None:
     log.line(
         "--- Channel probe: UNPROTO on free channels 3/9, channel of an "
@@ -5526,9 +5577,16 @@ def test_channel_probe(session: Session, log: RunLog) -> None:
         session.send_channel_frame(
             0, HostModeProtocol.cmd_disconnect(0), note="B.3 DI ch0"
         )
+        log.line(
+            "[dry-run] Part C: 60 s recording per phase for an incoming "
+            "connect from QtTermTCP (C.1 first call, C.2 second call with "
+            "channel 0 occupied), then DI on all connected channels"
+        )
+        log.line("[dry-run] C.3: set USERS 10 (verbose), repeat C.1/C.2, restore USERS")
         for ch in range(10):
             session.send_channel_frame(ch, frames[ch], note=f"CO ch{ch}")
         log.result("T146", "INFO", "dry-run, nothing sent")
+        log.result("T147", "INFO", "dry-run, nothing sent")
         return
 
     session.normalize()
@@ -5556,6 +5614,10 @@ def test_channel_probe(session: Session, log: RunLog) -> None:
         ).strip() or _CHANNEL_PROBE_TARGET
 
         _channel_probe_b(session, log, mycall, target, frames, un_frame)
+        if input("Run part C (incoming connects, QtTermTCP)? [y/N] ").strip().lower() == "y":
+            _channel_probe_c(session, log, frames, target)
+        else:
+            log.result("T147", "INFO", "skipped by operator")
     finally:
         for cmd, value in {**originals, **vhf_originals}.items():
             if value is None:
