@@ -20,6 +20,15 @@ tries to execute it, expecting it to describe current work.
 
 ## Priority 1 — Next implementation sprint
 
+### Enter Host Mode stays greyed out after Leave Host Mode — ✅ DONE (P68, 2026-09-29)
+
+`SerialManager.exit_host_mode()` cleared `_verbose_ready` and never set
+it again, so `is_verbose_mode` (and TNC -> Enter Host Mode) stayed False
+until a reconnect (since P49, seen in T144). Fixed: `_verbose_ready` is
+set after the COMMAND-char resync (both outcomes), `_verbose_confirmed`
+only if `cmd:` was seen, new signal `verbose_resumed` refreshes the TNC
+menu gating. Hardware check: T145 (open).
+
 ### `maildrop/maildrop.py`'s mnemonic table is unverified and CAN be sent — open (P24.1, 2026-09-22)
 
 `MailDropController`'s module docstring lists a "MailDrop Host Mode

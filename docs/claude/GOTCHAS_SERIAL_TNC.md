@@ -828,12 +828,13 @@ Grows over time.
   text entry is open) -> `B` -> Ctrl-C+CR -> confirm `cmd:` -> re-enter
   Host Mode; ending in `FAILED` (never a silently-claimed success — the
   lesson from P15) if `cmd:` or Host Mode re-entry cannot be confirmed.
-  `is_verbose_mode` is **not** trustworthy right after
-  `exit_host_mode()` — it stays `False` until the next full `init_tnc()`
-  wakeup, since `exit_host_mode()` itself sets `_verbose_ready = False`
-  and nothing else sets it back to `True`; use an ACTIVE Ctrl-C+CR probe
-  (matching `tools/hw_check.py`'s own `normalize()`) to confirm `cmd:`
-  instead of polling that property. `message_store.py`'s schema did
+  `_verbose_ready` is set by init **and** by `exit_host_mode()` (P68:
+  after its COMMAND-char resync, both outcomes; `_verbose_confirmed`
+  only if `cmd:` was seen), which then emits `verbose_resumed` —
+  **not** `verbose_mode_ready` (that one triggers banner collection and
+  the parameter upload). Still confirm `cmd:` with an ACTIVE Ctrl-C+CR
+  probe (matching `tools/hw_check.py`'s own `normalize()`) rather than
+  trusting the property alone. `message_store.py`'s schema did
   **not** cover what a real archive needs (own durable ID ✓, read status
   ✓, sender ✓ — but no TNC message number, no `@ BBS`, no P/T/B type,
   and `received_at` was the LOCAL receipt timestamp, not the TNC's own
