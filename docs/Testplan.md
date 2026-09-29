@@ -2988,6 +2988,28 @@ exit/write-order/CONVERSE-only-if-was-converse) is covered by
 
 ---
 
+### T145 — Enter Host Mode enabled again after Leave Host Mode (P68)
+
+Closes T144's own side observation (2026-09-29, Device B): after
+`TNC -> Leave Host Mode` the `Enter Host Mode` action (Ctrl+H) stayed
+greyed out until a reconnect. App-level, Device B.
+
+Steps (`docs/P68_Enter_Host_Mode_After_Exit_Spec.md`):
+1. Connect verbose, Ctrl+H (Host Mode entered).
+2. `TNC -> Leave Host Mode` → **expected:** verbose terminal usable.
+3. Ctrl+H again, **without** reconnecting → **expected:** the menu
+   entry is enabled and the second entry into Host Mode succeeds.
+
+| Device | Step 3 (second entry without reconnect) |
+|---|---|
+| B | ⬜ |
+
+**Status:** ⬜ OPEN — needs a hardware session on Device B; software-
+verified by `test_serial_manager.py::TestExitHostModeVerboseResumed` and
+`test_main_window_connection.py::TestEnterHostModeEnabledAfterLeaving`.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
