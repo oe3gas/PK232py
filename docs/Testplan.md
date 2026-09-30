@@ -3018,12 +3018,13 @@ VHF 1200 Bd, Direwolf on the FT-818 decoding ALL frames, TinyBox
 
 | Step | Question | Expected / measured |
 |---|---|---|
-| B.1 | Data on free channel 3 (`$23`), all channels free → UI frame? | ⬜ |
-| B.2 | Data on free channel 9 (`$29`), all channels free → UI frame? | ⬜ |
-| B.3 | Same on ch3 while ch0 is connected to the TinyBox; CR on `$20` teaches Direwolf's I-frame notation | ⬜ |
+| B.1 | Data on free channel 3 (`$23`), all channels free → UI frame? | ✅ PASS — UI frame |
+| B.2 | Data on free channel 9 (`$29`), all channels free → UI frame? | ✅ PASS — UI frame |
+| B.3 | Same on ch3 while ch0 is connected to the TinyBox; CR on `$20` teaches Direwolf's I-frame notation | ✅ PASS — UI frame; ch0 connection kept running (`\r` → prompt on `$30`) |
 
-**Status:** ⬜ OPEN — hardware session on Device B. Software: dry-run and
-evaluation covered by `test_hw_check_channel_probe.py`.
+**Status:** ✅ PASS (Device B, Release 01.AUG.91, 30.09.2026, log
+`20260930_210627_channel_probe.log`). Findings F1/F2 in
+`docs/claude/GOTCHAS_PACKET.md`.
 
 ---
 
@@ -3035,12 +3036,32 @@ from before the instruction until ENTER on PC 1 (max 120 s). `USERS` is logged f
 
 | Phase | Question | incoming_channel / accepted |
 |---|---|---|
-| C.1 | All free, USERS as found: which channel? | ⬜ |
-| C.2 | ch0 occupied, second caller (`OE3GAS-3`): accepted? channel? QtTermTCP shows? | ⬜ |
-| C.3 | Same as C.1/C.2 with `USERS 10` | ⬜ |
+| C.1 | All free, USERS as found (1): which channel? | ℹ️ channel 0 (`$50 CONNECTED to OE3GAS-2`) |
+| C.2 | ch0 occupied, second caller (`OE3GAS-3`): accepted? channel? QtTermTCP shows? | ℹ️ rejected (`DM` on the air); host got `$50 "Connect request: OE3GAS-3"` |
+| C.3 | Same as C.1/C.2 with `USERS 10` | ℹ️ first caller channel 0, second caller channel 1 |
 
-**Status:** ⬜ OPEN — hardware session on Device B. Findings feed P70
-(channel bar MON · 0–9).
+**Status:** ℹ️ INFO (measurement, no pass/fail) — Device B, 30.09.2026, log
+`20260930_212141_channel_probe.log`. F3/F4 feed P70 (channel bar MON · 0–9).
+
+---
+
+### T148 — Channel bar MON · 0–9 in the application (P70)
+
+Device B, App in Host Mode, VHF Packet. Two PCs: PC 1 = app + PK-232,
+PC 2 = Direwolf, QtTermTCP (`OE3GAS-2`, `OE3GAS-3`), TinyBox `OE3GAS-1`.
+USERS 10 (new default) unless step 3b.
+
+| Step | Where | Action | Expected | Result |
+|---|---|---|---|---|
+| 1 | PC 2 | QtTermTCP `OE3GAS-2` calls `OE3GAS` | chip 0 connected, partner OE3GAS-2 | ⬜ |
+| 2 | PC 1 | MON chip, send an unproto text | MON shows `[via ch1]`; PC 2 Direwolf shows a UI frame | ⬜ |
+| 3 | PC 2 | QtTermTCP `OE3GAS-3` calls | chip 1 connected, partner OE3GAS-3; chip 0 still OE3GAS-2 | ⬜ |
+| 3b | both | optional: USERS 1 in the parameters, upload again, disconnect both, call with OE3GAS-2 then OE3GAS-3 | "Incoming call from OE3GAS-3 rejected by the TNC (USERS 1)"; afterwards USERS back to 10 | ⬜ |
+| 4 | PC 1 | chip 0 → Disconnect | briefly "disconnecting", then free | ⬜ |
+| 5 | PC 1 | verbose, `CONNECT OE3GAS-1`, Ctrl+H | chip 0 connected with OE3GAS-1 (the open point of T144 step 3) | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session on Device B. Software covered by
+`test_packet_screen.py`, `test_link_table.py`, `test_main_window_packet.py`.
 
 ---
 
