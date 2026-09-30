@@ -58,7 +58,7 @@ from .screens.navtex_screen  import NavtexScreen
 from .screens.signal_screen  import SignalScreen
 from .screens.fax_screen     import FaxScreen
 from .screens.pactor_screen  import PactorScreen
-from .screens.packet_screen  import HFPacketScreen, VHFPacketScreen
+from .screens.packet_screen  import HFPacketScreen, VHFPacketScreen, MON_VIEW
 from .screens.tx_controller import TxController
 from .screens.screen_focus_controller import is_keyboard_input_widget
 
@@ -213,6 +213,9 @@ class MainWindow(QMainWindow):
         # When APRS toggle fires, _packet_rx_redraw() re-renders all entries.
         self._packet_raw_frames: list[tuple[str, str]] = []
         self._packet_aprs_active: bool = False
+        # P70: the UNPROTO path last sent with a UN frame (None = unknown),
+        # so a MON-view transmission only re-sends it when the via field changed.
+        self._unproto_path_sent: Optional[str] = None
         # Packet Capture (P2.4) — one file at a time, independent of which
         # channel or ALL/CH view is on screen; every channel's traffic goes
         # into it while it is open.
@@ -937,12 +940,11 @@ class MainWindow(QMainWindow):
             if not mycall or mycall.upper() == "NOCALL":
                 mycall = ""
             screen.set_mycall(mycall)
-            # Fresh channel state on every (re)activation - otherwise a
-            # CONNECTED/CALLING chip from a previous session (HF<->VHF
-            # switch, or a link that never got a DISCONNECTED) would sit
-            # there with no frame left to clear it.
-            if hasattr(screen, "reset_channels"):
-                screen.reset_channels()
+            # P70 (P67 addendum): the screen sets no channel state of its
+            # own on (re)activation - every chip is repainted from the
+            # LinkTable, the one source of truth (a carried-over channel
+            # stays shown, a stale widget state is corrected).
+            self._repaint_chips_from_link_table(screen)
             # USERS (P11.5) — advisory tooltip only, no lock/greying. Both
             # HF and VHF Packet share hf_packet config (no separate
             # VHFPacketConfig, see the "Config: add USERS..." commit).
@@ -1577,7 +1579,8 @@ class MainWindow(QMainWindow):
         if screen is None or not hasattr(screen, "channel_bar"):
             return None
         ch = screen.channel_bar.current()
-        if 0 <= ch < len(self._link_table.channels) and self._link_table.channels[ch].state == "connected":
+        if (isinstance(ch, int) and 0 <= ch < len(self._link_table.channels)
+                and self._link_table.channels[ch].state == "connected"):
             return ch
         return None
 
@@ -1916,6 +1919,7 @@ class MainWindow(QMainWindow):
             else:
                 self._log_monitor(f"[LINK] {msg}")
                 self._route_packet_link_message(screen, channel, msg)
+                self._report_rejected_call(screen, channel, msg)
                 # P67: feed the LinkTable from this SAME raw $5x text -
                 # never a second, independently-derived classification
                 # (the old on_channel_state consumer, _make_channel_
@@ -1999,7 +2003,7 @@ class MainWindow(QMainWindow):
             # link message regardless of which channel it came from. With
             # multiple channels this is wrong — a CONNECTED on channel 4
             # would lock Unproto even while the operator is looking at a
-            # different chip (e.g. the UI channel). Gating must only react
+            # different chip (e.g. the MON view). Gating must only react
             # to a message about the visible channel; _set_status() is an
             # EVENT display, not a channel display, so it keeps showing
             # every message regardless (see the trailing
@@ -2034,7 +2038,7 @@ class MainWindow(QMainWindow):
 
         Channel 15 ($5F) is not channel-scoped at all (e.g. the generic
         data-ack XX\\x00) — there is nowhere else for it to belong, so it
-        always goes to the UI channel, regardless of the mirror setting
+        always goes to the MON view, regardless of the mirror setting
         below. Every other channel (0-9) goes through
         screen.append_channel_data(), which writes to both that
         channel's own RX document and the merged ALL document (P50 Teil
@@ -2046,27 +2050,72 @@ class MainWindow(QMainWindow):
 
         P47.2: if HFPacketConfig.show_link_messages_in_ui_channel is on,
         every message about a QSO channel (1-9) is ALSO mirrored into the
-        UI channel's own document, tagged "[chN]" in the text itself (not
+        MON view's own document, tagged "[chN]" in the text itself (not
         relying on the ALL-view "n|" tag, which names the channel being
         WRITTEN to — here that is always 0 — not the channel the event is
-        ABOUT). This second write is visible whenever the UI channel
+        ABOUT). This second write is visible whenever the MON view
         itself is the one being viewed (CH view on chip UI, or ALL view
-        anywhere) — the mirror is for whoever is watching the UI channel.
+        anywhere) — the mirror is for whoever is watching the MON view.
         """
-        from .screens.packet_screen import UI_CHANNEL
-
         text = f"*** {msg} ***"
         if channel == 15:
-            screen.append_channel_data(UI_CHANNEL, text, color=_SYSTEM_MSG_COLOR)
+            screen.append_channel_data(MON_VIEW, text, color=_SYSTEM_MSG_COLOR)
             return
 
         screen.append_channel_data(channel, text, color=_SYSTEM_MSG_COLOR)
 
-        if (channel != UI_CHANNEL
-                and self._app_config.hf_packet.show_link_messages_in_ui_channel):
+        # Config key name unchanged (hard rule 10); the target is the MON
+        # view since P70.
+        if self._app_config.hf_packet.show_link_messages_in_ui_channel:
             screen.append_channel_data(
-                UI_CHANNEL, f"[ch{channel}] {text}", color=_SYSTEM_MSG_COLOR
+                MON_VIEW, f"[ch{channel}] {text}", color=_SYSTEM_MSG_COLOR
             )
+
+    def _report_rejected_call(self, screen, channel: int, msg: str) -> None:
+        """P70 E: '$5n Connect request: <CALL>' is what the TNC sends for an
+        incoming call it then rejects on the air (DM) - Device B, T147 F4,
+        USERS 1. An accepted call shows only 'CONNECTED to <CALL>' (F3),
+        so this text alone means "rejected". It changes no chip/table state
+        (LinkTable ignores it); the operator gets one line in the MON view
+        and the status bar. <n> is the USERS value actually configured
+        (HFPacketConfig.users - shared by HF and VHF Packet).
+        """
+        if channel == 15 or "connect request" not in msg.lower():
+            return
+        call = extract_partner(msg)
+        if not call:
+            return
+        note = (
+            f"Incoming call from {call} rejected by the TNC "
+            f"(USERS {self._app_config.hf_packet.users})"
+        )
+        if hasattr(screen, "append_channel_data"):
+            screen.append_channel_data(MON_VIEW, f"*** {note} ***", color=_SYSTEM_MSG_COLOR)
+        self.statusBar().showMessage(note, 8000)
+
+    def _apply_link_to_chips(self, channel: int, link) -> None:
+        """The ONE place ChannelBar.set_channel_state() is called, for BOTH
+        Packet screens (P67 Teil C.1; only one is visible at a time, but
+        keeping both in sync means switching HF<->VHF never shows a stale
+        chip). link.state's string values match ChannelBar's own CH_*
+        constants exactly (comm/link_table.py's STATE_* naming, chosen for
+        this) - passed straight through, no translation table."""
+        for pkt_name in ("HF Packet", "VHF Packet"):
+            screen = self._opmode_screens.get(pkt_name)
+            if screen is not None and hasattr(screen, "channel_bar"):
+                screen.channel_bar.set_channel_state(channel, link.state, link.partner)
+
+    def _repaint_chips_from_link_table(self, screen) -> None:
+        """Redraw every chip of *screen* from the LinkTable (P70, P67
+        addendum) - used on mode activation instead of resetting state
+        from the screen side. Goes through _apply_link_to_chips(), so
+        set_channel_state() still has exactly one caller."""
+        if not hasattr(screen, "channel_bar"):
+            return
+        for channel, link in enumerate(self._link_table.channels):
+            self._apply_link_to_chips(channel, link)
+        if hasattr(screen, "mheard_panel"):
+            screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
 
     def _on_link_table_change(self, channel: int, link) -> None:
         """The ONLY place ChannelBar.set_channel_state() is called
@@ -2078,10 +2127,7 @@ class MainWindow(QMainWindow):
         exactly (comm/link_table.py's own STATE_* naming, chosen for
         this) - passed straight through, no translation table needed.
         """
-        for pkt_name in ("HF Packet", "VHF Packet"):
-            screen = self._opmode_screens.get(pkt_name)
-            if screen is not None and hasattr(screen, "channel_bar"):
-                screen.channel_bar.set_channel_state(channel, link.state, link.partner)
+        self._apply_link_to_chips(channel, link)
         # P67, Teil C.2.3: after a reconciliation round confirms a
         # channel connected, make it the visible one - but only when
         # there is exactly ONE connected channel (with more than one,
@@ -3331,37 +3377,42 @@ class MainWindow(QMainWindow):
         self._link_table.on_local_disconnect_request(channel)
         self._update_maildrop_gate_ui()
 
-    def _on_packet_unproto(self, checked: bool) -> None:
-        """Unproto button toggled — set TNC UNPROTO path.
+    def _send_unproto_path(self, screen, force: bool = False) -> None:
+        """Send the UN frame for the via field's path (mnemonic UN), unless
+        exactly this path was already sent (*force* re-sends)."""
+        unproto_field = getattr(screen, "le_unproto", None)
+        path = unproto_field.text().strip().upper() if unproto_field else "CQ"
+        if not path:
+            path = "CQ"
+        if not force and path == self._unproto_path_sent:
+            return
+        from pk232py.comm.frame import build_command
+        frame = build_command(b'UN', path.encode('ascii'))
+        self._serial.send_command(frame[2:4], frame[4:-1])
+        self._unproto_path_sent = path
+        self._log_monitor(f"[PACKET] UNPROTO path \u2192 {path}")
 
-        checked=True:  switch to channel 0 (P10 — Unproto IS channel 0, the
-            UI/monitor channel; there is no separate $2F unproto frame) and
-            send UN {path}. Switching channel_changed's fires
-            _on_packet_channel_changed(0), which is what actually disables
-            Connect/Disconnect (T39) — the old direct setEnabled() calls
-            here are gone, since that is now the channel selection's job,
-            not this button's.
-        checked=False: no automatic jump to another channel — a silent
-            channel switch would swap out the visible TX text (P9) without
-            the operator clicking anything. They pick a QSO chip themselves;
-            Connect/Disconnect re-enable then, via _on_packet_channel_changed.
+    def _on_packet_unproto(self, checked: bool) -> None:
+        """Unproto button toggled - go to the MON view and set the
+        UNPROTO path.
+
+        checked=True:  select the MON chip (P70 - the monitor/unproto
+            view, not a TNC channel; before P70 this jumped to channel 0)
+            and send UN {path}. Text then typed in the MON view goes out
+            via the lowest free channel (_on_packet_tx_enter()).
+        checked=False: no automatic jump to another chip - a silent
+            switch would swap out the visible TX text (P9) without the
+            operator clicking anything.
         """
         screen = self._opmode_stack.currentWidget()
         if checked and hasattr(screen, "channel_bar"):
-            screen.channel_bar.set_current(0)
+            screen.channel_bar.set_current(MON_VIEW)
 
         if not self._serial.is_connected or not self._serial.is_host_mode:
             return
         if not checked:
             return
-        unproto_field = getattr(screen, "le_unproto", None)
-        path = unproto_field.text().strip().upper() if unproto_field else "CQ"
-        if not path:
-            path = "CQ"
-        from pk232py.comm.frame import build_command
-        frame = build_command(b'UN', path.encode('ascii'))
-        self._serial.send_command(frame[2:4], frame[4:-1])
-        self._log_monitor(f"[PACKET] UNPROTO path \u2192 {path}")
+        self._send_unproto_path(screen, force=True)
 
     def _maildrop_gate(self) -> tuple:
         """P39: the ONE place that decides whether the MailDrop session
@@ -4303,7 +4354,7 @@ class MainWindow(QMainWindow):
 
         Called when the APRS toggle changes so the user sees all frames
         in the new mode (raw ↔ decoded). P50 Teil B: with one RX document
-        per channel, this now only clears and rebuilds the UI channel's
+        per channel, this now only clears and rebuilds the MON view's
         own document (screen.clear_monitor_channel()) via
         append_monitor_data_local_only() — never the merged ALL document,
         which would either duplicate every historical monitor line or
@@ -4366,24 +4417,19 @@ class MainWindow(QMainWindow):
         if hasattr(screen, "mheard_panel") and hasattr(screen, "channel_bar"):
             screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
 
-        from .screens.packet_screen import UI_CHANNEL
         if hasattr(screen, "set_link_state") and hasattr(screen, "channel_bar"):
-            # set_link_state() stays the sole authority on Unproto
-            # enablement (T39 — P42 dropped its former Connect/Disconnect
-            # button role, see set_link_state()'s own docstring). Channel 0
-            # can never itself be calling/connected (P10.1's
-            # set_channel_state() refuses that), so state(UI_CHANNEL) is
-            # always "free" and this alone re-enables Unproto whenever the
-            # UI channel becomes current — even if it was left disabled by
-            # a different, busy channel a moment ago.
+            # P70: set_link_state() no longer locks Unproto (a connection
+            # never does, Unproto takes the lowest FREE channel); it is
+            # still called so its own docstring stays the one place that
+            # says so.
             screen.set_link_state(screen.channel_bar.state(channel))
-            # T39, rebased onto the channel model: moving to a QSO channel
-            # (never channel 0 itself) while Unproto is still on means the
-            # operator wants that channel for a connection, so turn Unproto
-            # off. blockSignals avoids re-entering _on_packet_unproto()
-            # (which would otherwise jump back to channel 0); only the
-            # visual reset is replayed directly, as the spec requires.
-            if (channel != UI_CHANNEL and hasattr(screen, "btn_unproto")
+            # Leaving the MON view while the Unproto button is still on
+            # means the operator moved on, so show the button off again -
+            # purely a display sync, not a lock. blockSignals avoids
+            # re-entering _on_packet_unproto() (which would otherwise jump
+            # straight back to the MON view); only the visual reset is
+            # replayed directly.
+            if (channel != MON_VIEW and hasattr(screen, "btn_unproto")
                     and screen.btn_unproto.isChecked()):
                 screen.btn_unproto.blockSignals(True)
                 screen.btn_unproto.setChecked(False)
@@ -4487,16 +4533,19 @@ class MainWindow(QMainWindow):
 
         channel = screen.current_channel() if hasattr(screen, "current_channel") else 1
 
-        # Only send when connected on this channel or in unproto mode (P42:
-        # channel_bar state replaces the old btn_connect.isChecked() check).
-        connected = (hasattr(screen, "channel_bar")
-                     and screen.channel_bar.state(channel) == "connected")
-        unproto   = (hasattr(screen, 'btn_unproto')
-                     and screen.btn_unproto.isChecked())
-        if not connected and not unproto:
+        text = screen.tx_text() if hasattr(screen, "tx_text") else screen.tx_input.toPlainText()
+
+        if channel == MON_VIEW:
+            self._send_unproto_from_mon(screen, text)
             return
 
-        text = screen.tx_text() if hasattr(screen, "tx_text") else screen.tx_input.toPlainText()
+        # A TNC channel: only send when it is connected (P42: channel_bar
+        # state replaces the old btn_connect.isChecked() check).
+        connected = (hasattr(screen, "channel_bar")
+                     and screen.channel_bar.state(channel) == "connected")
+        if not connected:
+            return
+
         if not text.strip():
             return
 
@@ -4532,6 +4581,36 @@ class MainWindow(QMainWindow):
             screen.clear_tx(channel)
         else:
             screen.tx_input.clear()
+
+    def _send_unproto_from_mon(self, screen, text: str) -> None:
+        """P70 D: text typed in the MON view goes out as an UNPROTO UI
+        frame - a data frame ($2n) on the LOWEST FREE channel per the
+        LinkTable (Device B, T146 F1/F2: a free channel sends UI even
+        while another is connected), never on a connected one. With no
+        free channel nothing is sent, the text stays in the TX window and
+        a notice goes to the MON view. The MON view shows the channel
+        used ('[via chN]').
+        """
+        if not text.strip():
+            return
+        free = self._link_table.lowest_free_channel()
+        if free is None:
+            screen.append_channel_data(
+                MON_VIEW,
+                "*** all 10 channels are connected - no free channel for unproto ***",
+                color=_SYSTEM_MSG_COLOR,
+            )
+            return
+        self._send_unproto_path(screen)
+        data = (text + '\r').encode('ascii', errors='replace')
+        self._serial.send_data(data, channel=free)
+        self._packet_capture_write(f"[MON TX ch{free}] {text.rstrip()}")
+        self._log_monitor(f"[PKT TX unproto via ch{free}] {text.rstrip()!r}")
+        screen.append_channel_data(
+            MON_VIEW, f"> {text.rstrip()}  [via ch{free}]",
+            color=self._semantic_colors['rx_echo'],
+        )
+        screen.clear_tx(MON_VIEW)
 
     def _on_mode_link_message(self, msg: str) -> None:
         """Display link state messages in RX panel."""
@@ -5238,8 +5317,8 @@ class MainWindow(QMainWindow):
             # (M2). Responses arrive asynchronously via HFPacketMode.
             # on_link_status() -> _on_mode_link_status() -> LinkTable.
             # on_link_status() (already wired in _wire_mode_callbacks()).
-            # Channel 0 last is not needed - it has no meaning in Host
-            # Mode (P10, UI_CHANNEL).
+            # Channel 0 is queried like every other channel (P70: it is a
+            # regular TNC channel; a verbose-built connection sits on it, M3).
             #
             # target_mode_name, not self._modes.current_mode_name, is
             # checked here - set_mode()'s own activation is ASYNC
@@ -5257,6 +5336,7 @@ class MainWindow(QMainWindow):
         else:
             self._sb_mode.setText("Mode: VERBOSE")
             self._set_mode_indicator("verbose")
+            self._unproto_path_sent = None   # P70: re-send UN after the next Host Mode entry
             # P67, Teil C.3: reset_channels() removed here - the
             # LinkTable is the app's own parallel record of channel
             # state and survives a Host Mode exit on purpose (that is
