@@ -154,3 +154,170 @@ class TestEveryTransmissionIsGated:
         log = hw_check.RunLog(None)
         assert hw_check._probe_connect(session, log, "OE3GAS-1", 0) is False
         assert sent == []
+
+
+# ---------------------------------------------------------------------------
+# P69a - operator guidance, part selection, paste split, ensure_vhf_1200
+# ---------------------------------------------------------------------------
+
+import re  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+def _headers(out: str) -> list[tuple[int, int]]:
+    return [(int(n), int(t)) for n, t in re.findall(r"^STEP (\d+) of (\d+) ", out, re.M)]
+
+
+class TestOperatorStep:
+    def _run(self, where=None):
+        step = hw_check.ProbeStep(
+            "T146 B.3 demo", where or hw_check.WHERE_PC2, 2,
+            ["Look at the Direwolf window.", "Nothing to type there."],
+            "go back to PC 1 and press ENTER here.",
+        )
+        return hw_check.StepRun([step]), step
+
+    def test_output_has_number_where_do_and_then(self, capsys):
+        run, s = self._run()
+        hw_check.operator_step(run, s.title, s.where, s.do, s.then)
+        out = capsys.readouterr().out
+        assert "STEP 1 of 1   T146 B.3 demo   (about 2 minutes)" in out
+        assert out.count("WHERE: ") == 1
+        assert f"WHERE: {hw_check.WHERE_PC2}" in out
+        assert "  1. Look at the Direwolf window." in out
+        assert "  2. Nothing to type there." in out
+        assert "THEN: go back to PC 1 and press ENTER here." in out
+
+    def test_only_the_two_fixed_where_texts_are_accepted(self):
+        run, s = self._run()
+        with pytest.raises(ValueError):
+            hw_check.operator_step(run, s.title, "PC 3 - somewhere", s.do, s.then)
+
+    def test_step_beyond_the_plan_is_an_error(self):
+        run, s = self._run()
+        hw_check.operator_step(run, s.title, s.where, s.do, s.then)
+        with pytest.raises(hw_check.HWCheckError):
+            hw_check.operator_step(run, s.title, s.where, s.do, s.then)
+
+    def test_step_title_is_logged(self):
+        log = hw_check.RunLog(None)
+        step = hw_check.ProbeStep("T1 x", hw_check.WHERE_PC1, 1, ["a"], "b")
+        run = hw_check.StepRun([step], log)
+        hw_check.operator_step(run, step.title, step.where, step.do, step.then)
+        assert run.n == 1 and run.current is step
+
+
+class TestPartSelection:
+    @pytest.mark.parametrize("part,total", [("B", 4), ("C", 11), ("all", 15)])
+    def test_n_matches_printed_steps(self, part, total, capsys):
+        session, log = _dry_run_session()
+        hw_check.test_channel_probe(session, log, part)
+        heads = _headers(capsys.readouterr().out)
+        assert [n for n, _ in heads] == list(range(1, total + 1))
+        assert {t for _, t in heads} == {total}
+
+    def test_part_b_has_no_part_c_step(self, capsys):
+        session, log = _dry_run_session()
+        hw_check.test_channel_probe(session, log, "B")
+        out = capsys.readouterr().out
+        assert not re.search(r"^STEP \d+ of \d+ +T147", out, re.M)
+
+    def test_part_c_has_no_part_b_step(self, capsys):
+        session, log = _dry_run_session()
+        hw_check.test_channel_probe(session, log, "C")
+        assert not re.search(r"^STEP \d+ of \d+ +T146", capsys.readouterr().out, re.M)
+
+    def test_every_dry_run_step_has_where_do_then(self, capsys):
+        session, log = _dry_run_session()
+        hw_check.test_channel_probe(session, log, "all")
+        out = capsys.readouterr().out
+        assert out.count("WHERE: ") == out.count("DO:") == out.count("THEN: ") == 15
+
+
+class TestSplitPasteByMarker:
+    M = {"B.1": "P69 B1 ch3 10:00:00", "B.2": "P69 B2 ch9 10:00:05",
+         "B.3": "P69 B3 ch3 10:00:10"}
+
+    PASTE = (
+        "noise before\n\n"
+        "Fm OE3GAS To P69TST <UI pid=F0>\n[0.4] OE3GAS>P69TST:P69 B1 ch3 10:00:00\n\n"
+        "Fm OE3GAS To P69TST <UI pid=F0>\n[0.4] OE3GAS>P69TST:P69 B2 ch9 10:00:05\n\n"
+        "Fm OE3GAS To P69TST <UI pid=F0>\n[0.4] OE3GAS>P69TST:P69 B3 ch3 10:00:10\n\n"
+        "Fm OE3GAS To OE3GAS-1 <I S0 R0 pid=F0>\n[0.4] OE3GAS>OE3GAS-1:\n"
+    )
+
+    def test_segments_are_assigned_to_their_steps(self):
+        seg, missing = hw_check.split_paste_by_marker(self.PASTE, self.M)
+        assert missing == []
+        assert self.M["B.1"] in seg["B.1"] and self.M["B.2"] not in seg["B.1"]
+        assert self.M["B.2"] in seg["B.2"] and self.M["B.3"] not in seg["B.2"]
+        assert self.M["B.3"] in seg["B.3"] and "<I S0" in seg["B.3"]
+        assert "noise before" not in seg["B.1"]
+
+    def test_missing_marker_is_reported(self):
+        seg, missing = hw_check.split_paste_by_marker(
+            self.PASTE.replace(self.M["B.2"], "other"), self.M)
+        assert missing == ["B.2"] and "B.2" not in seg
+        assert self.M["B.1"] in seg["B.1"]
+
+
+class TestEnsureVhf1200Prompt:
+    def _call(self, monkeypatch, answer):
+        monkeypatch.setattr("builtins.input", lambda prompt="": answer)
+        sets = []
+        session = SimpleNamespace(set_verbose=lambda c, v: sets.append((c, v)))
+        log = hw_check.RunLog(None)
+        ok = hw_check.ensure_vhf_1200(
+            session, log, "T146", {"VHF": "OFF", "HBAUD": "300"})
+        return ok, sets, log
+
+    def test_y_sets_vhf_and_hbaud(self, monkeypatch):
+        ok, sets, _ = self._call(monkeypatch, "y")
+        assert ok is True and sets == [("VHF", "ON"), ("HBAUD", "1200")]
+
+    def test_n_aborts_with_info(self, monkeypatch):
+        ok, sets, log = self._call(monkeypatch, "n")
+        assert ok is False and sets == []
+        assert log.findings[-1][:2] == ("T146", "INFO")
+
+    def test_already_1200_does_not_ask(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda p="": pytest.fail("asked"))
+        session = SimpleNamespace(set_verbose=lambda c, v: pytest.fail("set"))
+        assert hw_check.ensure_vhf_1200(
+            session, hw_check.RunLog(None), "T", {"VHF": "ON", "HBAUD": "1200"})
+
+
+class TestWaitForEnter:
+    def test_enter_ends_the_wait_and_pumps_meanwhile(self):
+        pumped, keys = [], iter([False, False, True])
+        ok = hw_check.wait_for_enter(
+            lambda s: pumped.append(s), 120.0,
+            key_ready=lambda: next(keys), read_line=lambda: "",
+        )
+        assert ok is True and len(pumped) == 2
+
+    def test_times_out_after_max_seconds(self, capsys):
+        now = [0.0]
+
+        def pump(s):
+            now[0] += s
+
+        ok = hw_check.wait_for_enter(
+            pump, 1.0, key_ready=lambda: False, read_line=lambda: "",
+            clock=lambda: now[0],
+        )
+        assert ok is False
+        assert "continuing by itself" in capsys.readouterr().out
+
+
+class TestChecklist:
+    def test_part_b_has_no_qtermtcp_item(self):
+        items = hw_check.channel_probe_checklist("B", "OE3GAS-1")
+        assert not any("QtTermTCP" in i for i in items)
+        assert any("TinyBox OE3GAS-1" in i for i in items)
+
+    def test_part_c_needs_both_sessions_disconnected(self):
+        items = hw_check.channel_probe_checklist("C", "OE3GAS-1")
+        assert any("OE3GAS-2" in i and "OE3GAS-3" in i and "disconnected" in i
+                   for i in items)
