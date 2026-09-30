@@ -5189,6 +5189,80 @@ _CHANNEL_PROBE_PATH = "P69TST"
 _CHANNEL_PROBE_TARGET = "OE3GAS-1"   # TinyBox, the same counterpart as T141/T142
 
 
+# ---------------------------------------------------------------------------
+# P69a Teil A -- operator_step(): the ONE place channel_probe tells the
+# operator what to do, and on WHICH of the two PCs (PC 1 = this program and
+# the PK-232, PC 2 = Direwolf / TinyBox / QtTermTCP; docs/DEVICES.md).
+# ---------------------------------------------------------------------------
+
+WHERE_PC1 = "PC 1  - this program / PK-232"
+WHERE_PC2 = "PC 2  - Direwolf / TinyBox / QtTermTCP"
+_OPERATOR_STEP_RULE = "=" * 62
+
+
+@dataclasses.dataclass(frozen=True)
+class ProbeStep:
+    """One planned operator step. The whole plan exists BEFORE the first
+    transmission, so 'STEP n of N' is counted, not estimated."""
+    title: str
+    where: str
+    minutes: int
+    do: list
+    then: str
+
+
+class StepRun:
+    """Counts the operator steps of one run against its planned list."""
+
+    def __init__(self, steps: list, log: Optional["RunLog"] = None):
+        self.steps = list(steps)
+        self.log = log
+        self.n = 0
+
+    @property
+    def total(self) -> int:
+        return len(self.steps)
+
+    @property
+    def current(self) -> Optional[ProbeStep]:
+        return self.steps[self.n - 1] if self.n else None
+
+    def advance(self, title: str) -> ProbeStep:
+        """Move to the next planned step; it must be the one named *title*
+        (a plan and a run that drift apart would show a wrong 'of N')."""
+        if self.n >= self.total:
+            raise HWCheckError(f"operator step {title!r} is not in the plan")
+        step = self.steps[self.n]
+        if step.title != title:
+            raise HWCheckError(
+                f"operator step {title!r} does not match the plan ({step.title!r})"
+            )
+        self.n += 1
+        return step
+
+
+def operator_step(
+    run: "StepRun", title: str, where: str, do: list, then: str,
+) -> None:
+    """Print one operator instruction block (always the same shape) and
+    log its number and title. *where* is exactly one of WHERE_PC1/WHERE_PC2."""
+    if where not in (WHERE_PC1, WHERE_PC2):
+        raise ValueError(f"where must be WHERE_PC1 or WHERE_PC2, got {where!r}")
+    step = run.advance(title)
+    print()
+    print(_OPERATOR_STEP_RULE)
+    unit = "minute" if step.minutes == 1 else "minutes"
+    print(f"STEP {run.n} of {run.total}   {title}   (about {step.minutes} {unit})")
+    print(f"WHERE: {where}")
+    print("DO:")
+    for i, action in enumerate(do, 1):
+        print(f"  {i}. {action}")
+    print(f"THEN: {then}")
+    print(_OPERATOR_STEP_RULE)
+    if run.log is not None:
+        run.log.line(f"STEP {run.n} of {run.total}: {title} [{where.split()[0]} {where.split()[1]}]")
+
+
 def _split_blocks(pasted: str) -> list[str]:
     """Direwolf separates decoded packets by blank lines - one block is
     one packet (its header line plus the detail lines around it)."""
