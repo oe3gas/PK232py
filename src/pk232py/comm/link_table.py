@@ -29,6 +29,12 @@ STATE_FREE        = "free"
 STATE_CALLING     = "calling"
 STATE_CONNECTED   = "connected"
 STATE_UNCONFIRMED = "unconfirmed"
+# P70 (T146/T147 F6): after a DI the TNC reports CO state 4 for a moment
+# (disconnect in progress) before the channel is free again.
+STATE_DISCONNECTING = "disconnecting"
+
+# CO state number (decode_link_status().state) that means "disconnecting".
+_CO_STATE_DISCONNECTING = 4
 
 
 @dataclass
@@ -90,16 +96,17 @@ class LinkTable:
     def on_host_link_message(self, channel: int, text: str) -> None:
         """A $5x link message's TEXT, already channel-attributed by its
         own CTL nibble (never by callsign - CLAUDE.md's P47 gotcha).
-        Classifies the known shapes (CONNECTED to/Connect request
-        (incoming, not yet accepted - TRM; HFPacketMode's own
-        _MSG_CONNECT_REQ rule)/DISCONNECTED/busy/Retry count exceeded)
-        - an unrecognised text leaves the channel untouched rather than
-        guessing."""
+        Classifies the known shapes (CONNECTED to/DISCONNECTED/busy/
+        Retry count exceeded) - an unrecognised text leaves the channel
+        untouched rather than guessing.
+
+        'Connect request: <call>' deliberately changes NOTHING (P70 E,
+        Device B T147 F4): with USERS too low the TNC sends it for a call
+        it then rejects on the air (DM), so it proves no link at all.
+        MainWindow reports it to the operator instead."""
         lower = text.lower()
         if "connected to" in lower and "disconnect" not in lower:
             self._set(channel, STATE_CONNECTED, extract_partner(text))
-        elif "connect request" in lower:
-            self._set(channel, STATE_CALLING, extract_partner(text))
         elif "disconnected" in lower or "busy" in lower:
             self._set(channel, STATE_FREE)
         elif "retry count exceeded" in lower:
@@ -116,6 +123,8 @@ class LinkTable:
             return
         if status.connected:
             self._set(status.channel, STATE_CONNECTED, status.partner)
+        elif status.state == _CO_STATE_DISCONNECTING:
+            self._set(status.channel, STATE_DISCONNECTING, status.partner)
         else:
             self._set(status.channel, STATE_FREE)
 
@@ -157,6 +166,15 @@ class LinkTable:
                 self.io_channel = channel
             if partner:
                 self._set(channel, STATE_CONNECTED, partner)
+
+    def lowest_free_channel(self) -> Optional[int]:
+        """The lowest channel whose state is exactly 'free' (not calling,
+        unconfirmed or disconnecting), or None if all ten are busy. The
+        channel Unproto goes out on (P70 D, T146 F1/F2)."""
+        for channel, link in enumerate(self.channels):
+            if link.state == STATE_FREE:
+                return channel
+        return None
 
     def on_local_connect_attempt(self, channel: int, callsign: str) -> None:
         """The operator just committed a callsign into a channel chip's
