@@ -99,7 +99,9 @@ class HFPacketConfig:
     check:      int = 30
     monitor:    int = 4
     resptime:   int = 0
-    users:      int = 1   # USERS — max. simultaneous AX.25 connections (1-10)
+    users:      int = 10  # USERS — max. simultaneous AX.25 connections (1-10).
+                          # Operator decision 30.09.2026 (P70 E2, T147 F3/F4): with 1 the
+                          # TNC rejects the second caller; an existing INI value is kept.
     txsmt:      int = 50
 
     # Boolean flags

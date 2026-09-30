@@ -106,7 +106,7 @@ class HFPacketParamsDialog(QDialog):
         # is ever sent for it (see ParamsUploader / UPLOAD_EXEMPT).
         self._sb_txsmt.setEnabled(False)
         self._sb_txsmt.setToolTip("Not a PK-232 command — has no effect")
-        self._sb_users    = spin(1, 10,  1);     form.addRow("USERS:",    self._sb_users)
+        self._sb_users    = spin(1, 10, 10);     form.addRow("USERS:",    self._sb_users)
         self._sb_users.setToolTip(
             "Maximum number of simultaneous AX.25 connections the TNC "
             "will accept.\nChannels above this number stay unused. "
