@@ -31,6 +31,12 @@ built, not yet run on hardware) measures what P70 needs: Unproto on
 channels other than 0, and which channel an incoming connect lands on
 (with USERS as found and USERS 10).
 
+### `operator_step()` for the other hw_check subcommands — open (P69a, 2026-09-30)
+
+`channel_probe` tells the operator what to do and on which PC through
+`operator_step()` (P69a). Use it in `link_carry`, `link_carry_host`,
+`aprs_*` and `maildrop_session` as well (own package).
+
 ### Enter Host Mode stays greyed out after Leave Host Mode — ✅ DONE (P68, 2026-09-29)
 
 `SerialManager.exit_host_mode()` cleared `_verbose_ready` and never set
