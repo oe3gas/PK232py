@@ -29,6 +29,15 @@ get a "disconnecting" state. Facts (T146/T147, Device B) and the model:
 `docs/claude/GOTCHAS_PACKET.md`. T144 step 3 (verbose connection visible
 on chip 0) is checked again by T148 step 5.
 
+### Host Mode parameters without verbose — P71 measured, P72/P73 wait (2026-09-30)
+
+Operator decision 30.09.2026: parameter changes must be set in Host Mode
+directly, never via a verbose detour. P71 (`hw_check host_params_probe`,
+built, not yet run on hardware) measures the Host mnemonics of
+`comm/host_params.py` (T151 ask/set/verbose cross-check, T152 set while
+connected). P72 (apply without verbose) waits for T151/T152; P73 (Packet
+parameters mask) follows P72.
+
 ### `operator_step()` for the other hw_check subcommands — open (P69a, 2026-09-30)
 
 `channel_probe` tells the operator what to do and on which PC through
