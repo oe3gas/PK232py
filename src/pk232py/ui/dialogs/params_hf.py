@@ -225,15 +225,15 @@ class HFPacketParamsDialog(QDialog):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self._chk_show_link_ui = QCheckBox(
-            "Show TNC link messages in the UI channel"
+            "Show TNC link messages in the MON view"
         )
         self._chk_show_link_ui.setToolTip(
             "A link message (CONNECTED, DISCONNECTED, Retry count "
             "exceeded, ...) always appears in the channel it actually "
             "happened on. Turn this on to ALSO mirror every one of them "
-            "into the UI channel (chip 0), tagged with the channel it "
+            "into the MON view (MON chip), tagged with the channel it "
             "came from, e.g. \"[ch1] *** DISCONNECTED: OE3XTC ***\" - "
-            "useful when the UI channel is the one you keep watching.\n"
+            "useful when the MON view is the one you keep watching.\n"
             "This is a display setting only; it is never sent to the TNC."
         )
         form.addRow(self._chk_show_link_ui)

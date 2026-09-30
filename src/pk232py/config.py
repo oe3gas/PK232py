@@ -145,7 +145,7 @@ class HFPacketConfig:
     # Display-only setting (P47) - never uploaded, see UPLOAD_EXEMPT in
     # test_param_dialogs_roundtrip.py. When on, every link message
     # (CONNECTED/DISCONNECTED/Retry count exceeded/...) also appears in
-    # the UI channel (chip 0), tagged with the channel it actually
+    # the MON view (MON chip, P70), tagged with the channel it actually
     # happened on, so it stays visible even while looking at a different
     # channel. Off by default.
     show_link_messages_in_ui_channel: bool = False

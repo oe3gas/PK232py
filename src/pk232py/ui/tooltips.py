@@ -93,7 +93,7 @@ TOOLTIPS: dict[str, str] = {
     # in packet_screen.py); btn_connect/btn_disconnect now belong to
     # PactorScreen alone (SCREEN_TOOLTIPS below).
     # ------------------------------------------------------------------
-    "btn_unproto":    "Unproto — transmit UI frames without a connection (broadcast).\nMutually exclusive with Connect.",
+    "btn_unproto":    "Unproto — transmit UI frames without a connection (broadcast).\nSwitches to the MON view; text typed there goes out via the lowest free channel.",
     "btn_maildrop":   "MailDrop — access the TNC built-in mailbox.\nLogs in to the MailDrop node.",
 
     "combo_hbaud":   "HBAUD — set the packet modem baud rate.\n300 Bd = HF packet (Bell 103)  |  1200 Bd = VHF packet (Bell 202)  |  2400 Bd = high-speed VHF.",
