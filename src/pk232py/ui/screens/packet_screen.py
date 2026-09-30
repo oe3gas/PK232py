@@ -922,8 +922,9 @@ class ChannelBar(QWidget):
             tip += "\ncarried over from verbose - waiting for confirmation"
         if ch >= self._user_limit:
             tip += (
-                f"\nUSERS is set to {self._user_limit} — incoming "
-                "connects on this channel will not be accepted."
+                f"\nUSERS is set to {self._user_limit}. Incoming calls take "
+                "the lowest free channel; with USERS 1 a second incoming "
+                "call was rejected (T147, device B)."
             )
         # CH_CALLING gets a trailing ellipsis (P44) - the state must be
         # readable even without colour (a screenshot, colour-blindness),

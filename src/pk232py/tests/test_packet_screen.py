@@ -239,7 +239,7 @@ class TestUserLimitTooltipOnly:
         for ch in range(1, 10):
             tip = screen.channel_bar._chips[ch].button.toolTip()
             assert "USERS is set to 1" in tip
-            assert "will not be accepted" in tip
+            assert "was rejected (T147, device B)" in tip
 
     def test_mon_chip_never_gets_the_warning_line(self):
         screen = _make_screen()

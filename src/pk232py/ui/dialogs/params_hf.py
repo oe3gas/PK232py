@@ -108,9 +108,10 @@ class HFPacketParamsDialog(QDialog):
         self._sb_txsmt.setToolTip("Not a PK-232 command — has no effect")
         self._sb_users    = spin(1, 10, 10);     form.addRow("USERS:",    self._sb_users)
         self._sb_users.setToolTip(
-            "Maximum number of simultaneous AX.25 connections the TNC "
-            "will accept.\nChannels above this number stay unused. "
-            "Default 1."
+            "Incoming calls take the lowest free channel. With USERS 1 a "
+            "second incoming call was rejected (T147, device B). Whether "
+            "USERS limits the number of calls or a channel range is not "
+            "measured."
         )
 
         # Read-only fields
