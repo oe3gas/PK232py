@@ -182,7 +182,10 @@ def _no_focus_btn(text: str, width: int = BTN_W) -> QPushButton:
 
 CHANNEL_COUNT = 10
 CHIP_MIN_W = 56
-UI_CHANNEL = 0   # P10: channel 0 is the UI/unproto/monitor channel, not a QSO
+# P70: the monitor/unproto/system-message view is NOT a TNC channel - it has
+# its own key, a str on purpose, so it can never be mistaken for (or
+# indexed as) one of the TNC channels 0-9. Channel 0 is a regular channel.
+MON_VIEW = "MON"
 
 # P56.A: there is no module-level RX font constant any more (P55.C's
 # _RX_FONT, removed) - the single source of truth for every RX
@@ -212,6 +215,9 @@ CH_CALLING     = "calling"
 CH_CONNECTED   = "connected"
 CH_FAILED      = "failed"
 CH_UNCONFIRMED = "unconfirmed"
+# P70 (T146/T147 F6): the TNC reports CO state 4 for a moment after a DI.
+# Matches comm.link_table.STATE_DISCONNECTING's string on purpose.
+CH_DISCONNECTING = "disconnecting"
 
 # Chip fill colour per state. CH_CALLING's amber is also the pulse
 # animation's low value (_PULSE_LOW) — this is just what the chip shows
@@ -231,6 +237,7 @@ _CHIP_FILL = {
     CH_CONNECTED:   "#3a9e3a",
     CH_FAILED:      "#b03a3a",
     CH_UNCONFIRMED: "#3a9e3a",
+    CH_DISCONNECTING: "#6a4a8a",
 }
 _CHIP_BORDER_CURRENT = "#ffb400"   # amber, 2px — marks the current channel
 
@@ -241,10 +248,9 @@ _PULSE_LOW           = "#8a6a1e"
 _PULSE_HIGH          = "#b08a2a"
 _PULSE_PERIOD_MS     = 1200   # 0.83 Hz — well under the 3 Hz photosensitivity limit
 _FAILED_FLASH_MS     = 1500   # how long CH_FAILED shows before reverting to CH_FREE
-# Channel 0 has no connection state a free/calling/connected fill could
-# express — it is a fixed, separate colour, always, regardless of _state[0]
-# (which set_channel_state() prevents from ever changing anyway).
-_UI_CHANNEL_FILL = "#2a6496"
+# The MON chip is no TNC channel and has no connection state a free/
+# calling/connected fill could express - a fixed, separate colour.
+_MON_CHIP_FILL = "#2a6496"
 
 # ChannelChip editor border — amber while typing, red once an Enter with an
 # invalid callsign leaves the field open for correction (P42.1).
@@ -296,8 +302,9 @@ class ChannelChip(QWidget):
                   it to free on its own; counts as free for interaction
                   (editor/context menu) in the meantime — a chip that just
                   failed is exactly where a retry is most likely.
-    Channel 0 (UI) -> no editor, no context menu entries — there is
-                  nothing to connect to there (P10).
+    MON chip (P70) -> no editor, no context menu entries — it is the
+                  monitor/unproto view, not a TNC channel; there is
+                  nothing to connect to there.
 
     ChannelBar owns the aggregate state (styling, "current" tracking,
     channel_map()); this class only owns its own button/editor stack and
@@ -305,14 +312,15 @@ class ChannelChip(QWidget):
     into `.button`/`.editor` directly rather than duplicating state here.
     """
 
-    clicked               = pyqtSignal(int)         # plain click
-    double_clicked        = pyqtSignal(int)         # double click
-    edit_requested        = pyqtSignal(int)         # "Connect…" (context menu)
-    connect_via_requested = pyqtSignal(int)         # "Connect via…"
-    disconnect_requested  = pyqtSignal(int)         # "Disconnect"
+    # The channel is an int 0-9, or MON_VIEW (a str) for the MON chip (P70).
+    clicked               = pyqtSignal(object)      # plain click
+    double_clicked        = pyqtSignal(object)      # double click
+    edit_requested        = pyqtSignal(object)      # "Connect…" (context menu)
+    connect_via_requested = pyqtSignal(int)         # "Connect via…" (never MON)
+    disconnect_requested  = pyqtSignal(int)         # "Disconnect" (never MON)
     connect_requested     = pyqtSignal(int, str)    # Enter, valid callsign
 
-    def __init__(self, channel: int, parent=None):
+    def __init__(self, channel: "int | str", parent=None):
         super().__init__(parent)
         self._channel = channel
         self._state = CH_FREE
@@ -369,7 +377,7 @@ class ChannelChip(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def channel(self) -> int:
+    def channel(self) -> "int | str":
         return self._channel
 
     def is_editing(self) -> bool:
@@ -398,7 +406,7 @@ class ChannelChip(QWidget):
         # a free channel that is only shown red for _FAILED_FLASH_MS for
         # visibility; blocking a retry click during that window would be
         # exactly the wrong moment to make the operator wait.
-        if self._channel == UI_CHANNEL or self._state not in (CH_FREE, CH_FAILED):
+        if self._channel == MON_VIEW or self._state not in (CH_FREE, CH_FAILED):
             return
         self.editor.setStyleSheet(_EDIT_STYLE_NORMAL)
         self.editor.setToolTip("")
@@ -447,8 +455,8 @@ class ChannelChip(QWidget):
         self.connect_requested.emit(self._channel, call)
 
     def _show_menu(self, global_pos) -> None:
-        if self._channel == UI_CHANNEL:
-            return   # P10: no context menu on the UI channel
+        if self._channel == MON_VIEW:
+            return   # P70: no context menu on the MON chip
         menu = QMenu(self)
         if self._state in (CH_FREE, CH_FAILED):
             act = menu.addAction("Connect…")
@@ -458,10 +466,11 @@ class ChannelChip(QWidget):
                 lambda: self.connect_via_requested.emit(self._channel)
             )
         else:
-            act = menu.addAction("Disconnect")
-            act.triggered.connect(
-                lambda: self.disconnect_requested.emit(self._channel)
-            )
+            if self._state != CH_DISCONNECTING:   # already on its way down
+                act = menu.addAction("Disconnect")
+                act.triggered.connect(
+                    lambda: self.disconnect_requested.emit(self._channel)
+                )
             act = menu.addAction("Copy callsign")
             act.triggered.connect(self._copy_callsign)
         menu.exec(global_pos)
@@ -472,7 +481,10 @@ class ChannelChip(QWidget):
 
 
 class ChannelBar(QWidget):
-    """Row of 10 channel chips (0-9) mirroring the PK-232's multi-channel model.
+    """Row of chips - MON, then channels 0-9 one to one as in the PK-232 (P70).
+
+    MON is no TNC channel: it is the monitor/unproto/system-message view
+    (key MON_VIEW). Channels 0-9 are all treated alike.
 
     A chip shows the channel number while free, and the partner callsign once
     a connect attempt is under way or a link is up. Chip fill colour encodes
@@ -489,7 +501,8 @@ class ChannelBar(QWidget):
     So ChannelBar simply remembers what HFPacketMode.on_channel_state told it.
     """
 
-    channel_changed  = pyqtSignal(int)
+    # int 0-9, or MON_VIEW (a str) for the MON chip (P70)
+    channel_changed  = pyqtSignal(object)
     connect_requested    = pyqtSignal(int, str)   # channel, callsign (P42)
     connect_via_requested = pyqtSignal(int)       # "Connect via…" (P42)
     disconnect_requested = pyqtSignal(int)        # context menu / Ctrl+K (P42, P46.C.2)
@@ -500,12 +513,12 @@ class ChannelBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._current = 1
+        self._current: "int | str" = 1
         self._state: dict[int, str] = {ch: CH_FREE for ch in range(CHANNEL_COUNT)}
         self._partner: dict[int, str] = {ch: "" for ch in range(CHANNEL_COUNT)}
-        self._chips: dict[int, ChannelChip] = {}
+        self._chips: "dict[int | str, ChannelChip]" = {}
         # USERS (P11.5) — advisory only, see set_user_limit().
-        self._user_limit: int = CHANNEL_COUNT - 1
+        self._user_limit: int = CHANNEL_COUNT
 
         # P44 — one shared pulse animation for every CH_CALLING chip (not
         # one per chip: a single animation object keeps every calling
@@ -541,7 +554,8 @@ class ChannelBar(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(2)
 
-        for ch in range(CHANNEL_COUNT):
+        # MON first, visually set off from the ten TNC channels (P70 C).
+        for ch in (MON_VIEW, *range(CHANNEL_COUNT)):
             chip = ChannelChip(ch)
             chip.editor.setCompleter(self._completer)
             chip.clicked.connect(self._on_chip_clicked)
@@ -551,9 +565,12 @@ class ChannelBar(QWidget):
             chip.connect_via_requested.connect(self.connect_via_requested)
             chip.disconnect_requested.connect(self.disconnect_requested)
 
-            self._group.addButton(chip.button, ch)
+            # QButtonGroup ids are ints: MON gets -2 (-1 means "auto").
+            self._group.addButton(chip.button, -2 if ch == MON_VIEW else ch)
             self._chips[ch] = chip
             row.addWidget(chip, 1)
+            if ch == MON_VIEW:
+                row.addSpacing(10)
 
         self._select(self._current, emit=False)
 
@@ -576,11 +593,8 @@ class ChannelBar(QWidget):
     def set_channel_state(self, ch: int, state: str, partner: str = "") -> None:
         """Update chip *ch* to *state* (CH_FREE/CH_CALLING/CH_CONNECTED).
 
-        Channel 0 (P10, UI_CHANNEL) never changes state — it is not a QSO
-        channel, so it can never be "calling" or "connected". This is a
-        defensive guard, not just a UI nicety: in every non-Packet operating
-        mode 0 is the only channel used (TRM 4.3), so a stray link-message
-        frame reporting channel 0 is not entirely impossible.
+        Channel 0 is a regular channel (P70). MON_VIEW (or any other key
+        that is not a TNC channel) is ignored: the MON chip has no state.
 
         P44 — a CALLING channel that is told to become FREE has, by
         definition, failed to connect (retry count exceeded, busy, or a
@@ -597,7 +611,7 @@ class ChannelBar(QWidget):
         set_channel_state() (P18/P16's existing channel-state path) - no
         new callback route.
         """
-        if ch == UI_CHANNEL or ch not in self._state:
+        if ch not in self._state:
             return
         prior = self._state[ch]
         if state == CH_FREE and prior == CH_CALLING:
@@ -653,35 +667,34 @@ class ChannelBar(QWidget):
             self._partner[ch] = ""
             self._update_chip(ch)
 
-    def set_current(self, ch: int) -> None:
-        """Select *ch* as the current channel (used by Connect/TX)."""
+    def set_current(self, ch: "int | str") -> None:
+        """Select *ch* (0-9 or MON_VIEW) as the current channel (used by
+        Connect/TX)."""
         if ch not in self._chips:
             return
         self._select(ch, emit=True)
 
-    def current(self) -> int:
+    def current(self) -> "int | str":
+        """The selected chip: a TNC channel 0-9, or MON_VIEW."""
         return self._current
 
-    def partner(self, ch: int | None = None) -> str:
+    def partner(self, ch: "int | str | None" = None) -> str:
         return self._partner.get(self._current if ch is None else ch, "")
 
-    def state(self, ch: int | None = None) -> str:
+    def state(self, ch: "int | str | None" = None) -> str:
         return self._state.get(self._current if ch is None else ch, CH_FREE)
 
     def channel_map(self) -> dict[str, int]:
         """Return {callsign: channel} for every channel that is currently
         connected or calling. Feeds MheardPanel.set_channel_map().
 
-        Channel 0 never appears here — set_channel_state() never lets it
-        become "connected"/"calling" in the first place, but the exclusion
-        is repeated here too since this is a public, independently callable
-        method (defence in depth, not redundant given how cheap it is).
+        Channel 0 is included like any other (P70); the MON chip has no
+        partner and never appears.
         """
         return {
             call: ch
             for ch, call in self._partner.items()
-            if ch != UI_CHANNEL and call
-            and self._state.get(ch) in (CH_CONNECTED, CH_CALLING)
+            if call and self._state.get(ch) in (CH_CONNECTED, CH_CALLING)
         }
 
     # -- pulse animation (P44) ------------------------------------------
@@ -712,8 +725,11 @@ class ChannelBar(QWidget):
             chip.button.setStyleSheet(_chip_style(fill, border, border_w))
 
     def step(self, delta: int) -> None:
-        """Move the current channel by *delta*, wrapping 0..9."""
-        self._select((self._current + delta) % CHANNEL_COUNT, emit=True)
+        """Move the selection by *delta* through MON, 0, 1 ... 9, wrapping
+        (P70: MON is the first of eleven positions)."""
+        positions = [MON_VIEW, *range(CHANNEL_COUNT)]
+        idx = positions.index(self._current)
+        self._select(positions[(idx + delta) % len(positions)], emit=True)
 
     def reset(self) -> None:
         """Set every chip back to 'free' with no partner.
@@ -755,18 +771,18 @@ class ChannelBar(QWidget):
     # Internal
     # ------------------------------------------------------------------
 
-    def _on_chip_clicked(self, ch: int) -> None:
+    def _on_chip_clicked(self, ch: "int | str") -> None:
         """A click selects — UNLESS the clicked chip is already the
         current, free channel, in which case it opens that chip's
         inline editor instead (P42.1's table: 'Klick auf den bereits
         gewählten freien Chip öffnet die Eingabe')."""
-        if (ch == self._current and ch != UI_CHANNEL
+        if (ch == self._current and ch != MON_VIEW
                 and self._state[ch] in (CH_FREE, CH_FAILED)):
             self._chips[ch].start_edit()
             return
         self._select(ch, emit=True)
 
-    def _on_chip_double_clicked(self, ch: int) -> None:
+    def _on_chip_double_clicked(self, ch: "int | str") -> None:
         """Double-click always opens the editor on a free chip,
         regardless of which channel was current before (P42.1)."""
         self._select(ch, emit=True)
@@ -791,20 +807,21 @@ class ChannelBar(QWidget):
         self.connect_requested.emit(ch, callsign)
 
     def start_edit_first_free(self, prefill: str = "") -> None:
-        """Open the editor on the first free, non-UI channel, prefilled
-        (P42 — MHEARD double-click on an unconnected station: 'the first
-        free chip', not necessarily the one currently selected)."""
-        for ch in range(1, CHANNEL_COUNT):
+        """Open the editor on the first free channel, prefilled (P42 —
+        MHEARD double-click on an unconnected station: 'the first free
+        chip', not necessarily the one currently selected). Channel 0
+        counts like any other since P70."""
+        for ch in range(CHANNEL_COUNT):
             if self._state[ch] in (CH_FREE, CH_FAILED):
                 self.start_edit(ch, prefill)
                 return
 
-    def start_edit(self, ch: int, prefill: str = "") -> None:
+    def start_edit(self, ch: "int | str", prefill: str = "") -> None:
         """Select *ch* and open its editor, prefilled (P42 — used by the
         MHEARD double-click handler in PacketBaseScreen). No-op for a
-        busy chip or the UI channel; ChannelChip.start_edit() enforces
+        busy chip or the MON chip; ChannelChip.start_edit() enforces
         that itself, this just also makes sure *ch* becomes current."""
-        if ch == UI_CHANNEL or self._state.get(ch) not in (CH_FREE, CH_FAILED):
+        if ch == MON_VIEW or self._state.get(ch) not in (CH_FREE, CH_FAILED):
             return
         self._select(ch, emit=True)
         self._chips[ch].start_edit(prefill)
@@ -842,7 +859,7 @@ class ChannelBar(QWidget):
                 chip.cancel_edit()
                 return
 
-    def _select(self, ch: int, emit: bool) -> None:
+    def _select(self, ch: "int | str", emit: bool) -> None:
         # P57.1: close any OTHER chip's open editor before switching -
         # the click/call that changes the channel keeps its normal
         # effect (it still switches), it just also closes whatever was
@@ -862,66 +879,59 @@ class ChannelBar(QWidget):
         if emit and changed:
             self.channel_changed.emit(ch)
 
-    def _update_chip(self, ch: int) -> None:
-        """Render chip *ch*. Channel 0's UI-channel special-casing lives
-        HERE ONLY (P10) — label, fill colour and tooltip all branch on
-        `ch == UI_CHANNEL` in this one method, not scattered across the
-        class, so there is exactly one place to look when that behaviour
-        needs to change.
-        """
+    def _update_chip(self, ch: "int | str") -> None:
+        """Render chip *ch*. The MON chip (P70) branches off here and
+        nowhere else in this class: a fixed colour, no state, no partner."""
         chip = self._chips[ch]
-        state = self._state[ch]
-        partner = self._partner[ch]
         is_current = ch == self._current
-        is_ui_channel = ch == UI_CHANNEL
-        chip.set_state(state, partner)
-
-        fill = _UI_CHANNEL_FILL if is_ui_channel else _CHIP_FILL.get(state, _CHIP_FILL[CH_FREE])
         border = _CHIP_BORDER_CURRENT if is_current else "#333333"
         border_w = 2 if is_current else 1
+        if ch == MON_VIEW:
+            chip.set_state(CH_FREE, "")
+            chip.set_display(
+                "MON", "", is_current,
+                _chip_style(_MON_CHIP_FILL, border, border_w),
+                "MON - monitor, unproto and system messages.\n"
+                "Not a TNC channel: nothing can be connected here. Text "
+                "typed here is sent as a UI frame along the UNPROTO path, "
+                "via the lowest free channel.\n"
+                "Click to select, or Ctrl+Up / Ctrl+Down steps through it too."
+            )
+            return
+
+        state = self._state[ch]
+        partner = self._partner[ch]
+        chip.set_state(state, partner)
+
+        fill = _CHIP_FILL.get(state, _CHIP_FILL[CH_FREE])
         # P67: CH_UNCONFIRMED's own dashed border — a channel carried
         # over from before a verbose<->Host Mode switch, not yet
         # reconfirmed this round, must not look identical to a plainly
         # confirmed CH_CONNECTED chip (same green fill otherwise).
         border_style = "dashed" if state == CH_UNCONFIRMED else "solid"
         style = _chip_style(fill, border, border_w, border_style)
-        if is_ui_channel:
-            tip = (
-                "UI / Unproto / Monitor channel.\n"
-                "No connection can be made here — text typed on this "
-                "channel is sent by the TNC as a UI frame along the "
-                "UNPROTO path (see the Unproto button).\n"
-                "Click to select, or Ctrl+Up / Ctrl+Down steps through it too."
+        tip = (
+            f"Channel {ch}\n"
+            f"State: {state}\n"
+            f"Partner: {partner or '—'}\n"
+            "Click to select; click again (or double-click, or "
+            "right-click → Connect…) to type a callsign.\n"
+            "Ctrl+Up / Ctrl+Down steps through channels."
+        )
+        if state == CH_UNCONFIRMED:
+            tip += "\ncarried over from verbose - waiting for confirmation"
+        if ch >= self._user_limit:
+            tip += (
+                f"\nUSERS is set to {self._user_limit} — incoming "
+                "connects on this channel will not be accepted."
             )
-        else:
-            tip = (
-                f"Channel {ch}\n"
-                f"State: {state}\n"
-                f"Partner: {partner or '—'}\n"
-                "Click to select; click again (or double-click, or "
-                "right-click → Connect…) to type a callsign.\n"
-                "Ctrl+Up / Ctrl+Down steps through channels."
-            )
-            if state == CH_UNCONFIRMED:
-                tip += "\ncarried over from verbose - waiting for confirmation"
-            if ch > self._user_limit:
-                tip += (
-                    f"\nUSERS is set to {self._user_limit} — incoming "
-                    "connects on this channel will not be accepted."
-                )
         # CH_CALLING gets a trailing ellipsis (P44) - the state must be
         # readable even without colour (a screenshot, colour-blindness),
         # and "OE3TEC" alone looks identical whether calling or connected.
         call_text = partner if partner else ""
         if state == CH_CALLING and call_text:
             call_text += " …"
-        chip.set_display(
-            "UI" if is_ui_channel else str(ch),
-            call_text,
-            is_current,
-            style,
-            tip,
-        )
+        chip.set_display(str(ch), call_text, is_current, style, tip)
 
 
 # ---------------------------------------------------------------------------
@@ -1226,8 +1236,8 @@ class PacketBaseScreen(QWidget):
         # so a channel's FULL history is there the moment you switch to
         # it, not just what arrives from then on. _rx_scroll remembers
         # each document's own scroll position across switches.
-        self._rx_docs: dict[int, QTextDocument] = {
-            ch: QTextDocument(self) for ch in range(CHANNEL_COUNT)
+        self._rx_docs: "dict[int | str, QTextDocument]" = {
+            ch: QTextDocument(self) for ch in (MON_VIEW, *range(CHANNEL_COUNT))
         }
         self._rx_doc_all = QTextDocument(self)
         for _doc in list(self._rx_docs.values()) + [self._rx_doc_all]:
@@ -1368,8 +1378,9 @@ class PacketBaseScreen(QWidget):
             if (event.key() == _Qt.Key.Key_K and
                     event.modifiers() & _Qt.KeyboardModifier.ControlModifier):
                 ch = self.channel_bar.current()
-                if (ch != UI_CHANNEL
-                        and self.channel_bar.state(ch) not in (CH_FREE, CH_FAILED)):
+                if (ch != MON_VIEW
+                        and self.channel_bar.state(ch) not in (CH_FREE, CH_FAILED)
+                        and self.channel_bar.state(ch) != CH_DISCONNECTING):
                     self.channel_bar.disconnect_requested.emit(ch)
                 return True
         # Enter in one of the non-TX fields registered in __init__, while no
@@ -1454,7 +1465,8 @@ class PacketBaseScreen(QWidget):
     # history (deliberate v0.1 simplification, see module docstring / P1.4).
     # ------------------------------------------------------------------
 
-    def current_channel(self) -> int:
+    def current_channel(self) -> "int | str":
+        """The selected chip: a TNC channel 0-9, or MON_VIEW (P70)."""
         return self.channel_bar.current()
 
     def reset_channels(self) -> None:
@@ -1558,11 +1570,11 @@ class PacketBaseScreen(QWidget):
         for doc in list(self._rx_docs.values()) + [self._rx_doc_all]:
             doc.setMaximumBlockCount(rx_max_lines)
 
-    def _all_view_tag(self, channel: int) -> str:
-        """Compact ALL-view channel tag (P50 Teil C): "UI" for the UI
-        channel (matching the chip's own "UI" label, P10), the plain
-        digit for a QSO channel."""
-        return "UI" if channel == UI_CHANNEL else str(channel)
+    def _all_view_tag(self, channel: "int | str") -> str:
+        """Compact ALL-view channel tag (P50 Teil C): "MON" for the
+        monitor view (matching the chip's own label, P70), the plain
+        digit for a TNC channel."""
+        return "MON" if channel == MON_VIEW else str(channel)
 
     def apply_rx_font(self, font: QFont) -> None:
         """Push *font* onto every RX document - each channel's own AND
@@ -1615,7 +1627,7 @@ class PacketBaseScreen(QWidget):
         self._view_all = show_all
         self._sync_rx_document()
 
-    def append_channel_data(self, channel: int, text: str, color: str = "#66ccff") -> None:
+    def append_channel_data(self, channel: "int | str", text: str, color: str = "#66ccff") -> None:
         """Append received connected-channel data - or, via an explicit
         *color* override, a channel-scoped system/link message (P47) -
         to *channel*'s own RX document AND the merged ALL document (P50
@@ -1629,12 +1641,10 @@ class PacketBaseScreen(QWidget):
 
     def append_monitor_data(self, text: str, is_html: bool = False,
                              ts: str = "") -> None:
-        """Append a monitored/unproto frame to the UI channel's own RX
+        """Append a monitored/unproto frame to the MON view's own RX
         document AND the merged ALL document (P50 Teil B). Monitor frames
-        carry no channel of their own ($3F, TRM 4.3) — they are
-        attributed to channel 0 by convention, matching how outgoing
-        UNPROTO traffic is also sent on channel 0 (see
-        _on_packet_unproto()).
+        carry no channel of their own ($3F, TRM 4.3) — they belong to the
+        MON view (P70), not to any TNC channel.
 
         `ts` is optional and only used by
         MainWindow._packet_rx_redraw()/append_monitor_data_local_only()
@@ -1642,12 +1652,12 @@ class PacketBaseScreen(QWidget):
         decode on/off (T59/T60). Live callers omit it and get the
         current UTC time, same as append_channel_data().
         """
-        self._rx_append(UI_CHANNEL, text, is_html=is_html, color="#aaaaaa", ts=ts)
+        self._rx_append(MON_VIEW, text, is_html=is_html, color="#aaaaaa", ts=ts)
 
     def append_monitor_data_local_only(self, text: str, is_html: bool = False,
                                         ts: str = "") -> None:
         """Same rendering as append_monitor_data(), but writes ONLY into
-        the UI channel's own document, never ALL (P50 Teil B/APRS
+        the MON view's own document, never ALL (P50 Teil B/APRS
         interplay) - used exclusively by
         MainWindow._packet_rx_redraw()/clear_monitor_channel() when the
         APRS decode toggle changes. See clear_monitor_channel()'s own
@@ -1655,13 +1665,13 @@ class PacketBaseScreen(QWidget):
         redraw."""
         if not ts:
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        self._rx_write_line(self._rx_docs[UI_CHANNEL], None, text, is_html, "#aaaaaa", ts)
-        if self.rx_display.document() is self._rx_docs[UI_CHANNEL]:
+        self._rx_write_line(self._rx_docs[MON_VIEW], None, text, is_html, "#aaaaaa", ts)
+        if self.rx_display.document() is self._rx_docs[MON_VIEW]:
             self.rx_display.moveCursor(QTextCursor.MoveOperation.End)
             self.rx_display.ensureCursorVisible()
 
     def clear_monitor_channel(self) -> None:
-        """Clear ONLY the UI channel's own RX document - called by
+        """Clear ONLY the MON view's own RX document - called by
         MainWindow._packet_rx_redraw() right before replaying
         _packet_raw_frames through append_monitor_data_local_only(),
         when the APRS decode toggle changes (T59/T60).
@@ -1673,17 +1683,17 @@ class PacketBaseScreen(QWidget):
         normal dual-write append_monitor_data()) or silently drop every
         QSO-channel line recorded since (if cleared outright) - neither
         of which an APRS raw<->decoded toggle should do. Only the CH view
-        of the UI channel (which, by construction, ever receives monitor
+        of the MON view (which, by construction, ever receives monitor
         frames and nothing else) reflects the new decode mode; ALL keeps
         its already-rendered history exactly as it was.
         """
-        self._rx_docs[UI_CHANNEL].clear()
+        self._rx_docs[MON_VIEW].clear()
 
     def _rx_write_line(self, doc, tag: str | None, text: str, is_html: bool,
                         color: str, ts: str) -> None:
         """Write ONE formatted line into *doc* - the shared primitive
         both _rx_append() (writes to a channel's own doc + ALL) and
-        append_monitor_data_local_only() (writes to the UI channel's own
+        append_monitor_data_local_only() (writes to the MON view's own
         doc only) use.
 
         *tag* is the compact ALL-view channel tag (P50 Teil C, e.g.
@@ -1723,7 +1733,7 @@ class PacketBaseScreen(QWidget):
                 cursor.insertText(f"         {line}\n")
             cursor.insertText("\n")
 
-    def _rx_append(self, channel: int, text: str, is_html: bool, color: str,
+    def _rx_append(self, channel: "int | str", text: str, is_html: bool, color: str,
                     ts: str = "") -> None:
         """Write one line into *channel*'s own document (no prefix - the
         channel is already named by which chip/view is selected) and the
@@ -1835,7 +1845,9 @@ class PacketBaseScreen(QWidget):
         self.btn_unproto.setCheckable(True)
         self.btn_unproto.setStyleSheet(_STYLE_UNPROTO_OFF)
         self.btn_unproto.setToolTip(
-            "Send unconnected UI frames (no ARQ, no acknowledge).\n"
+            "Switch to the MON view and set the UNPROTO path.\n"
+            "Text typed in the MON view goes out as unconnected UI frames\n"
+            "(no ARQ, no acknowledge) via the lowest free channel.\n"
             "Path set in the via field."
         )
         unproto_row.addWidget(self.btn_unproto)
@@ -2210,9 +2222,9 @@ class PacketBaseScreen(QWidget):
 
         return bar
 
-    def _update_status_bar(self, ch: int) -> None:
+    def _update_status_bar(self, ch: "int | str") -> None:
         partner = self.channel_bar.partner(ch)
-        self.lbl_sb_channel.setText(f"Ch {ch}")
+        self.lbl_sb_channel.setText("MON" if ch == MON_VIEW else f"Ch {ch}")
         self.lbl_sb_partner.setText(f"Partner: {partner}" if partner else "Partner: —")
 
     def note_last_frame(self, text: str) -> None:
@@ -2239,21 +2251,15 @@ class PacketBaseScreen(QWidget):
         self._options_container.setVisible(checked)
 
     def set_link_state(self, state: str) -> None:
-        """Update status/Unproto for an AX.25 link state change (P42).
+        """Kept for MainWindow's callers; no longer touches anything.
 
-        Called by MainWindow on link transitions. Connect/Disconnect no
-        longer have their own buttons to enable/disable (P42 — a connect
-        now comes from a chip's inline editor, which ChannelChip itself
-        already refuses to open on a busy channel; a disconnect comes from
-        the chip's context menu or Ctrl+K, both already channel-state-aware).
-        This method now only owns the T39 Connect/Unproto mutual exclusion:
-
-        state:
-          'connected' / 'calling' — Unproto disabled (no UNPROTO UI frames
-              while a QSO link is up or pending on some channel).
-          anything else (disconnected / idle) — Unproto re-enabled.
+        Until P70 this greyed btn_unproto while a channel was connected/
+        calling (T39, Connect <-> Unproto mutually exclusive). Device B
+        (T146 F1/F2) showed Unproto on a FREE channel works with another
+        channel connected, and Unproto now goes out on the lowest free
+        channel (MainWindow._on_packet_tx_enter()), so a connection never
+        locks the button any more.
         """
-        self.btn_unproto.setEnabled(state.lower() not in (CH_CONNECTED, CH_CALLING))
 
     def on_unproto_toggled(self, checked: bool) -> None:
         """Visual feedback for Unproto button toggle."""
