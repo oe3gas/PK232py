@@ -5,6 +5,46 @@
 
 ### Packet (HF / VHF)
 
+- **Channel model since P70 (30.09.2026): `UI_CHANNEL` no longer exists —
+  the monitor is `MON_VIEW`, channel 0 is an ordinary TNC channel.** The
+  channel bar is `[ MON ] [ 0 ] [ 1 ] … [ 9 ]`. `MON_VIEW = "MON"`
+  (`packet_screen.py`, a `str` on purpose so it can never be mistaken for a
+  TNC channel 0–9) is the key of the monitor/unproto/system-message view:
+  `_rx_docs[MON_VIEW]`, monitor frames (`$3F`), own unproto lines, `$5F`
+  and the optional link-message mirror (config key
+  `show_link_messages_in_ui_channel`, name unchanged) all go there. The MON
+  chip has no state, no editor, no context menu; `ChannelBar.current()` is
+  `int | "MON"`, `channel_changed` carries `object`, Ctrl+Up/Down steps
+  through eleven positions (MON, 0 … 9). Channels 0–9 are treated alike:
+  free / calling / connected / unconfirmed (P67) / **disconnecting** (new,
+  CO state 4) / failed. `LinkTable` is the only source of chip states;
+  `MainWindow._apply_link_to_chips()` is the only caller of
+  `set_channel_state()`; mode activation repaints the chips from the table
+  (`_repaint_chips_from_link_table()`), `reset_channels()` is not called
+  there any more. **Unproto** (text typed in the MON view) goes out as a
+  `$2n` data frame on `LinkTable.lowest_free_channel()` (state exactly
+  `free`); with all ten busy nothing is sent, the text stays and MON shows
+  "all 10 channels are connected - no free channel for unproto". The MON
+  view echoes `> text  [via chN]`. The UN path is sent before the first MON
+  frame and whenever the via field changed (`_unproto_path_sent`). The
+  Unproto button now only selects MON and sends the path; a connection never
+  locks it (`set_link_state()` is a documented no-op). `USERS n` accepts
+  exactly channels 0 … n−1, so the chip tooltip warns for `ch >= USERS`.
+  `USERS` defaults to 10 (config and dialog); a stored INI value is kept.
+- **Known Facts, Device B, P69/P70 (T146/T147, 30.09.2026, Release
+  01.AUG.91; logs `20260930_210627_channel_probe.log`,
+  `20260930_212141_channel_probe.log`).** F1 Data on a free channel 3 and 9
+  goes out as a UI frame over the UNPROTO path (T146 B.1/B.2 PASS). F2 The
+  same on channel 3 while channel 0 is connected to the TinyBox works, and
+  the connection on channel 0 keeps running (`\r` → prompt on `$30`; B.3
+  PASS). F3 An incoming connection lands on the **lowest free** channel:
+  first caller channel 0, second caller (USERS 10) channel 1. F4 With
+  `USERS 1` the second caller is rejected (`DM` on the air, Direwolf
+  capture); the host gets `$50 "Connect request: OE3GAS-3"` — and only for
+  a rejected call: an accepted call shows just `CONNECTED to <call>`. F5
+  `USERS` was 1 (`HFPacketConfig.users` old default). F6 After `DI`, `CO`
+  reports state 4 (disconnecting) for a moment, then free. Not measured on
+  Device A/C.
 - **PASSALL = `PX`, not `PA` and not `PS`** — see the mnemonic-table note above.
 - **Data sent on channel 0 is split into UI frames of at most PACLEN
   bytes each — hardware-confirmed, Device B, 27.09.2026 (P62/P62a,

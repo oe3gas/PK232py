@@ -102,7 +102,7 @@ docs/claude/  Aus CLAUDE.md ausgelagerte Details (siehe unten)
   (MainWindow app-weit → Screen → `ScreenFocusController` je Feld): `docs/Eventfilter_architecture.md`.
 - Tooltips zentral in `tooltips.py` (`TOOLTIPS` + klassenspezifisch `SCREEN_TOOLTIPS`); `apply_tooltips(self)` am Ende von `__init__`.
 - „Connect“ immer eindeutig benennen (TNC-Seriell vs. Station); TNC-Aktionen leben nur im TNC-Menü.
-- Packet: Connect passiert im `ChannelChip` (Inline-Editor); Kanal 0 = UI/Unproto-Kanal; Chip-Zustand kommt
+- Packet: Connect passiert im `ChannelChip` (Inline-Editor); MON-Chip = Monitor/Unproto-Ansicht (`MON_VIEW`), Kanal 0 ist ein normaler TNC-Kanal (P70); Chip-Zustand kommt
   ausschließlich aus der `LinkTable`-Subscription (`comm/link_table.py`).
 
 ## TxController (Kurz)
