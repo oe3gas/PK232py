@@ -125,6 +125,15 @@ required except for T101:
             confirm_tx(). MEASURES ONLY - P70 (channel bar MON + 0-9)
             builds on it. Not part of 'all'. See
             docs/P69_Channel_Probe_Measure_Spec.md.
+    host_params_probe
+            P71 (T151/T152): is each Host Mode mnemonic of comm/host_params.py
+            (a HYPOTHESIS from the firmware matrix) really the one that asks
+            and sets that parameter? --part A (PC 1 only): ask every row in
+            Host Mode, set a test value for int/bool rows (never callsigns or
+            control characters), then cross-check in verbose mode and restore.
+            --part B (PC 1 + PC 2): set seven parameters while a station is
+            connected. MEASURES ONLY (applying without verbose is P72). Not
+            part of 'all'. See docs/P71_Host_Params_Probe_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
@@ -231,6 +240,7 @@ from pk232py.comm.link_status import (  # noqa: E402
 from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
 from pk232py.comm.frame import build_command, _dle_escape  # noqa: E402
 from pk232py.comm.hostmode import HostModeProtocol  # noqa: E402
+from pk232py.comm.host_params import HOST_PARAMS, param_by_name  # noqa: E402
 from pk232py.comm.constants import SOH, ETB  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
 from pk232py.maildrop import MailDropSession, SerialManagerChannel  # noqa: E402
@@ -5956,6 +5966,472 @@ def test_channel_probe(session: Session, log: RunLog, part: str = "all") -> None
 
 
 # ===========================================================================
+# P71 -- host_params_probe (T151/T152): does a verbose parameter really get
+# asked and set in Host Mode by the mnemonic comm/host_params.py guesses?
+# MEASURES ONLY (hw_check rule 6) - applying parameters without verbose is
+# P72. Frames come from HostModeProtocol.build_command(); no new builder.
+# Part A (T151, PC 1 only): query, set, then a verbose cross-check.
+# Part B (T152, PC 1 + PC 2): set while a connection exists.
+# ===========================================================================
+
+_HP_PART_B_PARAMS = (
+    "USERS", "MAXFRAME", "PACLEN", "FRACK", "RETRY", "MONITOR", "TXDELAY",
+)
+_HP_NEVER_SET = {"EXPERT"}   # verbose-only (matrix 3a: Host Mode ignores it)
+_HP_ACK_POLL = b"HP"         # poll acknowledge, never an answer to a parameter frame
+
+
+def _hp_norm(value: str, kind: str) -> str:
+    """Comparable form of a parameter value: bools Y/N (ON/OFF/YES/NO/1/0
+    folded), ints as their number, everything else upper-cased text."""
+    text = (value or "").strip().upper()
+    if kind == "bool":
+        if text in ("Y", "YES", "ON", "1"):
+            return "Y"
+        if text in ("N", "NO", "OFF", "0"):
+            return "N"
+    if kind == "int" and re.fullmatch(r"-?\d+", text):
+        return str(int(text))
+    return text
+
+
+def _hp_value_after(mnemonic: bytes, data: Optional[bytes]) -> Optional[str]:
+    """The text after *mnemonic* in a raw answer, or None if *data* is
+    missing or does not start with it (never guessed, rule 6)."""
+    if not data or not mnemonic or not data.startswith(mnemonic):
+        return None
+    return data[len(mnemonic):].decode("ascii", errors="replace").strip()
+
+
+def rejected_code(set_resp: Optional[bytes]) -> Optional[int]:
+    """The error code if *set_resp* is an error answer: a lone byte, or
+    a 2-letter mnemonic plus ONE byte, in $01-$1F (TRM 4.3 - e.g. $09 'not
+    while connected'). $00 is the plain acknowledge; anything else is not
+    recognised as an error."""
+    if not set_resp:
+        return None
+    body = set_resp
+    if len(body) == 3 and body[:2].isalnum():
+        body = body[2:]
+    if len(body) == 1 and 0x01 <= body[0] <= 0x1F:
+        return body[0]
+    return None
+
+
+def choose_test_value(param, original: Optional[str]) -> Optional[str]:
+    """The value the probe sets, in Host Mode argument form, or None if
+    this row is never set: only 'int' (a valid value next to the current
+    one) and 'bool' (the opposite), plus BTEXT. Callsigns, control
+    characters, other text and EXPERT are never set, and nothing is set
+    without a known original to go back to."""
+    if not param.mnemonic or original is None or param.name in _HP_NEVER_SET:
+        return None
+    if param.name == "BTEXT":
+        return "P71"
+    if param.kind == "int":
+        m = re.match(r"\s*(-?\d+)", original)
+        if not m or param.lo is None or param.hi is None:
+            return None
+        cur = int(m.group(1))
+        return str(cur + 1 if cur + 1 <= param.hi else cur - 1)
+    if param.kind == "bool":
+        norm = _hp_norm(original, "bool")
+        return {"Y": "N", "N": "Y"}.get(norm)
+    return None
+
+
+def classify_host_param(
+    name: str, query1: Optional[bytes], set_resp: Optional[bytes],
+    query2: Optional[bytes], verbose_now: Optional[str],
+    test_value: Optional[str],
+) -> str:
+    """Verdict for one probed parameter (pure; bytes are raw Host Mode
+    payloads, mnemonic + value; the answer format is NOT assumed - the
+    bytes after the mnemonic are the value and are compared as text).
+
+      rejected               the set answer is an error code (rejected_code())
+      no_answer              no answer to the first query
+      query_only             not set (test_value None), the query gave a value
+      unparsed               an answer exists but is not 'mnemonic + value',
+                             or the verbose cross-check is missing
+      wrong_param            verbose does not show the test value
+      set_ok_query_unparsed  verbose shows it, the Host query does not agree
+      verified               query gave a value, verbose shows the test
+                             value, the second query shows it too
+    """
+    param = param_by_name(name)
+    mn = param.mnemonic if param else b""
+    kind = param.kind if param else "text"
+    if rejected_code(set_resp) is not None:
+        return "rejected"
+    if query1 is None:
+        return "no_answer"
+    value1 = _hp_value_after(mn, query1)
+    if test_value is None:
+        return "query_only" if value1 else "unparsed"
+    if value1 is None:
+        return "unparsed"
+    if verbose_now is None:
+        return "unparsed"
+    if _hp_norm(verbose_now, kind) != _hp_norm(test_value, kind):
+        return "wrong_param"
+    value2 = _hp_value_after(mn, query2)
+    if value2 is not None and _hp_norm(value2, kind) == _hp_norm(test_value, kind):
+        return "verified"
+    return "set_ok_query_unparsed"
+
+
+def _hp_placeholder_original(param) -> str:
+    """Stand-in 'current value' for the dry run (nothing is queried)."""
+    if param.kind == "int":
+        return str(param.lo)
+    if param.kind == "bool":
+        return "OFF"
+    return "x"
+
+
+def host_params_probe_frames(params=None) -> list:
+    """The Part A frame plan as (name, 'query'|'set', frame) - what
+    --dry-run shows and what a test can inspect. One query per row with a
+    mnemonic, a set frame only where choose_test_value() would set."""
+    frames = []
+    for p in (HOST_PARAMS if params is None else params):
+        if not p.mnemonic:
+            continue
+        frames.append((p.name, "query", HostModeProtocol.build_command(p.mnemonic, b"")))
+        value = choose_test_value(p, _hp_placeholder_original(p))
+        if value is not None:
+            frames.append((
+                p.name, "set",
+                HostModeProtocol.build_command(p.mnemonic, value.encode("ascii")),
+            ))
+    return frames
+
+
+def _hp_exchange(
+    session: "Session", frame: bytes, note: str = "", timeout: float = 0.8,
+) -> list:
+    """Send one already-built $4F frame and return EVERY frame seen for
+    *timeout* s, unfiltered, each logged raw (hex + text)."""
+    if session.dry_run:
+        session.send_frame(frame, note=note)
+        return []
+    captured: list = []
+    session.sm.frame_received.connect(captured.append)
+    try:
+        session.send_frame(frame, note=note)
+        session._pump(timeout)
+    finally:
+        session.sm.frame_received.disconnect(captured.append)
+    for f in captured:
+        session.log.line(
+            f"<< ctl=0x{f.ctl:02X} ch={f.channel} data={f.data!r} "
+            f"hex={f.data.hex(' ')} text={f.text!r}"
+        )
+    return captured
+
+
+def _hp_pick(mnemonic: bytes, frames: list) -> Optional[bytes]:
+    """The answer to a frame sent with *mnemonic*: the frame that starts
+    with it, else the first frame that is not a poll acknowledge."""
+    match = select_response_frame(mnemonic, frames)
+    if match is not None:
+        return match.data
+    for f in frames:
+        if not f.data.startswith(_HP_ACK_POLL):
+            return f.data
+    return None
+
+
+def host_params_steps(part: str, mycall: str) -> list:
+    """Operator plan for host_params_probe --part A / B (P69a pattern)."""
+    me = mycall or "<TNC MYCALL>"
+    steps = []
+    if part in ("A", "all"):
+        steps.append(ProbeStep(
+            "T151 A.1  ask and set the parameters in Host Mode", WHERE_PC1, 3,
+            ["Nothing to do: this program asks every parameter in Host "
+             "Mode and sets a test value for some.",
+             "Nothing is transmitted on the air."],
+            "wait; the next step appears by itself."))
+        steps.append(ProbeStep(
+            "T151 A.2  check in verbose mode and restore", WHERE_PC1, 3,
+            ["Nothing to do: this program leaves Host Mode once, asks the "
+             "changed parameters in verbose mode and restores every value."],
+            "wait; the run ends by itself with a summary."))
+    if part in ("B", "all"):
+        steps.append(ProbeStep(
+            "T152 B.1  a station connects", WHERE_PC2, 2,
+            [f"In QtTermTCP, use the session with callsign OE3GAS-2.",
+             f"Connect to {me}.",
+             "Wait until QtTermTCP shows it is connected - or 30 seconds pass.",
+             "Leave this connection OPEN."],
+            "go back to PC 1 and press ENTER here (recording also ends by "
+            "itself after 120 seconds)."))
+        steps.append(ProbeStep(
+            "T152 B.2  set seven parameters while connected", WHERE_PC1, 3,
+            ["Nothing to do: this program sets USERS, MAXFRAME, PACLEN, "
+             "FRACK, RETRY, MONITOR and TXDELAY one after another and "
+             "checks the link after each one."],
+            "wait; the next step appears by itself."))
+        steps.append(ProbeStep(
+            "T152 B.3  send one line", WHERE_PC2, 1,
+            ["In QtTermTCP, type one line (for example P71 test) and send it.",
+             "Wait about 5 seconds."],
+            "go back to PC 1 and press ENTER here."))
+        steps.append(ProbeStep(
+            "T152 B.4  disconnect", WHERE_PC1, 1,
+            ["Answer y to disconnect the channel that carries the connection."],
+            "answer y and press ENTER."))
+    return steps
+
+
+def _hp_answer_text(data: Optional[bytes]) -> str:
+    return "none" if data is None else f"{data!r} ({data.hex(' ')})"
+
+
+def _host_params_part_a(session: "Session", log: RunLog, run: StepRun) -> None:
+    params = list(HOST_PARAMS)
+    expert = parse_query_value("EXPERT", session.query("EXPERT"))
+    session.set_verbose("EXPERT", "ON")
+    try:
+        # Originals FIRST, in verbose mode: they are the test-value basis
+        # and what every change (also a collateral one) is restored to.
+        originals: dict = {}
+        for p in params:
+            originals[p.name] = parse_query_value(p.name, session.query(p.name))
+            log.line(f"original {p.name} = {originals[p.name]!r}")
+
+        # -- Pass 1: Host Mode -------------------------------------------
+        step = run.steps[run.n]
+        operator_step(run, step.title, step.where, step.do, step.then)
+        rec: dict = {}
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            for p in params:
+                if not p.mnemonic:
+                    log.line(f"{p.name}: no Host mnemonic (not in matrix) - skipped")
+                    continue
+                q = HostModeProtocol.build_command(p.mnemonic, b"")
+                r = {"test": choose_test_value(p, originals[p.name])}
+                r["q1"] = _hp_pick(p.mnemonic, _hp_exchange(session, q, f"{p.name} query"))
+                if r["test"] is not None:
+                    setf = HostModeProtocol.build_command(
+                        p.mnemonic, r["test"].encode("ascii"))
+                    r["set"] = _hp_pick(
+                        p.mnemonic, _hp_exchange(session, setf, f"{p.name} set {r['test']}"))
+                    r["q2"] = _hp_pick(
+                        p.mnemonic, _hp_exchange(session, q, f"{p.name} query again"))
+                rec[p.name] = r
+        finally:
+            session.exit_host_mode()
+
+        # -- Pass 2: verbose cross-check ---------------------------------
+        step = run.steps[run.n]
+        operator_step(run, step.title, step.where, step.do, step.then)
+        now: dict = {}
+        for p in params:
+            if originals[p.name] is not None:
+                now[p.name] = parse_query_value(p.name, session.query(p.name))
+        counts: dict = {}
+        for p in params:
+            r = rec.get(p.name)
+            if r is None:
+                verdict = "no_mnemonic"
+            else:
+                verdict = classify_host_param(
+                    p.name, r["q1"], r.get("set"), r.get("q2"),
+                    now.get(p.name) if r["test"] is not None else None,
+                    r["test"],
+                )
+            counts[verdict] = counts.get(verdict, 0) + 1
+            raw = "" if r is None else (
+                f" q1={_hp_answer_text(r['q1'])} set={_hp_answer_text(r.get('set'))}"
+                f" q2={_hp_answer_text(r.get('q2'))} test={r['test']!r}"
+                f" verbose={now.get(p.name)!r}"
+            )
+            log.result(f"T151 {p.name} ({p.mnemonic.decode() or '-'})", "INFO",
+                       f"{verdict}{raw}")
+        # Restore EVERYTHING that differs - also a parameter another
+        # mnemonic changed by mistake (a wrong_param's real owner).
+        for p in params:
+            orig = originals[p.name]
+            if orig is None:
+                continue
+            cur = now.get(p.name)
+            if cur is None or _hp_norm(cur, p.kind) == _hp_norm(orig, p.kind):
+                continue   # unchanged, or not readable - never restore blind
+            r = rec.get(p.name)
+            if not (r and r["test"] is not None):
+                log.line(f"COLLATERAL CHANGE: {p.name} was {orig!r}, is {cur!r}")
+            verify_restore(
+                p.name, lambda n=p.name: session.query(n),
+                lambda v, n=p.name: session.set_verbose(n, v), orig, log,
+            )
+        log.line("--- T151 summary: " + ", ".join(
+            f"{k}={v}" for k, v in sorted(counts.items())))
+    finally:
+        if expert is not None:
+            session.set_verbose("EXPERT", expert)
+
+
+def _host_params_part_b(
+    session: "Session", log: RunLog, run: StepRun, mycall: str,
+) -> None:
+    frames = {ch: HostModeProtocol.cmd_link_status(ch) for ch in range(10)}
+    expert = parse_query_value("EXPERT", session.query("EXPERT"))
+    session.set_verbose("EXPERT", "ON")
+    originals = {
+        n: parse_query_value(n, session.query(n)) for n in _HP_PART_B_PARAMS
+    }
+    for n, v in originals.items():
+        log.line(f"original {n} = {v!r}")
+    try:
+        with _host_mode_guard(session, log, frames, "T152"):
+            session.drain_pending_frames()
+            if not confirm_tx(
+                "T152: the TNC will ANSWER an incoming connect on the air "
+                "(this keys the transmitter). The next step is at PC 2."
+            ):
+                log.result("T152", "INFO", "skipped by operator")
+                return
+            captured: list = []
+            session.sm.frame_received.connect(captured.append)
+            try:
+                step = run.steps[run.n]
+                operator_step(run, step.title, step.where, step.do, step.then)
+                wait_for_enter(session._pump, 120.0)
+                session._pump(0.3)
+            finally:
+                session.sm.frame_received.disconnect(captured.append)
+            channel = find_incoming_channel(captured)
+            _probe_links(session, frames, "T152 connected", log)
+            if channel is None:
+                log.result("T152", "FAIL", "no incoming connection seen - not testing")
+                return
+            step = run.steps[run.n]
+            operator_step(run, step.title, step.where, step.do, step.then)
+            for name in _HP_PART_B_PARAMS:
+                p = param_by_name(name)
+                test = choose_test_value(p, originals[name])
+                if test is None:
+                    log.result(f"T152 {name}", "INFO", "no original known - not set")
+                    continue
+                setf = HostModeProtocol.build_command(p.mnemonic, test.encode("ascii"))
+                set_resp = _hp_pick(
+                    p.mnemonic, _hp_exchange(session, setf, f"{name} set {test}"))
+                q = _hp_pick(p.mnemonic, _hp_exchange(
+                    session, HostModeProtocol.build_command(p.mnemonic, b""),
+                    f"{name} query"))
+                back = re.match(r"\s*(-?\d+)", originals[name] or "")
+                if back:
+                    _hp_exchange(
+                        session,
+                        HostModeProtocol.build_command(p.mnemonic, back.group(1).encode("ascii")),
+                        f"{name} set back {back.group(1)}")
+                co = session.query_channel_frame(
+                    channel, frames[channel], note=f"CO ch{channel}")
+                link = False
+                for f in co:
+                    if f.data.startswith(b"CO"):
+                        link = decode_link_status(f.ctl, f.data).connected
+                code = rejected_code(set_resp)
+                log.result(
+                    f"T152 {name}", "INFO",
+                    (f"rejected (${code:02X})" if code is not None else "accepted")
+                    + f" link_after={link} set={_hp_answer_text(set_resp)}"
+                      f" query={_hp_answer_text(q)}",
+                )
+            step = run.steps[run.n]
+            operator_step(run, step.title, step.where, step.do, step.then)
+            data_seen: list = []
+            session.sm.frame_received.connect(data_seen.append)
+            try:
+                wait_for_enter(session._pump, 120.0)
+                session._pump(0.3)
+            finally:
+                session.sm.frame_received.disconnect(data_seen.append)
+            got = [f for f in data_seen if f.ctl == 0x30 + channel and f.data.strip()]
+            log.result("T152 data after the changes", "INFO",
+                       f"line_seen_on_ch{channel}={bool(got)}")
+            step = run.steps[run.n]
+            operator_step(run, step.title, step.where, step.do, step.then)
+            _probe_disconnect_all(session, log, frames, "T152 cleanup")
+    finally:
+        for n, v in originals.items():
+            if v is not None:
+                verify_restore(
+                    n, lambda n=n: session.query(n),
+                    lambda val, n=n: session.set_verbose(n, val), v, log,
+                )
+        if expert is not None:
+            session.set_verbose("EXPERT", expert)
+
+
+def test_host_params_probe(session: "Session", log: RunLog, part: str = "A") -> None:
+    if part not in ("A", "B", "all"):
+        raise ValueError(f"part must be A, B or all, got {part!r}")
+    log.line(f"--- Host parameter probe (part {part}): ask/set in Host Mode ---")
+    if session.dry_run:
+        steps = host_params_steps(part, "<TNC MYCALL>")
+        run = StepRun(steps, log)
+        log.line(f"[dry-run] {len(steps)} steps; nothing is sent to a port")
+        if part in ("A", "all"):
+            operator_step(run, *[getattr(steps[0], a) for a in ("title", "where", "do", "then")])
+            for name, kind, frame in host_params_probe_frames():
+                session.send_frame(frame, note=f"{name} {kind}")
+            operator_step(run, *[getattr(steps[1], a) for a in ("title", "where", "do", "then")])
+            log.line("[dry-run] verbose cross-check of every set parameter, then restore")
+            log.result("T151", "INFO", "dry-run, nothing sent")
+        if part in ("B", "all"):
+            for step in steps[2 if part == "all" else 0:]:
+                operator_step(run, step.title, step.where, step.do, step.then)
+                if step.title.startswith("T152 B.2"):
+                    for name in _HP_PART_B_PARAMS:
+                        p = param_by_name(name)
+                        value = choose_test_value(p, _hp_placeholder_original(p))
+                        log.line(f"[dry-run] {name}: set {value}, query, set back, CO on the connected channel")
+            log.result("T152", "INFO", "dry-run, nothing sent")
+        return
+
+    session.normalize()
+    mycall = parse_query_value("MYCALL", session.query("MYCALL")) or ""
+    steps = host_params_steps(part, mycall)
+    run = StepRun(steps, log)
+    print()
+    print(f"host_params_probe --part {part}: {len(steps)} steps, about "
+          f"{sum(s.minutes for s in steps)} minutes")
+    if part in ("B", "all"):
+        for item in (
+            "PC 2: QtTermTCP has a session with the callsign OE3GAS-2, disconnected.",
+            "PC 1 + PC 2: same APRS-free frequency, dummy load or minimum power.",
+            "PC 1: PK232PY is closed.",
+        ):
+            input(f"  {item}  ENTER when done: ")
+    if input("Ready to continue? [y/N] ").strip().lower() != "y":
+        log.result("T151" if part == "A" else "T152", "INFO", "skipped by operator")
+        return
+    vhf_originals: dict = {}
+    if part in ("B", "all"):
+        vhf_originals = _channel_probe_vhf_check(session, log, "T152") or {}
+        if not vhf_originals:
+            return
+    try:
+        if part in ("A", "all"):
+            _host_params_part_a(session, log, run)
+        if part in ("B", "all"):
+            _host_params_part_b(session, log, run, mycall)
+    finally:
+        for cmd, value in vhf_originals.items():
+            if value is not None:
+                verify_restore(
+                    cmd, lambda c=cmd: session.query(c),
+                    lambda v, c=cmd: session.set_verbose(c, v), value, log,
+                )
+
+
+# ===========================================================================
 # CLI
 # ===========================================================================
 
@@ -5983,14 +6459,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "t17", "t103", "pthuff", "t101", "siam", "t111", "t112",
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
             "maildrop_session", "aprs_query", "aprs_tx", "aprs_reject",
-            "link_carry", "link_carry_host", "channel_probe",
+            "link_carry", "link_carry_host", "channel_probe", "host_params_probe",
             "all",
         ],
     )
     p.add_argument(
-        "--part", choices=["B", "C", "all"], default="all",
-        help="channel_probe only: B = free-channel UNPROTO frames (T146), "
-             "C = incoming connects (T147), all = both (default)"
+        "--part", choices=["A", "B", "C", "all"], default="all",
+        help="channel_probe: B = free-channel UNPROTO frames (T146), "
+             "C = incoming connects (T147), all = both (default). "
+             "host_params_probe: A = ask/set/verbose cross-check (T151), "
+             "B = set while connected (T152), all = both"
     )
     p.add_argument("--port", help="Serial port, e.g. COM3 (default: pk232py.ini)")
     p.add_argument("--baud", type=int, help="Baud rate (default: pk232py.ini)")
@@ -6024,7 +6502,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    args = build_arg_parser().parse_args(argv)
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    if args.test == "channel_probe" and args.part == "A":
+        parser.error("channel_probe takes --part B, C or all")
+    if args.test == "host_params_probe" and args.part == "C":
+        parser.error("host_params_probe takes --part A, B or all")
 
     cfg_mgr = ConfigManager()
     cfg_mgr.load()
@@ -6096,6 +6579,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "link_carry":      [lambda s, l: test_link_carry(s, l)],
         "link_carry_host": [lambda s, l: test_link_carry_host(s, l)],
         "channel_probe":   [lambda s, l: test_channel_probe(s, l, args.part)],
+        "host_params_probe": [lambda s, l: test_host_params_probe(s, l, args.part)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
