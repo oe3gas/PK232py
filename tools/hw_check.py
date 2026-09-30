@@ -198,14 +198,21 @@ Testplan.md; the raw per-byte log stays local).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import datetime
 import logging
 import re
+import select
 import sys
 import time
 from pathlib import Path
 from typing import Callable, Optional
+
+try:
+    import msvcrt  # Windows: non-blocking key check for wait_for_enter()
+except ImportError:  # pragma: no cover - POSIX
+    msvcrt = None
 
 import serial  # only for the maildrop_session port-factory injection (P30.2)
 
@@ -5423,23 +5430,247 @@ def _channel_probe_vhf_check(session: Session, log: RunLog, tag: str) -> Optiona
     return originals if ensure_vhf_1200(session, log, tag, originals) else None
 
 
+def split_paste_by_marker(
+    pasted: str, markers: dict,
+) -> tuple[dict, list]:
+    """P69a Teil C: assign ONE long decoder paste to the steps that caused
+    it. *markers* maps a step key to the unique text that step sent. A
+    step's segment runs from the packet block holding its marker up to the
+    block holding the next step's marker (the last one runs to the end, so
+    B.3's CR I-frame belongs to B.3). Returns (segments, missing): steps
+    whose marker is nowhere in the paste are listed in *missing* and get no
+    segment. Pure - no serial interface."""
+    blocks = _split_blocks(pasted)
+    first_block: dict = {}
+    for key, text in markers.items():
+        for i, block in enumerate(blocks):
+            if text and text in block:
+                first_block[key] = i
+                break
+    missing = [k for k in markers if k not in first_block]
+    order = sorted(first_block, key=first_block.get)
+    segments: dict = {}
+    for j, key in enumerate(order):
+        start = first_block[key]
+        end = first_block[order[j + 1]] if j + 1 < len(order) else len(blocks)
+        segments[key] = "\n\n".join(blocks[start:max(end, start + 1)])
+    return segments, missing
+
+
+def channel_probe_steps(part: str, mycall: str, target: str) -> list:
+    """The complete, ordered operator plan for *part* ('B', 'C' or 'all'),
+    as (key, ProbeStep) pairs. Built before the first transmission, so
+    'STEP n of N' is a count. The ONLY place channel_probe words its
+    instructions; printing goes through operator_step()."""
+    me = mycall or "<TNC MYCALL>"
+    plan: list = []
+
+    def add(key, title, where, minutes, do, then):
+        plan.append((key, ProbeStep(title, where, minutes, do, then)))
+
+    answer_tx = (
+        "answer each question on this screen with y (send) or n (skip), "
+        "then press ENTER. The next step follows by itself."
+    )
+    if part in ("B", "all"):
+        add("B.1", "T146 B.1  UNPROTO frame on the free channel 3", WHERE_PC1, 2,
+            [f"Answer y to the question on this screen: this program sends ONE "
+             f"frame from {me} to {_CHANNEL_PROBE_PATH} on channel 3."],
+            answer_tx)
+        add("B.2", "T146 B.2  UNPROTO frame on the free channel 9", WHERE_PC1, 2,
+            [f"Answer y to the question on this screen: this program sends ONE "
+             f"frame from {me} to {_CHANNEL_PROBE_PATH} on channel 9."],
+            answer_tx)
+        add("B.3", "T146 B.3  free channel 3 while channel 0 is connected",
+            WHERE_PC1, 3,
+            [f"Answer y to connect channel 0 of the TNC ({me}) to {target}; "
+             f"the TinyBox answers by itself.",
+             "Answer y to send ONE frame on channel 3.",
+             f"Answer y to send one empty line (CR) to {target} on channel 0.",
+             "Answer y to disconnect again."],
+            answer_tx)
+        add("B.4", "T146 B.4  copy the decoder output", WHERE_PC2, 2,
+            [f"In the Direwolf window, find the line containing 'P69 B1' "
+             f"(sent by {me}).",
+             "Select everything from that line down to the last line and copy it."],
+            'go back to PC 1, paste it here, then type a line with a single "." '
+            "and press ENTER.")
+    if part in ("C", "all"):
+        for label, pair in (("C", ("C.1", "C.2")), ("C.3", ("C.3.1", "C.3.2"))):
+            caller_1, caller_2 = "OE3GAS-2", "OE3GAS-3"
+            if label == "C.3":
+                add("C.3.free", "T147 C.3  free both QtTermTCP sessions",
+                    WHERE_PC2, 1,
+                    ["In QtTermTCP, disconnect BOTH sessions (OE3GAS-2 and OE3GAS-3).",
+                     "Check that both sessions show 'disconnected'."],
+                    "go back to PC 1 and press ENTER here. The test then sets "
+                    "USERS 10 and repeats the calls.")
+            first, second = pair
+            add(f"{label}.1.call", f"T147 {first}  first incoming call",
+                WHERE_PC2, 2,
+                [f"In QtTermTCP, use the session with callsign {caller_1}.",
+                 f"Connect to {me}.",
+                 "Wait until QtTermTCP shows it is connected - or 30 seconds pass.",
+                 "Leave this connection OPEN."],
+                "go back to PC 1 and press ENTER here (recording also ends by "
+                "itself after 120 seconds).")
+            add(f"{label}.1.saw", f"T147 {first}  what QtTermTCP shows",
+                WHERE_PC2, 1,
+                [f"Look at the QtTermTCP session with callsign {caller_1}.",
+                 f"What does QtTermTCP show for {caller_1}? "
+                 f"(connected / busy / nothing)"],
+                "go back to PC 1, type the answer and press ENTER.")
+            add(f"{label}.2.occupy", f"T147 {second}  occupy channel 0",
+                WHERE_PC1, 1,
+                [f"Answer y to connect channel 0 of the TNC to {target}; the "
+                 f"TinyBox answers by itself.",
+                 "Wait about 30 seconds until the next step appears."],
+                "answer y (connect) or n (skip) and press ENTER.")
+            add(f"{label}.2.call", f"T147 {second}  second incoming call",
+                WHERE_PC2, 2,
+                [f"In QtTermTCP, use the session with callsign {caller_2} "
+                 f"(a DIFFERENT callsign than before).",
+                 f"Connect to {me}.",
+                 "Wait until QtTermTCP shows it is connected, busy, or 30 "
+                 "seconds pass.",
+                 "Leave this connection OPEN."],
+                "go back to PC 1 and press ENTER here (recording also ends by "
+                "itself after 120 seconds).")
+            add(f"{label}.2.saw", f"T147 {second}  what QtTermTCP shows",
+                WHERE_PC2, 1,
+                [f"Look at the QtTermTCP session with callsign {caller_2}.",
+                 f"What does QtTermTCP show for {caller_2}? "
+                 f"(connected / busy / nothing)"],
+                "go back to PC 1, type the answer and press ENTER.")
+    return plan
+
+
+class ProbePlan:
+    """The operator plan of one run: steps by key plus the StepRun that
+    counts them. show()/skip() are the only ways a step is consumed."""
+
+    def __init__(self, part: str, mycall: str, target: str,
+                 log: Optional["RunLog"] = None):
+        keyed = channel_probe_steps(part, mycall, target)
+        self.by_key = dict(keyed)
+        self.run = StepRun([step for _, step in keyed], log)
+        self.log = log
+
+    def show(self, key: str) -> None:
+        s = self.by_key[key]
+        operator_step(self.run, s.title, s.where, s.do, s.then)
+
+    def skip(self, key: str) -> None:
+        """A step the operator's own 'n' made pointless: counted, not shown."""
+        title = self.by_key[key].title
+        self.run.advance(title)
+        if self.log is not None:
+            self.log.line(f"STEP {self.run.n} of {self.run.total}: {title} - skipped")
+
+
+def channel_probe_checklist(part: str, target: str) -> list:
+    """Preparation items, each confirmed with ENTER (P69a Teil B)."""
+    items = ["PC 2: Direwolf is running and shows decoded packets."]
+    # The TinyBox is also the counterpart of C.2's channel-0 occupation.
+    items.append(f"PC 2: the TinyBox {target} is running.")
+    if part in ("C", "all"):
+        items.append(
+            "PC 2: QtTermTCP has two sessions with the callsigns OE3GAS-2 "
+            "and OE3GAS-3, BOTH disconnected."
+        )
+    items.append(
+        "PC 1 + PC 2: both stations are on the same APRS-free frequency, "
+        "dummy load or minimum power."
+    )
+    items.append("PC 1: PK232PY is closed.")
+    return items
+
+
+def _print_overview(plan: ProbePlan, part: str) -> None:
+    print()
+    print(f"channel_probe --part {part}: {plan.run.total} steps, about "
+          f"{sum(s.minutes for s in plan.run.steps)} minutes")
+    for i, step in enumerate(plan.run.steps, 1):
+        print(f"  {i:2d}. {step.where.split()[0]} {step.where.split()[1]}  "
+              f"{step.title}  (~{step.minutes} min)")
+
+
+def _preparation_checklist(
+    part: str, target: str, read_line: Callable[[str], str] = input,
+    ask: bool = True,
+) -> None:
+    items = channel_probe_checklist(part, target)
+    print()
+    print("Before we start - check each item:")
+    for i, item in enumerate(items, 1):
+        if ask:
+            read_line(f"  [{i}/{len(items)}] {item}  ENTER when done: ")
+        else:
+            print(f"  [{i}/{len(items)}] {item}")
+
+
+def _key_ready() -> bool:
+    """True if the operator has typed something (non-blocking)."""
+    if msvcrt is not None:
+        return msvcrt.kbhit()
+    return bool(select.select([sys.stdin], [], [], 0)[0])
+
+
+def wait_for_enter(
+    pump: Callable[[float], None], max_seconds: float,
+    key_ready: Callable[[], bool] = _key_ready,
+    read_line: Callable[[], str] = input,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Wait for the operator's ENTER WITHOUT blocking the Qt loop: pump in
+    short slices so frames are delivered while the operator works at PC 2.
+    True on ENTER; False (after a notice) once *max_seconds* pass."""
+    deadline = clock() + max_seconds
+    while clock() < deadline:
+        if key_ready():
+            read_line()
+            return True
+        pump(0.1)
+    print(f"No ENTER after {max_seconds:.0f} seconds - continuing by itself.")
+    return False
+
+
+@contextlib.contextmanager
+def _host_mode_guard(session: Session, log: RunLog, frames: dict, label: str):
+    """Host Mode for a block of steps. Ctrl-C inside it first disconnects
+    whatever the last CO query shows connected (behind confirm_tx()), and
+    Host Mode is left in every case (P69a Teil F)."""
+    session.enter_host_mode()
+    try:
+        yield
+    except KeyboardInterrupt:
+        try:
+            _probe_disconnect_all(session, log, frames, f"{label} stop")
+        except (Exception, KeyboardInterrupt) as exc:  # best effort
+            log.line(f"{label}: cleanup on stop incomplete ({exc!r})")
+        raise
+    finally:
+        session.exit_host_mode()
+
+
 def _channel_probe_b(
     session: Session, log: RunLog, mycall: str, target: str, frames: dict,
-    un_frame: bytes,
+    un_frame: bytes, plan: ProbePlan,
 ) -> None:
     def stamp() -> str:
         return datetime.datetime.now().strftime("%H:%M:%S")
 
+    sent: dict = {}   # step key -> the unique text that went out
+
     def free_channel_round(step: str, channel: int) -> None:
+        plan.show(step)
         text = f"P69 {step.replace('.', '')} ch{channel} {stamp()}"
-        session.enter_host_mode()
-        sent = False
-        try:
+        with _host_mode_guard(session, log, frames, step):
             session.drain_pending_frames()
             session.send_frame(un_frame, note=f"{step} UN {_CHANNEL_PROBE_PATH}")
             session._pump(0.5)
             _probe_links(session, frames, f"{step} pre", log)
-            sent = _probe_transmit(
+            ok = _probe_transmit(
                 session, log,
                 f"{step}: data frame ${0x20 + channel:02X} on the FREE channel "
                 f"{channel}, UNPROTO {_CHANNEL_PROBE_PATH} - should go out as "
@@ -5448,28 +5679,19 @@ def _channel_probe_b(
             )
             _pump_capture(session, 2.0, log, step)
             _probe_links(session, frames, f"{step} post", log)
-        finally:
-            session.exit_host_mode()
-        if not sent:
+        if ok:
+            sent[step] = text
+        else:
             log.result(f"T146 {step}", "INFO", "skipped by operator")
-            return
-        pasted = read_pasted_block(
-            "Paste the decoder (Direwolf) output, then a line with a single \".\":"
-        )
-        verdict = classify_decoder_line(pasted, mycall, _CHANNEL_PROBE_PATH, text)
-        log.result(
-            f"T146 {step}", "PASS" if verdict == "ui" else "FAIL",
-            f"classification={verdict} text={text!r}",
-        )
 
     free_channel_round("B.1", 3)
     free_channel_round("B.2", 9)
 
     # B.3: connection on channel 0, data on free channel 3, then CR on $20.
+    plan.show("B.3")
     text3 = f"P69 B3 ch3 {stamp()}"
-    session.enter_host_mode()
     sent3 = False
-    try:
+    with _host_mode_guard(session, log, frames, "B.3"):
         session.drain_pending_frames()
         session.send_frame(un_frame, note=f"B.3 UN {_CHANNEL_PROBE_PATH}")
         session._pump(0.5)
@@ -5493,108 +5715,139 @@ def _channel_probe_b(
             ):
                 _pump_capture(session, 10.0, log, "B.3 CR")
         _probe_disconnect_all(session, log, frames, "B.3 cleanup")
-    finally:
-        session.exit_host_mode()
     _confirm_command_prompt_light(session, "B.3", log)
-    if not sent3:
+    if sent3:
+        sent["B.3"] = text3
+    else:
         log.result("T146 B.3", "INFO", "skipped by operator")
+
+    # B.4: ONE paste for everything that went out.
+    if not sent:
+        plan.skip("B.4")
         return
+    plan.show("B.4")
     pasted = read_pasted_block(
-        "Paste the decoder output for B.3 (the ch3 frame AND the CR I-frame), "
-        "then a line with a single \".\":"
+        'Paste the decoder (Direwolf) output, then a line with a single ".":'
     )
-    marker = learn_iframe_marker(pasted)
-    log.line(f"B.3 I-frame notation learned from the paste: {marker!r}")
-    if marker is None:
-        marker = input(
-            "No '<I ...>' notation found. Enter the decoder's I-frame marker "
-            "text (empty = none): "
-        ).strip() or None
-        log.line(f"B.3 I-frame marker entered by operator: {marker!r}")
-    verdict = classify_decoder_line(pasted, mycall, _CHANNEL_PROBE_PATH, text3, marker)
-    log.result(
-        "T146 B.3", "PASS" if verdict == "ui" else "FAIL",
-        f"classification={verdict} marker={marker!r} text={text3!r}",
-    )
+    segments, missing = split_paste_by_marker(pasted, sent)
+    for step in sent:
+        if step in missing:
+            log.result(
+                f"T146 {step}", "FAIL",
+                f"not found in the pasted decoder output (text={sent[step]!r})",
+            )
+            continue
+        marker = None
+        if step == "B.3":
+            marker = learn_iframe_marker(segments[step])
+            log.line(f"B.3 I-frame notation learned from the paste: {marker!r}")
+        verdict = classify_decoder_line(
+            segments[step], mycall, _CHANNEL_PROBE_PATH, sent[step], marker,
+        )
+        log.result(
+            f"T146 {step}", "PASS" if verdict == "ui" else "FAIL",
+            f"classification={verdict} text={sent[step]!r}"
+            + (f" marker={marker!r}" if step == "B.3" else ""),
+        )
 
 
 def _channel_probe_incoming_round(
     session: Session, log: RunLog, frames: dict, target: str, label: str,
+    plan: ProbePlan,
 ) -> None:
     """One first call plus a second call with channel 0 occupied (C.1 and
-    C.2, repeated as C.3 with USERS 10). Enters and leaves Host Mode
-    itself."""
-    session.enter_host_mode()
-    try:
+    C.2, repeated as C.3.1/C.3.2 with USERS 10). Enters and leaves Host
+    Mode itself.
+
+    The capture is connected BEFORE the operator is told to call and stays
+    connected until ENTER (max 120 s): SerialManager emits frame_received
+    from its reader/poll thread, Qt queues it for this thread, and
+    wait_for_enter() pumps in 0.1 s slices - so nothing arrives unseen
+    while the operator works at PC 2."""
+    with _host_mode_guard(session, log, frames, label):
         session.drain_pending_frames()
-        for phase, who in ((f"{label}.1", "first"), (f"{label}.2", "second")):
-            if who == "second":
+        for k, who in ((1, "first"), (2, "second")):
+            phase = f"{label}.{k}"
+            if k == 2:
                 results = _probe_links(session, frames, f"{phase} pre", log)
                 if not (0 in results and (results[0].connected or results[0].partner)):
-                    _probe_connect(session, log, target, 0)
-                    _pump_capture(session, 30.0, log, f"{phase} occupy ch0")
+                    plan.show(f"{label}.2.occupy")
+                    if _probe_connect(session, log, target, 0):
+                        _pump_capture(session, 30.0, log, f"{phase} occupy ch0")
                     _probe_links(session, frames, f"{phase} ch0 occupied", log)
+                else:
+                    plan.skip(f"{label}.2.occupy")
             if not confirm_tx(
-                f"{phase}: the TNC will ANSWER an incoming connect (UA) on the "
-                f"air. Now call this TNC's MYCALL from QtTermTCP ({who} call, "
-                f"{'a different callsign, ' if who == 'second' else ''}"
-                f"within 60 s) - recording starts on Y."
+                f"{phase}: the TNC will ANSWER the {who} incoming connect on "
+                f"the air (this keys the transmitter). The next step is at PC 2."
             ):
                 log.result(f"T147 {phase}", "INFO", "skipped by operator")
+                plan.skip(f"{label}.{k}.call")
+                plan.skip(f"{label}.{k}.saw")
                 continue
-            captured = _pump_capture(session, 60.0, log, phase)
+            captured: list = []
+            session.sm.frame_received.connect(captured.append)
+            try:
+                plan.show(f"{label}.{k}.call")
+                wait_for_enter(session._pump, 120.0)
+                session._pump(0.3)
+            finally:
+                session.sm.frame_received.disconnect(captured.append)
+            for f in captured:
+                log.line(
+                    f"{phase} << ctl=0x{f.ctl:02X} ch={f.channel} "
+                    f"data={f.data!r} text={f.text!r}"
+                )
             channel = find_incoming_channel(captured)
             _probe_links(session, frames, f"{phase} post", log)
-            seen = read_pasted_block(
-                f"{phase}: what does QtTermTCP show (connected / busy / "
-                f"timeout, its own text)? End with a line with a single \".\":"
-            )
+            plan.show(f"{label}.{k}.saw")
+            seen = input("Your answer (connected / busy / nothing): ").strip()
             log.result(
                 f"T147 {phase}", "INFO",
                 f"incoming_channel={channel} accepted={channel is not None} "
                 f"operator={seen!r}",
             )
         _probe_disconnect_all(session, log, frames, f"{label} cleanup")
-    finally:
-        session.exit_host_mode()
     _confirm_command_prompt_light(session, f"{label} end", log)
 
 
 def _channel_probe_c(
-    session: Session, log: RunLog, frames: dict, target: str,
+    session: Session, log: RunLog, frames: dict, target: str, plan: ProbePlan,
 ) -> None:
-    _channel_probe_incoming_round(session, log, frames, target, "C")
+    _channel_probe_incoming_round(session, log, frames, target, "C", plan)
+    plan.show("C.3.free")
+    input("(ENTER to continue) ")
     log.line("C.3: USERS 10 (verbose), then the same two calls again")
     session.set_verbose("USERS", "10")
-    _channel_probe_incoming_round(session, log, frames, target, "C.3")
+    _channel_probe_incoming_round(session, log, frames, target, "C.3", plan)
 
 
-def test_channel_probe(session: Session, log: RunLog) -> None:
+def _channel_probe_dry_run(
+    session: Session, log: RunLog, part: str, frames: dict, un_frame: bytes,
+    plan: ProbePlan, target: str,
+) -> None:
     log.line(
-        "--- Channel probe: UNPROTO on free channels 3/9, channel of an "
-        "incoming connect ---"
+        "[dry-run] would normalize(), check VHF/HBAUD 1200, query and "
+        "log UNPROTO/USERS/MYCALL (UNPROTO/USERS restored at the end). "
+        "EVERY transmission below sits behind confirm_tx(); after every "
+        "Host Mode step CO on channels 0-9 is logged as 'links: ...'."
     )
-    un_frame = HostModeProtocol.cmd_unproto(_CHANNEL_PROBE_PATH)
-    frames = {ch: HostModeProtocol.cmd_link_status(ch) for ch in range(10)}
-
-    if session.dry_run:
-        log.line(
-            "[dry-run] would normalize(), check VHF/HBAUD 1200, query and "
-            "log UNPROTO/USERS/MYCALL (UNPROTO/USERS restored at the end). "
-            "EVERY transmission below sits behind confirm_tx(); after every "
-            "Host Mode step CO on channels 0-9 is logged as 'links: ...'."
-        )
+    _print_overview(plan, part)
+    _preparation_checklist(part, target, ask=False)
+    if part in ("B", "all"):
         log.line(f"[dry-run] Part B: UN {_CHANNEL_PROBE_PATH}")
         session.send_frame(un_frame, note=f"UN {_CHANNEL_PROBE_PATH}")
         for step, ch in (("B.1", 3), ("B.2", 9)):
+            plan.show(step)
             text = f"P69 {step.replace('.', '')} ch{ch} HH:MM:SS"
             log.line(
                 f"[dry-run] {step}: data frame ${0x20 + ch:02X} on free "
                 f"channel {ch}: {text!r}"
             )
             session.send_data_channel(ch, text)
+        plan.show("B.3")
         session.send_channel_frame(
-            0, HostModeProtocol.cmd_connect(_CHANNEL_PROBE_TARGET, channel=0),
+            0, HostModeProtocol.cmd_connect(target, channel=0),
             note="B.3 connect ch0",
         )
         log.line("[dry-run] B.3: data frame $23 on channel 3 while ch0 is connected")
@@ -5605,47 +5858,83 @@ def test_channel_probe(session: Session, log: RunLog) -> None:
         session.send_channel_frame(
             0, HostModeProtocol.cmd_disconnect(0), note="B.3 DI ch0"
         )
+        plan.show("B.4")
+        log.line("[dry-run] B.4: ONE decoder paste, split per step by its unique text")
+        log.result("T146", "INFO", "dry-run, nothing sent")
+    if part in ("C", "all"):
         log.line(
-            "[dry-run] Part C: 60 s recording per phase for an incoming "
-            "connect from QtTermTCP (C.1 first call, C.2 second call with "
-            "channel 0 occupied), then DI on all connected channels"
+            "[dry-run] Part C: recording from before the instruction until "
+            "ENTER (max 120 s) per call, then DI on all connected channels"
         )
-        log.line("[dry-run] C.3: set USERS 10 (verbose), repeat C.1/C.2, restore USERS")
+        for label in ("C", "C.3"):
+            if label == "C.3":
+                plan.show("C.3.free")
+                log.line("[dry-run] C.3: set USERS 10 (verbose), repeat the calls, restore USERS")
+            plan.show(f"{label}.1.call")
+            plan.show(f"{label}.1.saw")
+            plan.show(f"{label}.2.occupy")
+            plan.show(f"{label}.2.call")
+            plan.show(f"{label}.2.saw")
         for ch in range(10):
             session.send_channel_frame(ch, frames[ch], note=f"CO ch{ch}")
-        log.result("T146", "INFO", "dry-run, nothing sent")
         log.result("T147", "INFO", "dry-run, nothing sent")
+
+
+def test_channel_probe(session: Session, log: RunLog, part: str = "all") -> None:
+    if part not in ("B", "C", "all"):
+        raise ValueError(f"part must be B, C or all, got {part!r}")
+    log.line(
+        "--- Channel probe: UNPROTO on free channels 3/9, channel of an "
+        f"incoming connect (part {part}) ---"
+    )
+    un_frame = HostModeProtocol.cmd_unproto(_CHANNEL_PROBE_PATH)
+    frames = {ch: HostModeProtocol.cmd_link_status(ch) for ch in range(10)}
+    tag = "T146" if part != "C" else "T147"
+
+    if session.dry_run:
+        plan = ProbePlan(part, "<TNC MYCALL>", _CHANNEL_PROBE_TARGET, log)
+        _channel_probe_dry_run(
+            session, log, part, frames, un_frame, plan, _CHANNEL_PROBE_TARGET,
+        )
         return
 
     session.normalize()
+    raw = {c: session.query(c) for c in ("UNPROTO", "USERS", "MYCALL")}
+    for cmd, value in raw.items():
+        log.line(f"{cmd} (found): {value!r}")
+    originals = {c: parse_query_value(c, raw[c]) for c in ("UNPROTO", "USERS")}
+    mycall = parse_query_value("MYCALL", raw["MYCALL"]) or ""
+    if not mycall or any(v is None for v in originals.values()):
+        log.result(
+            tag, "SKIPPED",
+            f"MYCALL/UNPROTO/USERS not parseable -- not touching them "
+            f"(mycall={mycall!r} originals={originals!r})",
+        )
+        return
+    target = input(
+        f"Counterpart callsign for the connect on channel 0 [{_CHANNEL_PROBE_TARGET}]? "
+    ).strip() or _CHANNEL_PROBE_TARGET
+
+    plan = ProbePlan(part, mycall, target, log)
+    _print_overview(plan, part)
+    _preparation_checklist(part, target)
     if input("Ready to continue? [y/N] ").strip().lower() != "y":
-        log.result("T146", "INFO", "skipped by operator")
+        log.result(tag, "INFO", "skipped by operator")
         return
 
-    vhf_originals = _channel_probe_vhf_check(session, log, "T146")
-    if vhf_originals is None:
-        return
-    for cmd in ("UNPROTO", "USERS", "MYCALL"):
-        log.line(f"{cmd} (found): {session.query(cmd)!r}")
-    originals = {c: parse_query_value(c, session.query(c)) for c in ("UNPROTO", "USERS")}
-    mycall = parse_query_value("MYCALL", session.query("MYCALL")) or ""
+    vhf_originals: dict = {}
+    stopped = False
     try:
-        if not mycall or any(v is None for v in originals.values()):
-            log.result(
-                "T146", "SKIPPED",
-                f"MYCALL/UNPROTO/USERS not parseable -- not touching them "
-                f"(mycall={mycall!r} originals={originals!r})",
-            )
+        got = _channel_probe_vhf_check(session, log, tag)
+        if got is None:
             return
-        target = input(
-            f"Counterpart callsign for the connect on channel 0 [{_CHANNEL_PROBE_TARGET}]? "
-        ).strip() or _CHANNEL_PROBE_TARGET
-
-        _channel_probe_b(session, log, mycall, target, frames, un_frame)
-        if input("Run part C (incoming connects, QtTermTCP)? [y/N] ").strip().lower() == "y":
-            _channel_probe_c(session, log, frames, target)
-        else:
-            log.result("T147", "INFO", "skipped by operator")
+        vhf_originals = got
+        if part in ("B", "all"):
+            _channel_probe_b(session, log, mycall, target, frames, un_frame, plan)
+        if part in ("C", "all"):
+            _channel_probe_c(session, log, frames, target, plan)
+    except KeyboardInterrupt:
+        stopped = True
     finally:
         for cmd, value in {**originals, **vhf_originals}.items():
             if value is None:
@@ -5654,6 +5943,16 @@ def test_channel_probe(session: Session, log: RunLog) -> None:
                 cmd, lambda c=cmd: session.query(c),
                 lambda v, c=cmd: session.set_verbose(c, v), value, log,
             )
+    if stopped:
+        step = plan.run.current
+        if step is None:
+            where = f"before STEP 1 of {plan.run.total}"
+            next_part = part
+        else:
+            where = f"at STEP {plan.run.n} of {plan.run.total} ({step.title})"
+            next_part = "B" if step.title.startswith("T146") else "C"
+        log.line(f"Stopped {where}. Next run: --part {next_part}")
+        log.result(tag, "INFO", "stopped by operator")
 
 
 # ===========================================================================
@@ -5687,6 +5986,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "link_carry", "link_carry_host", "channel_probe",
             "all",
         ],
+    )
+    p.add_argument(
+        "--part", choices=["B", "C", "all"], default="all",
+        help="channel_probe only: B = free-channel UNPROTO frames (T146), "
+             "C = incoming connects (T147), all = both (default)"
     )
     p.add_argument("--port", help="Serial port, e.g. COM3 (default: pk232py.ini)")
     p.add_argument("--baud", type=int, help="Baud rate (default: pk232py.ini)")
@@ -5791,7 +6095,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "aprs_reject": [lambda s, l: test_aprs_reject(s, l)],
         "link_carry":      [lambda s, l: test_link_carry(s, l)],
         "link_carry_host": [lambda s, l: test_link_carry_host(s, l)],
-        "channel_probe":   [lambda s, l: test_channel_probe(s, l)],
+        "channel_probe":   [lambda s, l: test_channel_probe(s, l, args.part)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
