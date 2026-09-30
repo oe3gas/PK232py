@@ -20,16 +20,14 @@ tries to execute it, expecting it to describe current work.
 
 ## Priority 1 — Next implementation sprint
 
-### Channel bar MON · 0–9 (P70) — waits for T146/T147 (P69, 2026-09-29)
+### Channel bar MON · 0–9 (P70) — ✅ DONE (P70, 2026-09-30; hardware check T148 open)
 
-Channel 0 is the fixed "UI channel" today (P10), so a connection made in
-verbose mode (TNC channel 0) is invisible in the mask (T144). Operator
-decision 29.09.2026: own chip MON (no TNC channel) for monitor/Unproto,
-chips 0–9 one to one; Unproto goes out on the lowest free channel per the
-link table, locked when all ten are busy. P69 (`hw_check channel_probe`,
-built, not yet run on hardware) measures what P70 needs: Unproto on
-channels other than 0, and which channel an incoming connect lands on
-(with USERS as found and USERS 10).
+Channel bar `MON · 0 · 1 … 9`: MON is the monitor/unproto view (`MON_VIEW`),
+channel 0 is a regular TNC channel, Unproto goes out on the lowest free
+channel, rejected incoming calls are shown, `USERS` defaults to 10, chips
+get a "disconnecting" state. Facts (T146/T147, Device B) and the model:
+`docs/claude/GOTCHAS_PACKET.md`. T144 step 3 (verbose connection visible
+on chip 0) is checked again by T148 step 5.
 
 ### `operator_step()` for the other hw_check subcommands — open (P69a, 2026-09-30)
 
