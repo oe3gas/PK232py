@@ -38,6 +38,42 @@ never linked into or shipped with the GPL-v2 main application, so there is no
 licence conflict. (Were it ever reused inside pk232py — it will not be — the
 project licence would have to be relaxed to "GPL v2 or later".)
 
+## channel_probe - what you do where
+
+Two PCs: **PC 1** runs `hw_check.py` with the PK-232 (Device B) at the
+TS-790E; **PC 2** runs Direwolf (FT-818), the TinyBox `OE3GAS-1` and
+QtTermTCP. Every step prints `STEP n of N`, `WHERE`, `DO`, `THEN`.
+
+```bash
+python tools/hw_check.py --port COM6 channel_probe --part B   # T146, 4 steps, ~9 min
+python tools/hw_check.py --port COM6 channel_probe --part C   # T147, 11 steps, ~15 min
+python tools/hw_check.py --port COM6 channel_probe            # both, 15 steps
+python tools/hw_check.py --dry-run channel_probe --part C     # shows every step, sends nothing
+```
+
+**Part B (T146)** - all transmissions first, ONE decoder paste at the end:
+
+| Step | Where | What |
+|---|---|---|
+| B.1 | PC 1 | answer y: UNPROTO frame on free channel 3 |
+| B.2 | PC 1 | answer y: UNPROTO frame on free channel 9 |
+| B.3 | PC 1 | answer y: connect ch0 to the TinyBox, frame on ch3, CR on ch0, disconnect |
+| B.4 | PC 2 -> PC 1 | copy the Direwolf window from the line with `P69 B1` to the end, paste on PC 1, finish with a line `.` |
+
+**Part C (T147)** - no countdown: recording runs from before the
+instruction until you press ENTER on PC 1 (or 120 s):
+
+| Step | Where | What |
+|---|---|---|
+| C.1 call / what QtTermTCP shows | PC 2 | session `OE3GAS-2` connects to the TNC; note connected / busy / nothing |
+| C.2 occupy / call / what QtTermTCP shows | PC 1, PC 2, PC 2 | TNC ch0 connects to the TinyBox; session `OE3GAS-3` calls |
+| C.3 free both sessions | PC 2 | disconnect `OE3GAS-2` and `OE3GAS-3` in QtTermTCP |
+| C.3.1, C.3.2 | as C.1, C.2 | same again with `USERS 10` |
+
+Ctrl-C at any point restores UNPROTO/USERS/VHF/HBAUD, disconnects channels
+still connected (asks first) and prints `Stopped at STEP n of N (...). Next
+run: --part X`.
+
 ## Usage
 
 Run from the repository root:
