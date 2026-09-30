@@ -3012,7 +3012,7 @@ also software-verified by `test_serial_manager.py::TestExitHostModeVerboseResume
 
 ### T146 — `channel_probe` B: Unproto on free channels (P69)
 
-`python tools/hw_check.py --port COM6 channel_probe` (Part B). Device B,
+`python tools/hw_check.py --port COM6 channel_probe --part B` (P69a: 4 steps, one decoder paste at the end). Device B,
 VHF 1200 Bd, Direwolf on the FT-818 decoding ALL frames, TinyBox
 (`OE3GAS-1`) as counterpart. UNPROTO `P69TST`.
 
@@ -3029,8 +3029,9 @@ evaluation covered by `test_hw_check_channel_probe.py`.
 
 ### T147 — `channel_probe` C: channel of an incoming connect (P69)
 
-Same subcommand, Part C. QtTermTCP (e.g. `OE3GAS-2`) calls the PK-232's
-MYCALL; 60 s recording per phase. `USERS` is logged first.
+`python tools/hw_check.py --port COM6 channel_probe --part C` (P69a: 11 steps).
+QtTermTCP (`OE3GAS-2`, `OE3GAS-3`) calls the PK-232's MYCALL; recording runs
+from before the instruction until ENTER on PC 1 (max 120 s). `USERS` is logged first.
 
 | Phase | Question | incoming_channel / accepted |
 |---|---|---|
