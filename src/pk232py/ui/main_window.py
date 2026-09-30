@@ -1989,39 +1989,6 @@ class MainWindow(QMainWindow):
                 status = "FEC TX"
             else:
                 status = "STBY"
-            # Packet only: gate Unproto by link state (T39 — a connected/
-            # pending QSO channel must not also run UNPROTO UI frames).
-            # Guarded by hasattr so AMTOR/PACTOR screens (no set_link_state)
-            # are unaffected. P42: set_link_state() no longer also gates
-            # Connect/Disconnect buttons — those buttons no longer exist;
-            # a connect now comes from a chip's own inline editor (which
-            # ChannelChip itself already refuses to open on a busy channel)
-            # and a disconnect from the chip's context menu / Ctrl+D (both
-            # already channel-state-aware), so nothing here needs to gate them.
-            #
-            # Bug fixed 2026-09-20: set_link_state() used to fire for EVERY
-            # link message regardless of which channel it came from. With
-            # multiple channels this is wrong — a CONNECTED on channel 4
-            # would lock Unproto even while the operator is looking at a
-            # different chip (e.g. the MON view). Gating must only react
-            # to a message about the visible channel; _set_status() is an
-            # EVENT display, not a channel display, so it keeps showing
-            # every message regardless (see the trailing
-            # screen._set_status(status) call below, outside this guard).
-            # This leaves exactly two triggers for Unproto gating:
-            #   1. a channel switch (_on_packet_channel_changed() already
-            #      calls set_link_state(channel_bar.state(new_channel)))
-            #   2. a link message about the channel that is CURRENTLY selected
-            if hasattr(screen, "set_link_state"):
-                from .screens.packet_screen import PacketBaseScreen
-                is_visible_channel = True
-                if isinstance(screen, PacketBaseScreen) and channel is not None:
-                    is_visible_channel = (channel == screen.current_channel())
-                if is_visible_channel:
-                    if status in ("CONNECTED", "CALLING"):
-                        screen.set_link_state(status.lower())
-                    elif status == "DISCONNECTED":
-                        screen.set_link_state("disconnected")
             screen._set_status(status)
         return handler
 
@@ -3346,11 +3313,6 @@ class MainWindow(QMainWindow):
         # channel comes from the chip the user typed the callsign into).
         self._serial.send_channel_command(channel, b'CO', callsign.encode('ascii'))
         self._log_monitor(f"[PACKET] Connecting ch{channel} → {callsign}")
-        # set_link_state("calling") disables Unproto (T39) while the CO is
-        # out, awaiting CONNECTED. (set_link_state exists only on the
-        # packet screen.)
-        if hasattr(screen, "set_link_state"):
-            screen.set_link_state("calling")
         # P67, Teil C.1: set_channel_state() is called ONLY from the
         # LinkTable callback now - route this optimistic local update
         # through LinkTable.on_local_connect_attempt() instead of
@@ -4417,12 +4379,7 @@ class MainWindow(QMainWindow):
         if hasattr(screen, "mheard_panel") and hasattr(screen, "channel_bar"):
             screen.mheard_panel.set_channel_map(screen.channel_bar.channel_map())
 
-        if hasattr(screen, "set_link_state") and hasattr(screen, "channel_bar"):
-            # P70: set_link_state() no longer locks Unproto (a connection
-            # never does, Unproto takes the lowest FREE channel); it is
-            # still called so its own docstring stays the one place that
-            # says so.
-            screen.set_link_state(screen.channel_bar.state(channel))
+        if hasattr(screen, "channel_bar"):
             # Leaving the MON view while the Unproto button is still on
             # means the operator moved on, so show the button off again -
             # purely a display sync, not a lock. blockSignals avoids

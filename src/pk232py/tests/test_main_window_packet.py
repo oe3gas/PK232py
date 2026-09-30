@@ -163,7 +163,7 @@ class TestUnprotoUsesMonView:
         # so a connection - on any channel - never locks the button.
         w, screen = wired_vhf
         screen.channel_bar.set_current(5)
-        screen.set_link_state("connected")
+        w._link_table.on_host_link_message(5, "CONNECTED to OE3GAS-5")
         assert screen.btn_unproto.isEnabled()
 
         screen.channel_bar.set_current(MON_VIEW)
@@ -209,8 +209,8 @@ class TestConnectRejectedOnMon:
 class TestLinkMessageGatedByVisibleChannel:
     """T102 — a link message for a channel other than the visible one must
     not touch Unproto's enabled state (P42: Connect/Disconnect no longer
-    have buttons to gate — set_link_state() only owns Unproto now, see its
-    docstring); ChannelBar itself still updates (it is a separate,
+    have buttons to gate; P70 removed the Unproto lock too);
+    ChannelBar itself still updates (it is a separate,
     always-on, per-channel consumer of the same message)."""
 
     def test_message_for_other_channel_does_not_change_unproto(self, wired_vhf):

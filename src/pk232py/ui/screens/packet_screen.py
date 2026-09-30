@@ -1190,7 +1190,7 @@ class PacketBaseScreen(QWidget):
         btn_unproto, btn_maildrop, btn_aprs
         btn_eas, btn_passall, btn_mrpt, btn_mid, btn_squelch
         combo_hbaud, combo_monitor, rx_display, tx_input, macro_buttons
-        set_mycall(), set_link_state(), on_unproto_toggled(), _set_status()
+        set_mycall(), on_unproto_toggled(), _set_status()
 
     Channel model (P10 sprint), connect-in-chip (P42 — Connect/Dest/…/
     Disconnect row removed; a callsign is typed directly into the free
@@ -2249,17 +2249,6 @@ class PacketBaseScreen(QWidget):
 
     def _on_options_toggled(self, checked: bool) -> None:
         self._options_container.setVisible(checked)
-
-    def set_link_state(self, state: str) -> None:
-        """Kept for MainWindow's callers; no longer touches anything.
-
-        Until P70 this greyed btn_unproto while a channel was connected/
-        calling (T39, Connect <-> Unproto mutually exclusive). Device B
-        (T146 F1/F2) showed Unproto on a FREE channel works with another
-        channel connected, and Unproto now goes out on the lowest free
-        channel (MainWindow._on_packet_tx_enter()), so a connection never
-        locks the button any more.
-        """
 
     def on_unproto_toggled(self, checked: bool) -> None:
         """Visual feedback for Unproto button toggle."""
