@@ -3065,6 +3065,53 @@ USERS 10 (new default) unless step 3b.
 
 ---
 
+### T151 — `host_params_probe` A: ask and set parameters in Host Mode (P71)
+
+`python tools/hw_check.py --port COM6 host_params_probe --part A` (PC 1
+only, nothing transmitted). Device B. Pass 1 in Host Mode: query every row
+of `comm/host_params.py` that has a mnemonic (all hypotheses from
+`docs/PK232_firmware_matrix.md`), set a test value for `int`/`bool` rows
+and BTEXT (`P71`), query again — raw answers logged. Callsigns and control
+characters are only queried. Pass 2 in verbose mode: every set parameter is
+asked by its verbose name; a mismatch is `wrong_param` (the mnemonic belongs
+to another parameter - any parameter that changed by mistake is reported
+as `COLLATERAL CHANGE` and restored). Verdicts: `verified`,
+`set_ok_query_unparsed`, `query_only`, `rejected`, `no_answer`,
+`wrong_param`, `unparsed`.
+
+| What | Result |
+|---|---|
+| Answer format of a Host Mode query (value as ASCII?) | ⬜ |
+| Answer to a set (ACK `$00`? error code?) | ⬜ |
+| Verdict count per result; list of `wrong_param` rows | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session on Device B. Feeds P72
+(`verified_releases`). Software: `test_host_params_probe.py`.
+
+---
+
+### T152 — `host_params_probe` B: set parameters while connected (P71)
+
+`python tools/hw_check.py --port COM6 host_params_probe --part B`. Two PCs:
+QtTermTCP `OE3GAS-2` connects to the TNC (lands on channel 0, T147). In Host
+Mode USERS, MAXFRAME, PACLEN, FRACK, RETRY, MONITOR, TXDELAY are each set,
+asked, set back; after each one `CO` on the connected channel. Then one
+line from QtTermTCP must arrive on `$30`; `DI` behind `confirm_tx()`.
+
+| Parameter | accepted / rejected (code) | link_after |
+|---|---|---|
+| USERS | ⬜ | ⬜ |
+| MAXFRAME | ⬜ | ⬜ |
+| PACLEN | ⬜ | ⬜ |
+| FRACK | ⬜ | ⬜ |
+| RETRY | ⬜ | ⬜ |
+| MONITOR | ⬜ | ⬜ |
+| TXDELAY | ⬜ | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session on Device B. Feeds P72.
+
+---
+
 ## Test Block 7 — PACTOR / AMTOR Identity Labels (v12)
 
 ### T52–T58
