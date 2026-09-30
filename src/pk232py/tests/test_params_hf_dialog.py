@@ -34,12 +34,12 @@ class TestUsersRoundTrip:
 
     def test_default_value_populates_and_applies(self):
         cfg = HFPacketConfig()
-        assert cfg.users == 1
+        assert cfg.users == 10   # P70 E2: operator decision 30.09.2026
         dlg = HFPacketParamsDialog(cfg)
-        assert dlg._sb_users.value() == 1
+        assert dlg._sb_users.value() == 10
         out = HFPacketConfig()
         dlg.apply_to(out)
-        assert out.users == 1
+        assert out.users == 10
 
     def test_changed_value_round_trips(self):
         cfg = HFPacketConfig(users=4)

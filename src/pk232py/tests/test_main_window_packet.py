@@ -1,6 +1,6 @@
 # pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
 # Copyright (C) 2026  OE3GAS  —  GPL v2
-"""Unit tests for MainWindow's Packet channel-0 (UI channel) wiring (P10.2)
+"""Unit tests for MainWindow's Packet MON/channel wiring (P10.2, P70)
 and the per-channel link-message button gating fix (T102).
 
 Covers:
@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from pk232py.comm.frame import FrameKind
 from pk232py.ui.main_window import MainWindow
 from pk232py.modes.packet_vhf import VHFPacketMode
+from pk232py.ui.screens.packet_screen import MON_VIEW
 
 _app = QApplication.instance() or QApplication([])
 
@@ -116,62 +117,62 @@ def wired_vhf():
     # is a class attribute hardcoded to True).
 
 
-class TestUnprotoUsesChannelZero:
-    """T98.
+class TestUnprotoUsesMonView:
+    """T98, rebased by P70 (MON view instead of channel 0).
 
     P42 note: Connect/Disconnect no longer have buttons of their own, so
     the old "locks buttons" assertion here is now covered instead by
-    TestConnectRejectedOnChannelZero (the UI channel's chip refuses to
+    TestConnectRejectedOnMon (the MON chip refuses to
     open its inline connect editor at all). This class keeps the parts of
     T98 that are still meaningful: the channel-0 switch itself and
     Unproto's own enable/disable state.
     """
 
-    def test_unproto_on_switches_to_channel_zero(self, wired_vhf):
+    def test_unproto_on_switches_to_mon_view(self, wired_vhf):
         w, screen = wired_vhf
         screen.channel_bar.set_current(3)
         screen.tx_input.setPlainText("draft on ch3")
 
         screen.btn_unproto.setChecked(True)
 
-        assert screen.current_channel() == 0
+        assert screen.current_channel() == MON_VIEW
 
     def test_unproto_off_does_not_auto_jump_channel(self, wired_vhf):
         w, screen = wired_vhf
         screen.channel_bar.set_current(3)
         screen.btn_unproto.setChecked(True)
-        assert screen.current_channel() == 0
+        assert screen.current_channel() == MON_VIEW
 
         screen.btn_unproto.setChecked(False)
-        assert screen.current_channel() == 0   # operator must pick a chip
+        assert screen.current_channel() == MON_VIEW   # operator must pick a chip
 
     def test_selecting_qso_channel_turns_unproto_off(self, wired_vhf):
         w, screen = wired_vhf
         screen.channel_bar.set_current(3)
         screen.tx_input.setPlainText("draft on ch3")
         screen.btn_unproto.setChecked(True)
-        assert screen.current_channel() == 0
+        assert screen.current_channel() == MON_VIEW
 
         screen.channel_bar.set_current(3)
 
         assert not screen.btn_unproto.isChecked()
         assert screen.tx_input.toPlainText() == "draft on ch3"   # P9 preserved
 
-    def test_channel_zero_state_change_reenables_unproto(self, wired_vhf):
-        # A previously CONNECTED QSO channel leaves btn_unproto disabled
-        # (set_link_state('connected')); switching to channel 0 must
-        # re-enable it regardless, since channel 0 can never be busy itself.
+    def test_connected_channel_does_not_lock_unproto(self, wired_vhf):
+        # P70 D: Unproto goes out on the lowest FREE channel (T146 F1/F2),
+        # so a connection - on any channel - never locks the button.
         w, screen = wired_vhf
         screen.channel_bar.set_current(5)
         screen.set_link_state("connected")
-        assert not screen.btn_unproto.isEnabled()
+        assert screen.btn_unproto.isEnabled()
 
-        screen.channel_bar.set_current(0)
+        screen.channel_bar.set_current(MON_VIEW)
         assert screen.btn_unproto.isEnabled()
 
 
-class TestConnectRejectedOnChannelZero:
-    """T99 - channel 0 (UI channel) can never hold a connection.
+class TestConnectRejectedOnMon:
+    """T99, rebased by P70 - the MON chip (no TNC channel) can never hold
+    a connection.
 
     Under the old Connect/Dest row this was enforced in MainWindow (a
     warning dialog + un-checking btn_connect). P42 moved the guard to the
@@ -181,24 +182,24 @@ class TestConnectRejectedOnChannelZero:
     reached, and no serial frame is ever built.
     """
 
-    def test_channel_zero_chip_refuses_to_open_its_editor(self, wired_vhf):
+    def test_mon_chip_refuses_to_open_its_editor(self, wired_vhf):
         w, screen = wired_vhf
-        screen.channel_bar.set_current(0)
+        screen.channel_bar.set_current(MON_VIEW)
 
         screen.channel_bar.start_edit_current()
 
         assert not screen.channel_bar.is_editing()
         assert w._serial.calls == []
-        assert screen.channel_bar.state(0) == "free"
+        assert screen.channel_bar.state(MON_VIEW) == "free"
 
-    def test_channel_zero_never_emits_connect_requested(self, wired_vhf):
+    def test_mon_never_emits_connect_requested(self, wired_vhf):
         w, screen = wired_vhf
         received: list[tuple[int, str]] = []
         screen.channel_bar.connect_requested.connect(
             lambda ch, call: received.append((ch, call))
         )
 
-        screen.channel_bar.start_edit(0, "OE1XYZ")
+        screen.channel_bar.start_edit(MON_VIEW, "OE1XYZ")
 
         assert not screen.channel_bar.is_editing()
         assert received == []
@@ -219,11 +220,10 @@ class TestLinkMessageGatedByVisibleChannel:
         # Channel 4 connects while it is the visible channel.
         screen.channel_bar.set_current(4)
         mode.handle_frame(_FakeLinkMsgFrame(4, "CONNECTED to OE1XYZ"))
-        assert not screen.btn_unproto.isEnabled()
+        # P70: a connection never locks Unproto any more.
+        assert screen.btn_unproto.isEnabled()
 
-        # Switch away to the UI channel — Unproto re-enables (channel 0
-        # can never itself be busy).
-        screen.channel_bar.set_current(0)
+        screen.channel_bar.set_current(MON_VIEW)
         assert screen.btn_unproto.isEnabled()
 
         # A link message for channel 4 arrives while channel 0 is visible.
@@ -245,7 +245,7 @@ class TestLinkMessageGatedByVisibleChannel:
         mode.handle_frame(_FakeLinkMsgFrame(4, "CONNECTED to OE1XYZ"))
 
         screen.channel_bar.set_current(4)
-        assert not screen.btn_unproto.isEnabled()
+        assert screen.btn_unproto.isEnabled()
 
 
 class TestLinkMessageAppearsInItsOwnChannel:
@@ -279,11 +279,11 @@ class TestLinkMessageAppearsInItsOwnChannel:
 
         assert "*** DISCONNECTED: OE3XTC ***" in screen.rx_display.toPlainText()
 
-    def test_same_message_does_not_appear_on_ui_channel_in_ch_view(self, wired_vhf):
+    def test_same_message_does_not_appear_on_mon_view_in_ch_view(self, wired_vhf):
         w, screen = wired_vhf
         mode = w._modes.current_mode
         w._app_config.hf_packet.show_link_messages_in_ui_channel = False
-        screen.channel_bar.set_current(0)
+        screen.channel_bar.set_current(MON_VIEW)
         screen.set_view_all(False)
 
         mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
@@ -294,7 +294,7 @@ class TestLinkMessageAppearsInItsOwnChannel:
         w, screen = wired_vhf
         mode = w._modes.current_mode
         w._app_config.hf_packet.show_link_messages_in_ui_channel = False
-        screen.channel_bar.set_current(0)
+        screen.channel_bar.set_current(MON_VIEW)
         screen.set_view_all(True)
 
         mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
@@ -304,37 +304,37 @@ class TestLinkMessageAppearsInItsOwnChannel:
         assert "1│" in text
         assert "*** DISCONNECTED: OE3XTC ***" in text
 
-    def test_channel_15_always_appears_in_the_ui_channel(self, wired_vhf):
+    def test_channel_15_always_appears_in_mon_view(self, wired_vhf):
         # $5F is not channel-scoped at all (e.g. the generic data ack) -
         # there is nowhere else for it to belong, regardless of the
         # mirror setting (explicitly off here).
         w, screen = wired_vhf
         mode = w._modes.current_mode
         w._app_config.hf_packet.show_link_messages_in_ui_channel = False
-        screen.channel_bar.set_current(0)
+        screen.channel_bar.set_current(MON_VIEW)
         screen.set_view_all(False)
 
         mode.on_link_message(15, "some generic status")
 
         assert "some generic status" in screen.rx_display.toPlainText()
 
-    def test_mirror_setting_off_does_not_leak_into_ui_channel(self, wired_vhf):
+    def test_mirror_setting_off_does_not_leak_into_mon_view(self, wired_vhf):
         w, screen = wired_vhf
         mode = w._modes.current_mode
         w._app_config.hf_packet.show_link_messages_in_ui_channel = False
-        screen.channel_bar.set_current(0)
+        screen.channel_bar.set_current(MON_VIEW)
         screen.set_view_all(False)
 
         mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
 
         assert "OE3XTC" not in screen.rx_display.toPlainText()
 
-    def test_mirror_setting_on_duplicates_into_the_ui_channel_with_a_tag(self, wired_vhf):
+    def test_mirror_setting_on_duplicates_into_mon_view_with_a_tag(self, wired_vhf):
         w, screen = wired_vhf
         mode = w._modes.current_mode
         w._app_config.hf_packet.show_link_messages_in_ui_channel = True
         try:
-            screen.channel_bar.set_current(0)
+            screen.channel_bar.set_current(MON_VIEW)
             screen.set_view_all(False)
 
             mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE3XTC"))
@@ -345,14 +345,14 @@ class TestLinkMessageAppearsInItsOwnChannel:
             # file via the fixture's close()-triggered auto-save.
             w._app_config.hf_packet.show_link_messages_in_ui_channel = False
 
-    def test_mirror_setting_does_not_duplicate_a_ui_channel_message(self, wired_vhf):
-        # channel == UI_CHANNEL already means "this IS the UI channel" -
+    def test_mirror_setting_does_not_duplicate_a_mon_message(self, wired_vhf):
+        # channel 15 already goes to the MON view itself -
         # mirroring it into itself would just double it.
         w, screen = wired_vhf
         mode = w._modes.current_mode
         w._app_config.hf_packet.show_link_messages_in_ui_channel = True
         try:
-            screen.channel_bar.set_current(0)
+            screen.channel_bar.set_current(MON_VIEW)
             screen.set_view_all(False)
 
             mode.on_link_message(15, "some generic status")
@@ -377,7 +377,7 @@ class TestLinkMessageAppearsInItsOwnChannel:
     def test_set_status_still_fires_regardless_of_visible_channel(self, wired_vhf):
         w, screen = wired_vhf
         mode = w._modes.current_mode
-        screen.channel_bar.set_current(0)
+        screen.channel_bar.set_current(MON_VIEW)
 
         mode.handle_frame(_FakeLinkMsgFrame(1, "DISCONNECTED: OE1XYZ"))
 
@@ -718,7 +718,7 @@ class TestLinkTableHostModeCarryOver:
         w._link_table.mode_name = "VHF Packet"
         w._update_host_mode_ui(True)
 
-        # ctl=0x41 -> channel 1 (never channel 0/UI_CHANNEL - P10's own
+        # ctl=0x41 -> channel 1 (P10's own
         # TestUiChannelZero::test_channel_zero_state_never_sticks
         # deliberately keeps chip 0 free no matter what set_channel_
         # state() is told, so a LinkTable-driven confirmation is
@@ -1242,3 +1242,124 @@ class TestArchiveRestoreTrigger:
         w._update_maildrop_gate_ui()
         _app.processEvents()
         assert calls == []
+
+
+class TestChannelZeroAndUnprotoChannelChoice:
+    """P70 B/D/E: channel 0 is an ordinary TNC channel; Unproto goes out
+    on the lowest free channel per the LinkTable; a rejected incoming
+    call is reported, never turned into a chip state."""
+
+    @staticmethod
+    def _data_calls(w):
+        return [c for c in w._serial.calls if c[0] == "data"]
+
+    @staticmethod
+    def _connect_all(w, upto: int):
+        for ch in range(upto):
+            w._link_table.on_host_link_message(ch, f"CONNECTED to OE3GAS-{ch}")
+
+    def test_incoming_connection_on_channel_zero_shows_in_chip_zero(self, wired_vhf):
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+
+        mode.handle_frame(_FakeLinkMsgFrame(0, "CONNECTED to OE3GAS-2"))
+
+        assert screen.channel_bar.state(0) == "connected"
+        assert screen.channel_bar.partner(0) == "OE3GAS-2"
+        assert w._link_table.channels[0].state == "connected"
+
+    def test_unproto_with_channel_zero_connected_goes_out_on_channel_one(self, wired_vhf):
+        w, screen = wired_vhf
+        self._connect_all(w, 1)
+        screen.channel_bar.set_current(MON_VIEW)
+        screen.set_view_all(False)
+        screen.tx_input.setPlainText("CQ CQ de OE3GAS")
+
+        w._on_packet_tx_enter()
+
+        assert self._data_calls(w) == [("data", 1, b"CQ CQ de OE3GAS\r")]
+        assert "[via ch1]" in screen.rx_display.toPlainText()
+        assert screen.tx_input.toPlainText() == ""
+
+    def test_unproto_with_nothing_connected_uses_channel_zero(self, wired_vhf):
+        w, screen = wired_vhf
+        screen.channel_bar.set_current(MON_VIEW)
+        screen.tx_input.setPlainText("hello")
+
+        w._on_packet_tx_enter()
+
+        assert self._data_calls(w) == [("data", 0, b"hello\r")]
+
+    def test_unproto_with_all_ten_connected_sends_nothing_and_keeps_text(self, wired_vhf):
+        w, screen = wired_vhf
+        self._connect_all(w, 10)
+        screen.channel_bar.set_current(MON_VIEW)
+        screen.set_view_all(False)
+        screen.tx_input.setPlainText("hello")
+
+        w._on_packet_tx_enter()
+
+        assert self._data_calls(w) == []
+        assert screen.tx_input.toPlainText() == "hello"
+        assert "all 10 channels are connected - no free channel for unproto" in (
+            screen.rx_display.toPlainText())
+
+    def test_unproto_path_frame_goes_out_before_the_first_mon_frame(self, wired_vhf):
+        w, screen = wired_vhf
+        screen.le_unproto.setText("CQ VIA RELAY")
+        screen.channel_bar.set_current(MON_VIEW)
+        screen.tx_input.setPlainText("hello")
+
+        w._on_packet_tx_enter()
+
+        kinds = [c[0] for c in w._serial.calls]
+        assert kinds.index("cmd") < kinds.index("data")
+
+    def test_rejected_call_is_reported_in_mon_and_status_bar_only(self, wired_vhf):
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        w._app_config.hf_packet.users = 1
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(MON_VIEW)
+        before = [screen.channel_bar.state(ch) for ch in range(10)]
+
+        mode.handle_frame(_FakeLinkMsgFrame(1, "Connect request: OE3GAS-3"))
+
+        msg = "Incoming call from OE3GAS-3 rejected by the TNC (USERS 1)"
+        assert msg in screen.rx_display.toPlainText()
+        assert msg in w.statusBar().currentMessage()
+        assert [screen.channel_bar.state(ch) for ch in range(10)] == before
+
+    def test_other_link_messages_do_not_trigger_the_rejected_notice(self, wired_vhf):
+        w, screen = wired_vhf
+        mode = w._modes.current_mode
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(MON_VIEW)
+
+        mode.handle_frame(_FakeLinkMsgFrame(1, "CONNECTED to OE3GAS-3"))
+
+        assert "rejected by the TNC" not in screen.rx_display.toPlainText()
+
+    def test_activation_repaints_from_the_link_table_without_reset(self, wired_vhf, monkeypatch):
+        w, screen = wired_vhf
+        w._link_table.on_host_link_message(0, "CONNECTED to OE3GAS-2")
+        monkeypatch.setattr(
+            screen, "reset_channels",
+            lambda: pytest.fail("reset_channels() must not run on activation"),
+        )
+        # Chip drifted away from the table (e.g. a stale widget state).
+        screen.channel_bar.set_channel_state(0, "free", "")
+        assert screen.channel_bar.state(0) == "free"
+
+        w._switch_opmode("VHF Packet")
+
+        assert screen.channel_bar.state(0) == "connected"
+        assert screen.channel_bar.partner(0) == "OE3GAS-2"
+
+    def test_co_state_4_shows_disconnecting_on_the_chip(self, wired_vhf):
+        w, screen = wired_vhf
+        w._link_table.on_host_link_message(0, "CONNECTED to OE3GAS-2")
+
+        w._on_mode_link_status(0x40, b"CO31000OE3GAS-2")
+
+        assert screen.channel_bar.state(0) == "disconnecting"

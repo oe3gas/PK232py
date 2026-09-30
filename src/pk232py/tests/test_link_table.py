@@ -10,6 +10,7 @@ from __future__ import annotations
 from pk232py.comm.link_status import LinkStatus
 from pk232py.comm.link_table import (
     STATE_CONNECTED,
+    STATE_DISCONNECTING,
     STATE_FREE,
     STATE_UNCONFIRMED,
     ChannelLink,
@@ -188,3 +189,55 @@ class TestChannelLinkDefaults:
         link = ChannelLink()
         assert link.state == STATE_FREE
         assert link.partner == ""
+
+
+class TestLowestFreeChannelAndDisconnecting:
+    """P70 D / B: lowest_free_channel() and the 'disconnecting' state."""
+
+    def test_all_free_is_channel_zero(self):
+        assert LinkTable().lowest_free_channel() == 0
+
+    def test_channel_zero_connected_gives_one(self):
+        table = LinkTable()
+        table.on_host_link_message(0, "CONNECTED to OE3GAS-2")
+        assert table.lowest_free_channel() == 1
+
+    def test_channel_zero_unconfirmed_gives_one(self):
+        table = LinkTable()
+        table.on_host_link_message(0, "CONNECTED to OE3GAS-2")
+        table.mark_unconfirmed()
+        assert table.lowest_free_channel() == 1
+
+    def test_calling_channel_is_not_free(self):
+        table = LinkTable()
+        table.on_local_connect_attempt(0, "OE3GAS-1")
+        assert table.lowest_free_channel() == 1
+
+    def test_all_ten_busy_is_none(self):
+        table = LinkTable()
+        for ch in range(10):
+            table.on_host_link_message(ch, "CONNECTED to OE3GAS-%d" % ch)
+        assert table.lowest_free_channel() is None
+
+    def test_co_state_4_is_disconnecting_and_not_free(self):
+        table = LinkTable()
+        table.on_link_status(LinkStatus(channel=0, state=4, partner="OE3GAS-2"))
+        assert table.channels[0].state == STATE_DISCONNECTING
+        assert table.channels[0].partner == "OE3GAS-2"
+        assert table.lowest_free_channel() == 1
+
+    def test_disconnecting_then_free(self):
+        table = LinkTable()
+        table.on_link_status(LinkStatus(channel=0, state=4, partner="OE3GAS-2"))
+        table.on_link_status(LinkStatus(channel=0, state=1))
+        assert table.channels[0].state == STATE_FREE
+
+    def test_connect_request_changes_nothing(self):
+        # P70 E: the rejected-call text is reported by MainWindow, the
+        # table takes no state from it.
+        table = LinkTable()
+        seen = []
+        table.subscribe(lambda ch, link: seen.append(ch))
+        table.on_host_link_message(1, "Connect request: OE3GAS-3")
+        assert table.channels[1].state == STATE_FREE
+        assert seen == []

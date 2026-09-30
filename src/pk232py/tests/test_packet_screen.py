@@ -32,7 +32,7 @@ from PyQt6.QtCore import Qt, QAbstractAnimation
 from PyQt6.QtWidgets import QApplication
 
 from pk232py.ui.screens.packet_screen import (
-    HFPacketScreen, UI_CHANNEL, CHANNEL_COUNT,
+    HFPacketScreen, MON_VIEW, CHANNEL_COUNT,
     CH_FREE, CH_CALLING, CH_CONNECTED, CH_FAILED,
     _CHIP_FILL,
 )
@@ -165,25 +165,26 @@ class TestResetChannelsClearsAllBuffers:
 
 
 class TestUiChannelZero:
-    """P10.1 — channel 0 is the UI/unproto/monitor channel, not a QSO chip."""
+    """P10.1, superseded by P70: channel 0 is a regular TNC channel; the
+    monitor/unproto view is the separate MON chip (see
+    TestMonChipAndRegularChannelZero below)."""
 
-    def test_chip_zero_label_is_ui(self):
+    def test_chip_zero_label_is_its_number(self):
         screen = _make_screen()
-        assert screen.channel_bar._chips[0]._lbl_num.text() == "UI"
+        assert screen.channel_bar._chips[0]._lbl_num.text() == "0"
 
-    def test_channel_zero_state_never_sticks(self):
+    def test_channel_zero_state_sticks(self):
         screen = _make_screen()
-        screen.channel_bar.set_channel_state(0, "connected", "SHOULDNOTSTICK")
-        assert screen.channel_bar.state(0) == "free"
-        assert screen.channel_bar.partner(0) == ""
+        screen.channel_bar.set_channel_state(0, "connected", "OE1ABC")
+        assert screen.channel_bar.state(0) == "connected"
+        assert screen.channel_bar.partner(0) == "OE1ABC"
 
-    def test_channel_zero_excluded_from_channel_map(self):
+    def test_channel_zero_included_in_channel_map(self):
         screen = _make_screen()
-        screen.channel_bar.set_channel_state(0, "connected", "SHOULDNOTSTICK")
+        screen.channel_bar.set_channel_state(0, "connected", "OE1ABC")
         screen.channel_bar.set_channel_state(3, "connected", "OE1XYZ")
         cmap = screen.channel_bar.channel_map()
-        assert "SHOULDNOTSTICK" not in cmap
-        assert cmap == {"OE1XYZ": 3}
+        assert cmap == {"OE1ABC": 0, "OE1XYZ": 3}
 
     def test_step_still_reaches_channel_zero(self):
         screen = _make_screen()
@@ -204,10 +205,10 @@ class TestUiChannelZero:
         screen.append_monitor_data("heard something")
         assert screen.rx_display.toPlainText() == ""
 
-    def test_monitor_data_shown_in_ch_view_on_ui_channel(self):
+    def test_monitor_data_shown_in_ch_view_on_mon_view(self):
         screen = _make_screen()
         screen.set_view_all(False)
-        screen.channel_bar.set_current(UI_CHANNEL)
+        screen.channel_bar.set_current(MON_VIEW)
         screen.append_monitor_data("heard something")
         assert "heard something" in screen.rx_display.toPlainText()
 
@@ -223,23 +224,27 @@ class TestUserLimitTooltipOnly:
     """P11.5 — set_user_limit() is advisory only: a tooltip line, never a
     lock, grey-out or colour change."""
 
-    def test_channels_at_or_below_limit_get_no_extra_tooltip(self):
+    def test_channels_below_limit_get_no_extra_tooltip(self):
+        # P70: incoming calls land on the LOWEST free channel, so USERS n
+        # accepts exactly channels 0 .. n-1 (T147 F3/F4).
         screen = _make_screen()
-        screen.channel_bar.set_user_limit(1)
+        screen.channel_bar.set_user_limit(2)
+        assert "USERS is set to" not in screen.channel_bar._chips[0].button.toolTip()
         assert "USERS is set to" not in screen.channel_bar._chips[1].button.toolTip()
+        assert "USERS is set to 2" in screen.channel_bar._chips[2].button.toolTip()
 
     def test_channels_above_limit_get_the_warning_line(self):
         screen = _make_screen()
         screen.channel_bar.set_user_limit(1)
-        for ch in range(2, 10):
+        for ch in range(1, 10):
             tip = screen.channel_bar._chips[ch].button.toolTip()
             assert "USERS is set to 1" in tip
             assert "will not be accepted" in tip
 
-    def test_ui_channel_never_gets_the_warning_line(self):
+    def test_mon_chip_never_gets_the_warning_line(self):
         screen = _make_screen()
         screen.channel_bar.set_user_limit(0)
-        assert "USERS" not in screen.channel_bar._chips[UI_CHANNEL].button.toolTip()
+        assert "USERS" not in screen.channel_bar._chips[MON_VIEW].button.toolTip()
 
     def test_no_lock_or_style_change_above_the_limit(self):
         screen = _make_screen()
@@ -276,10 +281,10 @@ class TestChipConnectFlow:
         screen.channel_bar._on_chip_clicked(4)
         assert not screen.channel_bar.is_editing()
 
-    def test_ui_channel_does_not_open_editor(self):
+    def test_mon_chip_does_not_open_editor(self):
         screen = _make_screen()
-        screen.channel_bar.set_current(UI_CHANNEL)
-        screen.channel_bar._on_chip_clicked(UI_CHANNEL)
+        screen.channel_bar.set_current(MON_VIEW)
+        screen.channel_bar._on_chip_clicked(MON_VIEW)
         assert not screen.channel_bar.is_editing()
 
     def test_enter_with_valid_callsign_emits_connect_requested_on_that_channel(self):
@@ -326,11 +331,12 @@ class TestChipConnectFlow:
 
     def test_mheard_double_click_prefills_the_first_free_chip(self):
         screen = _make_screen()
-        screen.channel_bar.set_channel_state(1, "connected", "DL1ABC")
+        screen.channel_bar.set_channel_state(0, "connected", "DL1ABC")
+        screen.channel_bar.set_channel_state(1, "connected", "DL1DEF")
 
         screen.mheard_panel.connect_requested.emit("OE3XYZ")
 
-        assert screen.channel_bar.current() == 2   # channel 1 is busy
+        assert screen.channel_bar.current() == 2   # channels 0 and 1 are busy
         chip = screen.channel_bar._chips[2]
         assert chip.is_editing()
         assert chip.editor.text() == "OE3XYZ"
@@ -894,3 +900,63 @@ class TestMheardAutoPopulation:
 
         assert any(e[0] == "OE3TEC" for e in screen.mheard_panel._entries)
         assert "OE3TEC" not in screen.channel_bar.channel_map()
+
+
+class TestMonChipAndRegularChannelZero:
+    """P70 A/B/C: MON is a separate, non-TNC view; channel 0 is a normal channel."""
+
+    def test_channel_zero_opens_the_connect_editor(self):
+        screen = _make_screen()
+        screen.channel_bar.set_current(0)
+        screen.channel_bar._on_chip_clicked(0)
+        assert screen.channel_bar._chips[0].is_editing()
+
+    def test_mon_chip_exists_before_channel_zero(self):
+        screen = _make_screen()
+        bar = screen.channel_bar
+        assert MON_VIEW in bar._chips
+        assert bar._chips[MON_VIEW]._lbl_num.text() == "MON"
+        layout = bar.layout()
+        order = [w for w in (layout.itemAt(i).widget() for i in range(layout.count()))
+                 if w is not None]   # the spacer after MON has no widget
+        assert order.index(bar._chips[MON_VIEW]) + 1 == order.index(bar._chips[0])
+
+    def test_mon_chip_has_no_connect_editor_or_state(self):
+        screen = _make_screen()
+        bar = screen.channel_bar
+        bar.set_current(MON_VIEW)
+        bar._on_chip_clicked(MON_VIEW)
+        assert not bar.is_editing()
+        bar.set_channel_state(MON_VIEW, "connected", "X")
+        assert bar.channel_map() == {}
+
+    def test_mon_view_takes_monitor_lines(self):
+        screen = _make_screen()
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(MON_VIEW)
+        screen.append_monitor_data("heard something")
+        assert "heard something" in screen.rx_display.toPlainText()
+
+    def test_monitor_lines_do_not_land_in_channel_zero(self):
+        screen = _make_screen()
+        screen.set_view_all(False)
+        screen.channel_bar.set_current(0)
+        screen.append_monitor_data("heard something")
+        assert screen.rx_display.toPlainText() == ""
+
+    def test_disconnecting_state_is_shown_and_counts_as_busy(self):
+        screen = _make_screen()
+        screen.channel_bar.set_channel_state(2, "disconnecting", "OE3GAS-2")
+        assert screen.channel_bar.state(2) == "disconnecting"
+        screen.channel_bar.set_current(2)
+        screen.channel_bar._on_chip_clicked(2)
+        assert not screen.channel_bar.is_editing()
+
+    def test_step_includes_mon(self):
+        screen = _make_screen()
+        bar = screen.channel_bar
+        bar.set_current(0)
+        bar.step(-1)
+        assert bar.current() == MON_VIEW
+        bar.step(1)
+        assert bar.current() == 0
