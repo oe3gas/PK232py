@@ -1176,6 +1176,24 @@ Grows over time.
   nothing the operator sets by hand on the TNC survives a power-off, and
   MailDrop content is lost every time too (Backlog.md: saving/reloading
   the mailbox is a required feature, not a nice-to-have, because of this).
+- **Host Mode parameter answers on device B (01.AUG.91), T151, 01.10.2026**
+  (rule 11: device B only):
+  - Query `$4F <mn>` -> answer `<mn><value>`; set `<mn><value>` -> `<mn> $00`
+    (ACK); a second query shows the new value. Format: numbers as ASCII
+    decimal digits, switches `Y`/`N`, text literal (`UNCQ`, `CFall`,
+    `MTnone`), control characters as `$hh` (`CN$03`, `CL$18`, `SP$0D`),
+    empty text as `` (`BT`) - that `$0D` is **not** an error code.
+  - `$07` as the answer to a query: command unknown on this device (`EX`,
+    `PH`, `PB`, `PV`; verbose `EXPERT`/`PTHUFF` -> `?What?`). `$10` on `DA`
+    (DAYTIME unset): meaning unmeasured.
+  - 50 mnemonics are tied to their parameter by the Pass 0 verbose value
+    (numbers: strong evidence; switches: only weak, equal values can be
+    chance). **`AO` = ARQTMO**; ARQTOL is `?What?` here, the matrix row
+    `AO ARQTOL` is wrong. `KILONFWD  ON` (padded uppercase name) needs the
+    verbose parser's double-space rule.
+  - One of the Pass 1 test values switches the verbose command interpreter
+    off (every verbose query -> `?What?`, only power-cycling helps) -
+    trigger unknown until T155. Restore **in Host Mode** before leaving it.
 - **The PK-232 can hang and stop responding to anything at all, even the
   wakeup `*` — this is a hardware fault, not a software bug (P31,
   observed 23.09.2026).** The 18:01 wakeup failure that day was traced to

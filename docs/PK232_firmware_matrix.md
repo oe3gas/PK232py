@@ -179,7 +179,7 @@ haertet sie ab.
 | AL | ALIST | amtor |  x   |  x   |  x   | M | S | read-only list |
 | AC | ARQ | amtor |  x   |  x   |  x   | M | S | direct |
 | AO | ARQTMO | amtor |  x   |  x   |  x   | M | Q |  |
-| AO | ARQTOL | amtor |  x   |  x   |  x   | M | Q |  |
+| AO | ARQTOL | amtor |  x   |  x   |  x   | M | Q | REFUTED (T151, device B 01.AUG.91): AO answers ARQTMO value; verbose ARQTOL is ?What? |
 | CU | CBELL | amtor |  x   |  x   |  x   | M | Q |  |
 | DC | DCDCONN | amtor |  x   |  x   |  x   | M | Q |  |
 | EA | EAS | amtor |  x   |  x   |  x   | M | Q |  |
