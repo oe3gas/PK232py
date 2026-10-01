@@ -3085,8 +3085,46 @@ as `COLLATERAL CHANGE` and restored). Verdicts: `verified`,
 | Answer to a set (ACK `$00`? error code?) | ⬜ |
 | Verdict count per result; list of `wrong_param` rows | ⬜ |
 
-**Status:** ⬜ OPEN — hardware session on Device B. Feeds P72
+**Result (01.10.2026, device B, release 01.AUG.91,
+`hw_logs/20261001_185959_host_params_probe.log`):** Answer format, set ACK
+and error codes measured (see `docs/claude/GOTCHAS_SERIAL_TNC.md`, "Host Mode
+parameter answers on device B"). All 38 set parameters: query, set (`<mn>
+$00`), query again behave. `$07` = unknown command (EX, PH, PB, PV), `$10` on
+DA (meaning unmeasured). Pass 2 failed (see limitation) - the verdicts of the
+run itself were all `unparsed`; the re-evaluation against the Pass 0 verbose
+values (`--reevaluate`, P71a) gives `verified=32`, `verified_weak=21`
+(switches without Pass 2), `host_only=1` (ARQTOL), `rejected` 5.
+`AO` = ARQTMO, not ARQTOL.
+
+**Limitation (P71a B.4):** one of the Pass 1 test values switches the
+verbose command interpreter off - every verbose query after Pass 1 gave
+`?What?`, so Pass 2 verified nothing and nothing was restored. The TNC had
+to be power-cycled. Parts A (restore in Host Mode) and C (T155) of P71a
+address this.
+
+**Status:** ✅ PASS with the limitation above. Feeds P72
 (`verified_releases`). Software: `test_host_params_probe.py`.
+
+---
+
+### T155 — `host_params_probe` C: which parameter breaks the verbose commands (P71a)
+
+`python tools/hw_check.py --port COM6 host_params_probe --part C` (PC 1 only,
+nothing transmitted, never part of `all`). Groups of test values are set in
+Host Mode (packet numbers, packet switches, RTTY/AMTOR/Morse, MailDrop
+switches, `8BITCONV`+`XMITOK`), then verbose `PACLEN` and `USERS` are asked.
+`?What?` = the group holds the trigger: restore in Host Mode, halve the
+group, continue. Result: the single parameter (or a combination), plus the
+verbose answer to `HELP` in that state. If the Host Mode restore fails the
+program says to power-cycle the TNC.
+
+| What | Result |
+|---|---|
+| Triggering parameter / combination | ⬜ |
+| Verbose `HELP` answer in the broken state | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session on Device B. Software:
+`test_host_params_probe.py` (`bisect_trigger`).
 
 ---
 
