@@ -3092,7 +3092,7 @@ parameter answers on device B"). All 38 set parameters: query, set (`<mn>
 $00`), query again behave. `$07` = unknown command (EX, PH, PB, PV), `$10` on
 DA (meaning unmeasured). Pass 2 failed (see limitation) - the verdicts of the
 run itself were all `unparsed`; the re-evaluation against the Pass 0 verbose
-values (`--reevaluate`, P71a) gives `verified=32`, `verified_weak=21`
+values (`--reevaluate`, P71a) gives `verified=17` (numbers: set, ACK, read back), `verified_query=16` (read-only match), `verified_weak=20`
 (switches without Pass 2), `host_only=1` (ARQTOL), `rejected` 5.
 `AO` = ARQTMO, not ARQTOL.
 
