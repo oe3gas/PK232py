@@ -11,9 +11,10 @@ host_params_probe` (T151/T152) measures it; P72 then fills
 `verified_releases`. Where the matrix has no row the mnemonic is b""
 ("not in matrix") and the probe never sends anything for that row.
 
-Two names can share one mnemonic in the matrix (ARQTMO and ARQTOL are
-both AO; MYALTCAL and MDCHECK are both MK) - exactly the kind of wrong
-assignment the probe's verbose cross-check is meant to expose.
+The matrix gives two names one mnemonic (ARQTMO and ARQTOL are both AO;
+MYALTCAL and MDCHECK are both MK) - exactly the kind of wrong assignment
+the probe's verbose cross-check exposes: T151 showed AO is ARQTMO, so
+ARQTOL has no mnemonic here. Every mnemonic in the table is unique.
 
 `kind` says what the probe may do with a parameter: "int"/"bool" are set
 to a test value; "text" is only queried (except BTEXT); "call" and "char"
@@ -75,7 +76,8 @@ HOST_PARAMS: tuple = (
     HostParam("PTHUFF", b"PH", "bool"),   # matrix section 3 text (generation marker), no table row; also modes/pactor.py
     HostParam("PT200", b"PB", "bool"),   # matrix line 347, confidence L
     HostParam("PTOVER", b"PV", "char"),   # matrix line 350, confidence L
-    HostParam("ARQTOL", b"AO", "int", 1, 5),   # matrix line 182, confidence M
+    # matrix lists AO, but AO answers ARQTMO's value; ARQTOL is ?What? on 01.AUG.91 (T151)
+    HostParam("ARQTOL", b"", "int", 1, 5),
     HostParam("MOPT", b"", "bool"),   # not in matrix
     HostParam("MYSELCAL", b"MG", "call"),   # matrix line 190, confidence M
     HostParam("MYALTCAL", b"MK", "call"),   # matrix line 189, confidence M
