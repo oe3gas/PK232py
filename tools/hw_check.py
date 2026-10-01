@@ -6084,13 +6084,16 @@ def classify_host_param(
       wrong_param            q1 differs from the verbose value
       set_not_acked          the set frame did not get '<mn> $00'
       set_ok_query_unparsed  acknowledged, but q2 is not the test value
-      verified_weak          q1 == verbose_before and the set worked, but
-                             a switch (Y/N) without a passed Pass 2 - an
-                             equal value can be chance; or a switch that
-                             was only queried
-      verified               q1 == verbose_before; if set: ACK and q2 ==
-                             test value (a switch also needs Pass 2:
-                             verbose_after == verbose_before)
+      verified_query         not set (read-only row): q1 == verbose_before.
+                             Says nothing about setting - P72 must not set
+                             such a parameter
+      verified_weak          q1 == verbose_before and the set worked, but a
+                             switch (Y/N) without a passed Pass 2 - an
+                             equal value can be chance
+      verified               q1 == verbose_before, set ACK and q2 == test
+                             value measured (a switch also needs Pass 2:
+                             verbose_after == verbose_before). Only these
+                             rows may be set by P72
     """
     param = param_by_name(name)
     mn = mnemonic if mnemonic is not None else (param.mnemonic if param else b"")
@@ -6111,7 +6114,7 @@ def classify_host_param(
     if _hp_norm(value1, kind) != _hp_norm(verbose_before, kind):
         return "wrong_param"
     if test_value is None:
-        return "verified_weak" if kind == "bool" else "verified"
+        return "verified_query"
     if set_resp != mn + b"\x00":
         return "set_not_acked"
     value2 = _hp_value_after(mn, query2)

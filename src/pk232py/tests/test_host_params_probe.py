@@ -126,15 +126,15 @@ class TestClassifyHostParam:
         # 'BT\r' = empty BTEXT (T151), not error $0D
         assert hw_check.rejected_code(b"BT\r") is None
         assert hw_check.classify_host_param(
-            "BTEXT", b"BT\r", None, None, "", None) == "verified"
+            "BTEXT", b"BT\r", None, None, "", None) == "verified_query"
 
     def test_query_only_text_matching_verbose_is_verified(self):
         assert hw_check.classify_host_param(
-            "MYCALL", b"MLOE3GAS", None, None, "OE3GAS", None) == "verified"
+            "MYCALL", b"MLOE3GAS", None, None, "OE3GAS", None) == "verified_query"
 
     def test_hex_control_character_compares_unchanged(self):
         assert hw_check.classify_host_param(
-            "COMMAND", b"CN$03", None, None, "$03", None) == "verified"
+            "COMMAND", b"CN$03", None, None, "$03", None) == "verified_query"
 
     def test_no_answer(self):
         assert hw_check.classify_host_param(
@@ -203,12 +203,12 @@ class TestReevaluate:
         lines: list = []
         counts = hw_check.reevaluate_host_params_log(log, out=lines.append)
         assert counts == {
-            "rejected (0x07)": 1, "verified": 2, "host_only": 1, "verified_weak": 2,
+            "rejected (0x07)": 1, "verified": 2, "host_only": 1, "verified_weak": 1, "verified_query": 1,
         }
         text = "\n".join(lines)
         assert "PACLEN (PL): verified" in text
         assert "ARQTOL (AO): host_only" in text
-        assert "KILONFWD (KL): verified_weak" in text
+        assert "KILONFWD (KL): verified_query" in text
         assert "AX25L2V2 (AV): verified_weak" in text
 
     _REAL_LOG = (Path(__file__).resolve().parents[3] / "hw_logs"
@@ -216,9 +216,10 @@ class TestReevaluate:
 
     @pytest.mark.skipif(not _REAL_LOG.exists(),
                         reason="the real T151 log is not in this checkout")
-    def test_real_t151_log_has_at_least_30_verified(self):
+    def test_real_t151_log_counts(self):
         counts = hw_check.reevaluate_host_params_log(self._REAL_LOG, out=lambda _l: None)
-        assert counts.get("verified", 0) >= 30
+        assert counts.get("verified", 0) == 17 and counts.get("verified_weak", 0) == 20
+        assert counts.get("verified_query", 0) >= 15
 
 
 class TestBisectTrigger:
