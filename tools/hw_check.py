@@ -6063,7 +6063,7 @@ def _hp_verbose_before(name: str, response: str) -> Optional[str]:
 def classify_host_param(
     name: str, query1: Optional[bytes], set_resp: Optional[bytes],
     query2: Optional[bytes], verbose_before: Optional[str],
-    test_value: Optional[str], *, verbose_after: Optional[str] = None,
+    test_value: Optional[str], *, verbose_test: Optional[str] = None,
     verbose_rejected: bool = False, mnemonic: Optional[bytes] = None,
 ) -> str:
     """Verdict for one probed parameter (pure; bytes are raw Host Mode
@@ -6071,8 +6071,8 @@ def classify_host_param(
 
     *verbose_before* is the verbose value read in Pass 0 (before anything
     was changed) and is the reference for the Host query q1 (P71a B).
-    *verbose_after* is the Pass 2 value (after the restore), None when
-    Pass 2 could not read it. *verbose_rejected*: verbose answered the
+    *verbose_test* is the verbose value read right after the test value
+    was set (P71a cross-check), None when it could not be read. *verbose_rejected*: verbose answered the
     name with an error ('?What?'). *mnemonic* overrides the table row.
 
       rejected (0xNN)        q1 or the set answer is an error code
@@ -6081,18 +6081,22 @@ def classify_host_param(
                              no verbose reference value
       host_only              verbose rejects the name, the Host mnemonic
                              answers with a value
-      wrong_param            q1 differs from the verbose value
+      wrong_param            q1 differs from the verbose value, or the
+                             verbose value after the set is not the test
+                             value
       set_not_acked          the set frame did not get '<mn> $00'
       set_ok_query_unparsed  acknowledged, but q2 is not the test value
       verified_query         not set (read-only row): q1 == verbose_before.
                              Says nothing about setting - P72 must not set
                              such a parameter
       verified_weak          q1 == verbose_before and the set worked, but a
-                             switch (Y/N) without a passed Pass 2 - an
-                             equal value can be chance
+                             switch (Y/N) without a verbose cross-check
+                             of the test value - an equal value can be
+                             chance
       verified               q1 == verbose_before, set ACK and q2 == test
-                             value measured (a switch also needs Pass 2:
-                             verbose_after == verbose_before). Only these
+                             value measured (a switch also needs the
+                             verbose cross-check: verbose_test == test
+                             value). Only these
                              rows may be set by P72
     """
     param = param_by_name(name)
@@ -6120,10 +6124,9 @@ def classify_host_param(
     value2 = _hp_value_after(mn, query2)
     if value2 is None or _hp_norm(value2, kind) != _hp_norm(test_value, kind):
         return "set_ok_query_unparsed"
-    if kind == "bool" and not (
-        verbose_after is not None
-        and _hp_norm(verbose_after, kind) == _hp_norm(verbose_before, kind)
-    ):
+    if verbose_test is not None and _hp_norm(verbose_test, kind) != _hp_norm(test_value, kind):
+        return "wrong_param"
+    if kind == "bool" and verbose_test is None:
         return "verified_weak"
     return "verified"
 
@@ -6169,7 +6172,7 @@ def reevaluate_host_params_log(path, out=print) -> dict:
         before = _hp_verbose_before(name, raw) if raw else None
         verdict = classify_host_param(
             name, _hp_literal(q1), _hp_literal(st), _hp_literal(q2), before,
-            _hp_literal(test), verbose_after=_hp_literal(vafter),
+            _hp_literal(test), verbose_test=_hp_literal(vafter),
             verbose_rejected=bool(raw) and query_error(raw) is not None,
             mnemonic=mn_text.encode("ascii"),
         )
@@ -6190,7 +6193,7 @@ def _hp_placeholder_original(param) -> str:
     return "x"
 
 
-def host_params_probe_frames(params=None) -> list:
+def host_params_probe_frames(params=None, exclude=frozenset()) -> list:
     """The Part A frame plan as (name, 'query'|'set', frame) - what
     --dry-run shows and what a test can inspect. One query per row with a
     mnemonic, a set frame only where choose_test_value() would set."""
@@ -6199,7 +6202,8 @@ def host_params_probe_frames(params=None) -> list:
         if not p.mnemonic:
             continue
         frames.append((p.name, "query", HostModeProtocol.build_command(p.mnemonic, b"")))
-        value = choose_test_value(p, _hp_placeholder_original(p))
+        value = (None if p.mnemonic.decode() in exclude
+                 else choose_test_value(p, _hp_placeholder_original(p)))
         if value is not None:
             frames.append((
                 p.name, "set",
@@ -6207,7 +6211,8 @@ def host_params_probe_frames(params=None) -> list:
             ))
     # P71a A: restore frames follow all queries/sets, still in Host Mode.
     for p in (HOST_PARAMS if params is None else params):
-        if p.mnemonic and choose_test_value(p, _hp_placeholder_original(p)) is not None:
+        if (p.mnemonic and p.mnemonic.decode() not in exclude
+                and choose_test_value(p, _hp_placeholder_original(p)) is not None):
             back = _hp_norm(_hp_placeholder_original(p), p.kind)
             frames.append((
                 p.name, "restore",
@@ -6263,9 +6268,10 @@ def host_params_steps(part: str, mycall: str) -> list:
              "Nothing is transmitted on the air."],
             "wait; the next step appears by itself."))
         steps.append(ProbeStep(
-            "T151 A.2  check in verbose mode and restore", WHERE_PC1, 3,
-            ["Nothing to do: this program leaves Host Mode once, asks the "
-             "changed parameters in verbose mode and restores every value."],
+            "T151 A.2  restore in Host Mode, check the original values", WHERE_PC1, 3,
+            ["Nothing to do: this program leaves Host Mode, asks the test "
+             "values in verbose mode, goes back into Host Mode, restores "
+             "every value there and checks the originals in verbose mode."],
             "wait; the run ends by itself with a summary."))
     if part == "C":
         steps.append(ProbeStep(
@@ -6448,7 +6454,14 @@ def _hp_restore_in_host(session: "Session", log: RunLog, params, rec: dict) -> N
         log.line(f"{p.name}: {r['restore']} (q1 {value!r}, now {back!r})")
 
 
-def _host_params_part_a(session: "Session", log: RunLog, run: StepRun) -> None:
+def _host_params_part_a(
+    session: "Session", log: RunLog, run: StepRun, exclude=frozenset(),
+) -> None:
+    """T151. Order (P71a): originals in verbose -> Host Mode: query + set
+    test values (not for *exclude*d mnemonics) -> leave -> verbose
+    cross-check of the test values -> Host Mode again: restore everything
+    -> leave -> verbose check of the original values. The restore runs
+    even if the cross-check fails (e.g. '?What?', B.4)."""
     params = list(HOST_PARAMS)
     expert = parse_query_value("EXPERT", session.query("EXPERT"))
     session.set_verbose("EXPERT", "ON")
@@ -6465,37 +6478,58 @@ def _host_params_part_a(session: "Session", log: RunLog, run: StepRun) -> None:
             verbose_rejected[p.name] = query_error(resp) is not None
             log.line(f"original {p.name} = {originals[p.name]!r}")
 
-        # -- Pass 1: Host Mode -------------------------------------------
+        # -- Pass 1: Host Mode, set the test values ------------------------
         step = run.steps[run.n]
         operator_step(run, step.title, step.where, step.do, step.then)
         rec: dict = {}
-        session.enter_host_mode()
+        vtest: dict = {}
         try:
-            session.drain_pending_frames()
-            for p in params:
-                if not p.mnemonic:
-                    log.line(f"{p.name}: no Host mnemonic (not in matrix) - skipped")
-                    continue
-                q = HostModeProtocol.build_command(p.mnemonic, b"")
-                r = {"test": choose_test_value(p, originals[p.name])}
-                r["q1"] = _hp_pick(p.mnemonic, _hp_exchange(session, q, f"{p.name} query"))
-                if r["test"] is not None:
-                    setf = HostModeProtocol.build_command(
-                        p.mnemonic, r["test"].encode("ascii"))
-                    r["set"] = _hp_pick(
-                        p.mnemonic, _hp_exchange(session, setf, f"{p.name} set {r['test']}"))
-                    r["q2"] = _hp_pick(
-                        p.mnemonic, _hp_exchange(session, q, f"{p.name} query again"))
-                rec[p.name] = r
-        finally:
-            # P71a A: put every set parameter back WHILE the Host Mode
-            # still answers - the verbose interpreter may not (B.4).
+            session.enter_host_mode()
             try:
-                _hp_restore_in_host(session, log, params, rec)
+                session.drain_pending_frames()
+                for p in params:
+                    if not p.mnemonic:
+                        log.line(f"{p.name}: no Host mnemonic (not in matrix) - skipped")
+                        continue
+                    q = HostModeProtocol.build_command(p.mnemonic, b"")
+                    excluded = p.mnemonic.decode() in exclude
+                    if excluded:
+                        log.line(f"{p.name} ({p.mnemonic.decode()}): excluded - queried only")
+                    r = {"test": None if excluded else choose_test_value(p, originals[p.name])}
+                    r["q1"] = _hp_pick(p.mnemonic, _hp_exchange(session, q, f"{p.name} query"))
+                    if r["test"] is not None:
+                        setf = HostModeProtocol.build_command(
+                            p.mnemonic, r["test"].encode("ascii"))
+                        r["set"] = _hp_pick(
+                            p.mnemonic, _hp_exchange(session, setf, f"{p.name} set {r['test']}"))
+                        r["q2"] = _hp_pick(
+                            p.mnemonic, _hp_exchange(session, q, f"{p.name} query again"))
+                    rec[p.name] = r
             finally:
                 session.exit_host_mode()
 
-        # -- Pass 2: verbose cross-check ---------------------------------
+            # -- verbose cross-check of the test values --------------------
+            for p in params:
+                r = rec.get(p.name)
+                if r and r["test"] is not None:
+                    vtest[p.name] = parse_query_value(p.name, session.query(p.name))
+        finally:
+            # P71a A: put every set parameter back WHILE the Host Mode
+            # answers - the verbose interpreter may not (B.4). Also after
+            # a failed cross-check.
+            if any(r.get("test") is not None for r in rec.values()):
+                try:
+                    session.enter_host_mode()
+                    try:
+                        session.drain_pending_frames()
+                        _hp_restore_in_host(session, log, params, rec)
+                    finally:
+                        session.exit_host_mode()
+                except HWCheckError:
+                    log.line("Host Mode restore impossible - power-cycle the TNC")
+                    raise
+
+        # -- Pass 2: verbose check of the original values ------------------
         step = run.steps[run.n]
         operator_step(run, step.title, step.where, step.do, step.then)
         now: dict = {}
@@ -6511,14 +6545,15 @@ def _host_params_part_a(session: "Session", log: RunLog, run: StepRun) -> None:
                 verdict = classify_host_param(
                     p.name, r["q1"], r.get("set"), r.get("q2"),
                     verbose_before[p.name], r["test"],
-                    verbose_after=now.get(p.name),
+                    verbose_test=vtest.get(p.name),
                     verbose_rejected=verbose_rejected[p.name],
                 )
             counts[verdict] = counts.get(verdict, 0) + 1
             raw = "" if r is None else (
                 f" q1={_hp_answer_text(r['q1'])} set={_hp_answer_text(r.get('set'))}"
                 f" q2={_hp_answer_text(r.get('q2'))} test={r['test']!r}"
-                f" verbose={now.get(p.name)!r} restore={r.get('restore')}"
+                f" verbose={vtest.get(p.name)!r} restore={r.get('restore')}"
+                f" after={now.get(p.name)!r}"
             )
             log.result(f"T151 {p.name} ({p.mnemonic.decode() or '-'})", "INFO",
                        f"{verdict}{raw}")
@@ -6641,7 +6676,9 @@ def _host_params_part_b(
             session.set_verbose("EXPERT", expert)
 
 
-def test_host_params_probe(session: "Session", log: RunLog, part: str = "A") -> None:
+def test_host_params_probe(
+    session: "Session", log: RunLog, part: str = "A", exclude=frozenset(),
+) -> None:
     if part not in ("A", "B", "C", "all"):
         raise ValueError(f"part must be A, B, C or all, got {part!r}")
     log.line(f"--- Host parameter probe (part {part}): ask/set in Host Mode ---")
@@ -6651,11 +6688,16 @@ def test_host_params_probe(session: "Session", log: RunLog, part: str = "A") -> 
         log.line(f"[dry-run] {len(steps)} steps; nothing is sent to a port")
         if part in ("A", "all"):
             operator_step(run, *[getattr(steps[0], a) for a in ("title", "where", "do", "then")])
-            for name, kind, frame in host_params_probe_frames():
+            restoring = False
+            for name, kind, frame in host_params_probe_frames(exclude=exclude):
+                if kind == "restore" and not restoring:
+                    restoring = True
+                    log.line("[dry-run] leave Host Mode, verbose cross-check of "
+                             "the test values, back into Host Mode")
                 session.send_frame(frame, note=f"{name} {kind}")
-            log.line("[dry-run] leave Host Mode (after the restore frames)")
+            log.line("[dry-run] leave Host Mode")
             operator_step(run, *[getattr(steps[1], a) for a in ("title", "where", "do", "then")])
-            log.line("[dry-run] verbose cross-check of every set parameter, then restore")
+            log.line("[dry-run] verbose check of the original values")
             log.result("T151", "INFO", "dry-run, nothing sent")
         if part == "C":
             operator_step(run, *[getattr(steps[0], a) for a in ("title", "where", "do", "then")])
@@ -6700,7 +6742,7 @@ def test_host_params_probe(session: "Session", log: RunLog, part: str = "A") -> 
             return
     try:
         if part in ("A", "all"):
-            _host_params_part_a(session, log, run)
+            _host_params_part_a(session, log, run, exclude)
         if part in ("B", "all"):
             _host_params_part_b(session, log, run, mycall)
         if part == "C":
@@ -6756,6 +6798,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "never part of all)"
     )
     p.add_argument(
+        "--exclude", metavar="MN,...", default="",
+        help="host_params_probe --part A: Host Mode mnemonics (e.g. UR,XO) "
+             "that are queried but never set"
+    )
+    p.add_argument(
         "--reevaluate", metavar="LOGFILE",
         help="host_params_probe: judge an existing T151 log again against "
              "its Pass 0 verbose values; no port is opened"
@@ -6801,6 +6848,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             parser.error("--reevaluate belongs to host_params_probe")
         reevaluate_host_params_log(args.reevaluate)
         return 0
+
+    exclude = frozenset(m.strip().upper() for m in args.exclude.split(",") if m.strip())
+    known = {p.mnemonic.decode() for p in HOST_PARAMS if p.mnemonic}
+    if exclude - known:
+        parser.error(f"--exclude: unknown mnemonic(s) {sorted(exclude - known)}")
 
     cfg_mgr = ConfigManager()
     cfg_mgr.load()
@@ -6872,7 +6924,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         "link_carry":      [lambda s, l: test_link_carry(s, l)],
         "link_carry_host": [lambda s, l: test_link_carry_host(s, l)],
         "channel_probe":   [lambda s, l: test_channel_probe(s, l, args.part)],
-        "host_params_probe": [lambda s, l: test_host_params_probe(s, l, args.part)],
+        "host_params_probe": [
+            lambda s, l: test_host_params_probe(s, l, args.part, exclude)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),

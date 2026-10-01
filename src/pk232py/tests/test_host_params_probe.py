@@ -89,15 +89,15 @@ class TestClassifyHostParam:
         assert hw_check.classify_host_param(
             "AX25L2V2", b"AVY", b"AV\x00", b"AVN", "ON", "N") == "verified_weak"
 
-    def test_switch_with_a_passed_pass_2_is_verified(self):
+    def test_switch_with_a_matching_verbose_cross_check_is_verified(self):
         assert hw_check.classify_host_param(
             "AX25L2V2", b"AVY", b"AV\x00", b"AVN", "ON", "N",
-            verbose_after="ON") == "verified"
+            verbose_test="OFF") == "verified"
 
-    def test_switch_whose_pass_2_shows_another_value_stays_weak(self):
+    def test_switch_whose_verbose_value_is_not_the_test_value_is_wrong_param(self):
         assert hw_check.classify_host_param(
             "AX25L2V2", b"AVY", b"AV\x00", b"AVN", "ON", "N",
-            verbose_after="OFF") == "verified_weak"
+            verbose_test="ON") == "wrong_param"
 
     def test_verbose_rejects_but_host_answers_is_host_only(self):
         assert hw_check.classify_host_param(
@@ -305,9 +305,19 @@ class TestDryRunFrames:
         sets = {n for n, k, _f in frames if k == "set"}
         assert {n for n, k, _f in frames if k == "restore"} == sets
 
-    def test_dry_run_leaves_host_mode_after_the_restore_frames(self, capsys):
+    def test_dry_run_sets_leaves_host_mode_then_restores(self, capsys):
         out, _log = self._run("A", capsys)
-        assert out.index("(PACLEN restore)") < out.index("leave Host Mode")
+        assert (out.index("(PACLEN set)") < out.index("leave Host Mode, verbose")
+                < out.index("(PACLEN restore)") < out.rindex("leave Host Mode"))
+
+    def test_excluded_mnemonics_get_neither_set_nor_restore(self):
+        frames = hw_check.host_params_probe_frames(exclude={"UR"})
+        assert not [f for f in frames if f[0] == "USERS" and f[1] != "query"]
+        assert [f for f in frames if f[0] == "MAXFRAME" and f[1] == "set"]
+
+    def test_exclude_option_rejects_an_unknown_mnemonic(self):
+        with pytest.raises(SystemExit):
+            hw_check.main(["host_params_probe", "--dry-run", "--exclude", "ZZ"])
 
     def _run(self, part, capsys):
         log = hw_check.RunLog(None)
