@@ -295,6 +295,9 @@ class AppearanceConfig:
     font_size:    int  = 14
     bg_color:     str  = "#1e1e1e"   # RX/TX display background
     fg_color:     str  = "#ffffff"   # RX/TX display foreground
+    # P76: ring a bell when a connection is established (Configure ->
+    # Appearance -> Connect bell). On by default; a missing INI key = on.
+    connect_bell: bool = True
 
 
 @dataclass
@@ -695,6 +698,7 @@ class ConfigManager:
         a.font_size   = s.getint("font_size", a.font_size)
         a.bg_color    = s.get("bg_color",    a.bg_color)
         a.fg_color    = s.get("fg_color",    a.fg_color)
+        a.connect_bell = s.getboolean("connect_bell", a.connect_bell)
 
     def _build_appearance(self) -> None:
         a = self.app.appearance
@@ -704,4 +708,5 @@ class ConfigManager:
             "font_size":   str(a.font_size),
             "bg_color":    a.bg_color,
             "fg_color":    a.fg_color,
+            "connect_bell": str(a.connect_bell).lower(),
         }
