@@ -163,6 +163,9 @@ class MainWindow(QMainWindow):
         # anywhere else (Teil C.1).
         self._link_table = LinkTable()
         self._link_table.subscribe(self._on_link_table_change)
+        # P76: EVENTS (a new connect), not states - reconciliation after a
+        # Host Mode entry changes states too, but must stay silent.
+        self._link_table.subscribe_events(self._on_link_table_event)
         # P72: names of parameters the TNC did NOT take (saved in the config,
         # but TNC differs). ONE state variable: filled by _apply_changed_params(),
         # an entry leaves when the same parameter is applied ok, everything
@@ -4981,6 +4984,18 @@ class MainWindow(QMainWindow):
         self._apply_appearance()
         self._sync_theme_checks()
         self._log_monitor(f"[SYS] Theme → {theme.name}")
+
+    def _on_link_table_event(self, channel: int, event: str, partner: str) -> None:
+        """LinkTable event (P76): ring on a new connect if the bell is on."""
+        if event == "connected" and self._app_config.appearance.connect_bell:
+            self._ring_connect_bell()
+
+    def _ring_connect_bell(self) -> None:
+        """The ONE place that makes the connect sound: the application's
+        system beep (Windows: the "Default Beep" sound; no audio file, no
+        extra dependency). Silent if that Windows sound is muted - that is
+        not an app setting."""
+        QApplication.beep()
 
     def _on_connect_bell_toggled(self, checked: bool) -> None:
         """Connect bell menu entry (P76): effective immediately, saved immediately."""
