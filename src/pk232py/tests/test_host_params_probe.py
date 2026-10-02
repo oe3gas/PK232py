@@ -58,11 +58,20 @@ class TestTableCoversTheUploader:
     def test_mnemonics_are_empty_or_two_chars(self):
         assert all(p.mnemonic == b"" or len(p.mnemonic) == 2 for p in HOST_PARAMS)
 
-    def test_int_rows_have_a_range_and_nothing_is_verified_yet(self):
+    def test_int_rows_have_a_range(self):
         for p in HOST_PARAMS:
             if p.kind == "int":
                 assert p.lo is not None and p.hi is not None and p.lo < p.hi
-            assert p.verified_releases == ()
+
+    def test_verified_releases_only_where_measured(self):
+        # P72 Teil A: T151 (B) 37 + UN/CF (T138), T152 (A) 7, T156 (A) UBIT.
+        on_b = {p.name for p in HOST_PARAMS if "01.AUG.91" in p.verified_releases}
+        on_a = {p.name for p in HOST_PARAMS if "13.SEP.95" in p.verified_releases}
+        assert len(on_b) == 39 and {"UNPROTO", "CFROM", "USERS"} <= on_b
+        assert on_a == {"USERS", "MAXFRAME", "PACLEN", "FRACK", "RETRY",
+                        "MONITOR", "TXDELAY", "UBIT"}
+        assert "ILFPACK" not in on_b       # T155 / B.3: only verified_query
+        assert all(p.mnemonic for p in HOST_PARAMS if p.verified_releases)
 
     def test_every_mnemonic_occurs_at_most_once(self):
         # P71a E: AO was listed for ARQTMO and ARQTOL; T151 showed it is ARQTMO's
@@ -341,3 +350,48 @@ class TestDryRunFrames:
         assert ("T152", "INFO", "dry-run, nothing sent") in log.findings
         for name in ("USERS", "MAXFRAME", "PACLEN", "FRACK", "RETRY", "MONITOR", "TXDELAY"):
             assert name in out
+
+
+class TestAnswerFormats:
+    """P72 Teil A: host_set_args / parse_host_answer / host_error_code /
+    norm_value - the formats measured by T151, T152 and T156."""
+
+    def test_set_args(self):
+        from pk232py.comm.host_params import host_set_args, host_query_args
+        assert host_set_args(param_by_name("USERS"), "10") == b"10"
+        assert host_set_args(param_by_name("AX25L2V2"), "ON") == b"Y"
+        assert host_set_args(param_by_name("AX25L2V2"), "OFF") == b"N"
+        assert host_set_args(param_by_name("UBIT"), "0 OFF") == b"0 N"
+        assert host_set_args(param_by_name("UBIT"), "0 ON") == b"0 Y"
+        assert host_set_args(param_by_name("CTEXT"), "") == b"\r"
+        assert host_query_args(param_by_name("UBIT")) == b"0"
+        assert host_query_args(param_by_name("USERS")) == b""
+
+    def test_parse_answer(self):
+        from pk232py.comm.host_params import parse_host_answer
+        assert parse_host_answer(param_by_name("USERS"), b"UR10") == "10"
+        assert parse_host_answer(param_by_name("AX25L2V2"), b"AVY") == "Y"
+        assert parse_host_answer(param_by_name("UBIT"), b"UBN") == "OFF"
+        assert parse_host_answer(param_by_name("UBIT"), b"UBY") == "ON"
+        assert parse_host_answer(param_by_name("BTEXT"), b"BT\r") == ""
+
+    def test_parse_answer_never_guesses(self):
+        from pk232py.comm.host_params import parse_host_answer
+        assert parse_host_answer(param_by_name("USERS"), None) is None
+        assert parse_host_answer(param_by_name("USERS"), b"UR\x07") is None
+        assert parse_host_answer(param_by_name("USERS"), b"PL128") is None
+
+    def test_error_code(self):
+        from pk232py.comm.host_params import host_error_code
+        assert host_error_code(b"UR\x07") == 7
+        assert host_error_code(b"UR\x00") is None       # ACK
+        assert host_error_code(b"BT\r") is None          # empty text
+        assert host_error_code(None) is None
+
+    def test_norm_value(self):
+        from pk232py.comm.host_params import norm_value
+        assert norm_value("ON", "bool") == norm_value("Y", "bool") == "Y"
+        assert norm_value("OFF", "ubit") == "N"
+        assert norm_value("007", "int") == "7"
+        assert norm_value("APZ232 via WIDE1-1, WIDE2-1", "text") == \
+            norm_value("APZ232 VIA WIDE1-1,WIDE2-1", "text")

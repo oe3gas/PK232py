@@ -61,12 +61,13 @@ class TestUpload:
 
 
 class TestHostParamsRow:
-    def test_row_exists_and_form_is_not_guessed(self):
+    def test_row_is_the_t156_measurement(self):
         row = param_by_name("UBIT")
         assert row is not None and row.kind == "ubit"
-        # Host Mode argument form is unmeasured until T156: nothing may be
-        # sent for this row yet (mnemonic UB per manual, form unknown).
-        assert row.mnemonic == b""
+        # T156 (device A, 13.SEP.95): set "UB0 N", query "UB0" -> "UBN".
+        # Device B is unmeasured (Backlog) - not released there.
+        assert row.mnemonic == b"UB"
+        assert row.verified_releases == ("13.SEP.95",)
 
 
 class TestPacketDialog:

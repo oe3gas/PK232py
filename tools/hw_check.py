@@ -247,7 +247,9 @@ from pk232py.comm.link_status import (  # noqa: E402
 from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
 from pk232py.comm.frame import build_command, _dle_escape  # noqa: E402
 from pk232py.comm.hostmode import HostModeProtocol  # noqa: E402
-from pk232py.comm.host_params import HOST_PARAMS, param_by_name  # noqa: E402
+from pk232py.comm.host_params import (  # noqa: E402
+    HOST_PARAMS, host_error_code, host_query_args, norm_value, param_by_name,
+)
 from pk232py.comm.constants import SOH, ETB  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
 from pk232py.maildrop import MailDropSession, SerialManagerChannel  # noqa: E402
@@ -5991,18 +5993,7 @@ _HP_NEVER_SET = {"EXPERT"}   # verbose-only (matrix 3a: Host Mode ignores it)
 _HP_ACK_POLL = b"HP"         # poll acknowledge, never an answer to a parameter frame
 
 
-def _hp_norm(value: str, kind: str) -> str:
-    """Comparable form of a parameter value: bools Y/N (ON/OFF/YES/NO/1/0
-    folded), ints as their number, everything else upper-cased text."""
-    text = (value or "").strip().upper()
-    if kind == "bool":
-        if text in ("Y", "YES", "ON", "1"):
-            return "Y"
-        if text in ("N", "NO", "OFF", "0"):
-            return "N"
-    if kind == "int" and re.fullmatch(r"-?\d+", text):
-        return str(int(text))
-    return text
+_hp_norm = norm_value   # P72: one normalisation (comm/host_params.py)
 
 
 def _hp_value_after(mnemonic: bytes, data: Optional[bytes]) -> Optional[str]:
@@ -6013,19 +6004,7 @@ def _hp_value_after(mnemonic: bytes, data: Optional[bytes]) -> Optional[str]:
     return data[len(mnemonic):].decode("ascii", errors="replace").strip()
 
 
-def rejected_code(set_resp: Optional[bytes]) -> Optional[int]:
-    """The error code if *set_resp* is an error answer: a lone byte, or
-    a 2-letter mnemonic plus ONE byte, in $01-$1F (TRM 4.3 - e.g. $09 'not
-    while connected'). $00 is the plain acknowledge; anything else is not
-    recognised as an error."""
-    if not set_resp:
-        return None
-    body = set_resp
-    if len(body) == 3 and body[:2].isalnum():
-        body = body[2:]
-    if len(body) == 1 and 0x01 <= body[0] <= 0x1F and body[0] != 0x0D:
-        return body[0]
-    return None
+rejected_code = host_error_code   # P72: one error-code rule (comm/host_params.py)
 
 
 def choose_test_value(param, original: Optional[str]) -> Optional[str]:
@@ -6207,7 +6186,7 @@ def host_params_probe_frames(params=None, exclude=frozenset()) -> list:
     for p in (HOST_PARAMS if params is None else params):
         if not p.mnemonic:
             continue
-        frames.append((p.name, "query", HostModeProtocol.build_command(p.mnemonic, b"")))
+        frames.append((p.name, "query", HostModeProtocol.build_command(p.mnemonic, host_query_args(p))))
         value = (None if p.mnemonic.decode() in exclude
                  else choose_test_value(p, _hp_placeholder_original(p)))
         if value is not None:
@@ -6497,7 +6476,7 @@ def _host_params_part_a(
                     if not p.mnemonic:
                         log.line(f"{p.name}: no Host mnemonic (not in matrix) - skipped")
                         continue
-                    q = HostModeProtocol.build_command(p.mnemonic, b"")
+                    q = HostModeProtocol.build_command(p.mnemonic, host_query_args(p))
                     excluded = p.mnemonic.decode() in exclude
                     if excluded:
                         log.line(f"{p.name} ({p.mnemonic.decode()}): excluded - queried only")

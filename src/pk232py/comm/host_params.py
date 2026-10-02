@@ -4,12 +4,15 @@
 (as ParamsUploader._build_commands() sends it) to its Host Mode mnemonic
 (P71, Teil A). Qt-free.
 
-EVERY mnemonic below is a HYPOTHESIS taken from
+Every mnemonic below is a HYPOTHESIS taken from
 docs/PK232_firmware_matrix.md section 4 (confidence M/L, "matrix line N"
-= the row of that file) - nothing here is measured. `hw_check.py
-host_params_probe` (T151/T152) measures it; P72 then fills
-`verified_releases`. Where the matrix has no row the mnemonic is b""
-("not in matrix") and the probe never sends anything for that row.
+= the row of that file) UNLESS the release is listed in its
+`verified_releases` (P72, Teil A: measured by T151/T152/T156 - see the
+`_VERIFIED_*` blocks below, one block per measurement). Only a verified
+(parameter, release) pair may be set in Host Mode by the application
+(ParamApplier); everything else is reported as "not verified". Where the
+matrix has no row the mnemonic is b"" ("not in matrix") and nothing is
+ever sent for that row.
 
 The matrix gives two names one mnemonic (ARQTMO and ARQTOL are both AO;
 MYALTCAL and MDCHECK are both MK) - exactly the kind of wrong assignment
@@ -25,8 +28,13 @@ setting can cut the connection.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from typing import Optional
+
+# Releases exactly as printed in the boot banner (SerialManager.tnc_release).
+RELEASE_B = "01.AUG.91"     # device B
+RELEASE_A = "13.SEP.95"     # device A (docs/DEVICES.md, P72 Teil F)
 
 
 @dataclass(frozen=True)
@@ -36,10 +44,10 @@ class HostParam:
     kind: str                 # "int" | "bool" | "text" | "call" | "char"
     lo: Optional[int] = None  # int range, from the parameter dialogs
     hi: Optional[int] = None
-    verified_releases: tuple = ()   # filled after T151 (P72)
+    verified_releases: tuple = ()   # P72: releases where T151/T152/T156 verified it
 
 
-HOST_PARAMS: tuple = (
+_ROWS: tuple = (
     HostParam("EXPERT", b"EX", "bool"),   # matrix line 233, confidence L
     HostParam("MYCALL", b"ML", "call"),   # matrix line 327, confidence M
     HostParam("PACLEN", b"PL", "int", 1, 255),   # matrix line 328, confidence M
@@ -73,11 +81,11 @@ HOST_PARAMS: tuple = (
     HostParam("MTO", b"MT", "text"),   # matrix line 326, confidence M
     HostParam("8BITCONV", b"8B", "bool"),   # matrix line 353, confidence M
     HostParam("HID", b"", "bool"),   # not in matrix
-    # UBIT 0 (P74): manual gives mnemonic UB (matrix: confidence L, not BASE), but the
-    # argument form (0 N / 0N / 0 OFF / ...) is unmeasured until T156 - so b"" = the
-    # probe and P72 send nothing. Fill in the mnemonic + form here, in ONE place.
+    # UBIT 0 (P74/P72): mnemonic UB per manual (matrix: confidence L, not BASE);
+    # the Host Mode form was measured by T156 on device A: set "UB0 N|Y" (with a
+    # space), query "UB0" -> "UBN"/"UBY" (see host_set_args / parse_host_answer).
     # Named "UBIT" like the verbose command (the coverage test compares first tokens).
-    HostParam("UBIT", b"", "ubit"),
+    HostParam("UBIT", b"UB", "ubit"),
     HostParam("MYPTCALL", b"", "call"),   # not in matrix
     HostParam("PTHUFF", b"PH", "bool"),   # matrix section 3 text (generation marker), no table row; also modes/pactor.py
     HostParam("PT200", b"PB", "bool"),   # matrix line 347, confidence L
@@ -117,9 +125,127 @@ HOST_PARAMS: tuple = (
     HostParam("DAYTIME", b"DA", "text"),   # matrix line 230, confidence M
 )
 
+# --- P72 Teil A: measured releases ------------------------------------------
+# T151 (device B, 01.10.2026 20:55, hw_logs/20261001_205535_host_params_probe.log,
+# `host_params_probe --part A --exclude IL`; the log has no banner - the device
+# is the operator's statement; `--reevaluate` of that log gives exactly these 37
+# as `verified`: set, ACK `<mn> $00`, read back, verbose cross-check with the
+# test value). ILFPACK is NOT in the list (only `verified_query`, T155/B.3).
+_VERIFIED_B_T151 = frozenset({
+    "PACLEN", "TXDELAY", "MAXFRAME", "FRACK", "RETRY", "PERSIST", "SLOTTIME",
+    "DWAIT", "CHECK", "MONITOR", "RESPTIME", "USERS", "AX25L2V2", "HEADERLN",
+    "CONSTAMP", "DAYSTAMP", "ACRPACK", "ALFPACK", "MRPT", "PPERSIST", "XMITOK",
+    "8BITCONV", "ARQTMO", "ADELAY", "TDBAUD", "TDCHAN", "RFEC", "RXREV",
+    "TXREV", "MSPEED", "ALFRTTY", "DIDDLE", "MAILDROP", "MMSG", "TMAIL",
+    "3RDPARTY", "KILONFWD",
+})
+# T138 A.3 / A.5 (device B, 27.09.2026): UN and CF set in Host Mode and
+# confirmed in verbose mode.
+_VERIFIED_B_T138 = frozenset({"UNPROTO", "CFROM"})
+# T152 (device A, 02.10.2026, hw_logs/20261002_172135_host_params_probe.log):
+# set, ACK, read back = test value, WHILE CONNECTED, link unchanged afterwards.
+_VERIFIED_A_T152 = frozenset({
+    "USERS", "MAXFRAME", "PACLEN", "FRACK", "RETRY", "MONITOR", "TXDELAY",
+})
+# T156 (device A, 02.10.2026 16:28, hw_logs/20261002_162823_ubit_probe.log, no
+# banner - device A per the operator): UBIT 0 set "UB0 N", query "UB0" -> "UBN",
+# verbose confirmed, survives the VHF mode-switch frames.
+_VERIFIED_A_T156 = frozenset({"UBIT"})
+
+
+def _verified_releases(name: str) -> tuple:
+    releases = []
+    if name in _VERIFIED_B_T151 or name in _VERIFIED_B_T138:
+        releases.append(RELEASE_B)
+    if name in _VERIFIED_A_T152 or name in _VERIFIED_A_T156:
+        releases.append(RELEASE_A)
+    return tuple(releases)
+
+
+HOST_PARAMS: tuple = tuple(
+    replace(row, verified_releases=_verified_releases(row.name)) for row in _ROWS
+)
+
 _BY_NAME = {p.name: p for p in HOST_PARAMS}
 
 
 def param_by_name(name: str) -> Optional[HostParam]:
     """The table row for verbose *name*, or None."""
     return _BY_NAME.get(name.upper())
+
+
+# ---------------------------------------------------------------------------
+# Answer / argument formats (T151, T152, T156) - the ONE place, both
+# directions. Used by ParamApplier and tools/hw_check.py.
+# ---------------------------------------------------------------------------
+
+def host_error_code(set_resp: Optional[bytes]) -> Optional[int]:
+    """The error code if *set_resp* is an error answer: a lone byte, or
+    a 2-letter mnemonic plus ONE byte, in $01-$1F (TRM 4.3 - e.g. $09 'not
+    while connected'; measured: $07 = command unknown on this device).
+    $00 is the plain acknowledge; $0D alone is an empty text, not an error."""
+    if not set_resp:
+        return None
+    body = set_resp
+    if len(body) == 3 and body[:2].isalnum():
+        body = body[2:]
+    if len(body) == 1 and 0x01 <= body[0] <= 0x1F and body[0] != 0x0D:
+        return body[0]
+    return None
+
+
+def host_set_args(param: HostParam, value: str) -> bytes:
+    """Host Mode argument bytes for setting *param* to the verbose-style
+    *value* (what ParamsUploader sends after the name): numbers as ASCII
+    decimal, switches Y/N, text literal, empty text as CR, UBIT 0 as
+    "0 N" (OFF) / "0 Y" (ON) - with the space, T156."""
+    v = (value or "").strip()
+    if param.kind == "ubit":
+        on = v.split()[-1].upper() in ("ON", "Y", "YES", "1") if v else False
+        return b"0 Y" if on else b"0 N"
+    if param.kind == "bool":
+        return b"Y" if v.upper() in ("ON", "Y", "YES", "1", "TRUE") else b"N"
+    if param.kind == "int":
+        return str(int(v)).encode("ascii")
+    if not v:
+        return b"\r"
+    return v.encode("ascii", errors="replace")
+
+
+def host_query_args(param: HostParam) -> bytes:
+    """Argument bytes of the Host Mode query: none, except UBIT (index 0)."""
+    return b"0" if param.kind == "ubit" else b""
+
+
+def parse_host_answer(param: HostParam, data: Optional[bytes]) -> Optional[str]:
+    """The value in a Host Mode answer (the bytes after the mnemonic), or
+    None if *data* is missing, is an error byte, or does not start with the
+    mnemonic - never guessed (rule 6). UBIT: "UBN" -> "OFF", "UBY" -> "ON".
+    Empty text (a lone CR) gives ""."""
+    if not data or not param.mnemonic or not data.startswith(param.mnemonic):
+        return None
+    if host_error_code(data) is not None:
+        return None
+    rest = data[len(param.mnemonic):].decode("ascii", errors="replace").strip()
+    if param.kind == "ubit":
+        return {"N": "OFF", "Y": "ON"}.get(rest.upper())
+    return rest
+
+
+def norm_value(value: Optional[str], kind: str) -> str:
+    """Comparable form of a parameter value (P71a, moved here by P72):
+    bools Y/N (ON/OFF/YES/NO/1/0 folded; UBIT likewise), ints as their
+    number, text upper-cased with the TNC's own reformatting of lists
+    removed (T138 A.4: "UN APZ232 VIA A,B" comes back as
+    "APZ232 via A, B")."""
+    text = (value or "").strip().upper()
+    if kind in ("bool", "ubit"):
+        if text in ("Y", "YES", "ON", "1"):
+            return "Y"
+        if text in ("N", "NO", "OFF", "0"):
+            return "N"
+    if kind == "int" and re.fullmatch(r"-?\d+", text):
+        return str(int(text))
+    if kind in ("text", "call", "char"):
+        return re.sub(r"\s*,\s*", ",", re.sub(r"\s+", " ", text))
+    return text
