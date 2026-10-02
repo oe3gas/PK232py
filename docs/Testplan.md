@@ -3128,6 +3128,31 @@ program says to power-cycle the TNC.
 
 ---
 
+### T156 — `ubit_probe`: Host Mode form of `UBIT 0` (P74)
+
+`python tools/hw_check.py --port COM6 ubit_probe` (PC 1 only, nothing
+transmitted, never part of `all`; `--dry-run` shows the frames). Reads
+verbose `UBIT 0` (if it is OFF it is set ON first, so a candidate proves
+something), then in Host Mode tries `UB0 N`, `UB0N`, `UB0 OFF`, `UB0OFF`
+(each followed by the query `UB0`, raw answers logged) until one answers
+`$00`; checks it in verbose mode (`UBIT 0` must show OFF), sends VHF Packet's
+own mode frames and asks again, then restores. Result line:
+`host_form=..., query_answer=..., survives_mode_frames=...`. Devices: B
+first, then A; C only after consulting the operator (first `hw_check`
+contact).
+
+| What | Result |
+|---|---|
+| Host Mode form (device B) | ⬜ |
+| Query answer (raw) | ⬜ |
+| Survives mode frames | ⬜ |
+| Device A | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session. Software: `test_ubit_probe.py`.
+Feeds `comm/host_params.py` (`UBIT` row: mnemonic + form in one place).
+
+---
+
 ### T152 — `host_params_probe` B: set parameters while connected (P71)
 
 `python tools/hw_check.py --port COM6 host_params_probe --part B`. Two PCs:
