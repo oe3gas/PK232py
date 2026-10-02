@@ -397,3 +397,31 @@ class TestAnswerFormats:
         assert norm_value("007", "int") == "7"
         assert norm_value("APZ232 via WIDE1-1, WIDE2-1", "text") == \
             norm_value("APZ232 VIA WIDE1-1,WIDE2-1", "text")
+
+
+class TestExpertOff:
+    """P72 follow-up: host_params_probe --part A --expert-off (T158)."""
+
+    def test_option_is_parsed(self):
+        args = hw_check.build_arg_parser().parse_args(
+            ["host_params_probe", "--part", "A", "--expert-off"])
+        assert args.expert_off is True
+        assert hw_check.build_arg_parser().parse_args(["host_params_probe"]).expert_off is False
+
+    def test_only_with_part_a(self):
+        with pytest.raises(SystemExit):
+            hw_check.main(["host_params_probe", "--part", "B", "--expert-off", "--dry-run"])
+
+    def test_dry_run_mentions_the_expert_steps(self, capsys):
+        assert hw_check.main(["host_params_probe", "--part", "A", "--expert-off",
+                              "--dry-run"]) == 0
+        out = capsys.readouterr().out
+        assert "EXPERT OFF" in out and "EXPERT ON" in out
+
+    def test_rejected_with_expert_off_picks_error_bytes(self):
+        rec = {
+            "USERS": {"test": "2", "q1": b"UR1", "set": b"UR\x07"},
+            "PACLEN": {"test": "129", "q1": b"PL128", "set": b"PL\x00"},
+            "BTEXT": {"test": None, "q1": b"BT\r"},
+        }
+        assert hw_check.expert_off_rejected(rec) == ["USERS ($07)"]

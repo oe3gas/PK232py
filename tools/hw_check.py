@@ -133,7 +133,9 @@ required except for T101:
             control characters), then cross-check in verbose mode and restore.
             --part B (PC 1 + PC 2): set seven parameters while a station is
             connected. MEASURES ONLY (applying without verbose is P72). Not
-            part of 'all'. See docs/P71_Host_Params_Probe_Spec.md.
+            part of 'all'. --expert-off (with --part A, T158): the Host pass runs
+            with EXPERT OFF; the log lists the parameters the TNC then refuses.
+            See docs/P71_Host_Params_Probe_Spec.md.
     ubit_probe
             P74 (T156): which Host Mode argument form sets UBIT 0 (UB0 N,
             UB0N, UB0 OFF, UB0OFF)? Each candidate is cross-checked in verbose
@@ -6439,14 +6441,35 @@ def _hp_restore_in_host(session: "Session", log: RunLog, params, rec: dict) -> N
         log.line(f"{p.name}: {r['restore']} (q1 {value!r}, now {back!r})")
 
 
+def expert_off_rejected(rec: dict) -> list:
+    """T158 (pure): the parameters whose SET (or, if no set was sent, whose
+    query) was answered with an error byte during a --expert-off pass, as
+    'NAME ($07)'. rec is the Pass 1 record of _host_params_part_a()."""
+    out = []
+    for name, r in rec.items():
+        code = rejected_code(r.get("set")) if r.get("test") is not None else None
+        if code is None:
+            code = rejected_code(r.get("q1"))
+        if code is not None:
+            out.append(f"{name} (${code:02X})")
+    return out
+
+
 def _host_params_part_a(
     session: "Session", log: RunLog, run: StepRun, exclude=frozenset(),
+    expert_off: bool = False,
 ) -> None:
     """T151. Order (P71a): originals in verbose -> Host Mode: query + set
     test values (not for *exclude*d mnemonics) -> leave -> verbose
     cross-check of the test values -> Host Mode again: restore everything
     -> leave -> verbose check of the original values. The restore runs
-    even if the cross-check fails (e.g. '?What?', B.4)."""
+    even if the cross-check fails (e.g. '?What?', B.4).
+
+    *expert_off* (T158): Pass 0 stays with EXPERT ON; right before the Host
+    pass EXPERT is set OFF in verbose mode (and read back), right after it
+    ON again, so the verbose cross-check and the restore see the same
+    conditions as before. Which parameters the TNC then refuses is logged
+    as 'T158 rejected with EXPERT OFF'."""
     params = list(HOST_PARAMS)
     expert = parse_query_value("EXPERT", session.query("EXPERT"))
     session.set_verbose("EXPERT", "ON")
@@ -6469,6 +6492,12 @@ def _host_params_part_a(
         rec: dict = {}
         vtest: dict = {}
         try:
+            if expert_off:
+                session.set_verbose("EXPERT", "OFF")
+                now_expert = parse_query_value("EXPERT", session.query("EXPERT"))
+                log.line(f"EXPERT OFF requested; the TNC says EXPERT = {now_expert!r}")
+                if (now_expert or "").upper() != "OFF":
+                    raise HWCheckError("EXPERT did not go OFF - nothing measured")
             session.enter_host_mode()
             try:
                 session.drain_pending_frames()
@@ -6492,6 +6521,14 @@ def _host_params_part_a(
                     rec[p.name] = r
             finally:
                 session.exit_host_mode()
+                if expert_off:
+                    # Back to the Pass 0 conditions for the cross-check/restore.
+                    session.set_verbose("EXPERT", "ON")
+                    log.line("EXPERT ON again (verbose cross-check and restore)")
+            if expert_off:
+                rejected = expert_off_rejected(rec)
+                log.result("T158 rejected with EXPERT OFF", "INFO",
+                           ", ".join(rejected) if rejected else "none")
 
             # -- verbose cross-check of the test values --------------------
             for p in params:
@@ -6663,6 +6700,7 @@ def _host_params_part_b(
 
 def test_host_params_probe(
     session: "Session", log: RunLog, part: str = "A", exclude=frozenset(),
+    expert_off: bool = False,
 ) -> None:
     if part not in ("A", "B", "C", "all"):
         raise ValueError(f"part must be A, B, C or all, got {part!r}")
@@ -6674,6 +6712,9 @@ def test_host_params_probe(
         if part in ("A", "all"):
             operator_step(run, *[getattr(steps[0], a) for a in ("title", "where", "do", "then")])
             restoring = False
+            if expert_off:
+                log.line("[dry-run] --expert-off: Pass 0 with EXPERT ON, verbose "
+                         "EXPERT OFF, Host pass, verbose EXPERT ON again")
             for name, kind, frame in host_params_probe_frames(exclude=exclude):
                 if kind == "restore" and not restoring:
                     restoring = True
@@ -6727,7 +6768,7 @@ def test_host_params_probe(
             return
     try:
         if part in ("A", "all"):
-            _host_params_part_a(session, log, run, exclude)
+            _host_params_part_a(session, log, run, exclude, expert_off)
         if part in ("B", "all"):
             _host_params_part_b(session, log, run, mycall)
         if part == "C":
@@ -6944,6 +6985,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "never part of all)"
     )
     p.add_argument(
+        "--expert-off", action="store_true",
+        help="host_params_probe --part A: run the Host pass with EXPERT OFF "
+             "(Pass 0 and the verbose cross-check stay ON) to find out which "
+             "parameters the TNC then refuses (T158)"
+    )
+    p.add_argument(
         "--exclude", metavar="MN,...", default="",
         help="host_params_probe --part A: Host Mode mnemonics (e.g. UR,XO) "
              "that are queried but never set"
@@ -6989,6 +7036,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.test == "channel_probe" and args.part == "A":
         parser.error("channel_probe takes --part B, C or all")
+    if args.expert_off and (args.test != "host_params_probe" or args.part != "A"):
+        parser.error("--expert-off belongs to host_params_probe --part A")
     if args.reevaluate:
         if args.test != "host_params_probe":
             parser.error("--reevaluate belongs to host_params_probe")
@@ -7071,7 +7120,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "link_carry_host": [lambda s, l: test_link_carry_host(s, l)],
         "channel_probe":   [lambda s, l: test_channel_probe(s, l, args.part)],
         "host_params_probe": [
-            lambda s, l: test_host_params_probe(s, l, args.part, exclude)],
+            lambda s, l: test_host_params_probe(s, l, args.part, exclude, args.expert_off)],
         "ubit_probe": [lambda s, l: test_ubit_probe(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
