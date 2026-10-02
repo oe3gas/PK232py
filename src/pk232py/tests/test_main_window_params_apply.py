@@ -142,3 +142,26 @@ class TestTncDiffers:
         win._on_params_hf_packet()
         assert win._tnc_unapplied == set()
         assert win._sb_differs.isHidden()
+
+
+class TestWriteLogOnly:
+    """Behaviour test with NO P72 helper in the fixture (only the stub serial
+    and a dialog that changes USERS): what leaves the app after OK?"""
+
+    def test_host_mode_users_1_to_10_writes_exactly_the_set_and_query_frame(
+            self, monkeypatch):
+        w = MainWindow()
+        sm = _Serial({(b"UR", b"10"): b"UR\x00", (b"UR", b""): b"UR10"})
+        w._serial = sm
+        w._app_config.hf_packet.users = 1
+
+        def fake_exec(dlg):
+            dlg._config.users = 10
+            return QDialog.DialogCode.Accepted
+        monkeypatch.setattr(HFPacketParamsDialog, "exec", fake_exec)
+
+        w._on_params_hf_packet()
+
+        assert sm.writes, "no frame written (the value never reaches the TNC)"
+        assert sm.writes == [bytes.fromhex("01 4F 55 52 31 30 17"),
+                             bytes.fromhex("01 4F 55 52 17")]
