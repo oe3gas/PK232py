@@ -20,6 +20,15 @@ tries to execute it, expecting it to describe current work.
 
 ## Priority 1 — Next implementation sprint
 
+### Connect bell — implemented, T159 open (P76, 2026-10-02)
+
+A bell (`QApplication.beep()`, `MainWindow._ring_connect_bell()`) sounds when a
+connection is established, incoming and outgoing alike. Switch:
+Configure -> Appearance -> Connect bell (`AppearanceConfig.connect_bell`, on by
+default, saved at once). Only link messages ring (`LinkTable.subscribe_events`),
+never the reconciliation after a Host Mode entry. Done after hardware check
+T159. P75 (line endings) stays reserved.
+
 ### Channel bar MON · 0–9 (P70) — ✅ DONE (P70, 2026-09-30; hardware check T148 open)
 
 Channel bar `MON · 0 · 1 … 9`: MON is the monitor/unproto view (`MON_VIEW`),

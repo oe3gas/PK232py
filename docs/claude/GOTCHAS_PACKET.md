@@ -638,3 +638,12 @@
   Appearance at all** — named here because the spec explicitly asked
   to check, not because it was fixed; left alone deliberately (not
   asked for).
+- **Connect event != state change (P76, 2026-10-02).** `LinkTable.subscribe()`
+  reports STATES; the same `connected` state also arises from reconciliation
+  (`on_link_status()` after a CO query, `on_verbose_cstatus()`, e.g. after every
+  Host Mode entry) - that is not a new connection. Only link messages
+  (`on_host_link_message()`, `on_verbose_line()`) fire the `connected` EVENT
+  (`subscribe_events()`), and only if the channel was not already
+  `connected`/`unconfirmed`; reconciliation never does. Anything that must react to a NEW
+  connection (the connect bell, `MainWindow._ring_connect_bell()`) subscribes
+  to events, never to states.
