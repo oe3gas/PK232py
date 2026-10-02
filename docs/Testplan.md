@@ -3143,13 +3143,36 @@ contact).
 
 | What | Result |
 |---|---|
-| Host Mode form (device B) | ⬜ |
-| Query answer (raw) | ⬜ |
-| Survives mode frames | ⬜ |
-| Device A | ⬜ |
+| Host Mode form (device B) | ⬜ OPEN |
+| Query answer (raw) | ⬜ OPEN (device B) |
+| Survives mode frames | ⬜ OPEN (device B) |
+| Device A | ✅ `host_form=0 N` (set `UB0 N`, with a space), `query_answer=UBN` (`55 42 4e`), `survives_mode_frames=True` |
 
-**Status:** ⬜ OPEN — hardware session. Software: `test_ubit_probe.py`.
-Feeds `comm/host_params.py` (`UBIT` row: mnemonic + form in one place).
+**Result, device A, 02.10.2026 16:28**
+(`hw_logs/20261002_162823_ubit_probe.log`, `device: unknown (no banner)` - device A
+per the operator): PASS. The original `UBIT 0 OFF` was restored.
+
+**Status:** ✅ PASS (device A); device B ⬜ OPEN. Software: `test_ubit_probe.py`.
+Feeds `comm/host_params.py` (`UBIT` row, verified release `13.SEP.95`).
+
+---
+
+### T157 — App: parameters right after OK (P72)
+
+Device B, VHF Packet, 144.800 MHz with a dummy load or minimum power; PC 1
+runs PK232PY, PC 2 QtTermTCP (`OE3GAS-2`). Software: `test_param_applier.py`,
+`test_main_window_params_apply.py`.
+
+| # | Where | Do | Expected | Result |
+|---|---|---|---|---|
+| 1 | PC 1 | Host Mode, VHF Packet: USERS 10 -> 9, OK | MON: `[SYS] USERS  10 -> 9  ok`; Host Mode stays; no verbose byte in the log | ⬜ |
+| 2 | PC 1 | AX25L2V2 toggled, OK | `ok` | ⬜ |
+| 3 | PC 2 | QtTermTCP `OE3GAS-2` connects | connected | ⬜ |
+| 3 | PC 1 | MAXFRAME changed, OK | `ok`, the connection stays | ⬜ |
+| 4 | PC 1 | CTEXT changed, OK | `CTEXT  not verified for Host Mode on 01.AUG.91 - saved, TNC unchanged`, status field "TNC differs from parameters" | ⬜ |
+| 5 | PC 1 | leave Host Mode (verbose), PACLEN changed, OK | `ok` | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session on Device B.
 
 ---
 
@@ -3161,17 +3184,25 @@ Mode USERS, MAXFRAME, PACLEN, FRACK, RETRY, MONITOR, TXDELAY are each set,
 asked, set back; after each one `CO` on the connected channel. Then one
 line from QtTermTCP must arrive on `$30`; `DI` behind `confirm_tx()`.
 
+**Result, device A (`13.SEP.95`), 02.10.2026, two runs.** Run 1
+`hw_logs/20261002_163032_host_params_probe.log`: B.3 (one line from QtTermTCP)
+without a line arriving (`line_seen_on_ch0=False`). Run 2
+`hw_logs/20261002_172135_host_params_probe.log`: with the line
+(`line_seen_on_ch0=True`). Both: all seven set (`<mn> $00`), read back, link
+unchanged (`link_after=True`). Not yet run on device B (not needed for P72:
+it reads back after every set).
+
 | Parameter | accepted / rejected (code) | link_after |
 |---|---|---|
-| USERS | ⬜ | ⬜ |
-| MAXFRAME | ⬜ | ⬜ |
-| PACLEN | ⬜ | ⬜ |
-| FRACK | ⬜ | ⬜ |
-| RETRY | ⬜ | ⬜ |
-| MONITOR | ⬜ | ⬜ |
-| TXDELAY | ⬜ | ⬜ |
+| USERS | accepted (`UR$00`, query `UR2`) | True |
+| MAXFRAME | accepted (`MX$00`, `MX5`) | True |
+| PACLEN | accepted (`PL$00`, `PL129`) | True |
+| FRACK | accepted (`FR$00`, `FR5`) | True |
+| RETRY | accepted (`RY$00`, `RY11`) | True |
+| MONITOR | accepted (`MN$00`, `MN5`) | True |
+| TXDELAY | accepted (`TD$00`, `TD31`) | True |
 
-**Status:** ⬜ OPEN — hardware session on Device B. Feeds P72.
+**Status:** ✅ PASS (device A, `13.SEP.95`); device B ⬜ OPEN. Feeds P72.
 
 ---
 
