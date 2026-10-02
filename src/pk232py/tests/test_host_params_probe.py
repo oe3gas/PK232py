@@ -64,10 +64,10 @@ class TestTableCoversTheUploader:
                 assert p.lo is not None and p.hi is not None and p.lo < p.hi
 
     def test_verified_releases_only_where_measured(self):
-        # P72 Teil A: T151 (B) 37 + UN/CF (T138), T152 (A) 7, T156 (A) UBIT.
+        # P72 Teil A: T151 (B) 37 + UN/CF (T138) + UBIT (T156), T152 (A) 7, T156 (A) UBIT.
         on_b = {p.name for p in HOST_PARAMS if "01.AUG.91" in p.verified_releases}
         on_a = {p.name for p in HOST_PARAMS if "13.SEP.95" in p.verified_releases}
-        assert len(on_b) == 39 and {"UNPROTO", "CFROM", "USERS"} <= on_b
+        assert len(on_b) == 40 and {"UNPROTO", "CFROM", "USERS", "UBIT"} <= on_b
         # Device A: the 37 of T151 (22:07 log) + PTHUFF, PT200 + UBIT (T156);
         # UNPROTO/CFROM only on B.
         assert len(on_a) == 40 and {"PTHUFF", "PT200", "UBIT", "USERS"} <= on_a

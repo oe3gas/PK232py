@@ -52,11 +52,10 @@ device A. P73 (Packet parameters mask) follows.
 
 ### Open probes per device (P72, 2026-10-02) - open
 
-`ubit_probe` on **device B**. (T158 is done: EXPERT OFF does not hinder the
-released parameters on device A.) Device A has the 39 `verified` of the 22:07
-T151 run released; everything else is reported as
-`not verified for Host Mode on <release>` (saved, TNC unchanged until the next
-init).
+Device A has the 39 `verified` of the 22:07 T151 run released (T158: EXPERT OFF
+does not hinder them), UBIT 0 is released on A and B. Everything else is
+reported as `not verified for Host Mode on <release>` (saved, TNC unchanged until
+the next init) until a probe releases it.
 
 ### Verbose commands end with CR only (P75) - open (2026-10-02)
 

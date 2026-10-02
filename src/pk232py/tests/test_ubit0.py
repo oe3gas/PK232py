@@ -64,10 +64,10 @@ class TestHostParamsRow:
     def test_row_is_the_t156_measurement(self):
         row = param_by_name("UBIT")
         assert row is not None and row.kind == "ubit"
-        # T156 (device A, 13.SEP.95): set "UB0 N", query "UB0" -> "UBN".
-        # Device B is unmeasured (Backlog) - not released there.
+        # T156: set "UB0 N", query "UB0" -> "UBN" - device A (13.SEP.95) and
+        # device B (01.AUG.91, 19:46 log) measured the same form.
         assert row.mnemonic == b"UB"
-        assert row.verified_releases == ("13.SEP.95",)
+        assert row.verified_releases == ("01.AUG.91", "13.SEP.95")
 
 
 class TestPacketDialog:

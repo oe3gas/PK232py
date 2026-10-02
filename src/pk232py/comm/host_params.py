@@ -156,11 +156,15 @@ _VERIFIED_A_T152 = frozenset({
 # banner - device A per the operator): UBIT 0 set "UB0 N", query "UB0" -> "UBN",
 # verbose confirmed, survives the VHF mode-switch frames.
 _VERIFIED_A_T156 = frozenset({"UBIT"})
+# T156 on device B (02.10.2026 19:46, hw_logs/20261002_194624_ubit_probe.log,
+# banner `release=01.AUG.91`): `UB0 N` -> `UB $00`, query `UB0` -> `UBN`, verbose
+# `UBIT 0` = OFF, survives the VHF mode-switch frames. Same form as on device A.
+_VERIFIED_B_T156 = frozenset({"UBIT"})
 
 
 def _verified_releases(name: str) -> tuple:
     releases = []
-    if name in _VERIFIED_B_T151 or name in _VERIFIED_B_T138:
+    if name in _VERIFIED_B_T151 or name in _VERIFIED_B_T138 or name in _VERIFIED_B_T156:
         releases.append(RELEASE_B)
     if name in _VERIFIED_A_T151 or name in _VERIFIED_A_T152 or name in _VERIFIED_A_T156:
         releases.append(RELEASE_A)

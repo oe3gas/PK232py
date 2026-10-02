@@ -3143,17 +3143,24 @@ contact).
 
 | What | Result |
 |---|---|
-| Host Mode form (device B) | ⬜ OPEN |
-| Query answer (raw) | ⬜ OPEN (device B) |
-| Survives mode frames | ⬜ OPEN (device B) |
+| Host Mode form (device B) | ✅ `host_form=0 N` (set `UB0 N` -> `UB $00`) |
+| Query answer (raw) | ✅ `UBN` (`55 42 4e`) on device B |
+| Survives mode frames | ✅ True on device B |
 | Device A | ✅ `host_form=0 N` (set `UB0 N`, with a space), `query_answer=UBN` (`55 42 4e`), `survives_mode_frames=True` |
 
 **Result, device A, 02.10.2026 16:28**
 (`hw_logs/20261002_162823_ubit_probe.log`, `device: unknown (no banner)` - device A
 per the operator): PASS. The original `UBIT 0 OFF` was restored.
 
-**Status:** ✅ PASS (device A); device B ⬜ OPEN. Software: `test_ubit_probe.py`.
-Feeds `comm/host_params.py` (`UBIT` row, verified release `13.SEP.95`).
+**Result, device B, 02.10.2026 19:46**
+(`hw_logs/20261002_194624_ubit_probe.log`, banner `release=01.AUG.91`): PASS -
+`host_form=0 N`, `query_answer=b'UBN'`, verbose `UBIT 0` = OFF after the set and
+after the VHF mode-switch frames (`survives_mode_frames=True`). Same form as
+on device A. Device C: not measured.
+
+**Status:** ✅ PASS (device A and B); device C ⬜ not measured. Software:
+`test_ubit_probe.py`. Feeds `comm/host_params.py` (`UBIT` row, verified
+releases `01.AUG.91`, `13.SEP.95`).
 
 ---
 
