@@ -134,6 +134,12 @@ required except for T101:
             --part B (PC 1 + PC 2): set seven parameters while a station is
             connected. MEASURES ONLY (applying without verbose is P72). Not
             part of 'all'. See docs/P71_Host_Params_Probe_Spec.md.
+    ubit_probe
+            P74 (T156): which Host Mode argument form sets UBIT 0 (UB0 N,
+            UB0N, UB0 OFF, UB0OFF)? Each candidate is cross-checked in verbose
+            mode; then: does it survive VHF Packet's mode frames? PC 1 only,
+            nothing is transmitted, the original value is restored. Not part
+            of 'all'. See docs/P74_VHF_UBIT0_Spec.md.
     all     t17 + t103 + pthuff. Deliberately NOT t101 (it transmits and
             needs a second receiver), NOT siam/t111/t112 (siam needs a
             tuned receiver and an operator comparison; t111/t112 are run
@@ -6757,6 +6763,167 @@ def test_host_params_probe(
 
 
 # ===========================================================================
+# P74 Teil A -- ubit_probe (T156): Host Mode form of "UBIT 0"
+# ===========================================================================
+#
+# The manual (STABO ch. 12) gives the Host Mnemonic UB for UBIT but not the
+# argument form. These are the candidates, in the order the probe tries
+# them; the second element is the matching "ON" form for the restore.
+# MEASURES ONLY: nothing is transmitted; the production code takes the
+# confirmed form into comm/host_params.py (rule 6: never guess).
+
+UBIT_MNEMONIC = b"UB"
+UBIT_QUERY_ARG = b"0"
+UBIT_CANDIDATES = (
+    (b"0 N",   b"0 Y"),
+    (b"0N",    b"0Y"),
+    (b"0 OFF", b"0 ON"),
+    (b"0OFF",  b"0ON"),
+)
+
+
+def ubit_reply_accepted(data: Optional[bytes]) -> bool:
+    """True only for the plain acknowledge $00 (alone, or after the
+    2-letter mnemonic). An echo of the command is NOT an answer (rule 5)."""
+    if not data:
+        return False
+    body = data[len(UBIT_MNEMONIC):] if data.startswith(UBIT_MNEMONIC) else data
+    return body == b"\x00"
+
+
+def parse_ubit0_verbose(response: str) -> Optional[str]:
+    """'ON' / 'OFF' from a verbose 'UBIT 0' answer, or None. The echoed
+    command line itself carries neither word, so an echo alone gives None."""
+    found = re.findall(r"\bUBIT\b[^\r\n]*?\b(ON|OFF)\b", response or "", re.I)
+    return found[-1].upper() if found else None
+
+
+def ubit_probe_frames() -> list:
+    """The Host Mode plan of step 2 as (candidate, 'set'|'query', frame):
+    each candidate is followed by the query 'UB0'. What --dry-run shows."""
+    frames = []
+    for cand, _on in UBIT_CANDIDATES:
+        text = cand.decode("ascii")
+        frames.append((text, "set",
+                       HostModeProtocol.build_command(UBIT_MNEMONIC, cand)))
+        frames.append((text, "query",
+                       HostModeProtocol.build_command(UBIT_MNEMONIC, UBIT_QUERY_ARG)))
+    return frames
+
+
+def _ubit_verbose(session: "Session", log: RunLog, label: str) -> Optional[str]:
+    value = parse_ubit0_verbose(session.query("UBIT 0"))
+    log.line(f"{label}: verbose UBIT 0 = {value!r}")
+    return value
+
+
+def _ubit_mode_frames_survived(session: "Session", log: RunLog) -> Optional[bool]:
+    """Step 4: send VHF Packet's own activate+init frames in Host Mode,
+    leave, ask verbose UBIT 0 again. None = could not tell."""
+    vhf = VHFPacketMode()
+    session.enter_host_mode()
+    try:
+        session.drain_pending_frames()
+        for frame in vhf.get_activate_frames() + vhf.get_init_frames():
+            _hp_exchange(session, frame, "VHF packet mode frame")
+    finally:
+        session.exit_host_mode()
+    value = _ubit_verbose(session, log, "after mode frames")
+    return None if value is None else value == "OFF"
+
+
+def test_ubit_probe(session: "Session", log: RunLog) -> None:
+    log.line("--- UBIT 0 probe (T156): Host Mode form ---")
+    steps = [ProbeStep(
+        "T156 A.1  find the Host Mode form of UBIT 0", WHERE_PC1, 3,
+        ["Nothing to do: this program tries UB0 N, UB0N, UB0 OFF, UB0OFF in "
+         "Host Mode and checks each result in verbose mode.",
+         "Nothing is transmitted on the air."],
+        "wait; the run ends by itself with a summary.")]
+    run = StepRun(steps, log)
+    s = steps[0]
+
+    if session.dry_run:
+        operator_step(run, s.title, s.where, s.do, s.then)
+        log.line("[dry-run] verbose UBIT 0 (original), set ON first if it is OFF")
+        for cand, kind, frame in ubit_probe_frames():
+            session.send_frame(frame, note=f"UB {cand} {kind}")
+        log.line("[dry-run] leave Host Mode, verbose UBIT 0 must show OFF; "
+                 "VHF Packet frames; verbose UBIT 0 again; restore in Host Mode")
+        log.result("T156", "INFO", "dry-run, nothing sent")
+        return
+
+    session.normalize()
+    operator_step(run, s.title, s.where, s.do, s.then)
+    original = _ubit_verbose(session, log, "original")
+    if original is None:
+        log.result("T156", "FAIL", "verbose UBIT 0 not readable - nothing was changed")
+        return
+    if original == "OFF":
+        # A candidate proves nothing if the value already is OFF: start from ON.
+        session.set_verbose("UBIT", "0 ON")
+        if _ubit_verbose(session, log, "start value") != "ON":
+            log.result("T156", "FAIL", "could not set UBIT 0 ON in verbose mode")
+            return
+
+    host_form: Optional[bytes] = None
+    query_answer: Optional[bytes] = None
+    survives: Optional[bool] = None
+    try:
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            for cand, _on in UBIT_CANDIDATES:
+                set_frame = HostModeProtocol.build_command(UBIT_MNEMONIC, cand)
+                reply = _hp_pick(UBIT_MNEMONIC, _hp_exchange(
+                    session, set_frame, f"UB {cand.decode()}"))
+                log.line(f"candidate {cand.decode()!r}: reply {_hp_answer_text(reply)}")
+                query_answer = _hp_pick(UBIT_MNEMONIC, _hp_exchange(
+                    session, HostModeProtocol.build_command(UBIT_MNEMONIC, UBIT_QUERY_ARG),
+                    "UB0 query"))
+                log.line(f"candidate {cand.decode()!r}: query {_hp_answer_text(query_answer)}")
+                if ubit_reply_accepted(reply):
+                    host_form = cand
+                    break
+        finally:
+            session.exit_host_mode()
+
+        if host_form is not None:
+            if _ubit_verbose(session, log, "cross-check") != "OFF":
+                log.line(f"candidate {host_form.decode()!r} answered $00 but verbose "
+                         "UBIT 0 is not OFF - NOT confirmed")
+                host_form = None
+        if host_form is not None:
+            survives = _ubit_mode_frames_survived(session, log)
+    finally:
+        # Step 5: put the value back (ON = factory) in Host Mode with the
+        # confirmed form; then, if it was OFF before, in verbose mode.
+        on_arg = dict(UBIT_CANDIDATES).get(host_form) if host_form else None
+        if on_arg is not None:
+            try:
+                session.enter_host_mode()
+                try:
+                    session.drain_pending_frames()
+                    _hp_exchange(session, HostModeProtocol.build_command(
+                        UBIT_MNEMONIC, on_arg), f"UB {on_arg.decode()} restore")
+                finally:
+                    session.exit_host_mode()
+            except HWCheckError:
+                log.line("Host Mode restore impossible - power-cycle the TNC")
+                raise
+            _ubit_verbose(session, log, "after restore")
+        if original == "OFF":
+            session.set_verbose("UBIT", "0 OFF")
+            back = _ubit_verbose(session, log, "original restored")
+            log.line(f"original value OFF restored: {back == 'OFF'}")
+
+    detail = (f"host_form={host_form.decode() if host_form else None}, "
+              f"query_answer={_hp_answer_text(query_answer)}, "
+              f"survives_mode_frames={survives}")
+    log.result("T156", "PASS" if host_form is not None else "FAIL", detail)
+
+
+# ===========================================================================
 # CLI
 # ===========================================================================
 
@@ -6785,7 +6952,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
             "maildrop_session", "aprs_query", "aprs_tx", "aprs_reject",
             "link_carry", "link_carry_host", "channel_probe", "host_params_probe",
-            "all",
+            "ubit_probe", "all",
         ],
     )
     p.add_argument(
@@ -6926,6 +7093,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "channel_probe":   [lambda s, l: test_channel_probe(s, l, args.part)],
         "host_params_probe": [
             lambda s, l: test_host_params_probe(s, l, args.part, exclude)],
+        "ubit_probe": [lambda s, l: test_ubit_probe(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
