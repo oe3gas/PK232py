@@ -65,8 +65,32 @@ class LinkTable:
         self.converse: bool = False
         self.mode_name: Optional[str] = None
         self._observers: list[Callable[[int, ChannelLink], None]] = []
+        self._event_observers: list[Callable[[int, str, str], None]] = []
 
     # -- Observation -----------------------------------------------------
+
+    def subscribe_events(self, callback: Callable[[int, str, str], None]) -> None:
+        """Register *callback(channel, event, partner)* for EVENTS (P76) -
+        distinct from subscribe(), which reports STATES. The one event so
+        far is "connected": a link message said a connection was just made.
+        The same state change also arises from reconciliation
+        (on_link_status() after a CO query, on_verbose_cstatus(), e.g.
+        after every Host Mode entry) - that is NOT a new connection and
+        never produces an event, which is why a state callback could not
+        be used for a bell."""
+        self._event_observers.append(callback)
+
+    def _emit_connected(self, channel: int, was: str, partner: str) -> None:
+        """Fire "connected" if the channel was neither connected nor
+        unconfirmed (= believed connected) before this link message."""
+        if not (0 <= channel < CHANNEL_COUNT):
+            return
+        if was in (STATE_CONNECTED, STATE_UNCONFIRMED):
+            return
+        if self.channels[channel].state != STATE_CONNECTED:
+            return
+        for callback in self._event_observers:
+            callback(channel, "connected", partner)
 
     def subscribe(self, callback: Callable[[int, ChannelLink], None]) -> None:
         """Register *callback(channel, link)*, called once per state
@@ -106,7 +130,10 @@ class LinkTable:
         MainWindow reports it to the operator instead."""
         lower = text.lower()
         if "connected to" in lower and "disconnect" not in lower:
-            self._set(channel, STATE_CONNECTED, extract_partner(text))
+            was = self.channels[channel].state if 0 <= channel < CHANNEL_COUNT else ""
+            partner = extract_partner(text)
+            self._set(channel, STATE_CONNECTED, partner)
+            self._emit_connected(channel, was, partner)
         elif "disconnected" in lower or "busy" in lower:
             self._set(channel, STATE_FREE)
         elif "retry count exceeded" in lower:
@@ -144,8 +171,11 @@ class LinkTable:
         channel = channel_hint if channel_hint is not None else self.io_channel
         lower = text.lower()
         if "connected to" in lower and "disconnect" not in lower:
-            self._set(channel, STATE_CONNECTED, extract_partner(text))
+            was = self.channels[channel].state if 0 <= channel < CHANNEL_COUNT else ""
+            partner = extract_partner(text)
+            self._set(channel, STATE_CONNECTED, partner)
             self.converse = True
+            self._emit_connected(channel, was, partner)
         elif "disconnected" in lower:
             self._set(channel, STATE_FREE)
         elif text.rstrip().endswith("cmd:"):
