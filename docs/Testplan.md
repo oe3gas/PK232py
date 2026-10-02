@@ -3168,10 +3168,19 @@ parameters refused in the Host pass.
 
 | What | Result |
 |---|---|
-| Parameters refused with EXPERT OFF on 13.SEP.95 | ⬜ |
+| Parameters refused with EXPERT OFF on 13.SEP.95 | none - all 39 accepted; only DAYTIME answers `$10`, exactly as with EXPERT ON |
 
-**Status:** ⬜ OPEN — hardware session on device A. Until then no change to
-ParamApplier. Software: `test_host_params_probe.py` (`TestExpertOff`).
+**Result (02.10.2026, device A, `hw_logs/20261002_192301_host_params_probe.log`):**
+`T158 rejected with EXPERT OFF: DAYTIME ($10)`; `T151 summary ... verified=39`.
+Two evaluation defects of that run (fixed afterwards, tests with the real
+lines): the EXPERT row was judged `wrong_param` (the Host query says OFF by
+design under `--expert-off`; now `expected_off`) and UBIT was judged
+`wrong_param` (verbose `0 ON` vs Host `Y`; now asked as `UBIT 0` and `0 ON`
+normalises to ON). `--reevaluate` of that log gives `expected_off=1`,
+`verified=39`, `verified_query=18`, no `wrong_param`.
+
+**Status:** ✅ PASS. ParamApplier stays unchanged. Software:
+`test_host_params_probe.py` (`TestExpertOff`, `TestT158Evaluation`).
 
 ---
 
@@ -3183,14 +3192,17 @@ runs PK232PY, PC 2 QtTermTCP (`OE3GAS-2`). Software: `test_param_applier.py`,
 
 | # | Where | Do | Expected | Result |
 |---|---|---|---|---|
-| 1 | PC 1 | Host Mode, VHF Packet: USERS 10 -> 9, OK | MON: `[SYS] USERS  10 -> 9  ok`; Host Mode stays; no verbose byte in the log | ⬜ |
-| 2 | PC 1 | AX25L2V2 toggled, OK | `ok` | ⬜ |
-| 3 | PC 2 | QtTermTCP `OE3GAS-2` connects | connected | ⬜ |
-| 3 | PC 1 | MAXFRAME changed, OK | `ok`, the connection stays | ⬜ |
-| 4 | PC 1 | CTEXT changed, OK | `CTEXT  not verified for Host Mode on 01.AUG.91 - saved, TNC unchanged`, status field "TNC differs from parameters" | ⬜ |
-| 5 | PC 1 | leave Host Mode (verbose), PACLEN changed, OK | `ok` | ⬜ |
+| 1 | PC 1 | Host Mode, VHF Packet: USERS 10 -> 9, OK | MON: `[SYS] USERS  10 -> 9  ok`; Host Mode stays; no verbose byte in the log | ✅ |
+| 2 | PC 1 | AX25L2V2 toggled, OK | `ok` | ✅ |
+| 3 | PC 2 | QtTermTCP `OE3GAS-2` connects | connected | ✅ |
+| 3 | PC 1 | MAXFRAME changed, OK | `ok`, the connection stays | ✅ |
+| 4 | PC 1 | CTEXT changed, OK | `CTEXT  not verified for Host Mode on 01.AUG.91 - saved, TNC unchanged`, status field "TNC differs from parameters" | ✅ |
+| 5 | PC 1 | leave Host Mode (verbose), PACLEN changed, OK | `ok` | ✅ |
 
-**Status:** ⬜ OPEN — hardware session on Device B.
+**Result (02.10.2026, device B, operator observation):** all steps as in the
+table.
+
+**Status:** ✅ PASS (device B, 02.10.2026, operator observation).
 
 ---
 

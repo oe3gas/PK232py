@@ -1263,8 +1263,8 @@ Grows over time.
     character of the next command and every further verbose command gives
     `?What?`. Setting it in Host Mode works, so ParamApplier never sets it live
     (message "applied at the next initialisation", P75 fixes the line endings).
-  - **EXPERT:** T151/T152 set their values with `EXPERT ON` in the TNC. Whether
-    expert-class parameters can be set in Host Mode with `EXPERT OFF` (device A
-    after the init upload) is unmeasured until T158
-    (`host_params_probe --part A --expert-off`); ParamApplier is unchanged until
-    then, its read-back reports a refusal.
+  - **EXPERT OFF hinders setting the released parameters in Host Mode on
+    13.SEP.95 not (T158, 02.10.2026, `hw_logs/20261002_192301_host_params_probe.log`):**
+    with `EXPERT OFF` all 39 are accepted, only DAYTIME answers `$10` - as with
+    EXPERT ON. ParamApplier needs no EXPERT handling in Host Mode (the verbose
+    path keeps its EXPERT ON/OFF wrap on PACTOR firmware).

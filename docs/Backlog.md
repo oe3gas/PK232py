@@ -29,7 +29,7 @@ get a "disconnecting" state. Facts (T146/T147, Device B) and the model:
 `docs/claude/GOTCHAS_PACKET.md`. T144 step 3 (verbose connection visible
 on chip 0) is checked again by T148 step 5.
 
-### Host Mode parameters without verbose — P72 implemented, T157 open (2026-10-02)
+### Host Mode parameters without verbose — P72 done (2026-10-02, T157 PASS)
 
 Operator decision 30.09.2026: parameter changes must be set in Host Mode
 directly, never via a verbose detour. P71 measured the Host mnemonics
@@ -38,15 +38,14 @@ after OK (`comm/param_applier.py`, `ParamsUploader.changed_values()`), only
 for (parameter, release) pairs in `comm/host_params.py`
 `verified_releases`; every parameter is read back, a refusal is quoted and
 the status field "TNC differs from parameters" shows what the TNC did not
-take. **P72 is done after T157** (hardware, device B). P73 (Packet
-parameters mask) follows.
+take. **P72 is done:** T157 PASS on device B (02.10.2026), T158 PASS on
+device A. P73 (Packet parameters mask) follows.
 
 ### Open probes per device (P72, 2026-10-02) - open
 
-`ubit_probe` on **device B**, and the **T158** measurement on device A
-(`host_params_probe --part A --expert-off`: which parameters are refused with
-EXPERT OFF; ParamApplier stays unchanged until then). Device A already has the
-39 `verified` of the 22:07 T151 run released; everything else is reported as
+`ubit_probe` on **device B**. (T158 is done: EXPERT OFF does not hinder the
+released parameters on device A.) Device A has the 39 `verified` of the 22:07
+T151 run released; everything else is reported as
 `not verified for Host Mode on <release>` (saved, TNC unchanged until the next
 init).
 
