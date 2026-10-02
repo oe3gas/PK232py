@@ -20,6 +20,7 @@ ARQTOL has no mnemonic here. Every mnemonic in the table is unique.
 to a test value; "text" is only queried (except BTEXT); "call" and "char"
 (callsigns, control characters) are NEVER set - a wrong control-character
 setting can cut the connection.
+"ubit" (P74) is an indexed flag (UBIT 0); never set by the probe either.
 """
 
 from __future__ import annotations
@@ -72,6 +73,11 @@ HOST_PARAMS: tuple = (
     HostParam("MTO", b"MT", "text"),   # matrix line 326, confidence M
     HostParam("8BITCONV", b"8B", "bool"),   # matrix line 353, confidence M
     HostParam("HID", b"", "bool"),   # not in matrix
+    # UBIT 0 (P74): manual gives mnemonic UB (matrix: confidence L, not BASE), but the
+    # argument form (0 N / 0N / 0 OFF / ...) is unmeasured until T156 - so b"" = the
+    # probe and P72 send nothing. Fill in the mnemonic + form here, in ONE place.
+    # Named "UBIT" like the verbose command (the coverage test compares first tokens).
+    HostParam("UBIT", b"", "ubit"),
     HostParam("MYPTCALL", b"", "call"),   # not in matrix
     HostParam("PTHUFF", b"PH", "bool"),   # matrix section 3 text (generation marker), no table row; also modes/pactor.py
     HostParam("PT200", b"PB", "bool"),   # matrix line 347, confidence L
