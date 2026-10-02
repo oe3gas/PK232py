@@ -68,8 +68,10 @@ class TestTableCoversTheUploader:
         on_b = {p.name for p in HOST_PARAMS if "01.AUG.91" in p.verified_releases}
         on_a = {p.name for p in HOST_PARAMS if "13.SEP.95" in p.verified_releases}
         assert len(on_b) == 39 and {"UNPROTO", "CFROM", "USERS"} <= on_b
-        assert on_a == {"USERS", "MAXFRAME", "PACLEN", "FRACK", "RETRY",
-                        "MONITOR", "TXDELAY", "UBIT"}
+        # Device A: the 37 of T151 (22:07 log) + PTHUFF, PT200 + UBIT (T156);
+        # UNPROTO/CFROM only on B.
+        assert len(on_a) == 40 and {"PTHUFF", "PT200", "UBIT", "USERS"} <= on_a
+        assert not {"UNPROTO", "CFROM", "ILFPACK"} & on_a
         assert "ILFPACK" not in on_b       # T155 / B.3: only verified_query
         assert all(p.mnemonic for p in HOST_PARAMS if p.verified_releases)
 

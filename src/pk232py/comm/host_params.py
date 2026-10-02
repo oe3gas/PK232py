@@ -142,6 +142,11 @@ _VERIFIED_B_T151 = frozenset({
 # T138 A.3 / A.5 (device B, 27.09.2026): UN and CF set in Host Mode and
 # confirmed in verbose mode.
 _VERIFIED_B_T138 = frozenset({"UNPROTO", "CFROM"})
+# T151 on device A (01.10.2026 22:07, hw_logs/20261001_220703_host_params_probe.log,
+# banner `release=13.SEP.95 pactor=yes`; `--reevaluate` gives verified=39): the same
+# 37 as on device B plus PTHUFF and PT200 (PACTOR firmware). UNPROTO/CFROM were
+# measured on B only (T138); ILFPACK stays verified_query.
+_VERIFIED_A_T151 = _VERIFIED_B_T151 | frozenset({"PTHUFF", "PT200"})
 # T152 (device A, 02.10.2026, hw_logs/20261002_172135_host_params_probe.log):
 # set, ACK, read back = test value, WHILE CONNECTED, link unchanged afterwards.
 _VERIFIED_A_T152 = frozenset({
@@ -157,7 +162,7 @@ def _verified_releases(name: str) -> tuple:
     releases = []
     if name in _VERIFIED_B_T151 or name in _VERIFIED_B_T138:
         releases.append(RELEASE_B)
-    if name in _VERIFIED_A_T152 or name in _VERIFIED_A_T156:
+    if name in _VERIFIED_A_T151 or name in _VERIFIED_A_T152 or name in _VERIFIED_A_T156:
         releases.append(RELEASE_A)
     return tuple(releases)
 

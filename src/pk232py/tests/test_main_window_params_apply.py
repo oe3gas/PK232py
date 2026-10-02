@@ -119,18 +119,18 @@ class TestTncDiffers:
         assert win._app_config.hf_packet.users == 10
 
     def test_not_verified_for_this_release_is_reported_and_marks_differs(self, win, monkeypatch):
-        win._serial.tnc_release = "13.SEP.95"        # AX25L2V2 is verified on B only
+        win._serial.tnc_release = "13.SEP.95"        # UNPROTO is verified on B only
 
         def fake_exec(dlg):
-            dlg._config.ax25l2v2 = not dlg._config.ax25l2v2
+            dlg._config.unproto = "APRS"
             return QDialog.DialogCode.Accepted
         monkeypatch.setattr(HFPacketParamsDialog, "exec", fake_exec)
         win._app_config.hf_packet.users = 10
         win._on_params_hf_packet()
         assert win._serial.writes == []
-        assert any("AX25L2V2  not verified for Host Mode on 13.SEP.95"
+        assert any("UNPROTO  not verified for Host Mode on 13.SEP.95"
                    " - saved, TNC unchanged" in m for m in win.log)
-        assert win._tnc_unapplied == {"AX25L2V2"}
+        assert win._tnc_unapplied == {"UNPROTO"}
 
     def test_a_later_successful_attempt_clears_that_parameter(self, win):
         win._serial.answers = {(b"UR", b"10"): b"UR\x07", (b"UR", b""): b"UR1"}

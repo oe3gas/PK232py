@@ -112,8 +112,8 @@ class TestHostMode:
         assert r.ok and r.tnc_now == "OFF"
 
     def test_not_verified_for_the_release_sends_nothing(self):
-        t = FakeTransport(release=A)       # AX25L2V2 is verified on B only
-        before, after = _cfg_pair(lambda b, a: setattr(a.hf_packet, "ax25l2v2", False))
+        t = FakeTransport(release=A)       # UNPROTO is verified on B only
+        before, after = _cfg_pair(lambda b, a: setattr(a.hf_packet, "unproto", "APRS"))
         (r,) = ParamApplier(t).apply(before, after)
         assert t.log == []
         assert not r.ok
