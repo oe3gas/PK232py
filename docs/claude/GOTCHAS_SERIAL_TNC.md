@@ -1242,12 +1242,16 @@ Grows over time.
     PPERSIST, XMITOK, 8BITCONV, ARQTMO, ADELAY, TDBAUD, TDCHAN, RFEC, RXREV, TXREV,
     MSPEED, ALFRTTY, DIDDLE, MAILDROP, MMSG, TMAIL, 3RDPARTY, KILONFWD; plus UN and
     CF (T138 A.3/A.5). UBIT: not measured on B.
-  - **Device A, `13.SEP.95`:** T152 (`..._172135_host_params_probe.log`) USERS,
+  - **Device A, `13.SEP.95`:** T151 (01.10.2026 22:07,
+    `hw_logs/20261001_220703_host_params_probe.log`, banner; `--reevaluate`:
+    verified=39) = the same 37 as on B plus PTHUFF and PT200 (UNPROTO/CFROM:
+    B only). T152 (`..._172135_host_params_probe.log`) USERS,
     MAXFRAME, PACLEN, FRACK, RETRY, MONITOR, TXDELAY - set, ACK, read back,
     WHILE CONNECTED, link unchanged. T156 (`20261002_162823_ubit_probe.log`, no
     banner, device A per the operator): UBIT 0 set `UB0 N`/`UB0 Y` (WITH a
     space), query `UB0` -> `UBN`/`UBY`, verbose confirmed, survives the VHF
-    mode-switch frames. Everything else on A: **not measured.**
+    mode-switch frames. Everything else on A (MYCALL..., text and character
+    parameters, `verified_query` rows): **not released.**
   - **Device C:** nothing measured.
   - **Log attribution:** `20261001_220703_host_params_probe.log` (22:07-22:11) has
     the banner `release=13.SEP.95` = device A, not B; it is NOT used for B.
@@ -1261,4 +1265,6 @@ Grows over time.
     (message "applied at the next initialisation", P75 fixes the line endings).
   - **EXPERT:** T151/T152 set their values with `EXPERT ON` in the TNC. Whether
     expert-class parameters can be set in Host Mode with `EXPERT OFF` (device A
-    after the init upload) is unmeasured - the read-back reports it if not.
+    after the init upload) is unmeasured until T158
+    (`host_params_probe --part A --expert-off`); ParamApplier is unchanged until
+    then, its read-back reports a refusal.

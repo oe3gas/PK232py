@@ -3157,6 +3157,24 @@ Feeds `comm/host_params.py` (`UBIT` row, verified release `13.SEP.95`).
 
 ---
 
+### T158 — `host_params_probe --part A --expert-off`: what does EXPERT OFF refuse? (P72)
+
+`python tools/hw_check.py --port COM6 host_params_probe --part A --expert-off`
+(PC 1 only, nothing transmitted). Device A (`13.SEP.95`, the init upload ends
+with `EXPERT OFF` there). Pass 0 with EXPERT ON as before, then verbose
+`EXPERT OFF` (read back), Host pass, verbose `EXPERT ON` for the cross-check,
+restore as before. The log line `T158 rejected with EXPERT OFF: ...` lists the
+parameters refused in the Host pass.
+
+| What | Result |
+|---|---|
+| Parameters refused with EXPERT OFF on 13.SEP.95 | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session on device A. Until then no change to
+ParamApplier. Software: `test_host_params_probe.py` (`TestExpertOff`).
+
+---
+
 ### T157 — App: parameters right after OK (P72)
 
 Device B, VHF Packet, 144.800 MHz with a dummy load or minimum power; PC 1

@@ -43,10 +43,12 @@ parameters mask) follows.
 
 ### Open probes per device (P72, 2026-10-02) - open
 
-`host_params_probe --part A --exclude IL` on **device A** (release
-13.SEP.95) to release all other parameters for it, and `ubit_probe` on
-**device B**. Until then P72 reports those parameters as `not verified for
-Host Mode on <release>` (saved, TNC unchanged until the next init).
+`ubit_probe` on **device B**, and the **T158** measurement on device A
+(`host_params_probe --part A --expert-off`: which parameters are refused with
+EXPERT OFF; ParamApplier stays unchanged until then). Device A already has the
+39 `verified` of the 22:07 T151 run released; everything else is reported as
+`not verified for Host Mode on <release>` (saved, TNC unchanged until the next
+init).
 
 ### Verbose commands end with CR only (P75) - open (2026-10-02)
 
