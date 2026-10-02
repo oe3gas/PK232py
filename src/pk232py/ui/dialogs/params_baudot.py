@@ -30,7 +30,7 @@ class BaudotParamsDialog(QDialog):
     DEFAULTS = dict(
         acrtty=0, atxrtty=0, audelay=2, code=0,
         errchar=0x5F, mspeed=20, mweight=10,
-        xbaud=0, xlength=64, ubit="", aab="",
+        xbaud=0, xlength=64, aab="",
         # flags
         alfrtty=True, diddle=True, mopt=True, xmitok=True,
         afilter=False, cradd=False, marsdisp=False,
@@ -68,7 +68,6 @@ class BaudotParamsDialog(QDialog):
         self._sb_mweight = spin(10,90,  10); form.addRow("MWEIGHT:", self._sb_mweight)
         self._sb_xbaud   = spin(0, 300, 0);  form.addRow("XBAUD:",   self._sb_xbaud)
         self._sb_xlength = spin(0, 255, 64); form.addRow("XLENGTH:", self._sb_xlength)
-        self._le_ubit    = QLineEdit(); form.addRow("UBIT:", self._le_ubit)
         self._le_aab     = QLineEdit(); form.addRow("AAB:",  self._le_aab)
 
         # Read-only
@@ -123,7 +122,6 @@ class BaudotParamsDialog(QDialog):
         if "mweight" in kw: self._sb_mweight.setValue(int(kw["mweight"]))
         if "xbaud"   in kw: self._sb_xbaud.setValue(int(kw["xbaud"]))
         if "xlength" in kw: self._sb_xlength.setValue(int(kw["xlength"]))
-        if "ubit"    in kw: self._le_ubit.setText(str(kw["ubit"]))
         if "aab"     in kw: self._le_aab.setText(str(kw["aab"]))
         for attr, key in [
             ("_chk_alfrtty","alfrtty"),("_chk_diddle","diddle"),
@@ -146,7 +144,6 @@ class BaudotParamsDialog(QDialog):
             mweight  = self._sb_mweight.value(),
             xbaud    = self._sb_xbaud.value(),
             xlength  = self._sb_xlength.value(),
-            ubit     = self._le_ubit.text(),
             aab      = self._le_aab.text(),
             alfrtty  = self._chk_alfrtty.isChecked(),
             diddle   = self._chk_diddle.isChecked(),

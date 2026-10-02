@@ -36,7 +36,7 @@ class AMTORParamsDialog(QDialog):
         aab="", adelay=2, arqtmo=60, arqtol=3,
         code=0, errchar=0x5F, gusers=0, mid=0,
         mweight=10, tdbaud=96, tdchan=0,
-        xlength=64, ubit="",
+        xlength=64,
         navmsg="ALL", navstn="ALL",
         # flags
         rfec=True, rxrev=False, srxall=False, txrev=False,
@@ -83,7 +83,6 @@ class AMTORParamsDialog(QDialog):
         self._sb_mid     = spin(0, 99,  0);  form.addRow("MID:",     self._sb_mid)
         self._sb_mweight = spin(10, 90, 10); form.addRow("MWEIGHT:", self._sb_mweight)
         self._sb_xlength = spin(0, 255, 64); form.addRow("XLENGTH:", self._sb_xlength)
-        self._le_ubit    = QLineEdit(); form.addRow("UBIT:", self._le_ubit)
 
         # NAVTEX filter
         self._le_navmsg = QLineEdit(); self._le_navmsg.setText("ALL")
@@ -144,7 +143,6 @@ class AMTORParamsDialog(QDialog):
         if "mid"       in kw: self._sb_mid.setValue(int(kw["mid"]))
         if "mweight"   in kw: self._sb_mweight.setValue(int(kw["mweight"]))
         if "xlength"   in kw: self._sb_xlength.setValue(int(kw["xlength"]))
-        if "ubit"      in kw: self._le_ubit.setText(str(kw["ubit"]))
         if "navmsg"    in kw: self._le_navmsg.setText(str(kw["navmsg"]).upper())
         if "navstn"    in kw: self._le_navstn.setText(str(kw["navstn"]).upper())
         if "tdbaud"    in kw: self._sb_tdbaud.setValue(int(kw["tdbaud"]))
@@ -171,7 +169,6 @@ class AMTORParamsDialog(QDialog):
             mid       = self._sb_mid.value(),
             mweight   = self._sb_mweight.value(),
             xlength   = self._sb_xlength.value(),
-            ubit      = self._le_ubit.text(),
             navmsg    = self._le_navmsg.text().upper(),
             navstn    = self._le_navstn.text().upper(),
             tdbaud    = self._sb_tdbaud.value(),
