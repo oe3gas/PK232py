@@ -920,11 +920,13 @@ class ChannelBar(QWidget):
         )
         if state == CH_UNCONFIRMED:
             tip += "\ncarried over from verbose - waiting for confirmation"
-        if ch >= self._user_limit:
+        # USERS 0 = any free channel (STABO manual): no channel is out of range.
+        if self._user_limit > 0 and ch >= self._user_limit:
             tip += (
-                f"\nUSERS is set to {self._user_limit}. Incoming calls take "
-                "the lowest free channel; with USERS 1 a second incoming "
-                "call was rejected (T147, device B)."
+                f"\nUSERS is set to {self._user_limit}: incoming connects "
+                f"are accepted only on channels 0 to {self._user_limit - 1}; "
+                "USERS 0 = any free channel (STABO manual; consistent with "
+                "T147, device B)."
             )
         # CH_CALLING gets a trailing ellipsis (P44) - the state must be
         # readable even without colour (a screenshot, colour-blindness),

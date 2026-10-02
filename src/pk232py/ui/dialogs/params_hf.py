@@ -108,10 +108,9 @@ class HFPacketParamsDialog(QDialog):
         self._sb_txsmt.setToolTip("Not a PK-232 command — has no effect")
         self._sb_users    = spin(1, 10, 10);     form.addRow("USERS:",    self._sb_users)
         self._sb_users.setToolTip(
-            "Incoming calls take the lowest free channel. With USERS 1 a "
-            "second incoming call was rejected (T147, device B). Whether "
-            "USERS limits the number of calls or a channel range is not "
-            "measured."
+            "Incoming connects are accepted only on channels 0 to n-1; "
+            "USERS 0 = any free channel (STABO manual; consistent with "
+            "T147, device B)."
         )
 
         # Read-only fields
