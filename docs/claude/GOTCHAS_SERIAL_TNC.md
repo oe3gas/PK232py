@@ -1182,7 +1182,9 @@ Grows over time.
     (ACK); a second query shows the new value. Format: numbers as ASCII
     decimal digits, switches `Y`/`N`, text literal (`UNCQ`, `CFall`,
     `MTnone`), control characters as `$hh` (`CN$03`, `CL$18`, `SP$0D`),
-    empty text as `` (`BT`) - that `$0D` is **not** an error code.
+    empty text as `
+` (`BT
+`) - that `$0D` is **not** an error code.
   - `$07` as the answer to a query: command unknown on this device (`EX`,
     `PH`, `PB`, `PV`; verbose `EXPERT`/`PTHUFF` -> `?What?`). `$10` on `DA`
     (DAYTIME unset): meaning unmeasured.
@@ -1205,3 +1207,23 @@ Grows over time.
   remedy is a power-cycle** (off, then on). Do not spend time debugging
   `SerialManager`/Host-Mode code against a hung TNC; confirm the hardware
   is alive first.
+- **`UBIT 0 ON` (factory default) silently drops packets below the DCD
+  threshold (P74, found 01.10.2026, device B per operator - confirm in
+  log/Testplan).** Packet reception in VHF Packet was unreliable; with
+  `WHYNOT ON` the TNC reported "packet received below threshold" for the
+  discarded packets. After `UBIT 0 OFF` (verbose, by hand) every packet
+  with a correct CRC is processed regardless of DCD and reception has been
+  reliable. Manual (STABO ch. 12, UBIT / CUSTOM bit 0): `ON` suppresses a
+  packet too weak to light the DCD LED, `OFF` shows it anyway; UBIT applies
+  to **all** modes; Host mnemonic **`UB`**. The manual describes only the
+  receive side - whether `UBIT 0` leaves TX channel-busy detection alone is
+  not stated (T156 notes what it can). The TNC has no backup battery, so it
+  starts with ON every time: the app uploads `UBIT 0 ON|OFF` on every init
+  (`HFPacketConfig.ubit0`, default OFF, checkbox "UBIT 0 (DCD gate)" in the
+  Packet dialog). **Unmeasured until T156** (`hw_check.py ubit_probe`): the
+  Host Mode argument form (`0 N`, `0N`, `0 OFF`, `0OFF`?), the query answer,
+  whether the value survives mode switches (`PA`, `VH`, `HB`), and the
+  behaviour on devices A and C (firmware matrix: `UB UBIT` confidence L,
+  not in the BASE generation = device C). Until then
+  `host_params.py` has `UBIT` with an empty mnemonic: nothing is sent in
+  Host Mode (rule 6).

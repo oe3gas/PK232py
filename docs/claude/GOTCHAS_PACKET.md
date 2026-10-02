@@ -31,6 +31,12 @@
   locks it (`set_link_state()` is a documented no-op). `USERS n` accepts
   exactly channels 0 … n−1, so the chip tooltip warns for `ch >= USERS`.
   `USERS` defaults to 10 (config and dialog); a stored INI value is kept.
+  **USERS semantics (P74, 2026-10-01):** STABO manual, USERS: "`USERS n`
+  permits connects from outside only on channels 0 to n-1; `USERS 0` on
+  any free channel." That settles P70's open question "number or channel
+  range" in favour of the **channel range**, consistent with T147 (USERS 1:
+  second caller rejected; USERS 10: channel 1). Tooltips (parameter dialog,
+  channel chip) say so; no chip warning for `USERS 0`.
 - **Known Facts, Device B, P69/P70 (T146/T147, 30.09.2026, Release
   01.AUG.91; logs `20260930_210627_channel_probe.log`,
   `20260930_212141_channel_probe.log`).** F1 Data on a free channel 3 and 9
