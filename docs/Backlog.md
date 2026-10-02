@@ -1388,6 +1388,32 @@ vs-attribute ordering instead.
   actual signal-delivered data over a plain attribute whenever a test's
   very next assertion depends on it.
 
+### UBIT 10 (unsolicited ARQ state blocks) -- decided: NOT used (2026-10-02)
+
+Evaluated whether `UBIT 10 ON` (TNC emits `SOH $50 "n" ETB` on every state
+change, n = $30-$36 = OPMODE `v` value) could replace polling or stabilise
+the opmode switch FSM. Decision: do not enable it.
+
+- No polling to replace: Host Mode already runs with HPOLL OFF
+  (`enter_host_mode()` sends `HP N`). The STABO manual states the $50 block
+  itself depends on HPOLL -- UBIT 10 controls *whether* a block is created,
+  HPOLL only *how* it is delivered.
+- No benefit for `ModeManager` (M0-M3): `n` is the ARQ link state
+  (Standby/Phasing/Change-over/Idle/Traffic/Error/RQ), not an operating-mode
+  change (e.g. BA -> CW). The real stabiliser for mode switching remains the
+  planned v0.2 ACK-wait on the `$4F` reply of the activate mnemonic.
+- Regression risk: `_make_host_frame()` classifies `$50 "n"` as a normal
+  `LINK_MSG`, so `_make_link_handler()` would fall into its `else` branch and
+  overwrite AMTOR/PACTOR "CONNECTED" with "STBY"; the status digit would
+  also appear in the RX window; SIAM result fragments (also `$50`, T113)
+  could be corrupted; Packet/FAX could show stray digits on channel 0.
+  UBIT is stored in the TNC's battery-backed RAM and would leak into other
+  host software after exit.
+- Only gain would be a finer AMTOR ARQ status label (PHASING/IDLE/TFC/ERR/RQ)
+  -- not worth the risk to current stability. Revisit only together with an
+  AMTOR-scoped filter (in `AMTORMode.handle_frame()`, not in the parser) and
+  a prior hardware test of UBIT 10 on firmware v7.1.
+
 ---
 
 ## Priority 3 — Future / v0.2+
