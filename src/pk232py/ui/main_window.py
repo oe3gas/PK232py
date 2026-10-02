@@ -456,6 +456,17 @@ class MainWindow(QMainWindow):
 
         appear_menu.addSeparator()
 
+        # P76: bell on a new connection. Checkable; toggling applies at once
+        # and is saved at once, like the theme choice below.
+        self._act_connect_bell = QAction("Connect bell", self, checkable=True)
+        self._act_connect_bell.setStatusTip(
+            "Sound a bell when a connection is established")
+        self._act_connect_bell.setChecked(self._app_config.appearance.connect_bell)
+        self._act_connect_bell.toggled.connect(self._on_connect_bell_toggled)
+        appear_menu.addAction(self._act_connect_bell)
+
+        appear_menu.addSeparator()
+
         # Theme presets — checkable + mutually exclusive (QActionGroup).
         # The active theme shows a check mark; clicking one applies it live and
         # persists it. See _on_theme_selected() / _sync_theme_checks().
@@ -4970,6 +4981,12 @@ class MainWindow(QMainWindow):
         self._apply_appearance()
         self._sync_theme_checks()
         self._log_monitor(f"[SYS] Theme → {theme.name}")
+
+    def _on_connect_bell_toggled(self, checked: bool) -> None:
+        """Connect bell menu entry (P76): effective immediately, saved immediately."""
+        self._app_config.appearance.connect_bell = bool(checked)
+        self._config_mgr.save()
+        self._log_monitor(f"[SYS] Connect bell {'on' if checked else 'off'}")
 
     def _sync_theme_checks(self) -> None:
         """Tick the active preset in the submenu (none when theme == 'custom')."""
