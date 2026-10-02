@@ -3184,6 +3184,24 @@ normalises to ON). `--reevaluate` of that log gives `expected_off=1`,
 
 ---
 
+### T159 — App: bell on a new connect (P76)
+
+Any device, VHF Packet; PC 1 runs PK232PY, PC 2 QtTermTCP (`OE3GAS-2`).
+Software: `test_connect_bell.py`. The bell is `QApplication.beep()` - if the
+Windows sound "Default Beep" is muted, nothing is heard (not an app setting).
+
+| # | Where | Do | Expected | Result |
+|---|---|---|---|---|
+| 1 | PC 1 | Host Mode, VHF Packet, channel 1: connect `OE3GAS-1` (TinyBox) | one beep at "connected" | ⬜ |
+| 2 | PC 2 | QtTermTCP `OE3GAS-2` calls `OE3GAS` | one beep | ⬜ |
+| 3 | PC 1 | leave Host Mode, Ctrl+H | chips connected, NO beep (reconciliation) | ⬜ |
+| 4 | PC 1 | Configure -> Appearance -> Connect bell off; connect again | NO beep | ⬜ |
+| 5 | PC 1 | switch Connect bell on again | - | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session.
+
+---
+
 ### T157 — App: parameters right after OK (P72)
 
 Device B, VHF Packet, 144.800 MHz with a dummy load or minimum power; PC 1
