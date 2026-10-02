@@ -29,14 +29,37 @@ get a "disconnecting" state. Facts (T146/T147, Device B) and the model:
 `docs/claude/GOTCHAS_PACKET.md`. T144 step 3 (verbose connection visible
 on chip 0) is checked again by T148 step 5.
 
-### Host Mode parameters without verbose — P71 measured, P72/P73 wait (2026-09-30)
+### Host Mode parameters without verbose — P72 implemented, T157 open (2026-10-02)
 
 Operator decision 30.09.2026: parameter changes must be set in Host Mode
-directly, never via a verbose detour. P71 (`hw_check host_params_probe`,
-built, not yet run on hardware) measures the Host mnemonics of
-`comm/host_params.py` (T151 ask/set/verbose cross-check, T152 set while
-connected). P72 (apply without verbose) waits for T151/T152; P73 (Packet
-parameters mask) follows P72.
+directly, never via a verbose detour. P71 measured the Host mnemonics
+(T151 device B, T152/T156 device A), P72 applies a dialog's changes right
+after OK (`comm/param_applier.py`, `ParamsUploader.changed_values()`), only
+for (parameter, release) pairs in `comm/host_params.py`
+`verified_releases`; every parameter is read back, a refusal is quoted and
+the status field "TNC differs from parameters" shows what the TNC did not
+take. **P72 is done after T157** (hardware, device B). P73 (Packet
+parameters mask) follows.
+
+### Open probes per device (P72, 2026-10-02) - open
+
+`host_params_probe --part A --exclude IL` on **device A** (release
+13.SEP.95) to release all other parameters for it, and `ubit_probe` on
+**device B**. Until then P72 reports those parameters as `not verified for
+Host Mode on <release>` (saved, TNC unchanged until the next init).
+
+### Verbose commands end with CR only (P75) - open (2026-10-02)
+
+Terminate verbose commands with `\r` only, so `ILFPACK OFF` does not break
+them (the LF of CR LF becomes the first character of the next command,
+T155). Measure first: CR-only with ILFPACK ON and OFF. Then ILFPACK can be
+applied live (ParamApplier currently never does).
+
+### Disconnect: the PK-232 does not hear Direwolf's UA and repeats DISC - open (2026-10-02)
+
+Device A, 02.10.2026, UBIT 0 ON: after our disconnect request the TNC
+repeats DISC RETRY times because it does not hear Direwolf's UA. Counter
+test with UBIT 0 OFF.
 
 ### `operator_step()` for the other hw_check subcommands — open (P69a, 2026-09-30)
 
