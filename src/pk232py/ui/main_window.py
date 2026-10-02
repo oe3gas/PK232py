@@ -16,6 +16,7 @@ Layout:
 """
 from __future__ import annotations
 
+import copy
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -41,6 +42,7 @@ from ..modes.base_mode import BaseMode
 from ..modes.packet_hf import HFPacketMode
 from ..comm.params_uploader import ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
+from pk232py.comm.param_applier import ParamApplier, SerialParamTransport, format_result
 from .dialogs.params_hf      import HFPacketParamsDialog
 from .appearance_dialog      import AppearanceDialog
 from .dialogs.params_misc    import MiscParamsDialog
@@ -161,6 +163,11 @@ class MainWindow(QMainWindow):
         # anywhere else (Teil C.1).
         self._link_table = LinkTable()
         self._link_table.subscribe(self._on_link_table_change)
+        # P72: names of parameters the TNC did NOT take (saved in the config,
+        # but TNC differs). ONE state variable: filled by _apply_changed_params(),
+        # an entry leaves when the same parameter is applied ok, everything
+        # clears with the next init upload (_on_verbose_mode_ready()).
+        self._tnc_unapplied: set[str] = set()
         # Application config (parameters for all modes)
         from pk232py.config import ConfigManager
         self._config_mgr = ConfigManager()
@@ -1022,6 +1029,11 @@ class MainWindow(QMainWindow):
         )
         sb.addPermanentWidget(self._sb_mode)
 
+        self._sb_differs = QLabel("TNC differs from parameters")
+        self._sb_differs.setStyleSheet("color: #f44747; font-weight: bold;")
+        self._sb_differs.setVisible(False)
+        sb.addPermanentWidget(self._sb_differs)
+
         self._sb_time = QLabel("UTC: --:--:--")
         self._sb_time.setMinimumWidth(110)
         self._sb_time.setToolTip("Current UTC time")
@@ -1248,6 +1260,9 @@ class MainWindow(QMainWindow):
         site right.
         """
         self._log_monitor("[SYS] TNC in verbose mode")
+        # P72: the init upload below sends every parameter again.
+        self._tnc_unapplied.clear()
+        self._refresh_params_differ_label()
         self._sb_mode.setText("Mode: VERBOSE")
         self._set_mode_indicator("verbose")
         # P49.A.1: is_verbose_mode flips True right here - the one
@@ -4625,10 +4640,11 @@ class MainWindow(QMainWindow):
 
     def _on_params_hf_packet(self) -> None:
         """Open HF Packet Parameters dialog."""
-        from pk232py.config import ConfigManager
+        before = copy.deepcopy(self._app_config)
         dlg = HFPacketParamsDialog(self._app_config.hf_packet, parent=self)
         if dlg.exec() == HFPacketParamsDialog.DialogCode.Accepted:
-            self._log_monitor("[SYS] HF Packet parameters saved — sent to TNC on next initialisation")
+            self._config_mgr.save()
+            self._apply_changed_params(before, "HF Packet")
             # Refresh the USERS tooltip immediately (P11.5) rather than
             # waiting for the next mode (re)activation — HF and VHF Packet
             # share hf_packet config, so update both if either is built.
@@ -4646,6 +4662,7 @@ class MainWindow(QMainWindow):
 
     def _on_params_misc(self) -> None:
         """Open Misc Parameters dialog."""
+        before = copy.deepcopy(self._app_config)
         dlg = MiscParamsDialog(parent=self)
         mi = self._app_config.misc
         dlg.set_values(
@@ -4663,16 +4680,19 @@ class MainWindow(QMainWindow):
             # sync (it is what the converse-mode detection step and the
             # post-Host-Mode-exit resync send).
             self._serial.command_char = mi.command
-            self._log_monitor("[SYS] Misc parameters saved — sent to TNC on next initialisation")
+            self._apply_changed_params(before, "Misc")
 
     def _on_params_pactor(self) -> None:
         """Open PACTOR Parameters dialog."""
+        before = copy.deepcopy(self._app_config)
         dlg = PACTORParamsDialog(self._app_config.pactor, parent=self)
         if dlg.exec() == PACTORParamsDialog.DialogCode.Accepted:
-            self._log_monitor("[SYS] PACTOR parameters saved — sent to TNC on next initialisation")
+            self._config_mgr.save()
+            self._apply_changed_params(before, "PACTOR")
 
     def _on_params_amtor(self) -> None:
         """Open AMTOR / NAVTEX / TDM Parameters dialog."""
+        before = copy.deepcopy(self._app_config)
         dlg = AMTORParamsDialog(parent=self)
         am = self._app_config.amtor
         dlg.set_values(
@@ -4693,10 +4713,11 @@ class MainWindow(QMainWindow):
             am.txrev    = v["txrev"];    am.usos     = v["usos"]
             am.wideshft = v["wideshft"]; am.xmitok   = v["xmitok"]
             self._config_mgr.save()
-            self._log_monitor("[SYS] AMTOR/NAVTEX/TDM parameters saved — sent to TNC on next initialisation")
+            self._apply_changed_params(before, "AMTOR/NAVTEX/TDM")
 
     def _on_params_baudot(self) -> None:
         """Open BAUDOT / ASCII / CW Parameters dialog."""
+        before = copy.deepcopy(self._app_config)
         dlg = BaudotParamsDialog(parent=self)
         ba = self._app_config.baudot
         dlg.set_values(
@@ -4716,10 +4737,11 @@ class MainWindow(QMainWindow):
             ba.txrev   = v["txrev"];   ba.usos    = v["usos"]
             ba.wideshft= v["wideshft"]; ba.xmitok  = v["xmitok"]
             self._config_mgr.save()
-            self._log_monitor("[SYS] BAUDOT/ASCII/CW parameters saved — sent to TNC on next initialisation")
+            self._apply_changed_params(before, "BAUDOT/ASCII/CW")
 
     def _on_params_maildrop(self) -> None:
         """Open MailDrop Parameters dialog."""
+        before = copy.deepcopy(self._app_config)
         dlg = MailDropParamsDialog(parent=self)
         if getattr(self._serial, 'has_maildrop', None) is False:
             # P37 Teil D.3: lock, never hide - detect_maildrop() has
@@ -4739,7 +4761,68 @@ class MainWindow(QMainWindow):
             md.mmsg        = v["mmsg"];        md.tmail       = v["tmail"]
             md.third_party = v["third_party"]
             self._config_mgr.save()
-            self._log_monitor("[SYS] MailDrop parameters saved — sent to TNC on next initialisation")
+            self._apply_changed_params(before, "MailDrop")
+
+    # ------------------------------------------------------------------
+    # P72 - parameters right after OK
+    # ------------------------------------------------------------------
+
+    def _io_channel_connected(self) -> bool:
+        """True if the TNC's verbose I/O channel is a connected channel
+        (P67) - the only case where Converse may be resumed."""
+        ch = self._link_table.io_channel
+        return (0 <= ch < len(self._link_table.channels)
+                and self._link_table.channels[ch].state == "connected")
+
+    def _apply_changed_params(self, before, label: str) -> None:
+        """Set what changed between *before* and the config NOW in the TNC
+        (ParamApplier: Host Mode directly per Host frame, verbose with
+        read-back, nothing when not connected) and show the result."""
+        transport = SerialParamTransport(
+            self._serial,
+            in_converse=lambda: self._link_table.converse,
+            io_channel_connected=self._io_channel_connected,
+        )
+        pactor = bool(getattr(self._serial, "has_pactor", True))
+        results = ParamApplier(transport).apply(
+            before, self._app_config, has_pactor=pactor,
+            has_maildrop=getattr(self._serial, "has_maildrop", None) is not False,
+            needs_expert=pactor,
+        )
+        if not results:
+            self._log_monitor(f"[SYS] {label} parameters saved - nothing changed")
+            return
+        failed = []
+        for r in results:
+            line = f"[SYS] {format_result(r)}"
+            self._log_monitor(line)
+            if not self._serial.is_host_mode:
+                self._vt_append(f"{line}\n", color="#3a9e3a" if r.ok else "#f44747")
+            if r.ok:
+                self._tnc_unapplied.discard(r.name)
+            else:
+                self._tnc_unapplied.add(r.name)
+                failed.append(format_result(r))
+        self._refresh_params_differ_label()
+        if failed:
+            self._show_params_not_taken(label, failed)
+
+    def _refresh_params_differ_label(self) -> None:
+        names = sorted(self._tnc_unapplied)
+        self._sb_differs.setVisible(bool(names))
+        self._sb_differs.setToolTip(
+            "Saved in the configuration, but not (yet) in the TNC:\n"
+            + "\n".join(names)
+            + "\nThe next initialisation uploads them again." if names else "")
+
+    def _show_params_not_taken(self, label: str, lines: list) -> None:
+        """Dialog for parameters the TNC did not take - split out so a test
+        can stub this ONE method instead of the blocking QMessageBox."""
+        QMessageBox.warning(
+            self, f"{label} parameters not taken by the TNC",
+            "Saved in the configuration, but the TNC did not take:\n\n"
+            + "\n".join(lines),
+        )
 
     def _on_toggle_serial_status(self) -> None:
         """Show/hide serial signal status rows (rows 2+3)."""
