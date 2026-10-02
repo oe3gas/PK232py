@@ -20,14 +20,18 @@ before assuming the code changed or the earlier run was wrong.
 
 | Gerät | Release (Banner) | Generation | PACTOR | MailDrop | Prompt-Klammer | Letzte Messung | Besonderheiten |
 |---|---|---|---|---|---|---|---|
-| **A** | 11.09.1995 | PACTOR | ja | ja | rund | 22.09.2026 (T115, T116) | Quelle aller `CLAUDE.md` "Known Gotchas"-Befunde bis 22.09.2026 (Mnemonics, MailDrop-Ablauf, Packet-/Channel-Verhalten). `MI` = MFILTER (T115). |
+| **A** | 13.SEP.95 | PACTOR | ja | ja | rund | 02.10.2026 (T152, T156) | Quelle aller `CLAUDE.md` "Known Gotchas"-Befunde bis 22.09.2026 (Mnemonics, MailDrop-Ablauf, Packet-/Channel-Verhalten). `MI` = MFILTER (T115). |
 | **B** | 01.AUG.91 | MBX | nein | ja | eckig | 24.09.2026 (T119, P37) | MDCHECK hat kein Host-Mode-Kürzel (T118, wie Gerät A). Volles MailDrop-Protokoll (`L`/`S`/`SB`/`R`/`K`/`B`/`<`-Fremdabsender) 10/10 PASS, identisch zu Gerät A. |
 | **C** | 30.12.1988 | BASE | nein | **nein** | unbekannt | 23.09.2026 (Betreiberangabe, PuTTY) | Nie über die App/`hw_check.py` angeschlossen — MailDrop-Abwesenheit direkt mit einem Terminalprogramm geprüft, nicht gemessen über das hier dokumentierte Werkzeug. Ab P37 (24.09.2026) erkennt die App das automatisch über `SerialManager.detect_maildrop()` (`MAILDROP`-Abfrage, verbose, vor dem Upload — niemals `MDCHECK`); noch nicht an diesem Gerät verifiziert. |
 
 **Release-Spalte, Genauigkeit:** Gerät B ist die einzige Zeile mit einer
 byte-genauen Banner-Erfassung (P30/P37, `hw_logs/20260924_181446_maildrop_session.log`)
 — der Wert steht hier exakt wie im Banner (`Release 01.AUG.91`), unverändert,
-siehe `SerialManager.tnc_release`. Geräte A und C stammen aus älteren,
+siehe `SerialManager.tnc_release`. **Gerät A** hat seit dem 02.10.2026 (T152,
+`hw_logs/20261002_172135_host_params_probe.log`, Banner: `release=13.SEP.95
+pactor=yes`; Betreiber bestätigt) ebenfalls eine Banner-Erfassung - die frühere
+Abschrift `11.09.1995` (Generation PACTOR, andere Quellen in `docs/` nennen sie
+noch) ist damit ersetzt. Geräte A (frühere Messungen) und C stammen aus älteren,
 vom Betreiber transkribierten Angaben (kanonisches `DD.MM.YYYY`, vor der
 byte-genauen Banner-Erfassung entstanden) — keine wörtliche Banner-Erfassung
 und nicht nachträglich vereinheitlicht, um nichts zu erfinden.
