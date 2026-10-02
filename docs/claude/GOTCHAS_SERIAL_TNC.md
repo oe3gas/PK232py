@@ -1227,3 +1227,38 @@ Grows over time.
   not in the BASE generation = device C). Until then
   `host_params.py` has `UBIT` with an empty mnemonic: nothing is sent in
   Host Mode (rule 6).
+- **Host Mode parameters per device (P72, 02.10.2026; rule 11 - which pair is
+  measured, which is not).** Format (T151, T152, T156): set `SOH $4F <mn><value>
+  ETB` -> `<mn> $00`; query `<mn>` -> `<mn><value>`; numbers ASCII decimal,
+  switches `Y`/`N`, text literal, control characters as `$hh`, empty text as
+  `\r`; an error is ONE byte (`$07` command unknown here, `$10` DAYTIME unset).
+  `comm/host_params.py` is the table: a parameter may be set in Host Mode by the
+  app only if the TNC's release is in its `verified_releases`.
+  - **Device B, `01.AUG.91`:** 37 parameters `verified` by T151 (`--exclude IL`,
+    `hw_logs/20261001_205535_host_params_probe.log`, no banner - the device is
+    the operator's statement; `--reevaluate` reproduces exactly the 37): PACLEN,
+    TXDELAY, MAXFRAME, FRACK, RETRY, PERSIST, SLOTTIME, DWAIT, CHECK, MONITOR,
+    RESPTIME, USERS, AX25L2V2, HEADERLN, CONSTAMP, DAYSTAMP, ACRPACK, ALFPACK, MRPT,
+    PPERSIST, XMITOK, 8BITCONV, ARQTMO, ADELAY, TDBAUD, TDCHAN, RFEC, RXREV, TXREV,
+    MSPEED, ALFRTTY, DIDDLE, MAILDROP, MMSG, TMAIL, 3RDPARTY, KILONFWD; plus UN and
+    CF (T138 A.3/A.5). UBIT: not measured on B.
+  - **Device A, `13.SEP.95`:** T152 (`..._172135_host_params_probe.log`) USERS,
+    MAXFRAME, PACLEN, FRACK, RETRY, MONITOR, TXDELAY - set, ACK, read back,
+    WHILE CONNECTED, link unchanged. T156 (`20261002_162823_ubit_probe.log`, no
+    banner, device A per the operator): UBIT 0 set `UB0 N`/`UB0 Y` (WITH a
+    space), query `UB0` -> `UBN`/`UBY`, verbose confirmed, survives the VHF
+    mode-switch frames. Everything else on A: **not measured.**
+  - **Device C:** nothing measured.
+  - **Log attribution:** `20261001_220703_host_params_probe.log` (22:07-22:11) has
+    the banner `release=13.SEP.95` = device A, not B; it is NOT used for B.
+  - **While connected (B.4):** none of the seven T152 parameters was refused with
+    "not while connected" (device A). Unmeasured for the rest - therefore P72
+    ALWAYS reads back and quotes a rejection word for word.
+  - **ILFPACK OFF breaks the app's verbose commands (T155, P72 B.3):** the app
+    ends commands with CR LF; with `ILFPACK OFF` the LF counts as the first
+    character of the next command and every further verbose command gives
+    `?What?`. Setting it in Host Mode works, so ParamApplier never sets it live
+    (message "applied at the next initialisation", P75 fixes the line endings).
+  - **EXPERT:** T151/T152 set their values with `EXPERT ON` in the TNC. Whether
+    expert-class parameters can be set in Host Mode with `EXPERT OFF` (device A
+    after the init upload) is unmeasured - the read-back reports it if not.
