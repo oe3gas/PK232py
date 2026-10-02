@@ -1971,6 +1971,16 @@ class SerialManager(QObject):
         _read_until_prompt() below)."""
         return buf.startswith(b'cmd:') or b'\ncmd:' in buf
 
+    def send_verbose_command(
+        self, data: bytes, timeout: float = 3.0,
+    ) -> tuple[bool, bytes]:
+        """Public form of the send-and-wait that also hands back the TNC's
+        answer (P72): (cmd: prompt seen, every byte read). ParamApplier uses
+        it to quote a rejection ('?Bad ...') word for word. Same read path
+        as query_verbose_value() - the ReaderThread-fed buffer, so the
+        verbose terminal keeps showing everything."""
+        return self._write_verbose_wait_text(data, timeout=timeout)
+
     def write_verbose_wait(self, data: bytes, timeout: float = 5.0) -> bool:
         """Send a verbose-mode command and wait for TNC cmd: prompt.
 
