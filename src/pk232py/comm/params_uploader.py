@@ -335,6 +335,14 @@ class ParamsUploader:
             self._bool("HID",      hf.hid),
         ]
 
+        # UBIT 0 (P74): verbose form "UBIT 0 ON|OFF", the one the operator
+        # used by hand on 01.10.2026. Sent on EVERY init because the TNC has
+        # no backup battery and starts with the factory ON, which drops
+        # packets below the DCD threshold. The Host Mode form is unmeasured
+        # (T156) - this verbose upload runs before Host Mode, so it does not
+        # need it.
+        cmds.append(self._cmd("UBIT", "0 ON" if hf.ubit0 else "0 OFF"))
+
         # - PACTOR -
         # PACTOR commands: only send when TNC has the PACTOR option.
         # On a PK-232MBX without PACTOR, these return ?What? errors.
