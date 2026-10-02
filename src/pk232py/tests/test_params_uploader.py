@@ -331,3 +331,55 @@ class TestAbortsAfterRepeatedSilence:
 
         assert sent == total_commands
         assert serial.calls == total_commands
+
+
+class TestChangedValues:
+    """P72 Teil B: only the commands that differ between two snapshots."""
+
+    @staticmethod
+    def _diff(mutate, **kw):
+        import copy
+        before = AppConfig()
+        after = copy.deepcopy(before)
+        mutate(after)
+        return ParamsUploader.changed_values(before, after, **kw)
+
+    def test_users_1_to_10_is_exactly_one_pair(self):
+        import copy
+        before = AppConfig()
+        before.hf_packet.users = 1
+        after = copy.deepcopy(before)
+        after.hf_packet.users = 10
+        assert ParamsUploader.changed_values(before, after) == [("USERS", "10")]
+
+    def test_nothing_changed_is_empty(self):
+        assert self._diff(lambda c: None) == []
+
+    def test_switch_and_ubit_values(self):
+        assert self._diff(lambda c: setattr(c.hf_packet, "ax25l2v2", False)) == \
+            [("AX25L2V2", "OFF")]
+        assert self._diff(lambda c: setattr(c.hf_packet, "ubit0", True)) == \
+            [("UBIT", "0 ON")]
+
+    def test_clock_is_not_a_parameter(self):
+        # DAYTIME is "now" - two snapshots always differ by it; never a change.
+        def on(c):
+            c.tnc.utc_tnc_time = True
+        import copy
+        before = AppConfig()
+        before.tnc.utc_tnc_time = True
+        after = copy.deepcopy(before)
+        assert ParamsUploader.changed_values(before, after) == []
+
+    def test_same_source_as_the_init_upload(self):
+        # A newly set text parameter appears with the value _build_commands() sends.
+        pairs = self._diff(lambda c: setattr(c.hf_packet, "unproto", "APRS"))
+        assert pairs == [("UNPROTO", "APRS")]
+
+    def test_with_old_values(self):
+        import copy
+        before = AppConfig()
+        before.hf_packet.maxframe = 4
+        after = copy.deepcopy(before)
+        after.hf_packet.maxframe = 7
+        assert ParamsUploader.changed_with_old(before, after) == [("MAXFRAME", "7", "4")]

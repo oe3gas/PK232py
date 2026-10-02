@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from pk232py.comm.serial_manager import SerialManager
@@ -453,6 +453,60 @@ class ParamsUploader:
             cmds.append(self._cmd("EXPERT", "OFF"))
 
         return cmds
+
+    # ------------------------------------------------------------------
+    # P72: only what changed between two configuration snapshots
+    # ------------------------------------------------------------------
+
+    # Commands that are "now", not a parameter: two snapshots always differ.
+    _CLOCK_COMMANDS = frozenset({"DAYTIME"})
+
+    @classmethod
+    def changed_with_old(
+        cls, before: AppConfig, after: AppConfig,
+        has_pactor: bool = True, has_maildrop: bool = True,
+    ) -> list[tuple[str, str, Optional[str]]]:
+        """(name, new value, old value) for every command that
+        _build_commands(after) emits and _build_commands(before) does not
+        emit byte-for-byte. The SAME source as the init upload - there is
+        no second list of parameters. *old* is the value *before* sent
+        under that name (None if it sent none)."""
+        def build(cfg: AppConfig) -> list[bytes]:
+            return cls(serial=None, config=cfg)._build_commands(
+                has_pactor=has_pactor, has_maildrop=has_maildrop)
+
+        def split(cmd: bytes) -> tuple[str, str]:
+            name, _, value = cmd.decode("ascii").strip().partition(" ")
+            return name, value
+
+        old_cmds, new_cmds = build(before), build(after)
+        old_by_name: dict[str, list[str]] = {}
+        for cmd in old_cmds:
+            name, value = split(cmd)
+            old_by_name.setdefault(name, []).append(value)
+        out: list[tuple[str, str, Optional[str]]] = []
+        seen: set[bytes] = set()
+        for cmd in new_cmds:
+            if cmd in old_cmds or cmd in seen:
+                continue
+            seen.add(cmd)
+            name, value = split(cmd)
+            if name in cls._CLOCK_COMMANDS:
+                continue
+            gone = [v for v in old_by_name.get(name, [])
+                    if cls._cmd(name, v) not in new_cmds]
+            out.append((name, value, gone[0] if gone else None))
+        return out
+
+    @classmethod
+    def changed_values(
+        cls, before: AppConfig, after: AppConfig,
+        has_pactor: bool = True, has_maildrop: bool = True,
+    ) -> list[tuple[str, str]]:
+        """(name, new value) for every parameter whose verbose command
+        differs between the two snapshots (P72, Teil B)."""
+        return [(n, v) for n, v, _old in
+                cls.changed_with_old(before, after, has_pactor, has_maildrop)]
 
     # ------------------------------------------------------------------
     # Helpers
