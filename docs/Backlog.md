@@ -639,6 +639,24 @@ T105 and T108 additionally need a second AX.25 station.*
 - [ ] LICENSE / CONTRIBUTING.md / CHANGELOG.md present and referenced by README
 - [ ] README "Download & Run the Beta" section for non-developers
 
+### UBIT 0 OFF als Packet-Parameter (gilt fuer alle Modi) — open (P74, 2026-10-01)
+
+**Begruendung:** In VHF Packet verwarf der TNC gueltige Pakete. WHYNOT ON
+zeigte "packet received below threshold": Mit UBIT 0 ON (Werksvorgabe)
+unterdrueckt der PK-232 jedes Paket, das die DCD-LED nicht zum Leuchten
+bringt - auch bei korrekter CRC (STABO Kap. 12, UBIT / CUSTOM Bit 0).
+Mit UBIT 0 OFF wird jedes CRC-korrekte Paket verarbeitet; der Empfang war
+danach zuverlaessig (Betreiber, 01.10.2026, Geraet B).
+Da der TNC ohne Pufferbatterie bei jedem Einschalten auf UBIT 0 ON steht,
+muss die App den Wert setzen. Betreiberentscheid: UBIT 0 ist ein sichtbarer,
+aenderbarer Parameter in der Packet-Maske (Standard OFF) und wird bei jedem
+Init und sofort nach Aenderung (P72) gesetzt; er gilt fuer alle Betriebsarten.
+
+**Offen vor der Umsetzung:** Host-Form von UBIT (Handbuch: Kuerzel UB,
+Argumentform unbekannt), Verhalten auf Geraet A und C (Matrix: UBIT nicht
+in BASE), Wirkung auf das Senden, Wirkung in den
+anderen Betriebsarten.
+
 ---
 
 ## Priority 2 — Improvements
