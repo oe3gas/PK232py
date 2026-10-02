@@ -162,6 +162,17 @@ class HFPacketParamsDialog(QDialog):
         self._chk_hid       = chk("HID",        False); flags_layout.addWidget(self._chk_hid)
         self._chk_bbsmsgs   = chk("BBSMSGS",    False); flags_layout.addWidget(self._chk_bbsmsgs)
         self._chk_fulldp    = chk("FULLDP",     False); flags_layout.addWidget(self._chk_fulldp)
+        # P74: UBIT 0 is a TNC-wide flag (all modes), shown here because the
+        # symptom appears in Packet. Checked = UBIT 0 ON (factory default,
+        # drops packets below the DCD threshold); unchecked = OFF (default).
+        self._chk_ubit0     = chk("UBIT 0 (DCD gate)", False); flags_layout.addWidget(self._chk_ubit0)
+        self._chk_ubit0.setToolTip(
+            "OFF (recommended): every packet with a correct CRC is processed, "
+            "also when the signal is too weak to light the DCD LED. ON (factory "
+            "default) silently drops such packets - with WHYNOT ON the TNC "
+            "reports 'packet received below threshold' (found 01.10.2026, "
+            "device B). Keep it OFF. Applies to all modes."
+        )
         flags_layout.addStretch()
 
         layout.addWidget(right)
@@ -326,6 +337,7 @@ class HFPacketParamsDialog(QDialog):
         self._chk_8bitconv.setChecked(c.bitconv8)
         self._chk_hid.setChecked(c.hid)
         self._chk_mbell.setChecked(c.mbell)
+        self._chk_ubit0.setChecked(c.ubit0)
 
         self._chk_show_link_ui.setChecked(c.show_link_messages_in_ui_channel)
         self._chk_show_timestamps.setChecked(c.show_timestamps)
@@ -375,6 +387,7 @@ class HFPacketParamsDialog(QDialog):
         config.bitconv8 = self._chk_8bitconv.isChecked()
         config.hid      = self._chk_hid.isChecked()
         config.mbell    = self._chk_mbell.isChecked()
+        config.ubit0    = self._chk_ubit0.isChecked()
 
         config.show_link_messages_in_ui_channel = \
             self._chk_show_link_ui.isChecked()
