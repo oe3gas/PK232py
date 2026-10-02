@@ -6031,6 +6031,12 @@ def choose_test_value(param, original: Optional[str]) -> Optional[str]:
     return None
 
 
+def hp_verbose_name(param) -> str:
+    """The verbose query for *param*: UBIT is asked WITH its index ("UBIT 0"),
+    like the application and ubit_probe do (T158 review)."""
+    return f"{param.name} 0" if param.kind == "ubit" else param.name
+
+
 def _hp_verbose_before(name: str, response: str) -> Optional[str]:
     """The verbose value of *name* for judging the Host answer: the parsed
     value, or "" for an empty text parameter (the TNC then prints only its
@@ -6052,6 +6058,7 @@ def classify_host_param(
     query2: Optional[bytes], verbose_before: Optional[str],
     test_value: Optional[str], *, verbose_test: Optional[str] = None,
     verbose_rejected: bool = False, mnemonic: Optional[bytes] = None,
+    expert_off: bool = False,
 ) -> str:
     """Verdict for one probed parameter (pure; bytes are raw Host Mode
     payloads, mnemonic + value, compared as text after _hp_norm()).
@@ -6086,6 +6093,21 @@ def classify_host_param(
                              value). Only these
                              rows may be set by P72
     """
+    verdict = _classify_host_param(
+        name, query1, set_resp, query2, verbose_before, test_value,
+        verbose_test=verbose_test, verbose_rejected=verbose_rejected,
+        mnemonic=mnemonic)
+    if expert_off and name.upper() == "EXPERT" and verdict == "wrong_param":
+        # --expert-off sets EXPERT OFF before the Host pass on purpose: the
+        # Host query says OFF while Pass 0 said ON. Expected, not a defect.
+        return "expected_off"
+    return verdict
+
+
+def _classify_host_param(
+    name, query1, set_resp, query2, verbose_before, test_value, *,
+    verbose_test=None, verbose_rejected=False, mnemonic=None,
+) -> str:
     param = param_by_name(name)
     mn = mnemonic if mnemonic is not None else (param.mnemonic if param else b"")
     kind = param.kind if param else "text"
@@ -6138,12 +6160,14 @@ def reevaluate_host_params_log(path, out=print) -> dict:
     lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
     pass0: dict = {}
     pending: Optional[str] = None
+    expert_off = any("EXPERT OFF requested" in ln for ln in lines)
     for ln in lines:
         if "STEP 1 of" in ln:
             break          # Pass 0 = everything before Host Mode is entered
-        m = re.search(r"\] >> (b'[A-Z0-9]+\\r\\n')$", ln)
+        m = re.search(r"\] >> (b'[A-Z0-9 ]+\\r\\n')$", ln)
         if m:
-            pending = ast.literal_eval(m.group(1)).decode().strip()
+            # "UBIT 0" (query with index) is filed under "UBIT"
+            pending = ast.literal_eval(m.group(1)).decode().strip().split()[0]
             continue
         m = re.search(r"\] << ('.*')$", ln)
         if m and pending is not None:
@@ -6161,7 +6185,7 @@ def reevaluate_host_params_log(path, out=print) -> dict:
             name, _hp_literal(q1), _hp_literal(st), _hp_literal(q2), before,
             _hp_literal(test), verbose_test=_hp_literal(vafter),
             verbose_rejected=bool(raw) and query_error(raw) is not None,
-            mnemonic=mn_text.encode("ascii"),
+            mnemonic=mn_text.encode("ascii"), expert_off=expert_off,
         )
         counts[verdict] = counts.get(verdict, 0) + 1
         out(f"{name} ({mn_text}): {verdict}  verbose_before={before!r}"
@@ -6480,7 +6504,7 @@ def _host_params_part_a(
         verbose_rejected: dict = {}
         verbose_before: dict = {}
         for p in params:
-            resp = session.query(p.name)
+            resp = session.query(hp_verbose_name(p))
             originals[p.name] = parse_query_value(p.name, resp)
             verbose_before[p.name] = _hp_verbose_before(p.name, resp)
             verbose_rejected[p.name] = query_error(resp) is not None
@@ -6534,7 +6558,8 @@ def _host_params_part_a(
             for p in params:
                 r = rec.get(p.name)
                 if r and r["test"] is not None:
-                    vtest[p.name] = parse_query_value(p.name, session.query(p.name))
+                    vtest[p.name] = parse_query_value(
+                        p.name, session.query(hp_verbose_name(p)))
         finally:
             # P71a A: put every set parameter back WHILE the Host Mode
             # answers - the verbose interpreter may not (B.4). Also after
@@ -6557,7 +6582,8 @@ def _host_params_part_a(
         now: dict = {}
         for p in params:
             if originals[p.name] is not None:
-                now[p.name] = parse_query_value(p.name, session.query(p.name))
+                now[p.name] = parse_query_value(
+                    p.name, session.query(hp_verbose_name(p)))
         counts: dict = {}
         for p in params:
             r = rec.get(p.name)
@@ -6569,6 +6595,7 @@ def _host_params_part_a(
                     verbose_before[p.name], r["test"],
                     verbose_test=vtest.get(p.name),
                     verbose_rejected=verbose_rejected[p.name],
+                    expert_off=expert_off,
                 )
             counts[verdict] = counts.get(verdict, 0) + 1
             raw = "" if r is None else (
@@ -6592,7 +6619,7 @@ def _host_params_part_a(
             if not (r and r["test"] is not None):
                 log.line(f"COLLATERAL CHANGE: {p.name} was {orig!r}, is {cur!r}")
             verify_restore(
-                p.name, lambda n=p.name: session.query(n),
+                p.name, lambda p=p: session.query(hp_verbose_name(p)),
                 lambda v, n=p.name: session.set_verbose(n, v), orig, log,
             )
         log.line("--- T151 summary: " + ", ".join(

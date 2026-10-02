@@ -244,6 +244,8 @@ def norm_value(value: Optional[str], kind: str) -> str:
     removed (T138 A.4: "UN APZ232 VIA A,B" comes back as
     "APZ232 via A, B")."""
     text = (value or "").strip().upper()
+    if kind == "ubit" and text:
+        text = text.split()[-1]       # verbose "0 ON" / "0  OFF" -> ON / OFF
     if kind in ("bool", "ubit"):
         if text in ("Y", "YES", "ON", "1"):
             return "Y"

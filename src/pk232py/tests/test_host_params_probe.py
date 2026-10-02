@@ -425,3 +425,50 @@ class TestExpertOff:
             "BTEXT": {"test": None, "q1": b"BT\r"},
         }
         assert hw_check.expert_off_rejected(rec) == ["USERS ($07)"]
+
+
+# Real lines of hw_logs/20261002_192301_host_params_probe.log (T158, device A,
+# --expert-off): Pass 0 answers, the "EXPERT OFF requested" line and the two
+# result lines that were judged wrong_param by mistake.
+_T158_EXCERPT = r"""[19:23:23] >> b'EXPERT\r\n'
+[19:23:23] << 'EXPERT\r\nEXPert    ON\r\ncmd:'
+[19:23:23] >> b'PACLEN\r\n'
+[19:23:24] << 'PACLEN\r\nPACLen    128\r\ncmd:'
+[19:23:40] >> b'UBIT 0\r\n'
+[19:23:40] << 'UBIT 0\r\nUBit   0  ON\r\ncmd:'
+[19:24:00] STEP 1 of 2: T151 A.1  ask and set the parameters in Host Mode [PC 1]
+[19:24:01] EXPERT OFF requested; the TNC says EXPERT = 'OFF'
+[19:28:00] INFO: T151 EXPERT (EX) -- wrong_param q1=b'EXN' (45 58 4e) set=none q2=none test=None verbose=None restore=None after='ON'
+[19:28:00] INFO: T151 PACLEN (PL) -- verified q1=b'PL128' (50 4c 31 32 38) set=b'PL\x00' (50 4c 00) q2=b'PL129' (50 4c 31 32 39) test='129' verbose='129' restore=restored after='128'
+[19:28:00] INFO: T151 UBIT (UB) -- wrong_param q1=b'UBY' (55 42 59) set=none q2=none test=None verbose=None restore=None after='0 ON'
+"""
+
+
+class TestT158Evaluation:
+    def test_ubit_zero_on_reads_as_on(self):
+        from pk232py.comm.host_params import norm_value
+        assert norm_value("0 ON", "ubit") == norm_value("ON", "ubit") == "Y"
+        assert norm_value("0  OFF", "ubit") == "N"
+
+    def test_ubit_host_answer_matches_the_verbose_index_form(self):
+        verdict = hw_check.classify_host_param(
+            "UBIT", b"UBY", None, None, "0 ON", None)
+        assert verdict == "verified_query"
+
+    def test_expert_row_deviates_by_design_under_expert_off(self):
+        args = ("EXPERT", b"EXN", None, None, "ON", None)
+        assert hw_check.classify_host_param(*args) == "wrong_param"
+        assert hw_check.classify_host_param(*args, expert_off=True) == "expected_off"
+
+    def test_verbose_query_name_carries_the_index(self):
+        assert hw_check.hp_verbose_name(param_by_name("UBIT")) == "UBIT 0"
+        assert hw_check.hp_verbose_name(param_by_name("USERS")) == "USERS"
+
+    def test_real_t158_lines_reevaluated(self, tmp_path):
+        log = tmp_path / "t158.log"
+        log.write_text(_T158_EXCERPT, encoding="utf-8")
+        lines: list = []
+        counts = hw_check.reevaluate_host_params_log(log, out=lines.append)
+        assert "wrong_param" not in counts
+        assert counts == {"expected_off": 1, "verified": 1, "verified_query": 1}
+        assert any(l.startswith("UBIT (UB): verified_query") for l in lines)
