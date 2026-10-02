@@ -142,6 +142,14 @@ class HFPacketConfig:
     # never uploaded until confirmed (see ParamsUploader / UPLOAD_EXEMPT).
     mbell:    bool = False
 
+    # UBIT 0 (CUSTOM bit 0, P74). False = "UBIT 0 OFF": every packet with a
+    # correct CRC is processed. The factory default UBIT 0 ON silently drops
+    # packets too weak to light the DCD LED (WHYNOT ON then reports "packet
+    # received below threshold"; found 01.10.2026, device B). The TNC has no
+    # backup battery, so it starts with ON every time and the app must set
+    # the value on every init. Applies to ALL modes, not only Packet.
+    ubit0:    bool = False
+
     # Display-only setting (P47) - never uploaded, see UPLOAD_EXEMPT in
     # test_param_dialogs_roundtrip.py. When on, every link message
     # (CONNECTED/DISCONNECTED/Retry count exceeded/...) also appears in
@@ -425,6 +433,7 @@ class ConfigManager:
         hf.bitconv8  = s.getboolean("bitconv8", hf.bitconv8)
         hf.hid       = s.getboolean("hid",      hf.hid)
         hf.mbell     = s.getboolean("mbell",    hf.mbell)
+        hf.ubit0     = s.getboolean("ubit0",    hf.ubit0)
         hf.show_link_messages_in_ui_channel = s.getboolean(
             "show_link_messages_in_ui_channel",
             hf.show_link_messages_in_ui_channel,
@@ -528,6 +537,7 @@ class ConfigManager:
             "bitconv8": str(hf.bitconv8).lower(),
             "hid":      str(hf.hid).lower(),
             "mbell":    str(hf.mbell).lower(),
+            "ubit0":    str(hf.ubit0).lower(),
             "show_link_messages_in_ui_channel":
                 str(hf.show_link_messages_in_ui_channel).lower(),
             "show_timestamps": str(hf.show_timestamps).lower(),
