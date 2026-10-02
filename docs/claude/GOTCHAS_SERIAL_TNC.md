@@ -158,7 +158,7 @@ Grows over time.
 - **A measurement finding is valid for the device it was measured on —
   attribute by device, not just by date (P37, 2026-09-24;
   `docs/DEVICES.md` is the inventory).** Every finding below dated up to
-  and including 22.09.2026 was measured on **Device A** (11.09.1995,
+  and including 22.09.2026 was measured on **Device A** (13.SEP.95,
   PACTOR generation, round prompt bracket); every hardware run from
   23.09.2026 onward (P29 and later) was measured on **Device B**
   (01.AUG.91 / 01.08.1991, MBX generation, square prompt bracket) unless
@@ -613,7 +613,7 @@ Grows over time.
   - **Both bracket forms are hardware-confirmed — the device-name bracket
     depends on the EPROM, not a fixed shape (P31, 2026-09-23).** 22.09.2026
     (three rounds, P21–P24): round, `` (AEA PK-232M)  18536 free
-    (B,E,K,L,R,S) > `` — the operator confirms the **11.09.1995 EPROM**
+    (B,E,K,L,R,S) > `` — the operator confirms the **13.SEP.95 EPROM**
     (Gen. 3 / PACTOR, see `docs/PK232_firmware_matrix.md` §2) was installed
     for those rounds. 23.09.2026, 18:43 (P31,
     `hw_logs/20260923_184302_maildrop_session.log`), after the TNC had
@@ -1100,7 +1100,7 @@ Grows over time.
   place in that module still using `\r\n` before this. **Not a
   retroactive bugfix:** every successful MailDrop run to date (P20–P24,
   P27–P31) used the `\r\n` form and worked fine on Device A (PACTOR,
-  11.09.1995) — this is alignment with the manual, not a claim that
+  13.SEP.95) — this is alignment with the manual, not a claim that
   `\r\n` was broken there. **`L` on Device B (MBX, 01.08.1991) — resolved
   2026-09-24 (P37, T119, `hw_logs/20260924_181446_maildrop_session.log`):
   hypothesis (1), a software artefact, not the firmware.** The

@@ -28,7 +28,7 @@ cmd:
 ```
 
 Die Zeile **`Release DD.MM.YY`** ist der maßgebliche Versionsstempel. Deine drei
-EPROMs (30.12.1988, 01.08.1991, 11.09.1995) sind genau solche Release-Daten.
+EPROMs (30.12.1988, 01.08.1991, 13.SEP.95) sind genau solche Release-Daten.
 Es gibt **keinen** eigenen Konsolen-Befehl „Version" — over-the-air kann ein
 MailDrop-*User* zwar `VERSION` senden, lokal am Terminal ist der Banner der Weg.
 
@@ -44,7 +44,7 @@ MailDrop-*User* zwar `VERSION` senden, lokal am Terminal ist der Banner der Weg.
 |-----:|--------|------|---------------------|-------------|
 | 1 | **BASE**   | 1986–89 | Ur-PK-232: Baudot/ASCII-RTTY, AMTOR/SITOR, CW, AX.25-Packet, HF-FAX; KISS ab ~Juli 1987 | **30.12.1988** |
 | 2 | **MBX**    | ~1990–92 | „PakMail"-Mailbox-Tochterplatine (1989), Ende 1989 integriert → **PK-232MBX**; MailDrop-Befehle, NAVTEX, SIAM/TDM | **01.08.1991** |
-| 3 | **PACTOR** | ab 1993 | **PACTOR I** + **Gateway** hinzugefügt; PT*-Familie, MFILTER; letztes EPROM **v7.2** (1998) | **11.09.1995** |
+| 3 | **PACTOR** | ab 1993 | **PACTOR I** + **Gateway** hinzugefügt; PT*-Familie, MFILTER; letztes EPROM **v7.2** (1998) | **13.SEP.95** |
 
 Quellenlage (Kurzfassung): Die Modell-/Feature-Historie ist über
 repeater-builder.com (WA6ILQ), das Timewave-Upgrade-Guide und diverse Manuals
@@ -66,8 +66,8 @@ EPROMs ist der eigentliche Beweis (siehe §5).
 
 | Gerät | EPROM | Generation | Befund | Beleg |
 |---|---|---|---|---|
-| A | 11.09.1995 | PACTOR | Der gesamte unter `CLAUDE.md` → "Known Gotchas" dokumentierte Bestand an Hardware-Befunden (Mnemonics, MailDrop-Ablauf, Packet-/Channel-Verhalten, runde Prompt-Klammer, …) stammt von diesem Gerät. | `hw_logs/` (P9–P31), `CLAUDE.md` |
-| A | 11.09.1995 | PACTOR | `MI` = MFILTER (nicht MDCHECK) — siehe Anmerkung unten. | T115, `CLAUDE.md` |
+| A | 13.SEP.95 | PACTOR | Der gesamte unter `CLAUDE.md` → "Known Gotchas" dokumentierte Bestand an Hardware-Befunden (Mnemonics, MailDrop-Ablauf, Packet-/Channel-Verhalten, runde Prompt-Klammer, …) stammt von diesem Gerät. | `hw_logs/` (P9–P31), `CLAUDE.md` |
+| A | 13.SEP.95 | PACTOR | `MI` = MFILTER (nicht MDCHECK) — siehe Anmerkung unten. | T115, `CLAUDE.md` |
 | B | 01.08.1991 | MBX | Nur die eckige Prompt-Klammer (`[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >`) ist von diesem Gerät gemessen — ein einzelner Datenpunkt, kein Vergleichsscan gegen Gerät A. | `hw_logs/20260923_184302_maildrop_session.log` (P31) |
 | B | 01.08.1991 | MBX | MDCHECK hat kein Host-Mode-Kürzel — `mdcheck_scan` fand keinen Treffer unter denselben 23 Kandidaten wie auf Gerät A. Der Befund gilt damit über zwei Firmwaregenerationen (MBX + PACTOR). | T118, `hw_logs/20260923_203256_mdcheck_scan.log` (P34) |
 | B | 01.08.1991 | MBX | `MDCHECK` öffnete am 23.09. die Mailbox, aber `L` antwortete `*** What?` — **Ursache geklärt, 24.09.: ein überzähliges LF, das die App nach `MDCHECK` mitschickte, nicht die Firmware.** Mit `MDCHECK\r` allein kommt der Prompt sauber, `L` antwortet normal. | T119 (P37), `hw_logs/20260924_181446_maildrop_session.log` |

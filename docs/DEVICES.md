@@ -30,8 +30,10 @@ byte-genauen Banner-Erfassung (P30/P37, `hw_logs/20260924_181446_maildrop_sessio
 siehe `SerialManager.tnc_release`. **Gerät A** hat seit dem 02.10.2026 (T152,
 `hw_logs/20261002_172135_host_params_probe.log`, Banner: `release=13.SEP.95
 pactor=yes`; Betreiber bestätigt) ebenfalls eine Banner-Erfassung - die frühere
-Abschrift `11.09.1995` (Generation PACTOR, andere Quellen in `docs/` nennen sie
-noch) ist damit ersetzt. Geräte A (frühere Messungen) und C stammen aus älteren,
+Abschrift `11.09.1995` ist damit ersetzt. Ältere Dokumente (historische Einträge
+in `Testplan.md`, `Backlog.md` und der P37-Spec) verwenden weiterhin die frühere
+Abschrift 11.09.1995 und sind bewusst nicht umgeschrieben; `PK232_firmware_matrix.md`
+und `docs/claude/GOTCHAS_SERIAL_TNC.md` sind korrigiert. Geräte A (frühere Messungen) und C stammen aus älteren,
 vom Betreiber transkribierten Angaben (kanonisches `DD.MM.YYYY`, vor der
 byte-genauen Banner-Erfassung entstanden) — keine wörtliche Banner-Erfassung
 und nicht nachträglich vereinheitlicht, um nichts zu erfinden.
