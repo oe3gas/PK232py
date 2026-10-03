@@ -70,6 +70,19 @@ selector changes the configuration and goes through ParamApplier. Facts:
 TNC, then A). **Not covered:** was/now answers of parameters outside the Packet
 section (PACTOR, AMTOR, Baudot, Misc) are only reported, not taken.
 
+### Mnemonic audit (P80) — Parts A-C and E implemented, Part D waits for the operator (2026-10-03)
+
+`comm/mnemonic_registry.py` lists every Host Mode mnemonic the application sends
+(118, found by an `ast` scan: `build_command`, `build_ch_cmd`, `send_command`,
+`send_channel_command`, the `toggle_map` / `_CLEAR_TX_STOP_CMD` tables and
+`host_params`) with meaning, kind, `transmits` and evidence per release.
+`tests/test_mnemonic_registry.py` fails for a mnemonic without an entry and for a
+stale `docs/MNEMONIC_AUDIT.md` (generated: `python tools/gen_mnemonic_audit.py
+--update`). Report: 63 mnemonics without evidence, several where the application
+uses a mnemonic for something other than the matrix name. Open: Part D
+(`hw_check.py mnemonic_probe`, T166 device B / T167 device A) after the operator
+has reviewed the report.
+
 ### Per-theme appearance (P79) — implemented, T165 open (2026-10-03)
 
 Every theme has its own font, size, background, foreground, RX and TX colour. The
@@ -148,7 +161,24 @@ set after the COMMAND-char resync (both outcomes), `_verbose_confirmed`
 only if `cmd:` was seen, new signal `verbose_resumed` refreshes the TNC
 menu gating. Hardware check: T145 ✅ PASS (Device B).
 
-### `maildrop/maildrop.py`'s mnemonic table is unverified and CAN be sent — open (P24.1, 2026-09-22)
+### `maildrop/maildrop.py`'s mnemonic table is unverified and CAN be sent — SUPERSEDED (P24.1, 2026-09-22; closed by P80, 2026-10-03)
+
+**Superseded.** `MailDropController` and `maildrop.py` no longer exist (removed with
+P27; see the docstring of `maildrop/__init__.py`), so nothing of this can be sent.
+The guessed mnemonics were refuted by measurement (T151/T160/T161, both devices):
+
+| Parameter | guessed (P24) | measured |
+|---|---|---|
+| KILONFWD | `KF` | `KL` |
+| 3RDPARTY | `3P` | `3R` |
+| MMSG | `MM` | `MU` |
+| MDIGI / "MDPROMPT" | `MD` as MDPROMPT | `MD` = MDIGI |
+
+Fourth documented case (after `MI` = MFILTER, T115) for "never guess a mnemonic".
+The open question this entry stood for - which mnemonics the application really
+sends and what proves them - is now answered per mnemonic by P80
+(`comm/mnemonic_registry.py`, `docs/MNEMONIC_AUDIT.md`). Original entry, kept for
+the history:
 
 `MailDropController`'s module docstring lists a "MailDrop Host Mode
 mnemonics (STABO manual Ch. 12)" table (`HB`/`MY`/`LM`/`MD`/`TP`/`MT`/
