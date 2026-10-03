@@ -276,8 +276,15 @@ class HFPacketMode(BaseMode):
         return build_command(b'UN', path.upper().encode('ascii'))
 
     def monitor_frame(self, enabled: bool) -> bytes:
-        """Build a MONITOR ON/OFF command frame (mnemonic MN)."""
-        return build_command(b'MN', b'Y' if enabled else b'N')
+        """Build a MONITOR ON/OFF command frame (mnemonic MN).
+
+        ON sends ``MN <configured level>``, not ``MN Y``: the TNC turns "ON/YES"
+        into MONITOR 4 (STABO manual, P73 B.2) and the operator's level would
+        be lost.  OFF stays ``MN N``.
+        """
+        if enabled:
+            return build_command(b'MN', str(self.monitor).encode('ascii'))
+        return build_command(b'MN', b'N')
 
     # ------------------------------------------------------------------
     # Private frame handlers

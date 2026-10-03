@@ -336,9 +336,13 @@ class HostModeProtocol:
         return build_command(b'UN', path.upper().encode('ascii'))
 
     @staticmethod
-    def cmd_monitor(value: bool) -> bytes:
-        """MONITOR ON/OFF — enable or disable frame monitor (mnemonic MN)."""
-        return build_command(b'MN', b'Y' if value else b'N')
+    def cmd_monitor(value: bool, level: int) -> bytes:
+        """MONITOR on/off (mnemonic MN).
+
+        ON sends ``MN <level>`` (the configured MONITOR value), not ``MN Y``,
+        which the TNC turns into MONITOR 4 (P73 B.2).  OFF is ``MN N``.
+        """
+        return build_command(b'MN', str(level).encode('ascii') if value else b'N')
 
     @staticmethod
     def cmd_txdelay(value: int) -> bytes:

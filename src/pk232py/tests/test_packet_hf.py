@@ -212,3 +212,22 @@ class TestMonitorFromConfig:
     def test_default_is_the_config_default(self):
         from pk232py.config import HFPacketConfig
         assert HFPacketMode().monitor == HFPacketConfig.monitor
+
+
+class TestMonitorToggleFrames:
+    """P73 B.2 for the explicit toggle: ON sends the configured level (MN Y
+    would reset MONITOR to 4), OFF stays MN N."""
+
+    def test_off_and_on_again_with_monitor_6_gives_mn6(self):
+        mode = HFPacketMode(monitor=6)
+        assert mode.monitor_frame(False) == build_command(b'MN', b'N')
+        assert mode.monitor_frame(True) == build_command(b'MN', b'6')
+        assert mode.monitor_frame(True) != build_command(b'MN', b'Y')
+
+    def test_vhf_inherits_the_rule(self):
+        assert VHFPacketMode(monitor=6).monitor_frame(True) == build_command(b'MN', b'6')
+
+    def test_hostmode_cmd_monitor(self):
+        from pk232py.comm.hostmode import HostModeProtocol as HostModeCommands
+        assert HostModeCommands.cmd_monitor(True, 6) == build_command(b'MN', b'6')
+        assert HostModeCommands.cmd_monitor(False, 6) == build_command(b'MN', b'N')
