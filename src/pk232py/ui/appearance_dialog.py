@@ -75,7 +75,11 @@ class AppearanceDialog(QDialog):
     def __init__(self, config: AppearanceConfig, parent=None) -> None:
         super().__init__(parent)
         self._config = config
-        self.setWindowTitle("Appearance Settings")
+        # P79: the dialog edits the CURRENT theme - the title says which one.
+        from pk232py.ui.themes import THEMES
+        theme = THEMES.get(config.theme)
+        name = theme.name if theme else config.theme.title()
+        self.setWindowTitle(f"Appearance — {name}")
         self.setMinimumWidth(400)
         self.setModal(True)
         self._build_ui()
@@ -234,7 +238,9 @@ class AppearanceDialog(QDialog):
 
     def apply_to(self, config: AppearanceConfig) -> None:
         """Write dialog values into config."""
-        config.font_family = self._font_combo.currentFont().family()
+        # _family_name, not currentFont(): a font that is not installed here is
+        # shown as the combo's fallback, but OK must not silently replace it.
+        config.font_family = self._family_name
         config.font_size   = self._font_size.value()
         config.bg_color    = self._bg_btn.color()
         config.fg_color    = self._fg_btn.color()
@@ -242,21 +248,20 @@ class AppearanceDialog(QDialog):
         config.tx_color    = self._tx_btn.color()
 
     def _on_reset(self) -> None:
-        """Reset to the active theme's preset values (not hardcoded defaults).
+        """Reset to the current theme's defaults (P79).
 
-        If the config's theme is a known preset, reset to that preset; for
-        "custom" (or an unknown key) fall back to the Dark preset, which also
-        matches AppearanceConfig's field defaults.
+        The widgets get AppearanceConfig.defaults(theme); on OK every value
+        equals its default, so the theme's overrides are cleared (the other
+        themes' overrides are not touched). Cancel still discards it all.
         """
-        from pk232py.ui.themes import THEMES
-        t = THEMES.get(self._config.theme, THEMES["dark"])
-        self._font_combo.setCurrentFont(QFont(t.font_family))
-        self._family_name = t.font_family
-        self._font_size.setValue(t.font_size)
-        self._bg_btn.set_color(t.bg)
-        self._fg_btn.set_color(t.fg)
-        self._rx_btn.set_color(t.rx)
-        self._tx_btn.set_color(t.tx)
+        d = AppearanceConfig.defaults(self._config.theme)
+        self._font_combo.setCurrentFont(QFont(d["font_family"]))
+        self._family_name = d["font_family"]
+        self._font_size.setValue(d["font_size"])
+        self._bg_btn.set_color(d["bg_color"])
+        self._fg_btn.set_color(d["fg_color"])
+        self._rx_btn.set_color(d["rx_color"])
+        self._tx_btn.set_color(d["tx_color"])
         self._update_preview()
 
     def _on_accept(self) -> None:
