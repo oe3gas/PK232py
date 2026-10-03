@@ -81,6 +81,17 @@ _ROWS: tuple = (
     HostParam("MTO", b"MT", "text"),   # matrix line 326, confidence M
     HostParam("8BITCONV", b"8B", "bool"),   # matrix line 353, confidence M
     HostParam("HID", b"", "bool"),   # not in matrix
+    # P73 C: the Packet monitor flags. Mnemonics are the matrix hypotheses,
+    # verified_releases stays EMPTY until T160/T161 (host_params_probe) measure
+    # them - until then P72 reports them as "not verified for Host Mode" and the
+    # next verbose init applies them. FULLDP is not in the matrix.
+    HostParam("MBELL", b"ME", "bool"),      # confidence L
+    HostParam("MDIGI", b"MD", "bool"),      # confidence L
+    HostParam("MPROTO", b"MQ", "bool"),     # confidence L
+    HostParam("MSTAMP", b"MS", "bool"),     # confidence L
+    HostParam("PASSALL", b"PX", "bool"),    # confidence M (CLAUDE.md rule 6: PASSALL = PX)
+    HostParam("BBSMSGS", b"BB", "bool"),    # confidence L
+    HostParam("FULLDP", b"", "bool"),       # not in matrix
     # UBIT 0 (P74/P72): mnemonic UB per manual (matrix: confidence L, not BASE);
     # the Host Mode form was measured by T156 on device A: set "UB0 N|Y" (with a
     # space), query "UB0" -> "UBN"/"UBY" (see host_set_args / parse_host_answer).
@@ -169,6 +180,37 @@ def _verified_releases(name: str) -> tuple:
     if name in _VERIFIED_A_T151 or name in _VERIFIED_A_T152 or name in _VERIFIED_A_T156:
         releases.append(RELEASE_A)
     return tuple(releases)
+
+
+# ---------------------------------------------------------------------------
+# P73 B: parameters with ONE value per band. The TNC holds one MAXFRAME and one
+# SLOTTIME; the configuration holds an HF and a VHF value. This table is the
+# ONE place that says which config attribute belongs to which band - the mode
+# frames (HF/VHF Packet activation) and ParamsUploader's "what changed" both
+# read it, so a live change can never overwrite the other band's value.
+# ---------------------------------------------------------------------------
+
+BAND_HF = "HF"
+BAND_VHF = "VHF"
+
+BAND_PARAMS: dict = {
+    "MAXFRAME": {BAND_HF: "maxframe", BAND_VHF: "vhf_maxframe"},
+    "SLOTTIME": {BAND_HF: "slottime", BAND_VHF: "vhf_slottime"},
+}
+
+# Operating mode name (ModeManager) -> band; every other mode has no band.
+_MODE_BANDS = {"HF Packet": BAND_HF, "VHF Packet": BAND_VHF}
+
+
+def band_of_mode(mode_name: Optional[str]) -> Optional[str]:
+    """The band a ModeManager mode name stands for, or None (not a Packet mode)."""
+    return _MODE_BANDS.get(mode_name or "")
+
+
+def band_value(hf_config, name: str, band: str) -> int:
+    """The configured value of band-dependent parameter *name* for *band*
+    (*hf_config* is an HFPacketConfig)."""
+    return getattr(hf_config, BAND_PARAMS[name][band])
 
 
 HOST_PARAMS: tuple = tuple(
