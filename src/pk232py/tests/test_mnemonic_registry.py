@@ -56,8 +56,18 @@ class TestScanAgainstRegistry:
         assert b"ZV" not in audit.scan_sources(pkg)
 
     def test_the_registry_holds_nothing_the_app_does_not_send(self):
+        """Entries with sent=False document a refuted assignment (P80a: MI, Ao);
+        every OTHER entry must still be sent, or it is stale."""
         sent = set(audit.scan_sources())
-        assert set(REGISTRY) <= sent, sorted(set(REGISTRY) - sent)
+        stale = {mn for mn, e in REGISTRY.items() if e.sent and mn not in sent}
+        assert not stale, sorted(stale)
+
+    def test_a_not_sent_entry_is_really_not_sent(self):
+        """If the app starts sending MI or Ao again, the entry must say so (or the
+        code must change back) - the P80a decision cannot be undone silently."""
+        sent = set(audit.scan_sources())
+        back = {mn for mn, e in REGISTRY.items() if not e.sent and mn in sent}
+        assert not back, sorted(back)
 
 
 class TestRegistryShape:
