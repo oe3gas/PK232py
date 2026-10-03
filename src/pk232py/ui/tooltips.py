@@ -58,6 +58,10 @@ from PyQt6.QtWidgets import QWidget, QSizePolicy
 # the majority/default meaning and SCREEN_TOOLTIPS overrides the minority.
 # ---------------------------------------------------------------------------
 
+# P80b: MW answers a switch (MWN) and refuses 11 - it is not MWEIGHT; the Morse
+# weight controls send nothing and are greyed out.
+_MW_REFUTED = "Host mnemonic refuted - MW is not MWEIGHT (T166/T167)"
+
 # P80a: the controls of the Morse ID / MID (mnemonic MI) are greyed out; MI is
 # MFILTER (Testplan T115), no Morse ID mnemonic is known.
 _MI_UNVERIFIED = "Host mnemonic unverified - MI is MFILTER (T115)"
@@ -137,7 +141,9 @@ TOOLTIPS: dict[str, str] = {
     # btn_lock here is the Morse meaning; FaxScreen overrides it.
     # ------------------------------------------------------------------
     "sb_mspeed":  "MSPEED — Morse sending speed in words per minute.\nRange: 5–99 WPM. The TNC keys at this speed regardless of typing speed.",
-    "sb_mweight": "MWEIGHT — dot/dash weight.\nAdjusts the ratio of key-down to key-up time. 50 = standard; >50 = heavier dots/dashes.",
+    "sb_mweight": _MW_REFUTED,
+    "btn_weight_down": _MW_REFUTED,
+    "btn_weight_up":   _MW_REFUTED,
     "sb_mid":     _MI_UNVERIFIED,
     "btn_mid_down": _MI_UNVERIFIED,
     "btn_mid_up":   _MI_UNVERIFIED,
@@ -190,7 +196,8 @@ SCREEN_TOOLTIPS: dict[str, dict[str, str]] = {
     "PactorScreen": {
         "btn_connect":    "Connect — initiate a PACTOR ARQ connection to the destination callsign.\nEnter the callsign in the Dest field first.",
         "btn_disconnect": "Disconnect — terminate the PACTOR connection and return to standby.",
-        "btn_stby":       "STBY — return TNC to PACTOR standby without a formal disconnect.",
+        # P80b: PT is PACTIME (T167); the button is greyed out.
+        "btn_stby":       "No Host Mode PACTOR standby command verified (PT is PACTIME, T167)",
     },
 
     "FaxScreen": {

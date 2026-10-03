@@ -3100,7 +3100,6 @@ class MainWindow(QMainWindow):
         _conn("btn_ptlist",     self._on_pactor_ptlist)
         _conn("btn_ptsend",     self._on_pactor_ptsend)
         _conn("btn_disconnect", self._on_pactor_disconnect)
-        _conn("btn_stby",       self._on_pactor_stby)
 
     # ------------------------------------------------------------------
     # AMTOR slots
@@ -3282,8 +3281,11 @@ class MainWindow(QMainWindow):
     def _on_pactor_connect(self) -> None:
         """Connect button — initiate PACTOR ARQ call.
 
-        Sends PACTOR standby (PT) then ARQ call (AC {callsign}).
-        MYPTCALL must already be set via get_init_frames().
+        Sends the ARQ call (AC {callsign}) only. P80b: the former first step,
+        "PACTOR standby" (PT), is gone - T167 showed PT is PACTIME (answer
+        "PTA 10", OPMODE stays PA), not a mode. The TNC must already be in
+        PACTOR (activated in verbose mode). MYPTCALL must already be set via
+        get_init_frames().
         """
         screen = self._opmode_stack.currentWidget()
         le_dest = getattr(screen, "le_dest", None)
@@ -3298,10 +3300,7 @@ class MainWindow(QMainWindow):
         if not self._serial.is_connected:
             return
         from pk232py.comm.frame import build_command
-        # 1. Enter PACTOR standby
-        stby = build_command(b'PT')
-        self._serial.send_command(stby[2:4], stby[4:-1])
-        # 2. Initiate ARQ call (mnemonic AC, same as AMTOR but for PACTOR)
+        # Initiate ARQ call (mnemonic AC, same as AMTOR but for PACTOR)
         call = build_command(b'AC', dest.encode('ascii'))
         self._serial.send_command(call[2:4], call[4:-1])
         self._log_monitor(f"[PACTOR] Connecting → {dest}")
@@ -3334,15 +3333,6 @@ class MainWindow(QMainWindow):
         di = build_command(b'DI')
         self._serial.send_command(di[2:4], di[4:-1])
         self._log_monitor("[PACTOR] Disconnect sent")
-
-    def _on_pactor_stby(self) -> None:
-        """STBY button — return to PACTOR standby (mnemonic PT)."""
-        if not self._serial.is_connected:
-            return
-        from pk232py.comm.frame import build_command
-        frame = build_command(b'PT')
-        self._serial.send_command(frame[2:4], frame[4:-1])
-        self._log_monitor("[PACTOR] Standby")
 
     # ------------------------------------------------------------------
     # Packet slots
@@ -3800,7 +3790,6 @@ class MainWindow(QMainWindow):
         _wire("le_myptcall",  self._on_pactor_myptcall_changed)
         _wire("le_myselcal",  self._on_amtor_myselcal_changed)
         _wire("le_myaltcal",  self._on_amtor_myaltcal_changed)
-        _wire("le_myident",   self._on_amtor_myident_changed)
 
     def _on_pactor_myptcall_changed(self) -> None:
         """Send MYPTCALL frame when le_myptcall editingFinished fires."""
@@ -3858,23 +3847,6 @@ class MainWindow(QMainWindow):
             mode.myaltcal = text
         self._log_monitor(f"[PARAM] MYALTCAL → {text or '(cleared)'}")
 
-    def _on_amtor_myident_changed(self) -> None:
-        """Send MYIDENT frame when le_myident editingFinished fires."""
-        if not self._serial.is_connected or not self._serial.is_host_mode:
-            return
-        screen = self._opmode_stack.currentWidget()
-        field = getattr(screen, "le_myident", None)
-        if field is None:
-            return
-        text = field.text().strip().upper()
-        from pk232py.modes.amtor import AMTORMode
-        frame = AMTORMode.myident_frame(text)
-        self._serial.send_command(frame[2:4], frame[4:-1])
-        mode = self._modes.current_mode
-        if hasattr(mode, "myident"):
-            mode.myident = text
-        self._log_monitor(f"[PARAM] MYIDENT → {text or '(cleared)'}")
-
     # ------------------------------------------------------------------
     # Morse parameter wiring
     # ------------------------------------------------------------------
@@ -3903,7 +3875,6 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(slot)
 
         _wire_sb("sb_mspeed",  self._on_morse_mspeed_changed)
-        _wire_sb("sb_mweight", self._on_morse_mweight_changed)
         _wire_btn("btn_lock",  self._on_morse_lock)
 
     def _morse_send(self, frame: bytes) -> bool:
@@ -3924,18 +3895,6 @@ class MainWindow(QMainWindow):
         # Persist outside the send-guard: the user changed the screen, so save
         # it even with no TNC connected (the screen reloads it on next switch).
         self._app_config.baudot.mspeed = value
-        self._config_mgr.save()
-
-    def _on_morse_mweight_changed(self, value: int) -> None:
-        """MWEIGHT spinbox changed — send MW frame (mnemonic MW)."""
-        from pk232py.modes.morse import MorseMode
-        frame = MorseMode.mweight_frame(value)
-        if self._morse_send(frame):
-            mode = self._modes.current_mode
-            if hasattr(mode, "mweight"):
-                mode.mweight = value
-            self._log_monitor(f"[PARAM] MWEIGHT → {value}")
-        self._app_config.baudot.mweight = value
         self._config_mgr.save()
 
     def _on_morse_lock(self) -> None:

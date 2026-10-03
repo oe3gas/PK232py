@@ -297,6 +297,9 @@ class PactorScreen(QWidget):
         self.btn_stby.setFixedWidth(55)
         self.btn_stby.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_stby.clicked.connect(self._on_stby)
+        # P80b: PT is PACTIME (T167), no PACTOR standby command is verified, so
+        # STBY sends nothing; the tooltip is in tooltips.py (PactorScreen).
+        self.btn_stby.setEnabled(False)
         ctrl_row.addWidget(self.btn_stby)
 
         # Status label

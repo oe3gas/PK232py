@@ -208,6 +208,10 @@ class MorseScreen(QWidget):
         self.btn_weight_up.clicked.connect(
             lambda: self.sb_mweight.setValue(self.sb_mweight.value() + 1)
         )
+        # P80b: MW is not MWEIGHT (T166/T167), so nothing is sent; the controls
+        # are greyed out (tooltip: tooltips.py). The verbose upload is unchanged.
+        for _w in (self.btn_weight_down, self.sb_mweight, self.btn_weight_up):
+            _w.setEnabled(False)
 
         param_row.addSpacing(12)
 
