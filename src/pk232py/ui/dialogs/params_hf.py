@@ -15,8 +15,8 @@ import logging
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QScrollArea, QSpinBox,
+    QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+    QLineEdit, QPushButton, QSpinBox,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -25,15 +25,15 @@ from pk232py.config import HFPacketConfig
 logger = logging.getLogger(__name__)
 
 
-class HFPacketParamsDialog(QDialog):
-    """HF Packet Parameters dialog.
+class PacketParamsDialog(QDialog):
+    """Packet Parameters dialog (HF and VHF).
 
     Matches the PCPackRatt 'HF Packet Parameters' dialog.
     Parameters are stored in :class:`~pk232py.config.HFPacketConfig`.
 
     Usage::
 
-        dlg = HFPacketParamsDialog(config.hf_packet, parent=self)
+        dlg = PacketParamsDialog(config.hf_packet, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             dlg.apply_to(config.hf_packet)
     """
@@ -45,8 +45,8 @@ class HFPacketParamsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._config = config
-        self.setWindowTitle("HF Packet Parameters")
-        self.setMinimumWidth(600)
+        self.setWindowTitle("Packet Parameters")
+        self.setMinimumWidth(760)
         self.setModal(True)
         self._build_ui()
         self._populate()
@@ -73,32 +73,88 @@ class HFPacketParamsDialog(QDialog):
         root.addWidget(bb)
 
     def _build_main_tab(self) -> QWidget:
-        """Main parameters tab — numeric params + flag checkboxes."""
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        inner = QWidget()
-        layout = QHBoxLayout(inner)
+        """Main parameters tab - three columns, no scrolling (P73 D):
 
-        # ── Left column: numeric parameters ───────────────────────────
-        left = QGroupBox("Parameters")
+          1  Link             PACLEN ... USERS (one value for both bands)
+          2  Band & Status    HF | VHF table (HBAUD, MAXFRAME, SLOTTIME), then
+                              TXSMT and the read-only QHPACKET/QVPACKET
+          3  Flags            every switch, in two sub-columns
+
+        Lernmodus: a QHBoxLayout of three QGroupBoxes instead of the old
+        QScrollArea.  The height is set by the longest column (10 rows), so
+        nothing needs to scroll; the QGridLayout in column 2 is what puts the
+        HF and VHF value of the same parameter on one line.  Attribute names
+        (_sb_maxframe, _chk_*, ...) are unchanged - the P12 round-trip audit
+        and the tests find the widgets by them.
+        """
+        w = QWidget()
+        layout = QHBoxLayout(w)
+
+        def spin(lo, hi, val):
+            s = QSpinBox(); s.setRange(lo, hi); s.setValue(val); return s
+
+        # -- Column 1: Link -------------------------------------------------
+        left = QGroupBox("Link")
         form = QFormLayout(left)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        def spin(lo, hi, val):
-            w = QSpinBox(); w.setRange(lo, hi); w.setValue(val); return w
-
         self._sb_paclen   = spin(1, 255, 64);    form.addRow("PACLEN:",   self._sb_paclen)
         self._sb_txdelay  = spin(0, 255, 30);    form.addRow("TXDELAY:",  self._sb_txdelay)
-        self._sb_maxframe = spin(1, 7,   1);     form.addRow("MAXFRAME:", self._sb_maxframe)
         self._sb_frack    = spin(0, 250, 7);     form.addRow("FRACK:",    self._sb_frack)
         self._sb_retry    = spin(0, 15,  10);    form.addRow("RETRY:",    self._sb_retry)
         self._sb_persist  = spin(0, 255, 63);    form.addRow("PERSIST:",  self._sb_persist)
-        self._sb_slottime = spin(0, 250, 30);    form.addRow("SLOTTIME:", self._sb_slottime)
         self._sb_dwait    = spin(0, 250, 16);    form.addRow("DWAIT:",    self._sb_dwait)
         self._sb_check    = spin(0, 250, 30);    form.addRow("CHECK:",    self._sb_check)
-        self._sb_monitor  = spin(0, 6,   4);     form.addRow("MONITOR:",  self._sb_monitor)
         self._sb_resptime = spin(0, 250, 0);     form.addRow("RESPTIME:", self._sb_resptime)
-        self._sb_txsmt    = spin(0, 250, 50);    form.addRow("TXSMT:",    self._sb_txsmt)
+        self._sb_monitor  = spin(0, 6,   4);     form.addRow("MONITOR:",  self._sb_monitor)
+        self._sb_monitor.setToolTip(
+            "Sent to the TNC as MONITOR <n> at every Packet mode switch "
+            "(P73: it used to be MONITOR ON, which the TNC turns into 4)."
+        )
+        self._sb_users    = spin(1, 10, 10);     form.addRow("USERS:",    self._sb_users)
+        self._sb_users.setToolTip(
+            "Incoming connects are accepted only on channels 0 to n-1; "
+            "USERS 0 = any free channel (STABO manual; consistent with "
+            "T147, device B)."
+        )
+        layout.addWidget(left)
+
+        # -- Column 2: Band & Status ----------------------------------------
+        mid = QGroupBox("Band && Status")
+        mid_layout = QVBoxLayout(mid)
+
+        grid = QGridLayout()
+        grid.addWidget(QLabel("<b>HF</b>"),  0, 1, Qt.AlignmentFlag.AlignHCenter)
+        grid.addWidget(QLabel("<b>VHF</b>"), 0, 2, Qt.AlignmentFlag.AlignHCenter)
+        # HBAUD is shown, not set: Packet mode selects it itself (HF 300 /
+        # VHF 1200, get_init_frames()).
+        grid.addWidget(QLabel("HBAUD:"), 1, 0, Qt.AlignmentFlag.AlignRight)
+        for col, baud in ((1, "300"), (2, "1200")):
+            lbl = QLabel(baud)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setToolTip("Set by the Packet mode itself - display only.")
+            grid.addWidget(lbl, 1, col)
+        self._sb_maxframe     = spin(1, 7,   1)
+        self._sb_vhf_maxframe = spin(1, 7,   4)
+        self._sb_slottime     = spin(0, 250, 30)
+        self._sb_vhf_slottime = spin(0, 250, 10)
+        for row, (label, hf_sb, vhf_sb) in enumerate((
+            ("MAXFRAME:", self._sb_maxframe, self._sb_vhf_maxframe),
+            ("SLOTTIME:", self._sb_slottime, self._sb_vhf_slottime),
+        ), start=2):
+            grid.addWidget(QLabel(label), row, 0, Qt.AlignmentFlag.AlignRight)
+            grid.addWidget(hf_sb,  row, 1)
+            grid.addWidget(vhf_sb, row, 2)
+            tip = (f"One value per band. The TNC has a single {label[:-1]}: "
+                   "the value of the band whose Packet mode is active is "
+                   "sent at once, the other one when that mode is selected.")
+            hf_sb.setToolTip(tip)
+            vhf_sb.setToolTip(tip)
+        mid_layout.addLayout(grid)
+
+        status = QFormLayout()
+        status.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self._sb_txsmt    = spin(0, 250, 50);    status.addRow("TXSMT:",    self._sb_txsmt)
         # TXSMT does not appear anywhere in the PK-232 TRM Host Mode command
         # list (P13) - likely a command from a different AEA product (PK-900,
         # DSP-2232). Disabled rather than removed: the field and its INI
@@ -106,32 +162,26 @@ class HFPacketParamsDialog(QDialog):
         # is ever sent for it (see ParamsUploader / UPLOAD_EXEMPT).
         self._sb_txsmt.setEnabled(False)
         self._sb_txsmt.setToolTip("Not a PK-232 command — has no effect")
-        self._sb_users    = spin(1, 10, 10);     form.addRow("USERS:",    self._sb_users)
-        self._sb_users.setToolTip(
-            "Incoming connects are accepted only on channels 0 to n-1; "
-            "USERS 0 = any free channel (STABO manual; consistent with "
-            "T147, device B)."
-        )
-
         # Read-only fields
         self._sb_qhpacket = spin(0, 99, 33); self._sb_qhpacket.setEnabled(False)
-        form.addRow("QHPACKET (r/o):", self._sb_qhpacket)
+        status.addRow("QHPACKET (r/o):", self._sb_qhpacket)
         self._sb_qvpacket = spin(0, 99, 35); self._sb_qvpacket.setEnabled(False)
-        form.addRow("QVPACKET (r/o):", self._sb_qvpacket)
+        status.addRow("QVPACKET (r/o):", self._sb_qvpacket)
+        mid_layout.addLayout(status)
+        mid_layout.addStretch()
+        layout.addWidget(mid)
 
-        layout.addWidget(left)
-
-        # ── Right column: flag checkboxes ──────────────────────────────
+        # -- Column 3: Flags (two sub-columns) --------------------------------
         right = QGroupBox("Flags")
-        flags_layout = QVBoxLayout(right)
+        flags_grid = QGridLayout(right)
 
         def chk(label, default=False):
-            w = QCheckBox(label); w.setChecked(default); return w
+            c = QCheckBox(label); c.setChecked(default); return c
 
-        self._chk_ax25l2v2  = chk("AX25L2V2",  True);  flags_layout.addWidget(self._chk_ax25l2v2)
-        self._chk_headerln  = chk("HEADERLN",   True);  flags_layout.addWidget(self._chk_headerln)
-        self._chk_constamp  = chk("CONSTAMP",   True);  flags_layout.addWidget(self._chk_constamp)
-        self._chk_dagstamp  = chk("DAGSTAMP",   True);  flags_layout.addWidget(self._chk_dagstamp)
+        self._chk_ax25l2v2  = chk("AX25L2V2",  True)
+        self._chk_headerln  = chk("HEADERLN",   True)
+        self._chk_constamp  = chk("CONSTAMP",   True)
+        self._chk_dagstamp  = chk("DAGSTAMP",   True)
         # P55.F: these two are the TNC's OWN link-message timestamp
         # source - independent of the Display tab's "Show timestamps in
         # the RX view" (PK232PY's own added prefix). See that option's
@@ -146,25 +196,36 @@ class HFPacketParamsDialog(QDialog):
         )
         self._chk_constamp.setToolTip(_stamp_tip.format("CONSTAMP"))
         self._chk_dagstamp.setToolTip(_stamp_tip.format("DAYSTAMP"))
-        self._chk_ilfpack   = chk("ILFPACK",    True);  flags_layout.addWidget(self._chk_ilfpack)
-        self._chk_acrpack   = chk("ACRPACK",    True);  flags_layout.addWidget(self._chk_acrpack)
-        self._chk_alfpack   = chk("ALFPACK",    True);  flags_layout.addWidget(self._chk_alfpack)
-        self._chk_mrpt      = chk("MRPT",       True);  flags_layout.addWidget(self._chk_mrpt)
-        self._chk_ppersist  = chk("PPERSIST",   True);  flags_layout.addWidget(self._chk_ppersist)
-        self._chk_xmitok    = chk("XMITOK",     True);  flags_layout.addWidget(self._chk_xmitok)
-        self._chk_8bitconv  = chk("8BITCONV",   False); flags_layout.addWidget(self._chk_8bitconv)
-        self._chk_mbell     = chk("MBELL",      False); flags_layout.addWidget(self._chk_mbell)
-        self._chk_mdigi     = chk("MDIGI",      False); flags_layout.addWidget(self._chk_mdigi)
-        self._chk_mproto    = chk("MPROTO",     False); flags_layout.addWidget(self._chk_mproto)
-        self._chk_mstamp    = chk("MSTAMP",     False); flags_layout.addWidget(self._chk_mstamp)
-        self._chk_passall   = chk("PASSALL",    False); flags_layout.addWidget(self._chk_passall)
-        self._chk_hid       = chk("HID",        False); flags_layout.addWidget(self._chk_hid)
-        self._chk_bbsmsgs   = chk("BBSMSGS",    False); flags_layout.addWidget(self._chk_bbsmsgs)
-        self._chk_fulldp    = chk("FULLDP",     False); flags_layout.addWidget(self._chk_fulldp)
+        self._chk_ilfpack   = chk("ILFPACK",    True)
+        self._chk_acrpack   = chk("ACRPACK",    True)
+        self._chk_alfpack   = chk("ALFPACK",    True)
+        self._chk_mrpt      = chk("MRPT",       True)
+        self._chk_ppersist  = chk("PPERSIST",   True)
+        self._chk_xmitok    = chk("XMITOK",     True)
+        self._chk_8bitconv  = chk("8BITCONV",   False)
+        self._chk_mbell     = chk("MBELL",      False)
+        self._chk_mdigi     = chk("MDIGI",      False)
+        self._chk_mproto    = chk("MPROTO",     False)
+        self._chk_mstamp    = chk("MSTAMP",     False)
+        self._chk_passall   = chk("PASSALL",    False)
+        self._chk_hid       = chk("HID",        False)
+        self._chk_bbsmsgs   = chk("BBSMSGS",    False)
+        self._chk_fulldp    = chk("FULLDP",     False)
+        # P73 C: these seven used to be dead (MBELL saved but never sent, the
+        # others not even saved). Not measured on the TNC yet (T160/T161): until
+        # then a live change is saved and applied at the next initialisation.
+        for c in (self._chk_mbell, self._chk_mdigi, self._chk_mproto,
+                  self._chk_mstamp, self._chk_passall, self._chk_bbsmsgs,
+                  self._chk_fulldp):
+            c.setToolTip(
+                f"Sent to the TNC as {c.text()} ON/OFF at every initialisation. "
+                "Applied live only for TNC releases where it has been measured "
+                "(T160/T161)."
+            )
         # P74: UBIT 0 is a TNC-wide flag (all modes), shown here because the
         # symptom appears in Packet. Checked = UBIT 0 ON (factory default,
         # drops packets below the DCD threshold); unchecked = OFF (default).
-        self._chk_ubit0     = chk("UBIT 0 (DCD gate)", False); flags_layout.addWidget(self._chk_ubit0)
+        self._chk_ubit0     = chk("UBIT 0 (DCD gate)", False)
         self._chk_ubit0.setToolTip(
             "OFF (recommended): every packet with a correct CRC is processed, "
             "also when the signal is too weak to light the DCD LED. ON (factory "
@@ -172,11 +233,22 @@ class HFPacketParamsDialog(QDialog):
             "reports 'packet received below threshold' (found 01.10.2026, "
             "device B). Keep it OFF. Applies to all modes."
         )
-        flags_layout.addStretch()
-
+        flags = [
+            self._chk_ax25l2v2, self._chk_headerln, self._chk_constamp,
+            self._chk_dagstamp, self._chk_ilfpack, self._chk_acrpack,
+            self._chk_alfpack, self._chk_mrpt, self._chk_ppersist,
+            self._chk_xmitok, self._chk_8bitconv, self._chk_mbell,
+            self._chk_mdigi, self._chk_mproto, self._chk_mstamp,
+            self._chk_passall, self._chk_hid, self._chk_bbsmsgs,
+            self._chk_fulldp, self._chk_ubit0,
+        ]
+        per_col = (len(flags) + 1) // 2
+        for i, c in enumerate(flags):
+            flags_grid.addWidget(c, i % per_col, i // per_col)
+        flags_grid.setRowStretch(per_col, 1)
         layout.addWidget(right)
-        scroll.setWidget(inner)
-        return scroll
+
+        return w
 
     def _build_msg_tab(self) -> QWidget:
         """Message parameters tab — BTEXT, CTEXT, UNPROTO, etc."""
@@ -304,6 +376,8 @@ class HFPacketParamsDialog(QDialog):
         self._sb_resptime.setValue(c.resptime)
         self._sb_users.setValue(c.users)
         self._sb_txsmt.setValue(c.txsmt)
+        self._sb_vhf_maxframe.setValue(c.vhf_maxframe)
+        self._sb_vhf_slottime.setValue(c.vhf_slottime)
 
         self._chk_ax25l2v2.setChecked(c.ax25l2v2)
         self._chk_headerln.setChecked(c.headerln)
@@ -336,6 +410,12 @@ class HFPacketParamsDialog(QDialog):
         self._chk_8bitconv.setChecked(c.bitconv8)
         self._chk_hid.setChecked(c.hid)
         self._chk_mbell.setChecked(c.mbell)
+        self._chk_mdigi.setChecked(c.mdigi)
+        self._chk_mproto.setChecked(c.mproto)
+        self._chk_mstamp.setChecked(c.mstamp)
+        self._chk_passall.setChecked(c.passall)
+        self._chk_bbsmsgs.setChecked(c.bbsmsgs)
+        self._chk_fulldp.setChecked(c.fulldp)
         self._chk_ubit0.setChecked(c.ubit0)
 
         self._chk_show_link_ui.setChecked(c.show_link_messages_in_ui_channel)
@@ -357,6 +437,8 @@ class HFPacketParamsDialog(QDialog):
         config.resptime = self._sb_resptime.value()
         config.users    = self._sb_users.value()
         config.txsmt    = self._sb_txsmt.value()
+        config.vhf_maxframe = self._sb_vhf_maxframe.value()
+        config.vhf_slottime = self._sb_vhf_slottime.value()
 
         config.ax25l2v2  = self._chk_ax25l2v2.isChecked()
         config.headerln  = self._chk_headerln.isChecked()
@@ -386,6 +468,12 @@ class HFPacketParamsDialog(QDialog):
         config.bitconv8 = self._chk_8bitconv.isChecked()
         config.hid      = self._chk_hid.isChecked()
         config.mbell    = self._chk_mbell.isChecked()
+        config.mdigi    = self._chk_mdigi.isChecked()
+        config.mproto   = self._chk_mproto.isChecked()
+        config.mstamp   = self._chk_mstamp.isChecked()
+        config.passall  = self._chk_passall.isChecked()
+        config.bbsmsgs  = self._chk_bbsmsgs.isChecked()
+        config.fulldp   = self._chk_fulldp.isChecked()
         config.ubit0    = self._chk_ubit0.isChecked()
 
         config.show_link_messages_in_ui_channel = \

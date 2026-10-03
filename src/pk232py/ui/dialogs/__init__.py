@@ -2,7 +2,7 @@
 # Copyright (C) 2026  OE3GAS  —  GPL v2
 """pk232py.ui.dialogs — Configuration dialogs."""
 
-from .params_hf      import HFPacketParamsDialog
+from .params_hf      import PacketParamsDialog
 from .params_misc    import MiscParamsDialog
 from .params_pactor  import PACTORParamsDialog
 from .params_amtor   import AMTORParamsDialog
@@ -15,7 +15,7 @@ from .params_maildrop import MailDropParamsDialog
 # and was removed 2026-06-23 — do not re-add it here.
 
 __all__ = [
-    "HFPacketParamsDialog",
+    "PacketParamsDialog",
     "MiscParamsDialog",
     "PACTORParamsDialog",
     "AMTORParamsDialog",

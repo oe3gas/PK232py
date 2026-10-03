@@ -44,7 +44,8 @@ from ..modes.packet_vhf import VHFPacketMode
 from ..comm.params_uploader import ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
 from pk232py.comm.param_applier import ParamApplier, SerialParamTransport, format_result
-from .dialogs.params_hf      import HFPacketParamsDialog
+from pk232py.comm.host_params import BAND_HF, BAND_VHF, band_of_mode, band_value
+from .dialogs.params_hf      import PacketParamsDialog
 from .appearance_dialog      import AppearanceDialog
 from .dialogs.params_misc    import MiscParamsDialog
 from .dialogs.params_pactor  import PACTORParamsDialog
@@ -423,10 +424,10 @@ class MainWindow(QMainWindow):
  # Parameters 
         param_menu = mb.addMenu("&Parameters")
         # Implemented dialogs
-        _implemented = {"HF Packet...", "Misc...", "PACTOR...", "AMTOR / NAVTEX / TDM...", "BAUDOT / ASCII / CW...", "MailDrop..."}
+        _implemented = {"Packet...", "Misc...", "PACTOR...", "AMTOR / NAVTEX / TDM...", "BAUDOT / ASCII / CW...", "MailDrop..."}
         self._act_params_pactor = None
         for label, slot in [
-            ("HF Packet...",             self._on_params_hf_packet),
+            ("Packet...",             self._on_params_hf_packet),
             ("PACTOR...",                self._on_params_pactor),
             ("AMTOR / NAVTEX / TDM...",  self._on_params_amtor),
             ("BAUDOT / ASCII / CW...",   self._on_params_baudot),
@@ -1756,12 +1757,18 @@ class MainWindow(QMainWindow):
         """
         if mm_name == "HF Packet":
             hf_cfg = self._app_config.hf_packet
-            return HFPacketMode(maxframe=hf_cfg.maxframe, slottime=hf_cfg.slottime,
-                                monitor=hf_cfg.monitor)
+            return HFPacketMode(
+                maxframe=band_value(hf_cfg, "MAXFRAME", BAND_HF),
+                slottime=band_value(hf_cfg, "SLOTTIME", BAND_HF),
+                monitor=hf_cfg.monitor)
         if mm_name == "VHF Packet":
-            # P73 A: VHF carries the operator's MONITOR value too (it used to
-            # send MN Y = MONITOR 4); MX/SL follow in P73 B.
-            return VHFPacketMode(monitor=self._app_config.hf_packet.monitor)
+            # P73: VHF has its own MAXFRAME/SLOTTIME (BAND_PARAMS) and carries
+            # the operator's MONITOR value (it used to send MN Y = MONITOR 4).
+            hf_cfg = self._app_config.hf_packet
+            return VHFPacketMode(
+                maxframe=band_value(hf_cfg, "MAXFRAME", BAND_VHF),
+                slottime=band_value(hf_cfg, "SLOTTIME", BAND_VHF),
+                monitor=hf_cfg.monitor)
         return None
 
     def _on_mode_changed(self, name: str) -> None:
@@ -4660,8 +4667,8 @@ class MainWindow(QMainWindow):
     def _on_params_hf_packet(self) -> None:
         """Open HF Packet Parameters dialog."""
         before = copy.deepcopy(self._app_config)
-        dlg = HFPacketParamsDialog(self._app_config.hf_packet, parent=self)
-        if dlg.exec() == HFPacketParamsDialog.DialogCode.Accepted:
+        dlg = PacketParamsDialog(self._app_config.hf_packet, parent=self)
+        if dlg.exec() == PacketParamsDialog.DialogCode.Accepted:
             self._config_mgr.save()
             self._apply_changed_params(before, "HF Packet")
             # Refresh the USERS tooltip immediately (P11.5) rather than
@@ -4807,6 +4814,8 @@ class MainWindow(QMainWindow):
             before, self._app_config, has_pactor=pactor,
             has_maildrop=getattr(self._serial, "has_maildrop", None) is not False,
             needs_expert=pactor,
+            # P73 B: MAXFRAME/SLOTTIME only for the band of the active mode.
+            band=band_of_mode(self._modes.current_mode_name),
         )
         if not results:
             self._log_monitor(f"[SYS] {label} parameters saved - nothing changed")
@@ -4817,6 +4826,8 @@ class MainWindow(QMainWindow):
             self._log_monitor(line)
             if not self._serial.is_host_mode:
                 self._vt_append(f"{line}\n", color="#3a9e3a" if r.ok else "#f44747")
+            if r.deferred:
+                continue        # other band's value: intended, not "TNC differs"
             if r.ok:
                 self._tnc_unapplied.discard(r.name)
             else:
