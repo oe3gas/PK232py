@@ -3060,8 +3060,18 @@ USERS 10 (new default) unless step 3b.
 | 4 | PC 1 | chip 0 → Disconnect | briefly "disconnecting", then free | ⬜ |
 | 5 | PC 1 | verbose, `CONNECT OE3GAS-1`, Ctrl+H | chip 0 connected with OE3GAS-1 (the open point of T144 step 3) | ⬜ |
 
-**Status:** ⬜ OPEN — hardware session on Device B. Software covered by
-`test_packet_screen.py`, `test_link_table.py`, `test_main_window_packet.py`.
+**Status:** ⬜ OPEN — partly observed (device B, 03.10.2026, operator; steps not
+recorded one by one, so no step is ticked):
+- An incoming call lands on chip 0 (OE3XTC), an own connect on chip 1 (OE3GAS-1),
+  as measured in T147.
+- Unproto from MON goes out as a UI frame over a free channel; Direwolf on PC 2
+  confirms destination and frame type.
+- QtTermTCP showing the UI frame in the window of the connected session is
+  QtTermTCP's own display, not a finding.
+- The radio link with many retries (DCD) is the operator's to solve.
+
+Software covered by `test_packet_screen.py`, `test_link_table.py`,
+`test_main_window_packet.py`.
 
 ---
 
@@ -3205,7 +3215,7 @@ Windows sound "Default Beep" is muted, nothing is heard (not an app setting).
 | 4 | PC 1 | Configure -> Appearance -> Connect bell off; connect again | NO beep | ⬜ |
 | 5 | PC 1 | switch Connect bell on again | - | ⬜ |
 
-**Status:** ⬜ OPEN — hardware session.
+**Status:** ✅ PASS (device B, 03.10.2026, operator observation; steps not recorded one by one).
 
 ---
 
