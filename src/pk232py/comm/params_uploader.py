@@ -129,6 +129,13 @@ class ParamsUploader:
         # upload (P37) - detect_maildrop() never sends MDCHECK. A
         # detection failure (None) must not lock out an existing
         # feature, so only an explicit False skips the MailDrop block.
+        # P78 A: no banner (the TNC was already awake) -> infer the release
+        # from ONE EXPERT query, here, while we are at the cmd: prompt anyway.
+        # Without it P72 treats the release as unknown and sets nothing in
+        # Host Mode (T162). The banner, if there is one, always wins.
+        probe_release = getattr(self._serial, 'probe_release_verbose', None)
+        if probe_release:
+            probe_release()
         detect_maildrop = getattr(self._serial, 'detect_maildrop', None)
         has_maildrop = detect_maildrop() if detect_maildrop else True
         if has_maildrop is False:
