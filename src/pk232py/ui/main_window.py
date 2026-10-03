@@ -4966,9 +4966,9 @@ class MainWindow(QMainWindow):
         """Open Appearance settings dialog (Font & Colors)."""
         dlg = AppearanceDialog(self._app_config.appearance, parent=self)
         if dlg.exec() == AppearanceDialog.DialogCode.Accepted:
-            # Hand-tuned values match no preset → mark theme "custom" (so the
-            # submenu shows no check mark) unless they still equal a preset.
-            self._app_config.appearance.theme = "custom"
+            # P79: the dialog edited the CURRENT theme; keep only what differs
+            # from its defaults. The theme itself stays selected.
+            self._app_config.appearance.store_overrides()
             self._config_mgr.save()
             self._apply_appearance()
             self._sync_theme_checks()
@@ -4988,7 +4988,9 @@ class MainWindow(QMainWindow):
         a = self._app_config.appearance
         if a.theme == "air":
             # The native-look preset, but with the configured text colours.
-            return dataclasses.replace(THEMES["air"], rx=a.rx_color, tx=a.tx_color)
+            return dataclasses.replace(
+                THEMES["air"], font_family=a.font_family, font_size=a.font_size,
+                bg=a.bg_color, fg=a.fg_color, rx=a.rx_color, tx=a.tx_color)
         return Theme(
             key=a.theme, name=a.theme.title(),
             font_family=a.font_family, font_size=a.font_size,
@@ -5052,14 +5054,9 @@ class MainWindow(QMainWindow):
         theme = THEMES.get(key)
         if theme is None:
             return
-        a = self._app_config.appearance
-        a.theme       = key
-        a.font_family = theme.font_family
-        a.font_size   = theme.font_size
-        a.bg_color    = theme.bg
-        a.fg_color    = theme.fg
-        a.rx_color    = theme.rx     # P77: a theme sets the text-colour defaults
-        a.tx_color    = theme.tx
+        # P79: every theme keeps its own settings - the old theme's edits are
+        # stored, the new theme's own font/colours are restored.
+        self._app_config.appearance.switch_theme(key)
         self._config_mgr.save()
         self._apply_appearance()
         self._sync_theme_checks()
@@ -5098,24 +5095,10 @@ class MainWindow(QMainWindow):
         logger.debug("_apply_appearance: theme=%s bg_color=%s fg_color=%s",
                      a.theme, a.bg_color, a.fg_color)
 
-        # Self-healing: for the four built-in presets, always trust the CURRENT
-        # THEMES definition over whatever bg/fg/font happens to be persisted in
-        # pk232py.ini. Config drift (e.g. from an older app version, before this
-        # colour system existed) would otherwise silently survive every cold
-        # start — only a manual theme re-selection via _on_theme_selected()
-        # happened to repair it, which is why this bug was invisible during
-        # runtime theme-switch testing but visible on every fresh launch.
-        # "custom" is exempt: those values come from the user's own Appearance
-        # dialog choices and must NOT be overwritten.
-        from pk232py.ui.themes import THEMES, THEME_ORDER
-        if a.theme in THEME_ORDER:
-            preset = THEMES[a.theme]
-            a.bg_color    = preset.bg
-            a.fg_color    = preset.fg
-            a.font_family = preset.font_family
-            a.font_size   = preset.font_size
-            a.rx_color    = preset.rx
-            a.tx_color    = preset.tx
+        # P79: no preset overwrite here any more. The effective values of the
+        # current theme (default + its override) are computed by
+        # AppearanceConfig.effective() when the INI is loaded and when a theme
+        # is selected; this method only APPLIES what the config holds.
 
         # P77: the display colours have ONE source. Hand them to the widget
         # palette module (ui_theme.get_theme(): TX/RX colours of the macros,
