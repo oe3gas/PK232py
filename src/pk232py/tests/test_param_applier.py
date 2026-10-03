@@ -144,7 +144,7 @@ class TestHostMode:
             (b"MX", b"7"): b"MX\x07", (b"MX", b""): b"MX4"})
         before, after = _cfg_pair(lambda b, a: (setattr(b.hf_packet, "maxframe", 4),
                                                 setattr(a.hf_packet, "maxframe", 7)))
-        (r,) = ParamApplier(t).apply(before, after)
+        (r,) = ParamApplier(t).apply(before, after, band="HF")
         assert not r.ok
         assert r.reason == "rejected by TNC: $07"
         assert r.tnc_now == "4"

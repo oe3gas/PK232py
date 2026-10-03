@@ -25,7 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtWidgets import QApplication
 
 from pk232py.config import HFPacketConfig
-from pk232py.ui.dialogs.params_hf import HFPacketParamsDialog
+from pk232py.ui.dialogs.params_hf import PacketParamsDialog
 
 _app = QApplication.instance() or QApplication([])
 
@@ -35,7 +35,7 @@ class TestUsersRoundTrip:
     def test_default_value_populates_and_applies(self):
         cfg = HFPacketConfig()
         assert cfg.users == 10   # P70 E2: operator decision 30.09.2026
-        dlg = HFPacketParamsDialog(cfg)
+        dlg = PacketParamsDialog(cfg)
         assert dlg._sb_users.value() == 10
         out = HFPacketConfig()
         dlg.apply_to(out)
@@ -43,7 +43,7 @@ class TestUsersRoundTrip:
 
     def test_changed_value_round_trips(self):
         cfg = HFPacketConfig(users=4)
-        dlg = HFPacketParamsDialog(cfg)
+        dlg = PacketParamsDialog(cfg)
         assert dlg._sb_users.value() == 4   # _populate() picked it up
 
         dlg._sb_users.setValue(7)
@@ -53,6 +53,6 @@ class TestUsersRoundTrip:
 
     def test_spinbox_range_is_1_to_10(self):
         cfg = HFPacketConfig()
-        dlg = HFPacketParamsDialog(cfg)
+        dlg = PacketParamsDialog(cfg)
         assert dlg._sb_users.minimum() == 1
         assert dlg._sb_users.maximum() == 10

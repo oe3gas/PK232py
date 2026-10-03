@@ -382,4 +382,8 @@ class TestChangedValues:
         before.hf_packet.maxframe = 4
         after = copy.deepcopy(before)
         after.hf_packet.maxframe = 7
-        assert ParamsUploader.changed_with_old(before, after) == [("MAXFRAME", "7", "4")]
+        # P73 B: MAXFRAME is a band value - reported for the active band only.
+        assert ParamsUploader.changed_with_old(
+            before, after, band="HF") == [("MAXFRAME", "7", "4")]
+        assert ParamsUploader.changed_with_old(before, after, band="VHF") == []
+        assert ParamsUploader.changed_with_old(before, after) == []

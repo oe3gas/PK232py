@@ -19,7 +19,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QDialog
 
 from pk232py.comm.frame import FrameKind, HostFrame, build_command
-from pk232py.ui.dialogs.params_hf import HFPacketParamsDialog
+from pk232py.ui.dialogs.params_hf import PacketParamsDialog
 from pk232py.ui.main_window import MainWindow
 
 _app = QApplication.instance() or QApplication([])
@@ -81,7 +81,7 @@ def win(monkeypatch):
     def fake_exec(dlg):
         dlg._config.users = 10
         return QDialog.DialogCode.Accepted
-    monkeypatch.setattr(HFPacketParamsDialog, "exec", fake_exec)
+    monkeypatch.setattr(PacketParamsDialog, "exec", fake_exec)
     return w
 
 
@@ -100,7 +100,7 @@ class TestApplyRightAfterOk:
         assert not [m for m in win.log if "next initialisation" in m]
 
     def test_nothing_changed_sends_nothing(self, win, monkeypatch):
-        monkeypatch.setattr(HFPacketParamsDialog, "exec",
+        monkeypatch.setattr(PacketParamsDialog, "exec",
                             lambda dlg: QDialog.DialogCode.Accepted)
         win._on_params_hf_packet()
         assert win._serial.writes == []
@@ -124,7 +124,7 @@ class TestTncDiffers:
         def fake_exec(dlg):
             dlg._config.unproto = "APRS"
             return QDialog.DialogCode.Accepted
-        monkeypatch.setattr(HFPacketParamsDialog, "exec", fake_exec)
+        monkeypatch.setattr(PacketParamsDialog, "exec", fake_exec)
         win._app_config.hf_packet.users = 10
         win._on_params_hf_packet()
         assert win._serial.writes == []
@@ -158,10 +158,46 @@ class TestWriteLogOnly:
         def fake_exec(dlg):
             dlg._config.users = 10
             return QDialog.DialogCode.Accepted
-        monkeypatch.setattr(HFPacketParamsDialog, "exec", fake_exec)
+        monkeypatch.setattr(PacketParamsDialog, "exec", fake_exec)
 
         w._on_params_hf_packet()
 
         assert sm.writes, "no frame written (the value never reaches the TNC)"
         assert sm.writes == [bytes.fromhex("01 4F 55 52 31 30 17"),
                              bytes.fromhex("01 4F 55 52 17")]
+
+
+class TestActiveBand:
+    """P73 B: MainWindow hands the band of the ACTIVE Packet mode to the
+    applier - MAXFRAME/SLOTTIME of the other band are saved, never sent."""
+
+    def _set_mode(self, win, monkeypatch, name):
+        monkeypatch.setattr(type(win._modes), "current_mode_name",
+                            property(lambda self: name))
+
+    def _change(self, monkeypatch, **fields):
+        def fake_exec(dlg):
+            for k, v in fields.items():
+                setattr(dlg._config, k, v)
+            return QDialog.DialogCode.Accepted
+        monkeypatch.setattr(PacketParamsDialog, "exec", fake_exec)
+
+    def test_hf_maxframe_in_vhf_mode_is_not_sent(self, win, monkeypatch):
+        self._set_mode(win, monkeypatch, "VHF Packet")
+        win._app_config.hf_packet.users = 10
+        self._change(monkeypatch, maxframe=3)
+        win._on_params_hf_packet()
+        assert win._serial.writes == []                       # no MX frame
+        assert "[SYS] MAXFRAME (HF) saved - applies when HF Packet is selected" in win.log
+        assert win._tnc_unapplied == set()                    # intended, not "TNC differs"
+        assert win.problems == []
+        assert win._app_config.hf_packet.maxframe == 3        # but saved
+
+    def test_vhf_maxframe_in_vhf_mode_is_sent(self, win, monkeypatch):
+        self._set_mode(win, monkeypatch, "VHF Packet")
+        win._app_config.hf_packet.users = 10
+        win._serial.answers = {(b"MX", b"7"): b"MX\x00", (b"MX", b""): b"MX7"}
+        self._change(monkeypatch, vhf_maxframe=7)
+        win._on_params_hf_packet()
+        assert win._serial.writes == [build_command(b"MX", b"7"), build_command(b"MX", b"")]
+        assert "[SYS] MAXFRAME  4 -> 7  ok" in win.log

@@ -14,7 +14,7 @@ AppearanceDialog are separate &Configure dialogs, not part of this family,
 and are out of scope.
 
 The dialogs have TWO different APIs:
-  - HFPacketParamsDialog / PACTORParamsDialog: own a config object passed
+  - PacketParamsDialog / PACTORParamsDialog: own a config object passed
     into __init__, load it via _populate() and write it back via
     apply_to(config).
   - AMTORParamsDialog / BaudotParamsDialog / MiscParamsDialog /
@@ -75,7 +75,7 @@ from pk232py.config import (
 )
 from pk232py.ui.dialogs.params_amtor import AMTORParamsDialog
 from pk232py.ui.dialogs.params_baudot import BaudotParamsDialog
-from pk232py.ui.dialogs.params_hf import HFPacketParamsDialog
+from pk232py.ui.dialogs.params_hf import PacketParamsDialog
 from pk232py.ui.dialogs.params_maildrop import MailDropParamsDialog
 from pk232py.ui.dialogs.params_misc import MiscParamsDialog
 from pk232py.ui.dialogs.params_pactor import PACTORParamsDialog
@@ -96,8 +96,8 @@ WIDGET_TYPES = (QSpinBox, QDoubleSpinBox, QCheckBox, QLineEdit, QComboBox)
 # vars(dlg) -- see _widget_name()).
 UNWIRED_OK: dict[tuple[str, str], str] = {
     # --- read-only TNC query results: never settable, so never in config ---
-    ("HFPacketParamsDialog", "_sb_qhpacket"): "read-only, TNC query result",
-    ("HFPacketParamsDialog", "_sb_qvpacket"): "read-only, TNC query result",
+    ("PacketParamsDialog", "_sb_qhpacket"): "read-only, TNC query result",
+    ("PacketParamsDialog", "_sb_qvpacket"): "read-only, TNC query result",
     ("PACTORParamsDialog", "_sb_qptor"): "read-only, TNC query result",
     ("AMTORParamsDialog", "_sb_qtdm"): "read-only, TNC query result",
     ("AMTORParamsDialog", "_sb_qtor"): "read-only, TNC query result",
@@ -110,14 +110,9 @@ UNWIRED_OK: dict[tuple[str, str], str] = {
 
     # --- HF Packet: widgets with no HFPacketConfig field -- see Backlog.md ---
     # (8BITCONV, HID, MBELL and the CFROM/DFROM/MFROM/MTO filters were wired
-    # in P13.3 and are no longer exceptions here.)
-    ("HFPacketParamsDialog", "_chk_mdigi"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_chk_mproto"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_chk_mstamp"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_chk_passall"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_chk_bbsmsgs"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_chk_fulldp"): "no config field yet — see Backlog",
-    ("HFPacketParamsDialog", "_le_mbx"): "no config field yet — see Backlog",
+    # in P13.3, MDIGI/MPROTO/MSTAMP/PASSALL/BBSMSGS/FULLDP in P73 C - no
+    # longer exceptions here.)
+    ("PacketParamsDialog", "_le_mbx"): "no config field yet — see Backlog",
 
     # --- PACTOR: no PACTORConfig field -- see Backlog.md ---
     ("PACTORParamsDialog", "_chk_8bitconv"): "no config field yet — see Backlog",
@@ -182,10 +177,15 @@ UPLOAD_EXEMPT: dict[tuple[str, str], str] = {
         "likely a command from a different AEA product. Field/INI kept for "
         "compatibility, dialog spinbox disabled, never uploaded."
     ),
-    ("hf_packet", "mbell"): (
-        "MBELL is not in the TRM's 1987 Host Mode command list (may exist "
-        "only on later MBX firmware, P13.3) - wired to the dialog/INI but "
-        "not uploaded until confirmed. See Backlog."
+    ("hf_packet", "vhf_maxframe"): (
+        "P73 B: the init upload sends the HF band's value; the VHF value "
+        "goes out with VHF Packet's activation frames (VHFPacketMode) and "
+        "live through ParamApplier when VHF Packet is the active mode."
+    ),
+    ("hf_packet", "vhf_slottime"): (
+        "P73 B: the init upload sends the HF band's value; the VHF value "
+        "goes out with VHF Packet's activation frames (VHFPacketMode) and "
+        "live through ParamApplier when VHF Packet is the active mode."
     ),
     ("hf_packet", "show_link_messages_in_ui_channel"): (
         "display setting, not a TNC parameter (P47) - controls whether "
@@ -276,7 +276,7 @@ class _DialogSpec:
 
 
 def _bound_spec(dialog_cls: type, config_cls: type) -> _DialogSpec:
-    """HFPacketParamsDialog / PACTORParamsDialog: dialog owns a config
+    """PacketParamsDialog / PACTORParamsDialog: dialog owns a config
     object, loaded via _populate() and written back via apply_to()."""
     def make():
         return dialog_cls(config_cls())
@@ -314,7 +314,7 @@ def _dict_spec(dialog_cls: type, config_cls: type) -> _DialogSpec:
 
 
 DIALOG_SPECS: list[_DialogSpec] = [
-    _bound_spec(HFPacketParamsDialog, HFPacketConfig),
+    _bound_spec(PacketParamsDialog, HFPacketConfig),
     _bound_spec(PACTORParamsDialog, PACTORConfig),
     _dict_spec(AMTORParamsDialog, AMTORConfig),
     _dict_spec(BaudotParamsDialog, BaudotConfig),

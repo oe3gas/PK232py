@@ -20,7 +20,7 @@ from pk232py.comm.params_uploader import ParamsUploader
 from pk232py.config import AppConfig, ConfigManager, HFPacketConfig
 from pk232py.ui.dialogs.params_amtor import AMTORParamsDialog
 from pk232py.ui.dialogs.params_baudot import BaudotParamsDialog
-from pk232py.ui.dialogs.params_hf import HFPacketParamsDialog
+from pk232py.ui.dialogs.params_hf import PacketParamsDialog
 
 _app = QApplication.instance() or QApplication([])
 
@@ -72,14 +72,14 @@ class TestHostParamsRow:
 
 class TestPacketDialog:
     def test_checkbox_and_tooltip(self):
-        dlg = HFPacketParamsDialog(HFPacketConfig())
+        dlg = PacketParamsDialog(HFPacketConfig())
         tip = dlg._chk_ubit0.toolTip()
         assert "recommended" in tip and "below threshold" in tip
         assert dlg._chk_ubit0.text() == "UBIT 0 (DCD gate)"
         assert dlg._chk_ubit0.isChecked() is False
 
     def test_round_trip(self):
-        dlg = HFPacketParamsDialog(HFPacketConfig(ubit0=True))
+        dlg = PacketParamsDialog(HFPacketConfig(ubit0=True))
         assert dlg._chk_ubit0.isChecked() is True
         dlg._chk_ubit0.setChecked(False)
         out = HFPacketConfig(ubit0=True)
