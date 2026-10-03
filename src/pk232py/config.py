@@ -25,6 +25,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pk232py.colors import default_text_colors
+
 logger = logging.getLogger(__name__)
 
 CONFIG_FILE = Path.home() / ".pk232py" / "pk232py.ini"
@@ -313,6 +315,12 @@ class AppearanceConfig:
     font_size:    int  = 14
     bg_color:     str  = "#1e1e1e"   # RX/TX display background
     fg_color:     str  = "#ffffff"   # RX/TX display foreground
+    # P77: the ONE source of the text colours of every display (RX windows, TX
+    # input, verbose terminal, Packet channels, MON). The themes only supply
+    # defaults (colors.THEME_TEXT_COLORS); a missing INI key takes the stored
+    # theme's value. rx = received text / TNC output, tx = typed text / own commands.
+    rx_color:     str  = "#88ccff"
+    tx_color:     str  = "#ffee88"
     # P76: ring a bell when a connection is established (Configure ->
     # Appearance -> Connect bell). On by default; a missing INI key = on.
     connect_bell: bool = True
@@ -730,6 +738,10 @@ class ConfigManager:
         a.font_size   = s.getint("font_size", a.font_size)
         a.bg_color    = s.get("bg_color",    a.bg_color)
         a.fg_color    = s.get("fg_color",    a.fg_color)
+        # P77: without the keys (an INI from before) the stored theme decides.
+        rx_default, tx_default = default_text_colors(a.theme, a.bg_color)
+        a.rx_color    = s.get("rx_color",    rx_default)
+        a.tx_color    = s.get("tx_color",    tx_default)
         a.connect_bell = s.getboolean("connect_bell", a.connect_bell)
 
     def _build_appearance(self) -> None:
@@ -740,5 +752,7 @@ class ConfigManager:
             "font_size":   str(a.font_size),
             "bg_color":    a.bg_color,
             "fg_color":    a.fg_color,
+            "rx_color":    a.rx_color,
+            "tx_color":    a.tx_color,
             "connect_bell": str(a.connect_bell).lower(),
         }

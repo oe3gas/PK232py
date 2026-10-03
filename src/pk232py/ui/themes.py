@@ -50,6 +50,8 @@ from dataclasses import dataclass
 
 from PyQt6.QtGui import QColor, QPalette
 
+from pk232py.colors import THEME_TEXT_COLORS
+
 
 @dataclass(frozen=True)
 class Theme:
@@ -65,6 +67,10 @@ class Theme:
                         for the RX/TX text panels.
         system_palette: True → keep the native system palette/style (Air).
                         False → build and apply a full custom QPalette (Fusion).
+        rx / tx:        text colours for received / typed text (P77). Presets
+                        take them from colors.THEME_TEXT_COLORS; they are only
+                        DEFAULTS - AppearanceConfig.rx_color / tx_color are
+                        what the displays really use.
     """
     key:            str
     name:           str
@@ -73,6 +79,8 @@ class Theme:
     bg:             str
     fg:             str
     system_palette: bool
+    rx:             str = "#88ccff"
+    tx:             str = "#ffee88"
 
 
 THEMES: dict[str, Theme] = {
@@ -80,6 +88,7 @@ THEMES: dict[str, Theme] = {
         key="dark", name="Dark",
         font_family="Cascadia Mono SemiBold", font_size=14,
         bg="#1e1e1e", fg="#ffffff", system_palette=False,
+        rx=THEME_TEXT_COLORS["dark"][0], tx=THEME_TEXT_COLORS["dark"][1],
     ),
     # Mono = classic light paper-white terminal — deliberately NO colour.
     # White background, near-black text; build_palette derives every other role
@@ -89,11 +98,13 @@ THEMES: dict[str, Theme] = {
         key="mono", name="Mono",
         font_family="Courier New", font_size=14,
         bg="#ffffff", fg="#1a1a1a", system_palette=False,
+        rx=THEME_TEXT_COLORS["mono"][0], tx=THEME_TEXT_COLORS["mono"][1],
     ),
     "retro": Theme(
         key="retro", name="Retro",
         font_family="Courier New", font_size=14,
         bg="#0d0800", fg="#ffb000", system_palette=False,
+        rx=THEME_TEXT_COLORS["retro"][0], tx=THEME_TEXT_COLORS["retro"][1],
     ),
     # Air keeps the native look; bg/fg are light values used ONLY for the
     # RX/TX text panels (the global palette stays the system default).
@@ -101,6 +112,7 @@ THEMES: dict[str, Theme] = {
         key="air", name="Air",
         font_family="Segoe UI", font_size=11,
         bg="#ffffff", fg="#1a1a1a", system_palette=True,
+        rx=THEME_TEXT_COLORS["air"][0], tx=THEME_TEXT_COLORS["air"][1],
     ),
 }
 
@@ -219,6 +231,10 @@ def semantic_colors(theme: Theme) -> dict[str, str]:
     theme gets readable RX colours without a hand-added case here. Threshold
     128 splits at roughly perceptual middle grey.
 
+    P77: rx_received is the configured RX colour (theme.rx); the contrast
+    figures below describe the luma-bucketed echo/warning colours and the
+    old fixed rx_received values.
+
     Contrast check (rough luma distance to theme.bg, target > 80):
       Dark bucket   (bg luma ~9-30 for Retro/Dark):
         rx_received #88ccff (luma ~190) -> diff ~160-181
@@ -232,7 +248,9 @@ def semantic_colors(theme: Theme) -> dict[str, str]:
     """
     dark_bg = _luma(QColor(theme.bg)) < 128
     return {
-        "rx_received": "#88ccff" if dark_bg else "#0055aa",
+        # P77: the received-text colour is the configured RX colour (the
+        # Theme carries AppearanceConfig.rx_color); echo/warning stay luma-bucketed.
+        "rx_received": theme.rx,
         "rx_echo":     "#ffaa00" if dark_bg else "#b36b00",
         "rx_warning":  "#ff9900" if dark_bg else "#b34700",
     }
