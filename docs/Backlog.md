@@ -70,6 +70,18 @@ selector changes the configuration and goes through ParamApplier. Facts:
 TNC, then A). **Not covered:** was/now answers of parameters outside the Packet
 section (PACTOR, AMTOR, Baudot, Misc) are only reported, not taken.
 
+### Per-firmware results of T166/T167 (P80b) - done, PACTOR standby open (2026-10-03)
+
+P80b entered T166/T167 into the registry and `host_params` (8 new verified switches/ASPECT rows, 4 query-only rows) and stopped sending the refuted
+mnemonics: `NE` (cmd_navtex removed, NAVTEX = `NA`), `PT` (no PACTOR standby: STBY greyed out, Connect sends only the ARQ call), `XL`, `EE`, `CI`, `MY`
+(frames removed; the verbose upload is unchanged) and `MW` (Morse weight controls greyed out). `mnemonic_probe` now judges parameters through
+the same classification as `host_params_probe`.
+
+### PACTOR standby in Host Mode: mnemonic unknown, measure - open (2026-10-03)
+
+T167 showed `PT` is PACTIME (query `PTA 10`, OPMODE stays `PA`), not the PACTOR standby the app assumed. The Host Mode command for PACTOR standby
+(and how a connected/listening PACTOR state is left again) is unknown. Part of the planned PACTOR/AMTOR package; see the P80b report for what still works.
+
 ### Init upload sends commands the firmware does not know — open (2026-10-03)
 
 The init upload (`ParamsUploader`) sends commands the firmware does not know, e.g.

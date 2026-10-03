@@ -511,6 +511,16 @@ Grows over time.
   actually is; the file's own header is left untouched (historical
   artefact).
 
+  **Refuted Host Mode mnemonics (P80b, T166 device B / T167 device A) - facts, do not send:**
+  `NE` = NEWMODE (answers `NEY`, OPMODE stays `PA`; NAVTEX is `NA`); `PT` = PACTIME (device A:
+  `PTA 10`, OPMODE stays `PA` - NOT a PACTOR standby); `XL` and `EE` answer `$07` (unknown); `MW`
+  answers `MWN` (a switch) and refuses 11 with `$01` (MWEIGHT is not `MW`); `CI` answers `CIN` (a
+  switch; verbose CODE is 0); `MY` is `$07` on B and `MYnone` on A (MYIDENT mapping unproven); a bare
+  `MH` answers only `MH$01`/`MH$03` (the app polls `MH0`..`MH17`); no Morse-ID (MID) mnemonic among
+  `MA MB MC MJ MZ`. Confirmed instead: modes `BA AS MO AM FA SI TV NA` (+ `PN` on device A), switches
+  `EA WI SR US WO FN SQ`, `AY` (set), `RB FS NM NS` (query only). All are in
+  `comm/mnemonic_registry.py` (`sent=False` for the refuted ones).
+
   **New Host Mode mnemonics only with a registry entry (P80).**
 `comm/mnemonic_registry.py` has one `MnemonicEntry` per mnemonic the application
 sends (meaning, kind, `transmits`, evidence per release);
