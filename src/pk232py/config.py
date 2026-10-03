@@ -90,11 +90,11 @@ class HFPacketConfig:
     # Numeric parameters
     paclen:     int = 64
     txdelay:    int = 30
-    maxframe:   int = 1
+    maxframe:   int = 1    # HF value (P73: the VHF value is vhf_maxframe below)
     frack:      int = 7
     retry:      int = 10
     persist:    int = 63
-    slottime:   int = 30
+    slottime:   int = 30   # HF value (P73: the VHF value is vhf_slottime below)
     dwait:      int = 16
     check:      int = 30
     monitor:    int = 4
@@ -103,6 +103,13 @@ class HFPacketConfig:
                           # Operator decision 30.09.2026 (P70 E2, T147 F3/F4): with 1 the
                           # TNC rejects the second caller; an existing INI value is kept.
     txsmt:      int = 50
+
+    # VHF values of the two parameters that differ per band (P73 B). They are
+    # the values VHF Packet used to send as fixed numbers (MX 4 / SL 10), so
+    # an INI without these keys changes nothing. Only the active band's value
+    # reaches the TNC (comm/host_params.py BAND_PARAMS).
+    vhf_maxframe: int = 4
+    vhf_slottime: int = 10
 
     # Boolean flags
     ax25l2v2:   bool = True
@@ -141,6 +148,17 @@ class HFPacketConfig:
     # on later MBX firmware) - wired to the dialog/INI like the others, but
     # never uploaded until confirmed (see ParamsUploader / UPLOAD_EXEMPT).
     mbell:    bool = False
+
+    # Packet monitor flags (P73 C). They were checkboxes in the dialog that
+    # neither reached the INI nor the TNC. Defaults = the old checkbox
+    # pre-setting (all off). Matrix mnemonics: MDIGI MD, MPROTO MQ, MSTAMP MS,
+    # PASSALL PX, BBSMSGS BB; FULLDP is not in the matrix (comm/host_params.py).
+    mdigi:    bool = False
+    mproto:   bool = False
+    mstamp:   bool = False
+    passall:  bool = False
+    bbsmsgs:  bool = False
+    fulldp:   bool = False
 
     # UBIT 0 (CUSTOM bit 0, P74). False = "UBIT 0 OFF": every packet with a
     # correct CRC is processed. The factory default UBIT 0 ON silently drops
@@ -413,6 +431,8 @@ class ConfigManager:
         hf.resptime  = s.getint("resptime",  hf.resptime)
         hf.users     = s.getint("users",     hf.users)
         hf.txsmt     = s.getint("txsmt",     hf.txsmt)
+        hf.vhf_maxframe = s.getint("vhf_maxframe", hf.vhf_maxframe)
+        hf.vhf_slottime = s.getint("vhf_slottime", hf.vhf_slottime)
         hf.ax25l2v2  = s.getboolean("ax25l2v2",  hf.ax25l2v2)
         hf.headerln  = s.getboolean("headerln",  hf.headerln)
         hf.constamp  = s.getboolean("constamp",  hf.constamp)
@@ -436,6 +456,12 @@ class ConfigManager:
         hf.bitconv8  = s.getboolean("bitconv8", hf.bitconv8)
         hf.hid       = s.getboolean("hid",      hf.hid)
         hf.mbell     = s.getboolean("mbell",    hf.mbell)
+        hf.mdigi     = s.getboolean("mdigi",    hf.mdigi)
+        hf.mproto    = s.getboolean("mproto",   hf.mproto)
+        hf.mstamp    = s.getboolean("mstamp",   hf.mstamp)
+        hf.passall   = s.getboolean("passall",  hf.passall)
+        hf.bbsmsgs   = s.getboolean("bbsmsgs",  hf.bbsmsgs)
+        hf.fulldp    = s.getboolean("fulldp",   hf.fulldp)
         hf.ubit0     = s.getboolean("ubit0",    hf.ubit0)
         hf.show_link_messages_in_ui_channel = s.getboolean(
             "show_link_messages_in_ui_channel",
@@ -519,6 +545,8 @@ class ConfigManager:
             "resptime": str(hf.resptime),
             "users":    str(hf.users),
             "txsmt":    str(hf.txsmt),
+            "vhf_maxframe": str(hf.vhf_maxframe),
+            "vhf_slottime": str(hf.vhf_slottime),
             "ax25l2v2": str(hf.ax25l2v2).lower(),
             "headerln": str(hf.headerln).lower(),
             "constamp": str(hf.constamp).lower(),
@@ -540,6 +568,12 @@ class ConfigManager:
             "bitconv8": str(hf.bitconv8).lower(),
             "hid":      str(hf.hid).lower(),
             "mbell":    str(hf.mbell).lower(),
+            "mdigi":    str(hf.mdigi).lower(),
+            "mproto":   str(hf.mproto).lower(),
+            "mstamp":   str(hf.mstamp).lower(),
+            "passall":  str(hf.passall).lower(),
+            "bbsmsgs":  str(hf.bbsmsgs).lower(),
+            "fulldp":   str(hf.fulldp).lower(),
             "ubit0":    str(hf.ubit0).lower(),
             "show_link_messages_in_ui_channel":
                 str(hf.show_link_messages_in_ui_channel).lower(),
