@@ -45,7 +45,10 @@ from ..modes.packet_vhf import VHFPacketMode
 from ..comm.params_uploader import ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
 from pk232py.comm.param_applier import ParamApplier, SerialParamTransport, format_result
-from pk232py.comm.host_params import BAND_HF, BAND_VHF, band_of_mode, band_value
+from pk232py.comm.host_params import (
+    BAND_HF, BAND_VHF, band_of_mode, band_value, norm_value,
+)
+from pk232py.comm.verbose_parse import HF_PACKET_FIELDS, VerboseSync
 from pk232py.colors import role_colors
 from pk232py.ui.screens.ui_theme import get_theme as _display_colors, recolor_document
 from .dialogs.params_hf      import PacketParamsDialog
@@ -231,6 +234,8 @@ class MainWindow(QMainWindow):
         # already written when the theme changes.
         self._role_colors = role_colors(self._app_config.appearance.theme,
                                         self._app_config.appearance.bg_color)
+        # P78 B: the TNC's "was/now" answers in the verbose terminal -> config.
+        self._verbose_sync = VerboseSync()
 
         # Apply the saved theme's palette + style BEFORE building any widgets,
         # so every widget inherits the right palette at construction time.
@@ -5833,6 +5838,69 @@ class MainWindow(QMainWindow):
         self._vt_display.setTextCursor(cursor)
         self._vt_display.ensureCursorVisible()
 
+    def _take_verbose_change(self, name: str, old: str, new: str) -> None:
+        """Take one confirmed verbose change (name, was, now) into the Packet
+        parameters (P78 B).
+
+        Writes the configuration only if the value really differs - the app's
+        own init upload and ParamApplier cause the same was/now lines, and a
+        second save for an unchanged value would be noise. Text values are
+        compared the way the TNC reformats them ("APZ232 VIA A,B" comes back
+        as "APZ232 via A, B"). A parameter without a configuration field is
+        only reported in the monitor log; so is a band value (MAXFRAME,
+        SLOTTIME) while no Packet mode says which band it belongs to.
+        """
+        spec = HF_PACKET_FIELDS.get(name)
+        if spec is None:
+            if old != new:
+                self._log_monitor(
+                    f"[SYS] {name} {old} -> {new}: not taken into the "
+                    "parameters (no configuration field)")
+            return
+        attr, kind = spec
+        hf = self._app_config.hf_packet
+        if isinstance(attr, dict):                      # one value per band (P73)
+            band = band_of_mode(self._modes.current_mode_name)
+            if band is None:
+                self._log_monitor(
+                    f"[SYS] {name} {new}: not taken into the parameters "
+                    "(no Packet mode, so the band is unknown)")
+                return
+            attr = attr[band]
+        current = getattr(hf, attr)
+        if kind == "int":
+            try:
+                value = int(new.split()[0])
+            except (ValueError, IndexError):
+                return
+            if value == current:
+                return
+        elif kind == "bool":
+            value = norm_value(new, "bool") == "Y"
+            if value == current:
+                return
+        else:                                           # text
+            value = new
+            if norm_value(new, "text") == norm_value(str(current), "text"):
+                return
+        setattr(hf, attr, value)
+        self._config_mgr.save()
+        self._tnc_unapplied.discard(name)
+        self._sync_monitor_selectors()
+        self._vt_append(f"[SYS] {name} {new} taken into the parameters\n",
+                        color=self._sys_color())
+
+    def _sync_monitor_selectors(self) -> None:
+        """Show the configured MONITOR level in the Packet screens' selectors
+        (without sending anything - signals blocked)."""
+        level = str(self._app_config.hf_packet.monitor)
+        for screen in self._opmode_screens.values():
+            combo = getattr(screen, "combo_monitor", None)
+            if combo is not None and combo.currentText() != level:
+                combo.blockSignals(True)
+                combo.setCurrentText(level)
+                combo.blockSignals(False)
+
     def _on_vt_rx_data(self, data: bytes) -> None:
         """Display raw bytes received from TNC in verbose terminal.
 
@@ -5851,6 +5919,12 @@ class MainWindow(QMainWindow):
         # Insert blank line before cmd: to separate response blocks
         text = text.replace('cmd:', '\ncmd:')
         self._vt_append(text)              # TNC output: RX colour (P77)
+        # P78 B: a parameter changed in the verbose terminal must reach the
+        # configuration, or the next mode switch / Host Mode entry sends the
+        # OLD value over it (T162). The TNC confirms with "<Name> was a" /
+        # "<Name> now b"; ONE parser, comm/verbose_parse.py.
+        for _name, _old, _new in self._verbose_sync.feed(text):
+            self._take_verbose_change(_name, _old, _new)
         # P67, Teil C.4: every RECEIVED verbose line feeds the
         # LinkTable - a typed CONVERSE/CONV/K or Ctrl-C only changes
         # .converse once the TNC's own response confirms it (an echo
