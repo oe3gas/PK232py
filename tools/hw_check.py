@@ -6974,6 +6974,338 @@ def test_ubit_probe(session: "Session", log: RunLog) -> None:
 # CLI
 # ===========================================================================
 
+# ===========================================================================
+# P81 -- restart_probe (T168): what does the APP'S OWN init do to Packet
+# connections the TNC still holds when PK232PY is started again after a
+# crash? MEASURES ONLY (hw_check rule 6) - the check at start-up (P81 A-C)
+# is built on these findings. No new frame builder and no own init: the
+# restart is SerialManager.connect_port() + init_tnc() (the detection chain)
+# followed by ParamsUploader.upload() with every answer written to the log.
+# The "crash" closes the port WITHOUT HOST OFF and without DISCONNECT, which
+# is what a killed process leaves behind. Variants (--part): A = TNC in
+# verbose command mode, B = TNC in Host Mode, C = TNC in Converse.
+# ===========================================================================
+
+_RP_VARIANTS = {
+    "A": "TNC in the verbose command mode (links made in Host Mode, Host Mode left)",
+    "B": "TNC in Host Mode (the port is closed inside it)",
+    "C": "TNC in Converse (links made from the verbose CONNECT)",
+}
+_RP_CALLER = "OE3GAS-2"          # QtTermTCP on PC 2, the incoming call
+
+# A TNC answer that means "this command did not do what was asked".
+_RP_REJECT_RE = re.compile(r"\?|not while|\*\*\*|invalid|illegal|error|what\b", re.I)
+
+
+def restart_probe_variants(part: str) -> list:
+    """The variants a --part runs, in order: 'A'|'B'|'C' or 'all' = A, B, C."""
+    if part == "all":
+        return ["A", "B", "C"]
+    if part in _RP_VARIANTS:
+        return [part]
+    raise ValueError(f"part must be A, B, C or all, got {part!r}")
+
+
+def classify_upload_answer(cmd: str, found: bool, answer: bytes) -> str:
+    """'silent' (no cmd: prompt came back), 'rejected' (the TNC's answer says
+    the command failed, e.g. '?not while connected') or 'ok'. The TNC echoes
+    the command first; the echo is removed before the answer is judged, so a
+    parameter NAME is never mistaken for an error text."""
+    if not found:
+        return "silent"
+    text = answer.decode("ascii", errors="replace")
+    text = text.replace(cmd.strip(), "").replace("cmd:", "")
+    return "rejected" if _RP_REJECT_RE.search(text) else "ok"
+
+
+def links_from_cstatus(cstatus_text: str) -> dict:
+    """{channel: partner} for every channel the verbose CSTATUS shows with a
+    partner (a free channel has none). Never guessed beyond the parser."""
+    return {ch: partner for ch, (_io, _state, partner)
+            in sorted(parse_cstatus(cstatus_text).items()) if partner}
+
+
+def restart_probe_verdict(links_init: Optional[dict], links_after: Optional[dict],
+                          rejected: list) -> str:
+    """One line per variant: did the init / the upload cost a link or a command?
+    None = not measurable (the TNC was not at the cmd: prompt)."""
+    parts = []
+    if links_init is None:
+        parts.append("init: links not measurable")
+    else:
+        parts.append("init kept links" if links_init else "init: NO links found")
+    if links_init and links_after is not None:
+        lost = sorted(set(links_init) - set(links_after))
+        parts.append("upload LOST " + ",".join(f"ch{c}" for c in lost) if lost
+                     else "upload kept the links")
+    parts.append(f"{len(rejected)} command(s) rejected" if rejected
+                 else "no command rejected")
+    return "; ".join(parts)
+
+
+def restart_probe_steps(part: str, mycall: str) -> list:
+    """The ordered operator plan, as (key, ProbeStep) pairs (built before the
+    first transmission, like channel_probe_steps)."""
+    me = mycall or "<TNC MYCALL>"
+    plan: list = []
+    for v in restart_probe_variants(part):
+        plan.append((f"{v}.call", ProbeStep(
+            f"T168 {v}  incoming call ({_RP_VARIANTS[v].split(' (')[0]})", WHERE_PC2, 2,
+            [f"In QtTermTCP, use the session with callsign {_RP_CALLER}.",
+             f"Connect to {me}.",
+             "Wait until QtTermTCP shows it is connected - or 30 seconds pass.",
+             "Leave this connection OPEN."],
+            "go back to PC 1 and press ENTER here (recording also ends by "
+            "itself after 120 seconds). The program then simulates the crash.")))
+        plan.append((f"{v}.check", ProbeStep(
+            f"T168 {v}  is the link still alive after the restart?", WHERE_PC2, 2,
+            [f"Look at the QtTermTCP session {_RP_CALLER}: still connected?",
+             "Type ONE short line in that session and send it."],
+            "go back to PC 1, answer the question on this screen and press ENTER.")))
+    return plan
+
+
+def _rp_plan(part: str, mycall: str, log: Optional[RunLog]) -> "ProbePlan":
+    """A ProbePlan (show/skip) over restart_probe_steps()."""
+    plan = ProbePlan.__new__(ProbePlan)
+    keyed = restart_probe_steps(part, mycall)
+    plan.by_key = dict(keyed)
+    plan.run = StepRun([step for _, step in keyed], log)
+    plan.log = log
+    return plan
+
+
+def _rp_simulate_crash(session: "Session", log: RunLog) -> None:
+    """Close the port the way a killed process leaves it: no HOST OFF, no
+    DISCONNECT. Threads are stopped (a dead process has none), then the
+    Session gets a FRESH SerialManager - the restarted app. Reaches into
+    SerialManager's private threads on purpose: a public close would be
+    exactly the clean shutdown this probe must NOT do."""
+    sm = session.sm
+    log.line(f"CRASH: host_mode={sm.is_host_mode} - closing the port without "
+             f"HOST OFF / DISCONNECT")
+    sm._poll_active = False
+    for name in ("_reader", "_worker"):
+        thread = getattr(sm, name, None)
+        if thread is not None:
+            thread.stop()
+            thread.join(timeout=1.0)
+            setattr(sm, name, None)
+    port = sm._serial
+    if port is not None and port.is_open:
+        port.close()
+    sm._serial = None
+    session.sm = SerialManager()
+    session.sm.raw_data_received.connect(session._on_raw)
+    del session._raw_buf[:]
+    time.sleep(1.0)   # the OS releases the port
+
+
+def _rp_restart_like_app(session: "Session", log: RunLog) -> bool:
+    """The app's connect: connect_port() + init_tnc() (the P43 detection
+    chain). Unlike Session.connect() it accepts a TNC still in Host Mode as
+    a RESULT to log, not an error. False if the TNC did not answer."""
+    sm = session.sm
+    if not sm.connect_port(session.port_name, baudrate=session.baud):
+        raise HWCheckError(f"Port busy - is pk232py running? ({session.port_name})")
+    sm.init_tnc()
+    answered = session._wait_until(
+        lambda: sm.is_verbose_mode or sm.is_host_mode, timeout=8.0)
+    log.line(
+        f"RESTART init: answered={answered} verbose={sm.is_verbose_mode} "
+        f"host={sm.is_host_mode} release={sm.tnc_release!r} "
+        f"defaults={sm.tnc_defaults!r} "
+        f"verbose_confirmed={getattr(sm, 'verbose_confirmed', None)}")
+    return answered
+
+
+def _rp_upload_logged(session: "Session", log: RunLog, app_config: AppConfig) -> list:
+    """ParamsUploader.upload() exactly as the app runs it, with every command's
+    full answer in the log. [{'cmd','found','answer','verdict'}, ...]."""
+    sm = session.sm
+    records: list = []
+
+    def logged(data: bytes, timeout: float = 5.0) -> bool:
+        found, text = sm._write_verbose_wait_text(data, timeout=timeout)
+        cmd = data.decode("ascii", errors="replace").strip()
+        verdict = classify_upload_answer(cmd, found, text)
+        records.append({"cmd": cmd, "found": found, "answer": text, "verdict": verdict})
+        log.line(f"UPLOAD {cmd!r} found={found} {verdict} answer={text!r}")
+        return found
+
+    sm.write_verbose_wait = logged          # instance attribute, removed below
+    try:
+        sent = ParamsUploader(sm, app_config).upload()
+    finally:
+        del sm.write_verbose_wait
+    log.line(f"UPLOAD done: {sent} command(s) sent")
+    return records
+
+
+def _rp_cstatus_links(session: "Session", log: RunLog, label: str) -> Optional[dict]:
+    """Verbose CSTATUS -> {channel: partner}; None if the TNC is not at cmd:."""
+    if not _confirm_command_prompt_light(session, label, log):
+        log.line(f"{label} CSTATUS skipped: no cmd: prompt")
+        return None
+    raw = session.query("CSTATUS")
+    log.line(f"{label} CSTATUS: {raw!r}")
+    links = links_from_cstatus(raw)
+    log.line(f"{label} links: {links}")
+    return links
+
+
+def _rp_make_links(
+    session: "Session", log: RunLog, v: str, target: str, frames: dict,
+    plan: "ProbePlan",
+) -> Optional[dict]:
+    """Build the links for variant *v* and leave the TNC in the state *v* names.
+    Returns the links seen right before the crash ({} when not measurable,
+    None if the operator declined)."""
+    if v == "C":
+        if not confirm_tx(f"Verbose CONNECT {target} (the TNC stays in Converse)."):
+            return None
+        log.line(f"C CONNECT echo: {session.verbose(f'CONNECT {target}')!r}")
+        log.line(f"C waiting: {session.read_until_idle(idle=2.0, max_total=30.0)!r}")
+        plan.show("C.call")
+        wait_for_enter(session._pump, 120.0)
+        session._pump(0.3)
+        return {}     # in Converse nothing can be asked without leaving it
+    session.enter_host_mode()
+    session.drain_pending_frames()
+    if not _probe_connect(session, log, target, 1):
+        session.exit_host_mode()
+        return None
+    _pump_capture(session, 30.0, log, f"{v} connect ch1")
+    captured: list = []
+    session.sm.frame_received.connect(captured.append)
+    try:
+        plan.show(f"{v}.call")
+        wait_for_enter(session._pump, 120.0)
+        session._pump(0.3)
+    finally:
+        session.sm.frame_received.disconnect(captured.append)
+    for f in captured:
+        log.line(f"{v} call << ctl=0x{f.ctl:02X} ch={f.channel} "
+                 f"data={f.data!r} text={f.text!r}")
+    results = _probe_links(session, frames, f"{v} before crash", log)
+    before = {ch: r.partner for ch, r in results.items()
+              if not r.unparsed and r.error_code is None and r.connected}
+    if v == "A":
+        session.exit_host_mode()
+        _confirm_command_prompt_light(session, "A left Host Mode", log)
+    return before
+
+
+def _rp_cleanup(session: "Session", log: RunLog, frames: dict) -> None:
+    """DI on every channel the TNC still shows connected, then leave Host Mode."""
+    if session.sm.is_host_mode:
+        session.exit_host_mode()
+    _confirm_command_prompt_light(session, "cleanup", log)
+    session.enter_host_mode()
+    try:
+        _probe_disconnect_all(session, log, frames, "cleanup")
+    finally:
+        session.exit_host_mode()
+
+
+def _rp_variant(
+    session: "Session", log: RunLog, v: str, target: str, frames: dict,
+    plan: "ProbePlan", app_config: AppConfig,
+) -> None:
+    log.line(f"--- restart_probe {v}: {_RP_VARIANTS[v]} ---")
+    before = _rp_make_links(session, log, v, target, frames, plan)
+    if before is None:
+        log.result(f"T168 {v}", "INFO", "skipped by operator")
+        plan.skip(f"{v}.call")
+        plan.skip(f"{v}.check")
+        return
+    log.line(f"{v} links before the crash: {before}")
+    _rp_simulate_crash(session, log)
+    answered = _rp_restart_like_app(session, log)
+    if not answered:
+        log.result(f"T168 {v}", "FAIL", "the TNC did not answer the app's init")
+        plan.skip(f"{v}.check")
+        return
+    if session.sm.is_host_mode:
+        log.result(f"T168 {v}", "INFO",
+                   "init ended in Host Mode - upload not possible, nothing measured")
+        plan.skip(f"{v}.check")
+        return
+    links_init = _rp_cstatus_links(session, log, f"{v} after init")
+    records = _rp_upload_logged(session, log, app_config)
+    links_after = _rp_cstatus_links(session, log, f"{v} after upload")
+    rejected = [r["cmd"] for r in records if r["verdict"] == "rejected"]
+    silent = [r["cmd"] for r in records if r["verdict"] == "silent"]
+    for cmd in rejected:
+        log.line(f"{v} REJECTED: {cmd}")
+    plan.show(f"{v}.check")
+    alive = input("Is the QtTermTCP session still connected, and did your "
+                  "line go out? [y/N] ").strip().lower() == "y"
+    verdict = restart_probe_verdict(links_init, links_after, rejected)
+    log.result(
+        f"T168 {v}", "INFO",
+        f"links_before={before} links_init={links_init} links_after={links_after} "
+        f"rejected={rejected} silent={silent} pc2_link_alive={alive} -- {verdict}")
+    _rp_cleanup(session, log, frames)
+
+
+def test_restart_probe(
+    session: "Session", log: RunLog, part: str, app_config: AppConfig,
+) -> None:
+    variants = restart_probe_variants(part)
+    log.line(f"--- restart_probe (T168): app init with live links, variant(s) "
+             f"{','.join(variants)} ---")
+    frames = {ch: HostModeProtocol.cmd_link_status(ch) for ch in range(10)}
+    target = _CHANNEL_PROBE_TARGET
+
+    if session.dry_run:
+        plan = _rp_plan(part, "<TNC MYCALL>", log)
+        for v in variants:
+            log.line(f"[dry-run] {v}: {_RP_VARIANTS[v]}")
+        log.line("[dry-run] would: set up the links, simulate the crash (close the "
+                 "port without HOST OFF), restart with connect_port()+init_tnc(), "
+                 "CSTATUS, ParamsUploader.upload() with every answer logged, CSTATUS "
+                 "again, ask the operator, then DI on all connected channels:")
+        for ch in range(10):
+            session.send_channel_frame(ch, frames[ch], note=f"CO ch{ch}")
+        for key in list(plan.by_key):
+            plan.show(key)
+        log.result("T168", "INFO", "dry-run, nothing sent")
+        return
+
+    session.normalize()
+    mycall = parse_query_value("MYCALL", session.query("MYCALL")) or ""
+    if not mycall:
+        log.result("T168", "SKIPPED", "MYCALL not parseable -- nothing touched")
+        return
+    target = input(f"Counterpart callsign for the connect [{target}]? ").strip() or target
+    plan = _rp_plan(part, mycall, log)
+    print()
+    print(f"restart_probe --part {part}: {plan.run.total} steps; the program "
+          f"simulates the crash itself (no action for you).")
+    print(f"Before we start: PC 2 has the TinyBox {target} running and QtTermTCP "
+          f"with {_RP_CALLER} DISCONNECTED; PC 1: PK232PY is closed. The app's own "
+          f"upload overwrites the TNC parameters (that is the measurement).")
+    if input("Ready to continue? [y/N] ").strip().lower() != "y":
+        log.result("T168", "INFO", "skipped by operator")
+        return
+    originals = _channel_probe_vhf_check(session, log, "T168")
+    if originals is None:
+        return
+    try:
+        for v in variants:
+            _rp_variant(session, log, v, target, frames, plan, app_config)
+    finally:
+        try:
+            for cmd, value in originals.items():
+                if value is not None:
+                    verify_restore(
+                        cmd, lambda c=cmd: session.query(c),
+                        lambda val, c=cmd: session.set_verbose(c, val), value, log)
+        except Exception as exc:    # best effort: the TNC may be mid-state
+            log.line(f"(restore warning: {exc!r})")
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="hw_check.py",
@@ -6999,7 +7331,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
             "maildrop_session", "aprs_query", "aprs_tx", "aprs_reject",
             "link_carry", "link_carry_host", "channel_probe", "host_params_probe",
-            "ubit_probe", "all",
+            "ubit_probe", "restart_probe", "all",
         ],
     )
     p.add_argument(
@@ -7009,7 +7341,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "host_params_probe: A = ask/set/verbose cross-check (T151), "
              "B = set while connected (T152), all = A and B; "
              "C = find the parameter that breaks verbose commands (T155, "
-             "never part of all)"
+             "never part of all). "
+             "restart_probe (P81, T168): A = TNC left in verbose command mode, "
+             "B = left in Host Mode, C = left in Converse, all = A, B and C"
     )
     p.add_argument(
         "--expert-off", action="store_true",
@@ -7063,6 +7397,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.test == "channel_probe" and args.part == "A":
         parser.error("channel_probe takes --part B, C or all")
+    if args.test == "restart_probe" and args.part not in ("A", "B", "C", "all"):
+        parser.error("restart_probe takes --part A, B, C or all")
     if args.expert_off and (args.test != "host_params_probe" or args.part != "A"):
         parser.error("--expert-off belongs to host_params_probe --part A")
     if args.reevaluate:
@@ -7149,6 +7485,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "host_params_probe": [
             lambda s, l: test_host_params_probe(s, l, args.part, exclude, args.expert_off)],
         "ubit_probe": [lambda s, l: test_ubit_probe(s, l)],
+        "restart_probe": [lambda s, l: test_restart_probe(s, l, args.part, app_config)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
