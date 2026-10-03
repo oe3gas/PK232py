@@ -46,8 +46,9 @@ class ColorButton(QPushButton):
         return self._color
 
     def _pick_color(self) -> None:
-        # P77b: no options on purpose - in particular NOT DontUseNativeDialog,
-        # so the platform's own colour picker is used wherever Qt offers one.
+        # P77b: no options on purpose - in particular the option that forces
+        # Qt's own widget dialog is NOT set, so the platform's colour picker
+        # is used wherever Qt offers one.
         # Where it falls back to Qt's dialog, MainWindow's dialog hook gives it
         # the standard palette (it is a QDialog like any other).
         c = QColorDialog.getColor(
