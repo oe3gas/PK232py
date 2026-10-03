@@ -253,6 +253,19 @@ def param_by_name(name: str) -> Optional[HostParam]:
     return _BY_NAME.get(name.upper())
 
 
+def verified_mnemonic(name: str) -> bytes:
+    """The Host Mode mnemonic of parameter *name*, ONLY if a measurement backs
+    it (P80a). The UI switches and the mode frames take their mnemonic from
+    here instead of a literal of their own - one place, so a refuted guess
+    (RV, P2, AC) cannot live on in a second spelling. LookupError for an
+    unknown parameter, one without a mnemonic or one never verified: the
+    caller must then not send (CLAUDE.md rule 6)."""
+    row = param_by_name(name)
+    if row is None or not row.mnemonic or not row.verified_releases:
+        raise LookupError(f"no verified Host Mode mnemonic for {name!r}")
+    return row.mnemonic
+
+
 # ---------------------------------------------------------------------------
 # Answer / argument formats (T151, T152, T156) - the ONE place, both
 # directions. Used by ParamApplier and tools/hw_check.py.

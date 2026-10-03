@@ -8,7 +8,7 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 |---|---|---|---|---|---|---|
 | `3R` | 3RDPARTY (maildrop); matrix line 260, confidence L | param |  | T151 | T151 | - |
 | `8B` | 8BITCONV (rtty); matrix line 353, confidence M | param |  | T151 | T151 | - |
-| `AC` | ARQ: app sends it as ARQ call (amtor.py, main_window.py) but pactor.py sends ARQTMO with it (conflict) [matrix line 180] | action | TX | - | - | - |
+| `AC` | ARQ call (amtor, main_window.py PACTOR connect); matrix line 180, confidence M | action | TX | - | - | - |
 | `AD` | ADELAY (amtor); matrix line 178, confidence M | param |  | T151 | T151 | - |
 | `AG` | ACHG (amtor); matrix line 177, confidence M | action |  | - | - | - |
 | `AK` | ACRPACK (packet); matrix line 292, confidence M | param |  | T151 | T151 | - |
@@ -21,7 +21,7 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `AU` | AAB (amtor); matrix line 176, confidence M | param |  | - | - | - |
 | `AV` | AX25L2V2 (packet); matrix line 294, confidence M | param |  | T151 | T151 | - |
 | `AY` | ASPECT (fax); matrix line 201, confidence M | param |  | - | - | - |
-| `Ao` | ARQTOL as amtor.py sends it; ARQTOL is ?What? on 01.AUG.91 (T151), the mixed-case form is a guess - not in matrix | param |  | - | - | - |
+| `Ao` | NOT SENT since P80a: ARQTOL has no known Host Mode command (T151: the verbose ARQTOL is ?What? on 01.AUG.91); the mixed-case spelling was a guess - not in matrix | param |  | - | - | - |
 | `BA` | BAUDOT (global); matrix line 224, confidence M | mode |  | - | - | - |
 | `BB` | BBSMSGS (maildrop); matrix line 261, confidence L | param |  | T160 | T161 | - |
 | `BT` | BTEXT (packet); matrix line 298, confidence M | param |  | - | - | - |
@@ -60,7 +60,7 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `MF` | MFROM (packet); matrix line 322, confidence M | param |  | - | - | - |
 | `MG` | MYSELCAL (amtor); matrix line 190, confidence M | param |  | - | - | - |
 | `MH` | MHEARD (packet); matrix line 323, confidence M | query |  | - | - | - |
-| `MI` | MFILTER: app sends MID (morse.py) and a MID toggle (main_window.py); measured: MFILTER (T115) [matrix line 345] | param |  | - | T115 (MI$80 = verbose MFILTER $80) | - |
+| `MI` | MFILTER (measured: MI$80 = verbose MFILTER $80, T115). NOT SENT since P80a: the Packet MID button and the Morse ID spin box were wired to it by mistake; they are greyed out. No Morse ID mnemonic is known [matrix line 345, confidence L] | param |  | - | T115 (MI$80 = verbose MFILTER $80) | - |
 | `MK` | MYALTCAL; pactor.py also sends it as MYPTCALL; the matrix MDCHECK row is refuted (no MDCHECK mnemonic, T118) [matrix line 189, confidence M] | param |  | - | - | - |
 | `ML` | MYCALL (packet); matrix line 327, confidence M | param |  | - | - | - |
 | `MN` | MONITOR (packet); matrix line 324, confidence M | param |  | T151 | T151, T152 | - |
@@ -80,7 +80,6 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `NM` | NAVMSG (navtex); matrix line 288, confidence L | param |  | - | - | - |
 | `NS` | NAVSTN (navtex); matrix line 289, confidence L | param |  | - | - | - |
 | `OP` | OPMODE (global); matrix line 242, confidence M | query |  | - | T141 (OP queried in Host Mode) | - |
-| `P2` | PT200 as pactor.py sends it; the matrix has PB for PT200 (conflict) - not in matrix | param |  | - | - | - |
 | `PA` | PACKET (global); matrix line 243, confidence M | mode |  | - | T31 (init frames ACKed, 2026-05-17, ACK only) | - |
 | `PB` | PT200 (matrix line 347) [matrix line 347, confidence L] | param |  | - | T151 | - |
 | `PD` | PTSEND; main_window.py sends it with "1,2" [matrix line 351, confidence L] | action | TX | - | - | - |
@@ -98,7 +97,6 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `RF` | RFEC (amtor); matrix line 192, confidence M | param |  | T151 | T151 | - |
 | `RP` | RESPTIME (packet); matrix line 335, confidence M | param |  | T151 | T151 | - |
 | `RT` | RESTART (danger); matrix line 200, confidence H | action |  | - | - | - |
-| `RV` | RXREV as main_window.py sends it; host_params has RX for RXREV (conflict) - not in matrix | param |  | - | - | - |
 | `RX` | RXREV (amtor); matrix line 193, confidence M | param |  | T151 | T151 | - |
 | `RY` | RETRY (packet); matrix line 336, confidence M | param |  | T151 | T151, T152 | - |
 | `SA` | SAMPLE (global); matrix line 248, confidence M | action |  | - | - | - |

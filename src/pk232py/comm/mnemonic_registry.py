@@ -39,7 +39,12 @@ class MnemonicEntry:
     kind: str                 # "mode" | "param" | "query" | "action" | "channel"
     evidence: dict = field(default_factory=dict)   # release -> "T151, T152"
     transmits: bool = False   # keys the transmitter (XM, CQ, ARQ call, connect ...)
+    sent: bool = True         # False = the app does NOT send it (any more); kept to
+                              # document a refuted assignment (P80a: MI, Ao)
 
+
+# P80a: documented but no longer sent by the application.
+_NOT_SENT = frozenset({"MI", "Ao"})
 
 # (mnemonic, meaning, kind, transmits, evidence outside host_params)
 _TABLE: tuple = (
@@ -47,7 +52,7 @@ _TABLE: tuple = (
      'param', False, {}),
     ('8B', '8BITCONV (rtty); matrix line 353, confidence M',
      'param', False, {}),
-    ('AC', 'ARQ: app sends it as ARQ call (amtor.py, main_window.py) but pactor.py sends ARQTMO with it (conflict) [matrix line 180]',
+    ('AC', 'ARQ call (amtor, main_window.py PACTOR connect); matrix line 180, confidence M',
      'action', True, {}),
     ('AD', 'ADELAY (amtor); matrix line 178, confidence M',
      'param', False, {}),
@@ -73,7 +78,7 @@ _TABLE: tuple = (
      'param', False, {}),
     ('AY', 'ASPECT (fax); matrix line 201, confidence M',
      'param', False, {}),
-    ('Ao', 'ARQTOL as amtor.py sends it; ARQTOL is ?What? on 01.AUG.91 (T151), the mixed-case form is a guess - not in matrix',
+    ('Ao', 'NOT SENT since P80a: ARQTOL has no known Host Mode command (T151: the verbose ARQTOL is ?What? on 01.AUG.91); the mixed-case spelling was a guess - not in matrix',
      'param', False, {}),
     ('BA', 'BAUDOT (global); matrix line 224, confidence M',
      'mode', False, {}),
@@ -151,7 +156,7 @@ _TABLE: tuple = (
      'param', False, {}),
     ('MH', 'MHEARD (packet); matrix line 323, confidence M',
      'query', False, {}),
-    ('MI', 'MFILTER: app sends MID (morse.py) and a MID toggle (main_window.py); measured: MFILTER (T115) [matrix line 345]',
+    ('MI', 'MFILTER (measured: MI$80 = verbose MFILTER $80, T115). NOT SENT since P80a: the Packet MID button and the Morse ID spin box were wired to it by mistake; they are greyed out. No Morse ID mnemonic is known [matrix line 345, confidence L]',
      'param', False, {'13.SEP.95': 'T115 (MI$80 = verbose MFILTER $80)'}),
     ('MK', 'MYALTCAL; pactor.py also sends it as MYPTCALL; the matrix MDCHECK row is refuted (no MDCHECK mnemonic, T118) [matrix line 189, confidence M]',
      'param', False, {}),
@@ -191,8 +196,6 @@ _TABLE: tuple = (
      'param', False, {}),
     ('OP', 'OPMODE (global); matrix line 242, confidence M',
      'query', False, {'13.SEP.95': 'T141 (OP queried in Host Mode)'}),
-    ('P2', 'PT200 as pactor.py sends it; the matrix has PB for PT200 (conflict) - not in matrix',
-     'param', False, {}),
     ('PA', 'PACKET (global); matrix line 243, confidence M',
      'mode', False, {'13.SEP.95': 'T31 (init frames ACKed, 2026-05-17, ACK only)'}),
     ('PB', 'PT200 (matrix line 347) [matrix line 347, confidence L]',
@@ -227,8 +230,6 @@ _TABLE: tuple = (
      'param', False, {}),
     ('RT', 'RESTART (danger); matrix line 200, confidence H',
      'action', False, {}),
-    ('RV', 'RXREV as main_window.py sends it; host_params has RX for RXREV (conflict) - not in matrix',
-     'param', False, {}),
     ('RX', 'RXREV (amtor); matrix line 193, confidence M',
      'param', False, {}),
     ('RY', 'RETRY (packet); matrix line 336, confidence M',
@@ -286,7 +287,8 @@ def _build() -> dict:
     registry: dict = {}
     for mnemonic, meaning, kind, transmits, evidence in _TABLE:
         registry[mnemonic.encode("ascii")] = MnemonicEntry(
-            mnemonic.encode("ascii"), meaning, kind, dict(evidence), transmits)
+            mnemonic.encode("ascii"), meaning, kind, dict(evidence), transmits,
+            sent=mnemonic not in _NOT_SENT)
     # Parameters measured through host_params: take the evidence from there.
     for row in HOST_PARAMS:
         entry = registry.get(row.mnemonic)
