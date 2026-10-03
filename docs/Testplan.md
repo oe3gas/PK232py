@@ -3361,7 +3361,18 @@ After the run: `python tools/hw_check.py mnemonic_probe --reevaluate <log>` prin
 the evidence to enter in `comm/mnemonic_registry.py` (parameter rows: also
 `host_params_probe --reevaluate` on the same log). Nothing is typed from the log by hand.
 
-**Status:** ⬜ OPEN — hardware session (device B = T166, device A = T167).
+**Status:** ✅ PASS (03.10.2026; device B `01.AUG.91` = T166, `hw_logs/20261003_213830_mnemonic_probe.log`;
+device A `13.SEP.95` = T167, `hw_logs/20261003_214801_mnemonic_probe.log`). Results equal on both devices unless noted.
+
+- **Modes confirmed** (ACK `$00`, OP answer, back to `PA` checked): `BA` OPBAR, `AS` OPASR, `MO` OPMOR.., `AM` OPAM0R, `FA` OPFA0R,
+  `SI` OPSI, `TV` OPTV0R, `NA` OPNA0; device A also `PN` -> OPPN1R1000 (PTLIST, one mode).
+- **Parameters confirmed** (set, ACK, read back, verbose cross-check, restored): `EA` EAS, `WI` WIDESHFT, `SR` SRXALL, `US` USOS,
+  `WO` WORDOUT, `FN` FAXNEG, `SQ` SQUELCH, `AY` ASPECT. Query only, answer = verbose value: `RB` RBAUD, `FS` FSPEED, `NM` NAVMSG, `NS` NAVSTN.
+- **Refuted / not what the app assumed:** `NE` answers `NEY`, OPMODE stays `PA` (NEWMODE, a parameter - NAVTEX is `NA`); `PT` answers
+  `PTA 10`, OPMODE stays `PA` (PACTIME, device A); `XL`, `EE` `$07`; `MW` answers `MWN` (a switch), setting 11 gives `$01`; `CI` answers
+  `CIN` (a switch, verbose CODE is 0); `MY` `$07` (B) / `MYnone` (A) - ambiguous. MID scan `MA MB MC MJ MZ`: no hit.
+- **Open:** bare `MH` answers only `MH$01` (B) / `MH$03` (A), no list - the app polls `MH0`..`MH17`, not bare `MH` (P80b report).
+- The tool rated the parameters `unparsed` (no row, so no mnemonic/kind); fixed in P80b: `--reevaluate` on both logs gives `verified` for the eight set rows.
 
 ---
 
