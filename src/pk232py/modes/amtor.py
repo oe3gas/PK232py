@@ -55,7 +55,7 @@ Host Mode mnemonics (TRM Section 4.2.2)
   MK   MYALTCAL — alternative SELCAL
   MY   MYIDENT  — 7-char CCIR-625 ident
   AO   ARQTMO   — ARQ timeout (seconds)
-  Ao   ARQTOL   — ARQ bit-jitter tolerance (1-5)
+  --   ARQTOL   — no Host Mode command known (T151: "Ao" was a guess, ?What?)
   AD   ADELAY   — ARQ delay
   AG   ACHG     — ARQ changeover character
   AT   ACRRTTY  — auto CR
@@ -191,7 +191,6 @@ class AMTORMode(BaseMode):
             frames.append(self.myident_frame(self.myident))
         frames += [
             self.arqtmo_frame(self.arqtmo),
-            self.arqtol_frame(self.arqtol),
             self.adelay_frame(self.adelay),
             self.rfec_frame(self.rfec),
             self.srxall_frame(self.srxall),
@@ -351,15 +350,9 @@ class AMTORMode(BaseMode):
         """
         return build_command(b'AO', str(seconds).encode('ascii'))
 
-    @staticmethod
-    def arqtol_frame(tolerance: int) -> bytes:
-        """ARQTOL — ARQ bit-jitter tolerance 1-5 (mnemonic Ao).
-
-        1 = tight (fewer retransmissions, more errors accepted),
-        5 = loose (more retransmissions, better for poor conditions).
-        Default: 3.
-        """
-        return build_command(b'Ao', str(tolerance).encode('ascii'))
+    # ARQTOL: no frame builder (P80a). The guessed mnemonic "Ao" was refuted by
+    # T151 (the verbose ARQTOL is ?What? on 01.AUG.91) and no Host Mode command
+    # is known; AMTORMode.arqtol stays a configuration value.
 
     @staticmethod
     def adelay_frame(delay: int) -> bytes:

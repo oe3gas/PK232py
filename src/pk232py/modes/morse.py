@@ -31,7 +31,7 @@ Host Mode mnemonics (TRM Section 4.2.2)
   MO   MORSE    — enter Morse mode (mnemonic MO)
   MP   MSPEED   — send/receive speed in WPM (5-99)
   MW   MWEIGHT  — dit/dah weight ratio (10-90, default 10)
-  MI   MID      — Morse ID interval in minutes (0=off)
+  --   MID      — NOT sent: MI is MFILTER (T115), no Morse ID mnemonic known (P80a)
   EA   EAS      — echo as sent (Y/N)
   WO   WORDOUT  — send only complete words (Y/N)
   LO   LOCK     — lock receive speed to current signal (direct cmd)
@@ -132,7 +132,6 @@ class MorseMode(BaseMode):
         return [
             self.mspeed_frame(self.mspeed),
             self.mweight_frame(self.mweight),
-            self.mid_frame(self.mid),
             self.eas_frame(self.eas),
             self.wordout_frame(self.wordout),
             self.xmitok_frame(self.xmitok),
@@ -223,13 +222,8 @@ class MorseMode(BaseMode):
         weight = max(MWEIGHT_MIN, min(MWEIGHT_MAX, weight))
         return build_command(b'MW', str(weight).encode('ascii'))
 
-    @staticmethod
-    def mid_frame(minutes: int) -> bytes:
-        """MID — Morse ID interval in minutes (mnemonic MI).
-
-        0 = disabled.  When set, TNC sends MYCALL in Morse at interval.
-        """
-        return build_command(b'MI', str(minutes).encode('ascii'))
+    # MID: no frame builder (P80a). MI is MFILTER (T115), so the old
+    # mid_frame() changed the wrong parameter; the Morse ID mnemonic is unknown.
 
     @staticmethod
     def eas_frame(enabled: bool) -> bytes:

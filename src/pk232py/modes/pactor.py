@@ -54,6 +54,7 @@ import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
 from pk232py.comm.frame import build_command, build_data, FrameKind
+from pk232py.comm.host_params import verified_mnemonic
 from pk232py.modes.base_mode import BaseMode
 
 if TYPE_CHECKING:
@@ -203,12 +204,13 @@ class PACTORMode(BaseMode):
 
     @staticmethod
     def pt200_frame(enabled: bool) -> bytes:
-        """Build a PT200 ON/OFF frame (mnemonic P2).
+        """Build a PT200 ON/OFF frame (mnemonic PB, T151 device A; from
+        comm/host_params.py - "P2" was a guess, P80a).
 
         Controls automatic 100/200 baud speed selection.
         STABO Ch. 12 / PACTOR Parameters dialog.
         """
-        return build_command(b'P2', b'Y' if enabled else b'N')
+        return build_command(verified_mnemonic("PT200"), b'Y' if enabled else b'N')
 
     @staticmethod
     def ptround_frame(enabled: bool) -> bytes:
@@ -230,12 +232,15 @@ class PACTORMode(BaseMode):
 
     @staticmethod
     def arqtmo_frame(seconds: int) -> bytes:
-        """Build an ARQTMO frame — set ARQ timeout (mnemonic AC).
+        """Build an ARQTMO frame — set ARQ timeout (mnemonic AO, T151).
+
+        The mnemonic comes from comm/host_params.py (P80a): "AC" here was a
+        guess - AC is the ARQ call.
 
         Args:
             seconds: Timeout 1-255 (default 60).
         """
-        return build_command(b'AC', str(seconds).encode('ascii'))
+        return build_command(verified_mnemonic("ARQTMO"), str(seconds).encode('ascii'))
 
     @staticmethod
     def data_frame(data: bytes) -> bytes:
