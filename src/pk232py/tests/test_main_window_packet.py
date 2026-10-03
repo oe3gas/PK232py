@@ -981,9 +981,13 @@ class TestKeyboardFocusHandling:
         assert screen.tx_input.toPlainText() == "z"
 
     def test_monitor_combo_changes_value_without_leaking_into_tx_window(
-        self, wired_vhf,
+        self, wired_vhf, monkeypatch,
     ):
         w, screen = wired_vhf
+        # P78 C: the selector now goes through ParamApplier (which needs a
+        # real-looking serial, see test_p78_release_and_sync.py); this test is
+        # about keyboard focus only.
+        monkeypatch.setattr(w, "_apply_changed_params", lambda before, label: None)
         self._settle(w)
         assert screen.combo_monitor.currentText() == screen.MONITOR_DEFAULT
         screen.tx_input.clear()
