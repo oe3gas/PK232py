@@ -3333,6 +3333,22 @@ Software: `test_p78_devices_parse.py`, `test_p78_release_and_sync.py`.
 
 ---
 
+### T165 — Appearance: every theme keeps its own settings (P79)
+
+Software: `test_appearance_per_theme_p79.py`. No TNC needed.
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Theme Air: Font & Colors -> font A, TX text green. Theme Dark: font B. Theme Retro: font C | each OK; the title reads "Appearance — Air" / "— Dark" / "— Retro" | ⬜ |
+| 2 | Switch between Air, Dark, Retro | each theme shows its own font/colour | ⬜ |
+| 3 | Quit PK232PY, start it again | all three themes still have their own settings; the old theme is selected | ⬜ |
+| 4 | Air -> Font & Colors -> Reset -> OK | Air shows its defaults; Dark and Retro unchanged | ⬜ |
+| 5 | Open an old `pk232py.ini` (one `[Appearance]` section with a font) | the font appears under the stored theme; after saving the INI has `[Appearance.<theme>]` | ⬜ |
+
+**Status:** ⬜ OPEN — visual check (operator).
+
+---
+
 ### T157 — App: parameters right after OK (P72)
 
 Device B, VHF Packet, 144.800 MHz with a dummy load or minimum power; PC 1

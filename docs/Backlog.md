@@ -70,6 +70,16 @@ selector changes the configuration and goes through ParamApplier. Facts:
 TNC, then A). **Not covered:** was/now answers of parameters outside the Packet
 section (PACTOR, AMTOR, Baudot, Misc) are only reported, not taken.
 
+### Per-theme appearance (P79) — implemented, T165 open (2026-10-03)
+
+Every theme has its own font, size, background, foreground, RX and TX colour. The
+config keeps only the deviations per theme (`AppearanceConfig.overrides`, INI
+`[Appearance.<theme>]`); `effective(theme)` combines default and override. A theme
+switch restores the theme's own settings, the Font & Colors dialog edits the
+current theme (title "Appearance — Air"), Reset clears that theme's overrides.
+`custom` is a fifth theme (Dark defaults) without special status. Old INIs are
+migrated on load. Open: T165 (visual check).
+
 ### Packet parameters mask (P73) — implemented, T160/T161 PASS, T162 FAIL (fixed by P78, T164 open) (2026-10-03)
 
 Parameters -> **Packet...** (was "HF Packet...", class `PacketParamsDialog`):

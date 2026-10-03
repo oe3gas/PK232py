@@ -617,12 +617,32 @@
 
 ---
 
+### Per-theme appearance (P79, 2026-10-03)
+
+- **`AppearanceConfig.effective(theme)` is the ONLY place that combines a theme's
+  default with its override.** The single fields (`font_family` ... `tx_color`)
+  are the effective values of the CURRENT theme; every reader keeps using them.
+  Never write a theme's preset values into them anywhere else (the old
+  "self-healing" block in `MainWindow._apply_appearance()` is gone).
+- **Field edits become overrides via `store_overrides()`** (diff against
+  `defaults(theme)`; a value equal to the default is dropped). `switch_theme()`
+  stores first, then loads the new theme; `ConfigManager._build_appearance()`
+  stores too. Consequence: after assigning `overrides` by hand, call
+  `load_effective()`, or the next save derives the overrides from stale fields.
+- **Theme defaults live in `colors.THEME_DISPLAY` / `THEME_TEXT_COLORS`** (Qt-free,
+  `config.py` must not import `ui`); `ui/themes.py` builds its `Theme` objects
+  from them. `custom` is a theme of its own with Dark defaults, not reachable from
+  the menu (only through an old INI).
+- **The dialog writes `_family_name`, not `currentFont().family()`**: a font that
+  is not installed is shown as the combo's fallback, OK must not replace it.
+  Headless tests have no fonts at all - set `dlg._family_name` in tests.
+
 ### Display colors: one source (P77, 2026-10-03)
 
 - **RX/TX text colors live in `AppearanceConfig.rx_color` / `tx_color` - nowhere
   else.** Themes (`ui/themes.py`, `colors.THEME_TEXT_COLORS`) only supply defaults;
   a theme selection copies them into the config, a hand change in the Appearance
-  dialog makes the theme `custom`. Before P77 `ui/screens/ui_theme.py` had its own
+  dialog was `custom` until P79 (now: per-theme overrides, see above). Before P77 `ui/screens/ui_theme.py` had its own
   `rx_color`/`tx_color` per dark/light palette and the app always used the DARK
   one - gold `#ffee88` on a white background (screenshots 03.10.2026).
 - **`ui_theme.get_theme()` = widget palette + configured colors.**
