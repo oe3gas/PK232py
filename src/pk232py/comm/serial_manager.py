@@ -51,6 +51,7 @@ from .constants import (
     CTL_TX_DATA_BASE,
     ctl_channel,
 )
+from .devices import SOURCE_BANNER, SOURCE_INFERRED, infer_release
 from .pk232_hostmode_sub import HostModeWorker as _HostModeWorker
 from .pk232_hostmode_sub import escape_converse as _escape_converse
 from .frame import (
@@ -556,6 +557,7 @@ class SerialManager(QObject):
     verbose_mode_ready     = pyqtSignal()
     verbose_resumed        = pyqtSignal()        # P68
     host_mode_changed      = pyqtSignal(bool)
+    release_changed        = pyqtSignal(str, str)   # P78: (release, "banner"|"inferred")
     params_upload_required = pyqtSignal()
     status_message         = pyqtSignal(str)
     init_failed             = pyqtSignal()          # P45.2
@@ -602,6 +604,12 @@ class SerialManager(QObject):
         # this stays None until detect_maildrop() actively queries it
         # (P37). None means "not yet detected", never "no MailDrop".
         self._has_maildrop: Optional[bool] = None
+        # P78 A: the release INFERRED from the EXPERT fingerprint when no
+        # banner was seen (see comm/devices.py); the banner always wins.
+        # release_probe_attempted: the (single) query was already made this
+        # connection - an unusable answer must not be asked again and again.
+        self._inferred_release: Optional[str] = None
+        self.release_probe_attempted: bool = False
         # Shared buffer: ReaderThread writes here, write_verbose_wait()
         # (via _read_until_prompt(), P52.1) reads here
         self._rx_buf           = bytearray()
@@ -654,10 +662,45 @@ class SerialManager(QObject):
     @property
     def tnc_release(self) -> Optional[str]:
         """Firmware release date exactly as printed in the boot banner
-        (e.g. '01.AUG.91'), or None if no banner was captured, e.g. when
-        the TNC was already at the cmd: prompt at connect time (P37) -
-        nothing here invents a value or normalises the date format."""
-        return _parse_release(self._tnc_banner)
+        (e.g. '01.AUG.91'). Without a banner (the TNC was already at the
+        cmd: prompt at connect time, P37) the release INFERRED from the
+        EXPERT fingerprint (P78 A, comm/devices.py), or None if that has not
+        been (or could not be) determined. The banner always wins. Nothing
+        here normalises the date format."""
+        return _parse_release(self._tnc_banner) or self._inferred_release
+
+    @property
+    def tnc_release_source(self) -> Optional[str]:
+        """"banner", "inferred" or None (release unknown) - P78 A."""
+        if _parse_release(self._tnc_banner):
+            return SOURCE_BANNER
+        return SOURCE_INFERRED if self._inferred_release else None
+
+    def set_inferred_release(self, release: str, source: str = SOURCE_INFERRED) -> None:
+        """Store a release found by the EXPERT fingerprint and tell the UI.
+        A banner release is never replaced."""
+        if _parse_release(self._tnc_banner):
+            return
+        self._inferred_release = release
+        self.release_changed.emit(release, source)
+
+    def probe_release_verbose(self, timeout: float = 3.0) -> Optional[str]:
+        """No banner release known: ONE verbose ``EXPERT`` query and the
+        fingerprint of its answer (P78 A). Must be called at the cmd: prompt
+        - the same discipline as detect_maildrop(), which it runs next to
+        (ParamsUploader.upload()). The Host Mode variant (``EX``) needs the
+        frame exchange of SerialParamTransport, which is where it lives.
+
+        Returns the release afterwards (None if still unknown)."""
+        if (self.tnc_release is not None or self.release_probe_attempted
+                or not self.is_connected):
+            return self.tnc_release
+        self.release_probe_attempted = True
+        _found, raw = self._write_verbose_wait_text(b"EXPERT\r\n", timeout=timeout)
+        found = infer_release(raw.decode("ascii", errors="replace"))
+        if found:
+            self.set_inferred_release(*found)
+        return self.tnc_release
 
     @property
     def tnc_defaults(self) -> Optional[bool]:
@@ -790,6 +833,10 @@ class SerialManager(QObject):
         if self.is_connected:
             logger.warning("Port already open")
             return False
+        # P78 A: a new connection may be a different TNC - forget an inferred
+        # release (the banner, if any, is captured again by the init).
+        self._inferred_release = None
+        self.release_probe_attempted = False
         try:
             factory = self._port_factory or serial.Serial
             self._serial = factory(
