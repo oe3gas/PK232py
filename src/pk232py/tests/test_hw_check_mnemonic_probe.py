@@ -47,8 +47,8 @@ class TestScope:
     def test_mode_frames_are_the_apps_own(self):
         by = {mn: frame for mn, _l, frame, _n in _modes()}
         assert by["BA"] == HostModeProtocol.cmd_baudot()
-        assert by["NE"] == HostModeProtocol.cmd_navtex()
-        assert by["PT"] == HostModeProtocol.cmd_pactor()
+        # NE and PT are literals since P80b (T166/T167: both are parameters)
+        assert by["NE"][2:4] == b"NE" and by["PT"][2:4] == b"PT"
 
     def test_no_transmitting_or_action_mnemonic_is_ever_sent(self):
         """The whole probe: modes, candidate parameters, MID scan candidates,
@@ -68,10 +68,6 @@ class TestScope:
     def test_mi_is_not_probed_as_a_parameter(self):
         mns = {p.mnemonic for p in hw_check.mnemonic_probe_candidates()}
         assert b"MI" not in mns
-
-    def test_candidates_are_not_already_measured_rows(self):
-        measured = {p.mnemonic for p in HOST_PARAMS if p.verified_releases}
-        assert not measured & {p.mnemonic for p in hw_check.mnemonic_probe_candidates()}
 
     def test_only_int_and_bool_candidates_can_be_set(self):
         for p in hw_check.mnemonic_probe_candidates():

@@ -6053,6 +6053,12 @@ def _hp_verbose_before(name: str, response: str) -> Optional[str]:
     return None
 
 
+def _hp_row(name: str):
+    """The row for *name*: HOST_PARAMS first, else a mnemonic_probe candidate."""
+    return param_by_name(name) or next(
+        (p for p in mnemonic_probe_candidates() if p.name == name.upper()), None)
+
+
 def classify_host_param(
     name: str, query1: Optional[bytes], set_resp: Optional[bytes],
     query2: Optional[bytes], verbose_before: Optional[str],
@@ -6108,7 +6114,9 @@ def _classify_host_param(
     name, query1, set_resp, query2, verbose_before, test_value, *,
     verbose_test=None, verbose_rejected=False, mnemonic=None,
 ) -> str:
-    param = param_by_name(name)
+    # P80b: a candidate row of mnemonic_probe is not in HOST_PARAMS (yet); without
+    # its mnemonic and kind every answer was "unparsed" (T166/T167).
+    param = _hp_row(name)
     mn = mnemonic if mnemonic is not None else (param.mnemonic if param else b"")
     kind = param.kind if param else "text"
     for resp in (set_resp, query1):
@@ -6161,9 +6169,12 @@ def reevaluate_host_params_log(path, out=print) -> dict:
     pass0: dict = {}
     pending: Optional[str] = None
     expert_off = any("EXPERT OFF requested" in ln for ln in lines)
+    seen_original = False
     for ln in lines:
-        if "STEP 1 of" in ln:
-            break          # Pass 0 = everything before Host Mode is entered
+        if " original " in ln:
+            seen_original = True
+        if seen_original and "STEP " in ln and " of " in ln:
+            break          # Pass 0 = the originals, before the Host pass starts
         m = re.search(r"\] >> (b'[A-Z0-9 ]+\\r\\n')$", ln)
         if m:
             # "UBIT 0" (query with index) is filed under "UBIT"
@@ -7338,12 +7349,14 @@ def mnemonic_probe_mode_frames() -> list:
         ("AS", "ASCII", HostModeProtocol.cmd_ascii_rtty(), False),
         ("MO", "MORSE", HostModeProtocol.cmd_morse(), False),
         ("AM", "AMTOR", HostModeProtocol.cmd_amtor(), False),
-        ("PT", "PACTOR", HostModeProtocol.cmd_pactor(), True),
+        # PT and NE are probed as literals: the app's builders are gone (P80b,
+        # T166/T167 showed both are parameters, not modes) - re-run to re-check.
+        ("PT", "PACTOR", build_command(b"PT"), True),
         ("FA", "FAX", FAXMode().get_activate_frames()[0], False),
         ("SI", "SIGNAL", SignalMode().get_activate_frames()[0], False),
         ("TV", "TDM", TDMMode().get_activate_frames()[0], False),
         ("NA", "NAVTEX (navtex.py)", NAVTEXMode().get_activate_frames()[0], False),
-        ("NE", "NAVTEX (hostmode.cmd_navtex)", HostModeProtocol.cmd_navtex(), False),
+        ("NE", "NAVTEX (NEWMODE, P80b)", build_command(b"NE"), False),
     ]
 
 
