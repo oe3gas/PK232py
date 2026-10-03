@@ -70,6 +70,16 @@ selector changes the configuration and goes through ParamApplier. Facts:
 TNC, then A). **Not covered:** was/now answers of parameters outside the Packet
 section (PACTOR, AMTOR, Baudot, Misc) are only reported, not taken.
 
+### Restart with live Packet links (P81) — Teil 0 built, A-C wait for T168 (2026-10-03)
+
+Operator wish: when PK232PY connects and the TNC did NOT print a banner, check for
+active Packet sessions (`CSTATUS`, `OPMODE`, `VHF`) before the parameter upload,
+show them (LinkTable, Packet mask, `[SYS]` line, no bell) and let the upload
+respect them. Unmeasured: what the full upload (~70 commands) does to a live link.
+Built: `hw_check.py restart_probe` (T168). Open: T168 (device B), then P81 A-C
+(`Init: check for live Packet links…`, `Init: parameter upload respects live
+links`, `MainWindow: show live links found at start-up`), tests, T169.
+
 ### Mnemonic audit (P80) — Parts A-C and E implemented, Part D waits for the operator (2026-10-03)
 
 `comm/mnemonic_registry.py` lists every Host Mode mnemonic the application sends

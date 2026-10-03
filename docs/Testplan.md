@@ -3343,6 +3343,44 @@ Software: `test_p78_devices_parse.py`, `test_p78_release_and_sync.py`.
 
 ---
 
+### T168 — `restart_probe`: the app's init with live links (P81, Teil 0)
+
+`python tools/hw_check.py restart_probe --part A|B|C|all` (device B; PC 1 =
+PK232PY tool + PK-232, PC 2 = TinyBox `OE3GAS-1` + QtTermTCP `OE3GAS-2`).
+Software: `test_hw_check_restart_probe.py`. Simulates the crash (port closed
+WITHOUT HOST OFF / DISCONNECT), then runs the app's own init
+(`connect_port()` + `init_tnc()`) and `ParamsUploader.upload()`, every
+answer in the log. The upload overwrites the TNC parameters (that is the
+measurement); VHF/HBAUD are restored afterwards.
+
+| # | Variant | TNC when the port is closed | Expected in the log |
+|---|---|---|---|
+| A | `--part A` | verbose command mode, links on ch0 (OE3GAS-2) and ch1 (OE3GAS-1) | `links_before` / `links_init` / `links_after`, rejected commands, PC 2 link alive? |
+| B | `--part B` | Host Mode | same; `RESTART init:` line says whether the init left Host Mode |
+| C | `--part C` | Converse (verbose `CONNECT`) | same; `links_before` is `{}` (not measurable in Converse) |
+
+Result per variant: `T168 <v> INFO links_before=… links_init=… links_after=… rejected=[…] silent=[…] pc2_link_alive=… -- <verdict>`.
+P81 parts A-C are built from these lines (parts B/D take the test cases from
+the real log lines).
+
+**Status:** ⬜ OPEN — hardware session (device B).
+
+---
+
+### T169 — App: live links found at start-up (P81, after T168)
+
+Device B. Needs P81 parts A-C (not built yet - they wait for T168).
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Two links as in T168; end PK232PY in the Task Manager; start it again | both chips connected, `[SYS]` line "2 active connections found: …", NO bell | ⬜ |
+| 2 | Same, but end PK232PY normally | as 1 | ⬜ |
+| 3 | Control: TNC off/on, start PK232PY | no check (banner), no links | ⬜ |
+
+**Status:** ⬜ OPEN — blocked by T168 and P81 A-C.
+
+---
+
 ### T165 — Appearance: every theme keeps its own settings (P79)
 
 Software: `test_appearance_per_theme_p79.py`. No TNC needed.
