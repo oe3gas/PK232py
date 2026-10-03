@@ -132,6 +132,21 @@ _ROWS: tuple = (
     HostParam("KILONFWD", b"KL", "bool"),   # matrix line 268, confidence L
     HostParam("MTEXT", b"", "text"),   # not in matrix
     HostParam("DAYTIME", b"DA", "text"),   # matrix line 230, confidence M
+    # P80b: measured by T166 (device B) and T167 (device A), see _VERIFIED_B_T166.
+    HostParam("EAS", b"EA", "bool"),
+    HostParam("WIDESHFT", b"WI", "bool"),
+    HostParam("SRXALL", b"SR", "bool"),
+    HostParam("USOS", b"US", "bool"),
+    HostParam("WORDOUT", b"WO", "bool"),
+    HostParam("FAXNEG", b"FN", "bool"),
+    HostParam("SQUELCH", b"SQ", "bool"),
+    HostParam("ASPECT", b"AY", "int", 1, 6),
+    # Query only (answer = the verbose value on both devices), NOT verified for
+    # setting: kind "text" so the probe never sets them and P72 never does.
+    HostParam("RBAUD", b"RB", "text"),
+    HostParam("FSPEED", b"FS", "text"),
+    HostParam("NAVMSG", b"NM", "text"),
+    HostParam("NAVSTN", b"NS", "text"),
 )
 
 # --- P72 Teil A: measured releases ------------------------------------------
@@ -179,6 +194,15 @@ _PACKET_MONITOR_FLAGS = frozenset({
 })
 _VERIFIED_B_T160 = _PACKET_MONITOR_FLAGS
 _VERIFIED_A_T161 = _PACKET_MONITOR_FLAGS
+# T166 (device B, 03.10.2026 21:38, hw_logs/20261003_213830_mnemonic_probe.log,
+# banner `release=01.AUG.91`) and T167 (device A, 21:48,
+# hw_logs/20261003_214801_mnemonic_probe.log, banner `release=13.SEP.95`): per row
+# query, set `<mn> $00`, query = test value, verbose cross-check, restored.
+_MNEMONIC_PROBE_SET = frozenset({
+    "EAS", "WIDESHFT", "SRXALL", "USOS", "WORDOUT", "FAXNEG", "SQUELCH", "ASPECT",
+})
+_VERIFIED_B_T166 = _MNEMONIC_PROBE_SET
+_VERIFIED_A_T167 = _MNEMONIC_PROBE_SET
 
 
 # P80: the measurement behind each (release, parameter) pair - the registry
@@ -192,6 +216,8 @@ _VERIFIED_SETS = (
     (RELEASE_A, "T152", _VERIFIED_A_T152),
     (RELEASE_A, "T156", _VERIFIED_A_T156),
     (RELEASE_A, "T161", _VERIFIED_A_T161),
+    (RELEASE_B, "T166", _VERIFIED_B_T166),
+    (RELEASE_A, "T167", _VERIFIED_A_T167),
 )
 
 

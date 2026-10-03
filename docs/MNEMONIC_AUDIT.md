@@ -13,21 +13,21 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `AG` | ACHG (amtor); matrix line 177, confidence M | action |  | - | - | - |
 | `AK` | ACRPACK (packet); matrix line 292, confidence M | param |  | T151 | T151 | - |
 | `AL` | ALIST (amtor); matrix line 179, confidence M | action |  | - | - | - |
-| `AM` | AMTOR (global); matrix line 221, confidence M | mode |  | - | - | - |
+| `AM` | AMTOR (global); matrix line 221, confidence M | mode |  | T166 (ACK $00, OPAM0R, back to PA) | T167 (ACK $00, OP OPAM0R, back to PA) | - |
 | `AO` | ARQTMO; T151: AO answers the ARQTMO value, not ARQTOL [matrix line 181, confidence M] | param |  | T151 | T151 | - |
 | `AP` | ALFPACK (packet); matrix line 293, confidence M | param |  | T151 | T151 | - |
 | `AR` | ALFRTTY (rtty); matrix line 356, confidence M | param |  | T151 | T151 | - |
-| `AS` | ASCII (global); matrix line 222, confidence M | mode |  | - | - | - |
+| `AS` | ASCII (global); matrix line 222, confidence M | mode |  | T166 (ACK $00, OPASR, back to PA) | T167 (ACK $00, OP OPASR, back to PA) | - |
 | `AU` | AAB (amtor); matrix line 176, confidence M | param |  | - | - | - |
 | `AV` | AX25L2V2 (packet); matrix line 294, confidence M | param |  | T151 | T151 | - |
-| `AY` | ASPECT (fax); matrix line 201, confidence M | param |  | - | - | - |
+| `AY` | ASPECT (fax); matrix line 201, confidence M | param |  | T166 | T167 | - |
 | `Ao` | NOT SENT since P80a: ARQTOL has no known Host Mode command (T151: the verbose ARQTOL is ?What? on 01.AUG.91); the mixed-case spelling was a guess - not in matrix | param |  | - | - | - |
-| `BA` | BAUDOT (global); matrix line 224, confidence M | mode |  | - | - | - |
+| `BA` | BAUDOT (global); matrix line 224, confidence M | mode |  | T166 (ACK $00, OPBAR, back to PA) | T167 (ACK $00, OP OPBAR, back to PA) | - |
 | `BB` | BBSMSGS (maildrop); matrix line 261, confidence L | param |  | T160 | T161 | - |
 | `BT` | BTEXT (packet); matrix line 298, confidence M | param |  | - | - | - |
 | `CF` | CFROM (packet); matrix line 300, confidence M | param |  | T138 | - | - |
 | `CG` | CONSTAMP (packet); matrix line 308, confidence M | param |  | T151 | T151 | - |
-| `CI` | CPACTIME: app sends CODE (rtty_baudot.py), matrix: CPACTIME [matrix line 309] | param |  | - | - | - |
+| `CI` | NOT SENT since P80b: CI is not CODE - the query answers CIN (a switch; matrix: CPACTIME) while the verbose CODE is 0 (T166/T167); the verbose upload is unchanged | param |  | - | - | - |
 | `CK` | CHECK (packet); matrix line 303, confidence M | param |  | T151 | T151 | - |
 | `CL` | CANLINE (global); matrix line 226, confidence M | param |  | - | - | - |
 | `CN` | COMMAND (global); matrix line 228, confidence M | param |  | - | - | - |
@@ -39,14 +39,14 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `DI` | DISCONNECT (packet); matrix line 311, confidence M | channel | TX | - | - | - |
 | `DS` | DAYSTAMP (global); matrix line 229, confidence M | param |  | T151 | T151 | - |
 | `DW` | DWAIT (packet); matrix line 312, confidence M | param |  | T151 | T151 | - |
-| `EA` | EAS (amtor); matrix line 185, confidence M | param |  | - | - | - |
-| `EE` | ERRCHAR (amtor.py, rtty_ascii.py) - not in matrix | param |  | - | - | - |
+| `EA` | EAS (amtor); matrix line 185, confidence M | param |  | T166 | T167 | - |
+| `EE` | NOT SENT since P80b: ERRCHAR has no Host Mode command under EE - $07 (unknown) on both devices (T166/T167); the verbose upload is unchanged. Matrix: ER for ERRCHAR (line 287), not measured | param |  | - | - | - |
 | `EX` | EXPERT (global); matrix line 233, confidence L | param |  | - | - | - |
-| `FA` | FAX (global); matrix line 234, confidence M | mode |  | - | - | - |
+| `FA` | FAX (global); matrix line 234, confidence M | mode |  | T166 (ACK $00, OPFA0R, back to PA) | T167 (ACK $00, OP OPFA0R, back to PA) | - |
 | `FE` | FEC (amtor); matrix line 186, confidence M | action | TX | - | - | - |
-| `FN` | FAXNEG (fax); matrix line 204, confidence M | param |  | - | - | - |
+| `FN` | FAXNEG (fax); matrix line 204, confidence M | param |  | T166 | T167 | - |
 | `FR` | FRACK (packet); matrix line 313, confidence M | param |  | T151 | T151, T152 | - |
-| `FS` | FSPEED (fax); matrix line 205, confidence M | param |  | - | - | - |
+| `FS` | FSPEED (fax); matrix line 205, confidence M | param |  | T166 (query = verbose value; query only, not verified for setting) | T167 (query = verbose value; query only, not verified for setting) | - |
 | `HB` | HBAUD (packet); matrix line 315, confidence M | param |  | - | T112 (restore reports HBaud was 300) | - |
 | `HD` | HEADERLN (packet); matrix line 316, confidence M | param |  | T151 | T151 | - |
 | `HM` | HOMEBBS (maildrop); matrix line 267, confidence L | param |  | - | - | - |
@@ -59,12 +59,12 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `ME` | MBELL (maildrop); matrix line 271, confidence L | param |  | T160 | T161 | - |
 | `MF` | MFROM (packet); matrix line 322, confidence M | param |  | - | - | - |
 | `MG` | MYSELCAL (amtor); matrix line 190, confidence M | param |  | - | - | - |
-| `MH` | MHEARD (packet); matrix line 323, confidence M | query |  | - | - | - |
+| `MH` | MHEARD (packet); matrix line 323, confidence M; T166/T167: a BARE MH answers only MH$01 (B) / MH$03 (A), no list - the app polls MH0..MH17 (main_window._on_packet_mheard), not bare MH | query |  | - | - | - |
 | `MI` | MFILTER (measured: MI$80 = verbose MFILTER $80, T115). NOT SENT since P80a: the Packet MID button and the Morse ID spin box were wired to it by mistake; they are greyed out. No Morse ID mnemonic is known [matrix line 345, confidence L] | param |  | - | T115 (MI$80 = verbose MFILTER $80) | - |
 | `MK` | MYALTCAL; pactor.py also sends it as MYPTCALL; the matrix MDCHECK row is refuted (no MDCHECK mnemonic, T118) [matrix line 189, confidence M] | param |  | - | - | - |
 | `ML` | MYCALL (packet); matrix line 327, confidence M | param |  | - | - | - |
 | `MN` | MONITOR (packet); matrix line 324, confidence M | param |  | T151 | T151, T152 | - |
-| `MO` | MORSE (global); matrix line 238, confidence M | mode |  | - | - | - |
+| `MO` | MORSE (global); matrix line 238, confidence M | mode |  | T166 (ACK $00, OPMOR22, back to PA) | T167 (ACK $00, OPMOR20, back to PA) | - |
 | `MP` | MSPEED (morse); matrix line 286, confidence M | param |  | T151 | T151 | - |
 | `MQ` | MPROTO (maildrop); matrix line 277, confidence L | param |  | T160 | T161 | - |
 | `MR` | MRPT (packet); matrix line 325, confidence M | param |  | T151 | T151 | - |
@@ -72,13 +72,13 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `MT` | MTO (packet); matrix line 326, confidence M | param |  | - | - | - |
 | `MU` | MMSG (maildrop); matrix line 276, confidence L | param |  | T151 | T151 | - |
 | `MV` | MAILDROP (maildrop); matrix line 270, confidence L | param |  | T151 | T151 | - |
-| `MW` | MARSDISP: app sends MWEIGHT (morse.py), matrix: MARSDISP [matrix line 188] | param |  | - | - | - |
+| `MW` | NOT SENT since P80b: MW is not MWEIGHT - the query answers MWN (a switch; matrix: MARSDISP) and a set of 11 gets $01 (T166/T167); the verbose upload is unchanged | param |  | - | - | - |
 | `MX` | MAXFRAME (packet); matrix line 320, confidence M | param |  | T151 | T151, T152 | - |
-| `MY` | MYGATE: app sends MYIDENT (amtor.py), matrix: MYGATE [matrix line 280] | param |  | - | - | - |
-| `NA` | NAVTEX (navtex); matrix line 290, confidence L | mode |  | - | - | - |
-| `NE` | NEWMODE: app sends it as NAVTEX mode switch (hostmode.py), matrix: NEWMODE; navtex.py sends NA [matrix line 346] | mode |  | - | - | - |
-| `NM` | NAVMSG (navtex); matrix line 288, confidence L | param |  | - | - | - |
-| `NS` | NAVSTN (navtex); matrix line 289, confidence L | param |  | - | - | - |
+| `MY` | NOT SENT since P80b: MYIDENT mapping unproven - $07 on device B, "MYnone" on device A (T166/T167, ambiguous; matrix: MYGATE); the verbose upload is unchanged | param |  | - | - | - |
+| `NA` | NAVTEX (navtex); matrix line 290, confidence L | mode |  | T166 (ACK $00, OPNA0, back to PA) | T167 (ACK $00, OP OPNA0, back to PA) | - |
+| `NE` | NEWMODE (pactor; matrix line 346). NOT SENT since P80b: the app used it as NAVTEX mode switch (hostmode.cmd_navtex, removed); T166/T167: the answer is NEY and OPMODE stays PA - a parameter, NAVTEX is NA | param |  | T166 (query: NEY, OPMODE stays PA) | T167 (query: NEY, OPMODE stays PA) | - |
+| `NM` | NAVMSG (navtex); matrix line 288, confidence L | param |  | T166 (query = verbose value; query only, not verified for setting) | T167 (query = verbose value; query only, not verified for setting) | - |
+| `NS` | NAVSTN (navtex); matrix line 289, confidence L | param |  | T166 (query = verbose value; query only, not verified for setting) | T167 (query = verbose value; query only, not verified for setting) | - |
 | `OP` | OPMODE (global); matrix line 242, confidence M | query |  | - | T141 (OP queried in Host Mode) | - |
 | `PA` | PACKET (global); matrix line 243, confidence M | mode |  | - | T31 (init frames ACKed, 2026-05-17, ACK only) | - |
 | `PB` | PT200 (matrix line 347) [matrix line 347, confidence L] | param |  | - | T151 | - |
@@ -86,13 +86,13 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `PE` | PERSIST (packet); matrix line 331, confidence M | param |  | T151 | T151 | - |
 | `PH` | PTHUFF (matrix section 3 text, no table row) | param |  | - | T151 | - |
 | `PL` | PACLEN (packet); matrix line 328, confidence M | param |  | T151 | T151, T152 | - |
-| `PN` | PTLIST (pactor); matrix line 349, confidence M | query |  | - | - | - |
+| `PN` | PTLIST (pactor): enters the PTLIST mode (matrix line 349, confidence M) | mode |  | - | T167 (ACK $00, OPPN1R1000, back to PA) | - |
 | `PP` | PPERSIST (packet); matrix line 332, confidence M | param |  | T151 | T151 | - |
-| `PT` | PACTIME: app sends it as PACTOR mode switch, matrix: PACTIME [matrix line 329] | mode |  | - | - | - |
+| `PT` | PACTIME (packet; matrix line 329). NOT SENT since P80b: the app used it as PACTOR standby, but T167 shows the answer "PTA 10" and OPMODE stays PA - a parameter, not a mode (T167) | param |  | - | T167 (query: PTA 10, OPMODE stays PA) | - |
 | `PV` | PTOVER (pactor); matrix line 350, confidence L | param |  | - | - | - |
 | `PX` | PASSALL (packet); matrix line 330, confidence M | param |  | T160 | T161 | - |
 | `Pr` | PTROUND (pactor.py), mixed-case form - not in matrix | param |  | - | - | - |
-| `RB` | RBAUD (rtty); matrix line 361, confidence M | param |  | - | - | - |
+| `RB` | RBAUD (rtty); matrix line 361, confidence M | param |  | T166 (query = verbose value; query only, not verified for setting) | T167 (query = verbose value; query only, not verified for setting) | - |
 | `RC` | RCVE (return to receive) [matrix line 212, confidence M] | action |  | - | - | - |
 | `RF` | RFEC (amtor); matrix line 192, confidence M | param |  | T151 | T151 | - |
 | `RP` | RESPTIME (packet); matrix line 335, confidence M | param |  | T151 | T151 | - |
@@ -101,24 +101,24 @@ evidence for that release (`-` = none). `TX` = keys the transmitter.
 | `RY` | RETRY (packet); matrix line 336, confidence M | param |  | T151 | T151, T152 | - |
 | `SA` | SAMPLE (global); matrix line 248, confidence M | action |  | - | - | - |
 | `SE` | SELFEC (amtor); matrix line 194, confidence M | action | TX | - | - | - |
-| `SI` | SIGNAL (global); matrix line 249, confidence M | mode |  | - | - | - |
+| `SI` | SIGNAL (global); matrix line 249, confidence M | mode |  | T166 (ACK $00, OPSI, back to PA) | T167 (ACK $00, OP OPSI, back to PA) | - |
 | `SL` | SLOTTIME (packet); matrix line 338, confidence M | param |  | T151 | T151 | - |
 | `SP` | SENDPAC (packet); matrix line 337, confidence M | param |  | - | - | - |
-| `SQ` | SQUELCH toggle (main_window.py) [matrix line 339, confidence M] | param |  | - | - | - |
-| `SR` | SRXALL (amtor); matrix line 195, confidence M | param |  | - | - | - |
+| `SQ` | SQUELCH toggle (main_window.py) [matrix line 339, confidence M] | param |  | T166 | T167 | - |
+| `SR` | SRXALL (amtor); matrix line 195, confidence M | param |  | T166 | T167 | - |
 | `TD` | TXDELAY (rtty); matrix line 362, confidence M | param |  | T151 | T151, T152 | - |
 | `TL` | TMAIL (maildrop); matrix line 281, confidence L | param |  | T151 | T151 | - |
 | `TN` | TDCHAN (signal); matrix line 368, confidence L | param |  | T151 | T151 | - |
 | `TU` | TDBAUD (signal); matrix line 367, confidence L | param |  | T151 | T151 | - |
-| `TV` | TDM (signal); matrix line 369, confidence L | mode |  | - | - | - |
+| `TV` | TDM (signal); matrix line 369, confidence L | mode |  | T166 (ACK $00, OPTV0R, back to PA) | T167 (ACK $00, OP OPTV0R, back to PA) | - |
 | `TX` | TXREV (amtor); matrix line 196, confidence M | param |  | T151 | T151 | - |
 | `UB` | UBIT (maildrop); matrix line 282, confidence L | param |  | T156 | T156 | - |
 | `UN` | UNPROTO (packet); matrix line 342, confidence M | param |  | T138 | T101 (UI frame sent with the UNPROTO path) | - |
 | `UR` | USERS (maildrop); matrix line 283, confidence L | param |  | T151 | T151, T152 | - |
-| `US` | USOS (rtty); matrix line 363, confidence M | param |  | - | - | - |
+| `US` | USOS (rtty); matrix line 363, confidence M | param |  | T166 | T167 | - |
 | `VH` | VHF (packet); matrix line 343, confidence M | param |  | - | T112 (restore reports Vhf was OFF) | - |
-| `WI` | WIDESHFT (amtor.py, rtty_baudot.py) - not in matrix | param |  | - | - | - |
-| `WO` | WORDOUT (amtor); matrix line 197, confidence M | param |  | - | - | - |
-| `XL` | XLENGTH (amtor.py, rtty_ascii.py) - not in matrix | param |  | - | - | - |
+| `WI` | WIDESHFT (amtor.py, rtty_baudot.py) - not in matrix | param |  | T166 | T167 | - |
+| `WO` | WORDOUT (amtor); matrix line 197, confidence M | param |  | T166 | T167 | - |
+| `XL` | NOT SENT since P80b: XLENGTH has no Host Mode command under XL - $07 (unknown) on both devices (T166/T167); the verbose upload is unchanged | param |  | - | - | - |
 | `XM` | XMIT (fax); matrix line 214, confidence M | action | TX | - | - | - |
 | `XO` | XMITOK (global); matrix line 257, confidence M | param |  | T151 | T151 | - |
