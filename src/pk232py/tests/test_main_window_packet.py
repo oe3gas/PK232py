@@ -640,6 +640,13 @@ class TestModeInstanceFactory:
         assert ("cmd", b'MX', b'4') not in cmds
         assert ("cmd", b'SL', b'10') not in cmds
 
+    def test_build_mode_instance_carries_monitor_for_both_bands(self, window):
+        # P73 A: MN <configured value>, not MN Y, for HF and VHF alike.
+        w = window
+        w._app_config.hf_packet.monitor = 6
+        assert w._build_mode_instance("HF Packet").monitor == 6
+        assert w._build_mode_instance("VHF Packet").monitor == 6
+
     def test_host_mode_entry_default_activation_still_works(self, window):
         # _update_host_mode_ui(True) is the OTHER real set_mode() call site
         # in main_window.py (P19.1) - it always activates Baudot RTTY, so

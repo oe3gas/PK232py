@@ -410,12 +410,14 @@ class TestT112FrameSequence:
         assert build_command(b'MX', b'1') not in frames
         assert build_command(b'SL', b'30') not in frames
 
-    def test_sequence_ends_with_hf_monitor_on(self):
+    def test_sequence_ends_with_the_configured_monitor_level(self):
+        # P73 A: MN <n> (the config default 4), not MN Y.
         from pk232py.comm.frame import build_command
 
         frames = hw_check.build_t112_frame_sequence()
         assert frames
-        assert frames[-1] == build_command(b'MN', b'Y')
+        assert frames[-1] == build_command(b'MN', b'4')
+        assert build_command(b'MN', b'Y') not in frames
 
 
 class TestEvaluateT101:

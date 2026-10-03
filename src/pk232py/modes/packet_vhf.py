@@ -76,7 +76,7 @@ class VHFPacketMode(HFPacketMode):
     def get_init_frames(self) -> list[bytes]:
         """Return VHF-specific parameter frames.
 
-        Sequence (Testplan T31): HB 1200, MX 4, SL 10, MN Y.  ``VH Y`` is
+        Sequence (Testplan T31): HB 1200, MX, SL, MN <monitor>.  ``VH Y`` is
         already sent in get_activate_frames().
 
         Lernmodus: this deliberately does NOT call super().get_init_frames().
@@ -88,7 +88,7 @@ class VHFPacketMode(HFPacketMode):
             build_command(b'HB', b'1200'),  # HBAUD 1200
             build_command(b'MX', b'4'),     # MAXFRAME 4
             build_command(b'SL', b'10'),    # SLOTTIME 10 (10ms units = 100ms)
-            build_command(b'MN', b'Y'),     # MONITOR ON — receive unproto frames
+            build_command(b'MN', str(self.monitor).encode('ascii')),  # MONITOR (P73 A)
         ]
 
     def deactivate(self) -> None:

@@ -185,3 +185,30 @@ class TestGetInitFrames:
         assert build_command(b'VH', b'N') not in init
         assert build_command(b'MX', b'4') in init
         assert build_command(b'SL', b'10') in init
+
+
+# ---------------------------------------------------------------------------
+# P73 A - MONITOR from the configuration instead of "MN Y"
+# ---------------------------------------------------------------------------
+
+class TestMonitorFromConfig:
+    """MN Y makes the TNC set MONITOR 4 (STABO manual, UBIT 1 OFF) - the
+    operator's MONITOR 6 was lost after every mode switch."""
+
+    def test_hf_sends_the_configured_monitor(self):
+        frames = HFPacketMode(monitor=6).get_init_frames()
+        assert build_command(b'MN', b'6') in frames
+        assert build_command(b'MN', b'Y') not in frames
+
+    def test_vhf_sends_the_configured_monitor(self):
+        frames = VHFPacketMode(monitor=6).get_init_frames()
+        assert build_command(b'MN', b'6') in frames
+        assert build_command(b'MN', b'Y') not in frames
+
+    def test_monitor_zero_is_sent_too(self):
+        # 0 is a value, not "unset" - a falsy check would drop it.
+        assert build_command(b'MN', b'0') in HFPacketMode(monitor=0).get_init_frames()
+
+    def test_default_is_the_config_default(self):
+        from pk232py.config import HFPacketConfig
+        assert HFPacketMode().monitor == HFPacketConfig.monitor

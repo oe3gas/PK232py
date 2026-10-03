@@ -40,6 +40,7 @@ from ..comm.link_status import (
 from ..mode_manager import ModeManager
 from ..modes.base_mode import BaseMode
 from ..modes.packet_hf import HFPacketMode
+from ..modes.packet_vhf import VHFPacketMode
 from ..comm.params_uploader import ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
 from pk232py.comm.param_applier import ParamApplier, SerialParamTransport, format_result
@@ -1730,7 +1731,6 @@ class MainWindow(QMainWindow):
         # meaningful in Host Mode on a live link.
         if (self._modes.current_mode_name == "VHF Packet"
                 and self._serial.is_connected and self._serial.is_host_mode):
-            from pk232py.modes.packet_vhf import VHFPacketMode
             vh_off = VHFPacketMode.vhf_off_frame()
             self._serial.send_command(vh_off[2:4], vh_off[4:-1])
             self._log_monitor("[PACKET] Leaving VHF Packet — VHF OFF (VH N)")
@@ -1756,7 +1756,12 @@ class MainWindow(QMainWindow):
         """
         if mm_name == "HF Packet":
             hf_cfg = self._app_config.hf_packet
-            return HFPacketMode(maxframe=hf_cfg.maxframe, slottime=hf_cfg.slottime)
+            return HFPacketMode(maxframe=hf_cfg.maxframe, slottime=hf_cfg.slottime,
+                                monitor=hf_cfg.monitor)
+        if mm_name == "VHF Packet":
+            # P73 A: VHF carries the operator's MONITOR value too (it used to
+            # send MN Y = MONITOR 4); MX/SL follow in P73 B.
+            return VHFPacketMode(monitor=self._app_config.hf_packet.monitor)
         return None
 
     def _on_mode_changed(self, name: str) -> None:

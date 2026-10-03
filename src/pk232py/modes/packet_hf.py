@@ -17,7 +17,7 @@ In Host Mode, Packet operation produces the following frame types
     $4x  build_ch_cmd(ch, b'DI')            — DISCONNECT
     $2x  build_data(ch, data)               — send data on channel x
     $4F  build_command(b'PA')               — enter Packet mode
-    $4F  build_command(b'MN', b'Y')         — MONITOR ON
+    $4F  build_command(b'MN', b'4')         — MONITOR <n> (configured value)
     $4F  build_command(b'UN', b'CQ')        — UNPROTO CQ
 
 TODO (v0.2):
@@ -103,6 +103,7 @@ class HFPacketMode(BaseMode):
         self,
         maxframe: int = HFPacketConfig.maxframe,
         slottime: int = HFPacketConfig.slottime,
+        monitor: int = HFPacketConfig.monitor,
     ) -> None:
         """
         Args:
@@ -117,10 +118,15 @@ class HFPacketMode(BaseMode):
                       mode_instance=...) — see T112 (P18.1): without this,
                       HF Packet kept whatever MAXFRAME/SLOTTIME VHF Packet
                       last set.
+            monitor:  MONITOR level to send in get_init_frames() (mnemonic
+                      MN, 0-6). P73 A: used to be a fixed ``MN Y``, which
+                      the TNC turns into MONITOR 4 (STABO manual, UBIT 1) -
+                      the operator's own value was lost at every mode switch.
         """
         super().__init__()
         self.maxframe = maxframe
         self.slottime = slottime
+        self.monitor  = monitor
         # Callbacks — set by the UI or mode manager
         self.on_data_received: Optional[Callable[[int, bytes], None]] = None
         self.on_monitor_frame: Optional[Callable[[bytes], None]]      = None
@@ -152,9 +158,14 @@ class HFPacketMode(BaseMode):
         """Return parameter frames sent after Packet mode is confirmed.
 
         HF Packet selects the 300 Bd HF FSK modem (VHF OFF), resets
-        MAXFRAME/SLOTTIME to its own configured values, and enables the
-        frame monitor.  Sequence: VH N, HB 300, MX <maxframe>,
-        SL <slottime>, MN Y.
+        MAXFRAME/SLOTTIME to its own configured values, and sets the
+        configured MONITOR level.  Sequence: VH N, HB 300, MX <maxframe>,
+        SL <slottime>, MN <monitor>.
+
+        P73 A: ``MN <n>`` instead of ``MN Y``.  With UBIT 1 OFF the TNC sets
+        MONITOR to 4 on "MONITOR ON/YES" (STABO manual), so the value in the
+        parameter dialog (e.g. 6) was lost after every mode switch.  Setting
+        ``MN<number>`` in Host Mode is measured on both devices (T151).
 
         Lernmodus: ``VH N`` is essential here — without it, switching to HF
         Packet *after* VHF Packet would leave the TNC on the 1200 Bd Bell-202
@@ -172,7 +183,7 @@ class HFPacketMode(BaseMode):
             build_command(b'HB', b'300'), # HBAUD 300
             build_command(b'MX', str(self.maxframe).encode('ascii')),  # MAXFRAME
             build_command(b'SL', str(self.slottime).encode('ascii')),  # SLOTTIME
-            build_command(b'MN', b'Y'),   # MONITOR ON — receive unproto frames
+            build_command(b'MN', str(self.monitor).encode('ascii')),  # MONITOR
         ]
 
     def handle_frame(self, frame: "HostFrame") -> None:
