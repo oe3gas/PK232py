@@ -3402,6 +3402,9 @@ capture of every restart (`LoggingSerialPort`, `>> hex=… text=…` / `<< …`)
 `pk232py.comm` DEBUG lines of the detection chain (`Init: step …`) and
 `RESTART init: answered=… after N s`; the wait is 60 s (was 8 s). A failed init stops
 the run (power-cycle the TNC, then run the remaining parts separately).
+Every question is a framed, counted operator step (`start`, per variant `connect`, `call`,
+`check`, `cleanup`; 13 steps for `--part all`); the `pk232py.comm` DEBUG lines go to the
+log FILE only, so nothing is printed between a question and its answer.
 
 **First run 03.10.2026 22:06 (`hw_logs/20261003_220612_restart_probe.log`, banner
 `release=01.AUG.91  pactor=no` = device B).** (The shorter log `..._220341_...` is an
