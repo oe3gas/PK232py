@@ -3422,7 +3422,18 @@ aborted start on device A, `13.SEP.95`, nothing measured.)
 - Open question for B: did the detection chain simply need longer than 8 s? -> rerun
   `--part B0`, then `--part B` with the 60 s wait and the chain capture.
 
-**Status:** ⬜ OPEN — A measured (device B); B0, B (rerun) and C (clean rerun) open.
+**Second round 03.10.2026 (device B, per the operator):**
+- **B0** (`..._225739_...`) and **B** (`..._225902_...`): INVALID. The chain correctly detected
+  Host Mode in step 3 (`HPN`), left it (HOST N, CR) and went on in verbose mode, but
+  `restart_probe` read `host=True` at the moment step 3 reported Host Mode (23:04:11) and gave
+  up. Fixed: the run now waits for the END of the init - `verbose_mode_ready` (ready) or
+  `init_failed`, the same signals the app waits for - not for the first state.
+- **C** (`..._230503_...`): PASS. Init and upload keep the link on channel 0. The second call
+  (QtTermTCP) was refused because USERS was 1 after the power cycle (channel 0 busy, T147).
+  Fixed: the run sets USERS 10 (verbose) before the calls and restores it afterwards.
+- Rerun needed: B0, then B.
+
+**Status:** ⬜ OPEN — A and C measured (device B); B0 and B to be rerun with the fixed tool.
 
 ---
 
