@@ -70,6 +70,12 @@ selector changes the configuration and goes through ParamApplier. Facts:
 TNC, then A). **Not covered:** was/now answers of parameters outside the Packet
 section (PACTOR, AMTOR, Baudot, Misc) are only reported, not taken.
 
+### Init upload sends commands the firmware does not know — open (2026-10-03)
+
+The init upload (`ParamsUploader`) sends commands the firmware does not know, e.g.
+ARQTOL on 01.AUG.91 (T151: `?What?`). Later: filter the upload per firmware, based on
+the mnemonic registry (`comm/mnemonic_registry.py`) and T151/T160/T161.
+
 ### Restart with live Packet links (P81) — Teil 0 built, A-C wait for T168 (2026-10-03)
 
 Operator wish: when PK232PY connects and the TNC did NOT print a banner, check for
