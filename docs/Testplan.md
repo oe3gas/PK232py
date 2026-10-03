@@ -3209,6 +3209,55 @@ Windows sound "Default Beep" is muted, nothing is heard (not an app setting).
 
 ---
 
+### T160 — `host_params_probe --part A --exclude IL`, device A: the Packet monitor flags (P73)
+
+`python tools/hw_check.py --port COM6 host_params_probe --part A --exclude IL`
+(PC 1 only, nothing transmitted). The new rows run automatically: MBELL `ME`,
+MDIGI `MD`, MPROTO `MQ`, MSTAMP `MS`, PASSALL `PX`, BBSMSGS `BB` (FULLDP has no
+mnemonic - verbose only). Device A, `13.SEP.95`. Read the `T151 summary` and the
+per-row verdicts of these seven rows; a mnemonic that is `wrong_param` or
+unknown (`$07`) stays out of `verified_releases`.
+
+| Row | verdict | Note |
+|---|---|---|
+| MBELL / MDIGI / MPROTO / MSTAMP / PASSALL / BBSMSGS | ⬜ | |
+| FULLDP | ⬜ | verbose only |
+
+**Status:** ⬜ OPEN — hardware session. A follow-up commit enters the verified
+rows in `comm/host_params.py` (`verified_releases`).
+
+---
+
+### T161 — `host_params_probe --part A --exclude IL`, device B: the Packet monitor flags (P73)
+
+Same as T160 on device B (`01.AUG.91`).
+
+| Row | verdict | Note |
+|---|---|---|
+| MBELL / MDIGI / MPROTO / MSTAMP / PASSALL / BBSMSGS | ⬜ | |
+| FULLDP | ⬜ | verbose only |
+
+**Status:** ⬜ OPEN — hardware session.
+
+---
+
+### T162 — App: MONITOR and the band values survive a mode switch (P73)
+
+Device B, PK232PY in Host Mode, nothing transmitted. Software:
+`test_packet_params_p73.py`, `test_packet_hf.py` (`TestMonitorFromConfig`).
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Parameters -> Packet...: MONITOR 6, OK; select VHF Packet; leave Host Mode; verbose `MONITOR` | `6` (before P73: `4`, because `MN Y` set it) | ⬜ |
+| 2 | Parameters -> Packet...: VHF MAXFRAME 5, OK (VHF Packet active) | MON: `MAXFRAME  4 -> 5  ok` | ⬜ |
+| 3 | change the HF MAXFRAME while VHF Packet is active, OK | MON: `MAXFRAME (HF) saved - applies when HF Packet is selected`; no `MX` frame; no "TNC differs" label | ⬜ |
+| 4 | select HF Packet, then VHF Packet again; leave Host Mode; verbose `MAXFRAME` | `5` | ⬜ |
+| 5 | the Parameters tab at 100 %: three columns, no scrollbar | as stated | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session.
+
+---
+
 ### T157 — App: parameters right after OK (P72)
 
 Device B, VHF Packet, 144.800 MHz with a dummy load or minimum power; PC 1
