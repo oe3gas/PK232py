@@ -292,7 +292,6 @@ class TestHostModeProtocol:
 
     def test_mode_commands(self):
         assert b'PA' in HostModeProtocol.cmd_packet()
-        assert b'PT' in HostModeProtocol.cmd_pactor()
         assert b'AM' in HostModeProtocol.cmd_amtor()
 
     def test_feed_delivers_frame(self):

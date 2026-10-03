@@ -255,11 +255,6 @@ class HostModeProtocol:
         return build_command(b'PA')
 
     @staticmethod
-    def cmd_pactor() -> bytes:
-        """PACTOR — switch TNC to PACTOR I ARQ mode (mnemonic PT)."""
-        return build_command(b'PT')
-
-    @staticmethod
     def cmd_amtor() -> bytes:
         """AMTOR — switch TNC to AMTOR standby (mnemonic AM)."""
         return build_command(b'AM')
@@ -278,11 +273,6 @@ class HostModeProtocol:
     def cmd_morse() -> bytes:
         """MORSE — switch TNC to CW/Morse mode (mnemonic MO)."""
         return build_command(b'MO')
-
-    @staticmethod
-    def cmd_navtex() -> bytes:
-        """NAVTEX — switch TNC to NAVTEX receive mode (mnemonic NE)."""
-        return build_command(b'NE')
 
     # ------------------------------------------------------------------
     # Packet connect / disconnect
