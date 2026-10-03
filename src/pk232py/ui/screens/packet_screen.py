@@ -89,6 +89,7 @@ from .opmode_rtty_base import (
     BTN_W, SPACING, MACRO_COUNT,
 )
 from .screen_focus_controller import is_keyboard_input_widget
+from .ui_theme import get_theme, recolor_document
 from ...maildrop.protocol import validate_callsign
 
 
@@ -1561,8 +1562,19 @@ class PacketBaseScreen(QWidget):
     # Muted colour for the optional timestamp and the ALL-view "n|" tag
     # (P50 Teil C) - never the line's own content colour, so a system
     # message's eye-catching colour (link messages, etc.) still stands
-    # out against it.
-    _MUTED_RX_COLOR = "#6a6a6a"
+    # out against it. P77a: it is the theme's dim_color (readable on the
+    # theme's background; the old fixed dark grey reached only 3.1 : 1).
+    @staticmethod
+    def _muted_rx_color() -> str:
+        return get_theme()["dim_color"]
+
+    def recolor_rx_documents(self, color_map: dict) -> None:
+        """Rewrite already-rendered text colours in EVERY RX document - each
+        channel's own, MON and the merged ALL one (P77a) - after a colour
+        change. rx_display only shows one of them, so recolouring the widget's
+        document alone would leave the hidden channels in the old colours."""
+        for doc in list(self._rx_docs.values()) + [self._rx_doc_all]:
+            recolor_document(doc, color_map)
 
     def apply_display_settings(self, show_timestamps: bool, rx_max_lines: int) -> None:
         """Apply PC-side RX display settings (P50 Teil C) - called once on
@@ -1630,7 +1642,8 @@ class PacketBaseScreen(QWidget):
         self._view_all = show_all
         self._sync_rx_document()
 
-    def append_channel_data(self, channel: "int | str", text: str, color: str = "#66ccff") -> None:
+    def append_channel_data(self, channel: "int | str", text: str,
+                            color: "str | None" = None) -> None:
         """Append received connected-channel data - or, via an explicit
         *color* override, a channel-scoped system/link message (P47) -
         to *channel*'s own RX document AND the merged ALL document (P50
@@ -1639,7 +1652,12 @@ class PacketBaseScreen(QWidget):
         on; the ALL/CH filter (T100) is now a matter of which document
         rx_display is showing (_sync_rx_document()), not whether a line
         gets written at all.
+
+        *color* None = the RX colour of AppearanceConfig (P77a; it used to
+        be a fixed light blue that vanished on a light background).
         """
+        if color is None:
+            color = get_theme()["rx_color"]
         self._rx_append(channel, text, is_html=False, color=color)
 
     def append_monitor_data(self, text: str, is_html: bool = False,
@@ -1655,7 +1673,8 @@ class PacketBaseScreen(QWidget):
         decode on/off (T59/T60). Live callers omit it and get the
         current UTC time, same as append_channel_data().
         """
-        self._rx_append(MON_VIEW, text, is_html=is_html, color="#aaaaaa", ts=ts)
+        self._rx_append(MON_VIEW, text, is_html=is_html,
+                        color=get_theme()["dim_color"], ts=ts)
 
     def append_monitor_data_local_only(self, text: str, is_html: bool = False,
                                         ts: str = "") -> None:
@@ -1668,7 +1687,8 @@ class PacketBaseScreen(QWidget):
         redraw."""
         if not ts:
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        self._rx_write_line(self._rx_docs[MON_VIEW], None, text, is_html, "#aaaaaa", ts)
+        self._rx_write_line(self._rx_docs[MON_VIEW], None, text, is_html,
+                            get_theme()["dim_color"], ts)
         if self.rx_display.document() is self._rx_docs[MON_VIEW]:
             self.rx_display.moveCursor(QTextCursor.MoveOperation.End)
             self.rx_display.ensureCursorVisible()
@@ -1712,12 +1732,12 @@ class PacketBaseScreen(QWidget):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if self._show_timestamps:
             fmt = QTextCharFormat()
-            fmt.setForeground(QColor(self._MUTED_RX_COLOR))
+            fmt.setForeground(QColor(self._muted_rx_color()))
             cursor.setCharFormat(fmt)
             cursor.insertText(f"[{ts}] ")
         if tag is not None:
             fmt = QTextCharFormat()
-            fmt.setForeground(QColor(self._MUTED_RX_COLOR))
+            fmt.setForeground(QColor(self._muted_rx_color()))
             cursor.setCharFormat(fmt)
             cursor.insertText(f"{tag}│")
         if is_html:
