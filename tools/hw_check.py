@@ -1969,7 +1969,9 @@ class _RunLogHandler(logging.Handler):
             self.handleError(record)
 
 
-def _log_init_phase_summary(log: "RunLog", wrapper: "LoggingSerialPort") -> None:
+def _log_init_phase_summary(
+    log: "RunLog", wrapper: "LoggingSerialPort", label: str = "MAILDROP_SESSION",
+) -> None:
     """P30.3: a plain-language hint at the end of the run, from whatever
     the init phase actually sent/received - never a replacement for the
     raw bytes already logged above it."""
@@ -1980,7 +1982,7 @@ def _log_init_phase_summary(log: "RunLog", wrapper: "LoggingSerialPort") -> None
         f"init phase summary: sent {len(sent)} B, received {len(received)} B "
         f"-- {hint}"
     )
-    log.result("MAILDROP_SESSION", "INFO", f"init phase: {hint}")
+    log.result(label, "INFO", f"init phase: {hint}")
 
 
 # ===========================================================================
@@ -2133,6 +2135,10 @@ class Session:
         self._raw_buf = bytearray()
         self.sm.raw_data_received.connect(self._on_raw)
         self.xmitok: Optional[str] = None  # set by normalize() (P34.2)
+        # P81 / T168: a restarted app is a NEW SerialManager; the byte-level capture
+        # of the detection chain must follow it (restart_probe sets both).
+        self.port_factory = None
+        self.init_capture: dict = {}
 
     def _on_raw(self, data: bytes) -> None:
         self._raw_buf.extend(data)
@@ -7000,6 +7006,7 @@ def test_ubit_probe(session: "Session", log: RunLog) -> None:
 
 _RP_VARIANTS = {
     "A": "TNC in the verbose command mode (links made in Host Mode, Host Mode left)",
+    "B0": "TNC in Host Mode WITHOUT any connection (isolates Host Mode from the links)",
     "B": "TNC in Host Mode (the port is closed inside it)",
     "C": "TNC in Converse (links made from the verbose CONNECT)",
 }
@@ -7010,12 +7017,12 @@ _RP_REJECT_RE = re.compile(r"\?|not while|\*\*\*|invalid|illegal|error|what\b", 
 
 
 def restart_probe_variants(part: str) -> list:
-    """The variants a --part runs, in order: 'A'|'B'|'C' or 'all' = A, B, C."""
+    """The variants a --part runs, in order: 'A'|'B0'|'B'|'C' or 'all' = A, B0, B, C."""
     if part == "all":
-        return ["A", "B", "C"]
+        return ["A", "B0", "B", "C"]
     if part in _RP_VARIANTS:
         return [part]
-    raise ValueError(f"part must be A, B, C or all, got {part!r}")
+    raise ValueError(f"part must be A, B0, B, C or all, got {part!r}")
 
 
 def classify_upload_answer(cmd: str, found: bool, answer: bytes) -> str:
@@ -7061,6 +7068,8 @@ def restart_probe_steps(part: str, mycall: str) -> list:
     me = mycall or "<TNC MYCALL>"
     plan: list = []
     for v in restart_probe_variants(part):
+        if v == "B0":
+            continue        # no connection, nothing for the operator to do
         plan.append((f"{v}.call", ProbeStep(
             f"T168 {v}  incoming call ({_RP_VARIANTS[v].split(' (')[0]})", WHERE_PC2, 2,
             [f"In QtTermTCP, use the session with callsign {_RP_CALLER}.",
@@ -7109,6 +7118,8 @@ def _rp_simulate_crash(session: "Session", log: RunLog) -> None:
     sm._serial = None
     session.sm = SerialManager()
     session.sm.raw_data_received.connect(session._on_raw)
+    if session.port_factory is not None:
+        session.sm.set_port_factory(session.port_factory)
     del session._raw_buf[:]
     time.sleep(1.0)   # the OS releases the port
 
@@ -7120,15 +7131,37 @@ def _rp_restart_like_app(session: "Session", log: RunLog) -> bool:
     sm = session.sm
     if not sm.connect_port(session.port_name, baudrate=session.baud):
         raise HWCheckError(f"Port busy - is pk232py running? ({session.port_name})")
+    started = time.monotonic()
     sm.init_tnc()
+    # T168 B: 8 s (Session.connect) may be shorter than the detection chain's
+    # worst case - the app itself does not wait, it reacts to the chain's end.
+    # Wait long and MEASURE how long the chain really takes.
     answered = session._wait_until(
-        lambda: sm.is_verbose_mode or sm.is_host_mode, timeout=8.0)
+        lambda: sm.is_verbose_mode or sm.is_host_mode, timeout=_RP_INIT_WAIT)
+    elapsed = time.monotonic() - started
     log.line(
-        f"RESTART init: answered={answered} verbose={sm.is_verbose_mode} "
+        f"RESTART init: answered={answered} after {elapsed:.1f} s "
+        f"(waited at most {_RP_INIT_WAIT:.0f} s) verbose={sm.is_verbose_mode} "
         f"host={sm.is_host_mode} release={sm.tnc_release!r} "
         f"defaults={sm.tnc_defaults!r} "
         f"verbose_confirmed={getattr(sm, 'verbose_confirmed', None)}")
+    _rp_log_init_capture(session, log)
     return answered
+
+
+_RP_INIT_WAIT = 60.0
+
+
+def _rp_log_init_capture(session: "Session", log: RunLog) -> None:
+    """What the detection chain put on the wire in this restart (the bytes are
+    already in the log line by line; this is the plain-language total)."""
+    wrapper = session.init_capture.get("port")
+    if wrapper is None:
+        log.line("init capture: not active (no LoggingSerialPort)")
+        return
+    sent, received = bytes(wrapper.sent_total), bytes(wrapper.received_total)
+    log.line(f"init capture: sent {len(sent)} B, received {len(received)} B "
+             f"-- {classify_init_phase(sent, received)}")
 
 
 def _rp_upload_logged(session: "Session", log: RunLog, app_config: AppConfig) -> list:
@@ -7173,6 +7206,12 @@ def _rp_make_links(
     """Build the links for variant *v* and leave the TNC in the state *v* names.
     Returns the links seen right before the crash ({} when not measurable,
     None if the operator declined)."""
+    if v == "B0":
+        session.enter_host_mode()
+        session.drain_pending_frames()
+        results = _probe_links(session, frames, "B0 before crash", log)
+        return {ch: r.partner for ch, r in results.items()
+                if not r.unparsed and r.error_code is None and r.connected}
     if v == "C":
         if not confirm_tx(f"Verbose CONNECT {target} (the TNC stays in Converse)."):
             return None
@@ -7220,29 +7259,39 @@ def _rp_cleanup(session: "Session", log: RunLog, frames: dict) -> None:
         session.exit_host_mode()
 
 
+def _rp_skip(plan: "ProbePlan", key: str) -> None:
+    """plan.skip() for a step that exists (B0 has none)."""
+    if key in plan.by_key:
+        plan.skip(key)
+
+
 def _rp_variant(
     session: "Session", log: RunLog, v: str, target: str, frames: dict,
     plan: "ProbePlan", app_config: AppConfig,
-) -> None:
+) -> bool:
+    """One variant. False = the TNC is in a state the next variant cannot start
+    from (init failed): the caller stops and tells the operator to power-cycle."""
     log.line(f"--- restart_probe {v}: {_RP_VARIANTS[v]} ---")
     before = _rp_make_links(session, log, v, target, frames, plan)
     if before is None:
         log.result(f"T168 {v}", "INFO", "skipped by operator")
-        plan.skip(f"{v}.call")
-        plan.skip(f"{v}.check")
-        return
+        _rp_skip(plan, f"{v}.call")
+        _rp_skip(plan, f"{v}.check")
+        return True
     log.line(f"{v} links before the crash: {before}")
     _rp_simulate_crash(session, log)
     answered = _rp_restart_like_app(session, log)
     if not answered:
-        log.result(f"T168 {v}", "FAIL", "the TNC did not answer the app's init")
-        plan.skip(f"{v}.check")
-        return
+        log.result(f"T168 {v}", "FAIL",
+                   f"the TNC did not answer the app's init within {_RP_INIT_WAIT:.0f} s "
+                   f"(links before the crash: {before})")
+        _rp_skip(plan, f"{v}.check")
+        return False
     if session.sm.is_host_mode:
         log.result(f"T168 {v}", "INFO",
                    "init ended in Host Mode - upload not possible, nothing measured")
-        plan.skip(f"{v}.check")
-        return
+        _rp_skip(plan, f"{v}.check")
+        return False
     links_init = _rp_cstatus_links(session, log, f"{v} after init")
     records = _rp_upload_logged(session, log, app_config)
     links_after = _rp_cstatus_links(session, log, f"{v} after upload")
@@ -7250,15 +7299,18 @@ def _rp_variant(
     silent = [r["cmd"] for r in records if r["verdict"] == "silent"]
     for cmd in rejected:
         log.line(f"{v} REJECTED: {cmd}")
-    plan.show(f"{v}.check")
-    alive = input("Is the QtTermTCP session still connected, and did your "
-                  "line go out? [y/N] ").strip().lower() == "y"
+    alive = None
+    if f"{v}.check" in plan.by_key:
+        plan.show(f"{v}.check")
+        alive = input("Is the QtTermTCP session still connected, and did your "
+                      "line go out? [y/N] ").strip().lower() == "y"
     verdict = restart_probe_verdict(links_init, links_after, rejected)
     log.result(
         f"T168 {v}", "INFO",
         f"links_before={before} links_init={links_init} links_after={links_after} "
         f"rejected={rejected} silent={silent} pc2_link_alive={alive} -- {verdict}")
     _rp_cleanup(session, log, frames)
+    return True
 
 
 def test_restart_probe(
@@ -7305,8 +7357,13 @@ def test_restart_probe(
     if originals is None:
         return
     try:
-        for v in variants:
-            _rp_variant(session, log, v, target, frames, plan, app_config)
+        for i, v in enumerate(variants):
+            if not _rp_variant(session, log, v, target, frames, plan, app_config):
+                rest = variants[i + 1:]
+                log.line("STOPPED after variant " + v + ": the TNC may still be in Host "
+                         "Mode with connections - POWER-CYCLE it"
+                         + (f", then run --part {','.join(rest)} separately" if rest else ""))
+                break
     finally:
         try:
             for cmd, value in originals.items():
@@ -7643,7 +7700,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ],
     )
     p.add_argument(
-        "--part", choices=["A", "B", "C", "all"], default="all",
+        "--part", choices=["A", "B", "B0", "C", "all"], default="all",
         help="channel_probe: B = free-channel UNPROTO frames (T146), "
              "C = incoming connects (T147), all = both (default). "
              "host_params_probe: A = ask/set/verbose cross-check (T151), "
@@ -7651,7 +7708,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "C = find the parameter that breaks verbose commands (T155, "
              "never part of all). "
              "restart_probe (P81, T168): A = TNC left in verbose command mode, "
-             "B = left in Host Mode, C = left in Converse, all = A, B and C. "
+             "B0 = left in Host Mode without connections, B = left in Host Mode "
+             "with connections, C = left in Converse, all = A, B0, B and C. "
              "mnemonic_probe (P80 D, T166/T167): A = mode switches + OP, "
              "B = unproven parameters + MID scan, C = queries MH/PN, all = A, B, C"
     )
@@ -7707,8 +7765,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.test == "channel_probe" and args.part == "A":
         parser.error("channel_probe takes --part B, C or all")
-    if args.test in ("restart_probe", "mnemonic_probe") and args.part not in ("A", "B", "C", "all"):
-        parser.error(f"{args.test} takes --part A, B, C or all")
+    if args.test == "restart_probe" and args.part not in ("A", "B0", "B", "C", "all"):
+        parser.error("restart_probe takes --part A, B0, B, C or all")
+    if args.test == "mnemonic_probe" and args.part not in ("A", "B", "C", "all"):
+        parser.error("mnemonic_probe takes --part A, B, C or all")
     if args.expert_off and (args.test != "host_params_probe" or args.part != "A"):
         parser.error("--expert-off belongs to host_params_probe --part A")
     if args.reevaluate:
@@ -7760,13 +7820,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     capture_box: dict = {}
     comm_log_handler: Optional[_RunLogHandler] = None
     comm_logger = logging.getLogger("pk232py.comm")
-    if args.test == "maildrop_session" and not args.dry_run:
+    if args.test in ("maildrop_session", "restart_probe") and not args.dry_run:
         def _capturing_port_factory(**kw):
             wrapper = LoggingSerialPort(serial.Serial(**kw), log)
             capture_box["port"] = wrapper
+            session.init_capture["port"] = wrapper   # the LATEST open (P81: one per restart)
             return wrapper
 
         session.sm.set_port_factory(_capturing_port_factory)
+        session.port_factory = _capturing_port_factory
 
         comm_log_handler = _RunLogHandler(log)
         comm_log_handler.setLevel(logging.DEBUG)
@@ -7812,7 +7874,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if not args.dry_run:
             session.connect()
             if "port" in capture_box:
-                _log_init_phase_summary(log, capture_box["port"])
+                _log_init_phase_summary(log, capture_box["port"], args.test.upper())
                 init_phase_summarized = True
         for fn in test_fns[args.test]:
             fn(session, log)
@@ -7821,7 +7883,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         log.result(args.test, "FAIL", str(exc))
         exit_code = 1
         if "port" in capture_box and not init_phase_summarized:
-            _log_init_phase_summary(log, capture_box["port"])
+            _log_init_phase_summary(log, capture_box["port"], args.test.upper())
     except KeyboardInterrupt:
         log.line("ERROR: interrupted by operator")
         exit_code = 1

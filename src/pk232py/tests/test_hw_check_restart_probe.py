@@ -79,10 +79,14 @@ class TestLinksAndVerdict:
 
 class TestPlan:
     def test_variants(self):
-        assert hw_check.restart_probe_variants("all") == ["A", "B", "C"]
+        assert hw_check.restart_probe_variants("all") == ["A", "B0", "B", "C"]
         assert hw_check.restart_probe_variants("B") == ["B"]
+        assert hw_check.restart_probe_variants("B0") == ["B0"]
         with pytest.raises(ValueError):
             hw_check.restart_probe_variants("D")
+
+    def test_b0_has_no_operator_step_it_involves_no_connection(self):
+        assert hw_check.restart_probe_steps("B0", "OE3GAS") == []
 
     def test_two_steps_per_variant_all_on_pc2(self):
         for part, n in (("A", 2), ("all", 6)):
@@ -100,6 +104,44 @@ class TestDryRun:
         out = capsys.readouterr().out
         assert "STEP 6 of 6" in out
         assert not session.sm.is_connected
+
+
+class TestInitChainIsObserved:
+    def test_the_wait_is_long_enough_for_the_whole_detection_chain(self):
+        """T168 B: the first run waited 8 s and called a slow chain 'no answer'."""
+        assert hw_check._RP_INIT_WAIT >= 30.0
+
+    def test_the_restarted_app_keeps_the_byte_capture(self, monkeypatch):
+        log = hw_check.RunLog(None)
+        session = hw_check.Session("DRYRUN", 9600, True, log, AppConfig())
+        factory = lambda **kw: None            # noqa: E731
+        session.port_factory = factory
+        monkeypatch.setattr(hw_check.time, "sleep", lambda s: None)
+        old = session.sm
+        hw_check._rp_simulate_crash(session, log)
+        assert session.sm is not old
+        assert session.sm._port_factory is factory
+
+    def test_a_failed_init_stops_the_run_and_says_power_cycle(self, monkeypatch, capsys):
+        log = hw_check.RunLog(None)
+        session = hw_check.Session("DRYRUN", 9600, True, log, AppConfig())
+        calls: list = []
+
+        def fake_variant(sess, lg, v, *a):
+            calls.append(v)
+            return v != "B0"                   # B0 fails
+
+        monkeypatch.setattr(hw_check, "_rp_variant", fake_variant)
+        monkeypatch.setattr(hw_check, "parse_query_value", lambda *a: "VAL")
+        monkeypatch.setattr(hw_check, "_channel_probe_vhf_check", lambda *a: {})
+        monkeypatch.setattr(session, "normalize", lambda: None)
+        monkeypatch.setattr(session, "query", lambda *a: "x")
+        session.dry_run = False
+        answers = iter(["", "y"])
+        monkeypatch.setattr("builtins.input", lambda *a: next(answers))
+        hw_check.test_restart_probe(session, log, "all", AppConfig())
+        assert calls == ["A", "B0"]            # B and C never started
+        assert "POWER-CYCLE" in capsys.readouterr().out
 
 
 class TestCrashIsNotACleanShutdown:
