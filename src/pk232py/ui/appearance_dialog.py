@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 import logging
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QColorDialog, QDialog, QDialogButtonBox, QFontComboBox,
     QFormLayout, QGroupBox, QHBoxLayout, QLabel,
     QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
+from pk232py.colors import low_contrast_warnings
 from pk232py.config import AppearanceConfig
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 class ColorButton(QPushButton):
     """A button that shows and selects a color."""
+
+    # Emitted whenever the colour changes (picked OR set from code), so the
+    # dialog's preview and contrast warning never miss a change.
+    colorChanged = pyqtSignal(str)
 
     def __init__(self, color: str = "#1e1e1e", parent=None) -> None:
         super().__init__(parent)
@@ -32,6 +37,7 @@ class ColorButton(QPushButton):
             f"border-radius:3px;"
         )
         self.setText(color)
+        self.colorChanged.emit(color)
 
     def color(self) -> str:
         return self._color
@@ -47,8 +53,9 @@ class ColorButton(QPushButton):
 class AppearanceDialog(QDialog):
     """Appearance settings dialog.
 
-    Allows selecting font family, size, background and foreground color
-    for the RX/TX display and verbose terminal.
+    Allows selecting font family, size, background, foreground, RX text and
+    TX text color for the RX/TX displays and the verbose terminal (P77: one
+    colour source, AppearanceConfig).
 
     Usage::
 
@@ -104,23 +111,39 @@ class AppearanceDialog(QDialog):
         self._fg_btn = ColorButton()
         color_form.addRow("Foreground (text):", self._fg_btn)
 
+        # P77: received text / TNC output, and typed text / own commands.
+        self._rx_btn = ColorButton()
+        color_form.addRow("RX text:", self._rx_btn)
+
+        self._tx_btn = ColorButton()
+        color_form.addRow("TX text:", self._tx_btn)
+
         root.addWidget(color_group)
 
         # ── Preview ───────────────────────────────────────────────────
         preview_group = QGroupBox("Preview")
         pv_layout = QVBoxLayout(preview_group)
-        self._preview = QLabel("AEA PK-232MBX  Ver. 7.1\ncmd: MYCALL OE3GAS")
-        self._preview.setFixedHeight(50)
+        # One line per colour: foreground, RX (TNC output), TX (own command).
+        self._preview = QLabel()
+        self._preview.setTextFormat(Qt.TextFormat.RichText)
+        self._preview.setFixedHeight(70)
         self._preview.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._preview.setContentsMargins(6, 4, 6, 4)
         pv_layout.addWidget(self._preview)
+        # P77: shown (never blocking) when a text colour is hard to read on
+        # the chosen background; empty = hidden.
+        self._warning = QLabel()
+        self._warning.setWordWrap(True)
+        self._warning.setStyleSheet("color:#c0392b;")
+        self._warning.setVisible(False)
+        pv_layout.addWidget(self._warning)
         root.addWidget(preview_group)
 
         # Update preview on change
         self._font_combo.currentFontChanged.connect(self._update_preview)
         self._font_size.valueChanged.connect(self._update_preview)
-        self._bg_btn.clicked.connect(self._update_preview)
-        self._fg_btn.clicked.connect(self._update_preview)
+        for btn in (self._bg_btn, self._fg_btn, self._rx_btn, self._tx_btn):
+            btn.colorChanged.connect(self._update_preview)
 
         # ── Buttons ───────────────────────────────────────────────────
         bb = QDialogButtonBox(
@@ -141,16 +164,25 @@ class AppearanceDialog(QDialog):
         self._font_size.setValue(c.font_size)
         self._bg_btn.set_color(c.bg_color)
         self._fg_btn.set_color(c.fg_color)
+        self._rx_btn.set_color(c.rx_color)
+        self._tx_btn.set_color(c.tx_color)
         self._update_preview()
 
     def _update_preview(self) -> None:
         font = self._font_combo.currentFont()
         font.setPointSize(self._font_size.value())
         self._preview.setFont(font)
-        self._preview.setStyleSheet(
-            f"background-color:{self._bg_btn.color()};"
-            f"color:{self._fg_btn.color()};"
+        bg, fg = self._bg_btn.color(), self._fg_btn.color()
+        rx, tx = self._rx_btn.color(), self._tx_btn.color()
+        self._preview.setStyleSheet(f"background-color:{bg}; color:{fg};")
+        self._preview.setText(
+            f'<span style="color:{fg}">Foreground text</span><br>'
+            f'<span style="color:{rx}">AEA PK-232MBX  Ver. 7.1</span><br>'
+            f'<span style="color:{tx}">cmd: MYCALL OE3GAS</span>'
         )
+        warnings = low_contrast_warnings(bg, fg, rx, tx)
+        self._warning.setText("<br>".join(warnings))
+        self._warning.setVisible(bool(warnings))
 
     def apply_to(self, config: AppearanceConfig) -> None:
         """Write dialog values into config."""
@@ -158,6 +190,8 @@ class AppearanceDialog(QDialog):
         config.font_size   = self._font_size.value()
         config.bg_color    = self._bg_btn.color()
         config.fg_color    = self._fg_btn.color()
+        config.rx_color    = self._rx_btn.color()
+        config.tx_color    = self._tx_btn.color()
 
     def _on_reset(self) -> None:
         """Reset to the active theme's preset values (not hardcoded defaults).
@@ -172,6 +206,8 @@ class AppearanceDialog(QDialog):
         self._font_size.setValue(t.font_size)
         self._bg_btn.set_color(t.bg)
         self._fg_btn.set_color(t.fg)
+        self._rx_btn.set_color(t.rx)
+        self._tx_btn.set_color(t.tx)
         self._update_preview()
 
     def _on_accept(self) -> None:

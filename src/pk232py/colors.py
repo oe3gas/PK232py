@@ -76,3 +76,17 @@ def default_text_colors(theme_key: str, bg_color: str) -> tuple[str, str]:
     if theme_key in THEME_TEXT_COLORS:
         return THEME_TEXT_COLORS[theme_key]
     return THEME_TEXT_COLORS["air" if is_light_background(bg_color) else "dark"]
+
+
+def low_contrast_warnings(bg: str, fg: str, rx: str, tx: str) -> list[str]:
+    """One "Low contrast: <what> on background (2.1 : 1)" line per text colour
+    whose contrast to *bg* is below MIN_CONTRAST. Empty list = all fine.
+
+    A pure function, so the Appearance dialog's warning is testable without Qt.
+    """
+    out = []
+    for label, color in (("Foreground text", fg), ("RX text", rx), ("TX text", tx)):
+        ratio = contrast_ratio(color, bg)
+        if ratio < MIN_CONTRAST:
+            out.append(f"Low contrast: {label} on background ({ratio:.1f} : 1)")
+    return out
