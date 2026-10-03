@@ -7156,16 +7156,20 @@ def _rp_restart_like_app(session: "Session", log: RunLog) -> bool:
     sm = session.sm
     if not sm.connect_port(session.port_name, baudrate=session.baud):
         raise HWCheckError(f"Port busy - is pk232py running? ({session.port_name})")
+    # T168 B/B0: reading is_host_mode the moment detection step 3 reported Host Mode
+    # (23:04:11) stopped the run while the chain was still leaving it (HOST N, CR).
+    # The END of the init is what the app itself waits for: verbose_mode_ready
+    # (success) or init_failed (no TNC). Wait for exactly those two signals.
+    end: dict = {"state": None}
+    sm.verbose_mode_ready.connect(lambda: end.update(state="ready"))
+    sm.init_failed.connect(lambda: end.update(state="failed"))
     started = time.monotonic()
     sm.init_tnc()
-    # T168 B: 8 s (Session.connect) may be shorter than the detection chain's
-    # worst case - the app itself does not wait, it reacts to the chain's end.
-    # Wait long and MEASURE how long the chain really takes.
-    answered = session._wait_until(
-        lambda: sm.is_verbose_mode or sm.is_host_mode, timeout=_RP_INIT_WAIT)
+    session._wait_until(lambda: end["state"] is not None, timeout=_RP_INIT_WAIT)
     elapsed = time.monotonic() - started
+    answered = end["state"] == "ready"
     log.line(
-        f"RESTART init: answered={answered} after {elapsed:.1f} s "
+        f"RESTART init: end={end['state'] or 'timeout'} after {elapsed:.1f} s "
         f"(waited at most {_RP_INIT_WAIT:.0f} s) verbose={sm.is_verbose_mode} "
         f"host={sm.is_host_mode} release={sm.tnc_release!r} "
         f"defaults={sm.tnc_defaults!r} "
@@ -7175,6 +7179,20 @@ def _rp_restart_like_app(session: "Session", log: RunLog) -> bool:
 
 
 _RP_INIT_WAIT = 60.0
+
+
+def _rp_set_users_10(session: "Session", log: RunLog) -> Optional[str]:
+    """T147: after a power cycle USERS is 1, so a second incoming call is refused
+    while channel 0 is busy. Set USERS 10 (verbose) before the calls. Returns the
+    original value to restore, or None if USERS could not be read/set."""
+    original = parse_query_value("USERS", session.query("USERS"))
+    if original is None:
+        log.line("USERS not readable - left alone (a second call may be refused)")
+        return None
+    if original.strip() != "10":
+        session.set_verbose("USERS", "10")
+    log.line(f"USERS was {original!r}, now 10 for the incoming calls")
+    return original
 
 
 def _rp_log_init_capture(session: "Session", log: RunLog) -> None:
@@ -7395,6 +7413,9 @@ def test_restart_probe(
     originals = _channel_probe_vhf_check(session, log, "T168")
     if originals is None:
         return
+    users = _rp_set_users_10(session, log)
+    if users is not None:
+        originals = {**originals, "USERS": users}
     try:
         for i, v in enumerate(variants):
             if not _rp_variant(session, log, v, target, frames, plan, app_config):

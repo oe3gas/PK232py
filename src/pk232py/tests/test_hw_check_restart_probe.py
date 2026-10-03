@@ -111,6 +111,95 @@ class TestPlan:
         assert order == [("pump", 0.5), ("show", "start")]
 
 
+class _FakeSM:
+    """A SerialManager stand-in: the chain first reports Host Mode (as detection
+    step 3 did at 23:04:11), then leaves it and ends with a signal."""
+
+    def __init__(self, ending):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class Sig(QObject):
+            verbose_mode_ready = pyqtSignal()
+            init_failed = pyqtSignal()
+        self._sig = Sig()
+        self.verbose_mode_ready = self._sig.verbose_mode_ready
+        self.init_failed = self._sig.init_failed
+        self.is_host_mode = False
+        self.is_verbose_mode = False
+        self.tnc_release = None
+        self.tnc_defaults = None
+        self.verbose_confirmed = False
+        self._ending = ending
+
+    def connect_port(self, name, baudrate=9600):
+        return True
+
+    def init_tnc(self):
+        from PyQt6.QtCore import QTimer
+        self.is_host_mode = True               # step 3: "Host Mode detected"
+
+        def finish():
+            self.is_host_mode = False
+            if self._ending == "ready":
+                self.is_verbose_mode = True
+                self.verbose_mode_ready.emit()
+            else:
+                self.init_failed.emit()
+        self._timer = QTimer()
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(finish)
+        self._timer.start(150)
+
+
+class TestWaitForTheEndOfTheInit:
+    def _session(self, ending):
+        log = hw_check.RunLog(None)
+        session = hw_check.Session("DRYRUN", 9600, True, log, AppConfig())
+        session.sm = _FakeSM(ending)
+        return session, log
+
+    def test_the_first_host_mode_state_is_not_the_end(self):
+        """T168 B0/B 23:04:11: host=True was read while the chain was leaving it."""
+        session, log = self._session("ready")
+        assert hw_check._rp_restart_like_app(session, log) is True
+        assert not session.sm.is_host_mode and session.sm.is_verbose_mode
+
+    def test_init_failed_ends_the_wait_at_once(self, monkeypatch):
+        import time
+        session, log = self._session("failed")
+        start = time.monotonic()
+        assert hw_check._rp_restart_like_app(session, log) is False
+        assert time.monotonic() - start < 5.0   # not the 60 s timeout
+
+    def test_a_chain_that_never_ends_times_out(self, monkeypatch):
+        session, log = self._session("never")
+        session.sm.init_tnc = lambda: None
+        monkeypatch.setattr(hw_check, "_RP_INIT_WAIT", 0.3)
+        assert hw_check._rp_restart_like_app(session, log) is False
+
+
+class TestUsersForTheIncomingCalls:
+    class _S:
+        def __init__(self, users):
+            self.users, self.sets = users, []
+
+        def query(self, name):
+            return f"{name}\r\nUSers     {self.users}\r\ncmd:"
+
+        def set_verbose(self, name, value):
+            self.sets.append((name, value))
+
+    def test_users_1_is_raised_to_10_and_the_original_returned(self):
+        s = self._S("1")
+        assert hw_check._rp_set_users_10(s, hw_check.RunLog(None)) == "1"
+        assert s.sets == [("USERS", "10")]
+
+    def test_users_10_is_left_alone(self):
+        s = self._S("10")
+        assert hw_check._rp_set_users_10(s, hw_check.RunLog(None)) == "10"
+        assert s.sets == []
+
+
 class TestDebugLinesStayInTheFile:
     def test_comm_debug_lines_are_not_printed_but_logged(self, tmp_path, capsys):
         import logging
