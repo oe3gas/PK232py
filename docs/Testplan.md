@@ -3209,6 +3209,23 @@ Windows sound "Default Beep" is muted, nothing is heard (not an app setting).
 
 ---
 
+### T163 — Appearance: RX and TX text colors (P77)
+
+Visual check, any device or none (the verbose terminal needs a connection for
+real TNC output). Software: `test_appearance_colors_p77.py`.
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Configure -> Appearance -> theme Air; open the Baudot window and type | TX input dark green on white, easy to read; verbose terminal: TNC output navy on white (no light grey) | ⬜ |
+| 2 | Configure -> Appearance... (Font & Colors): change "TX text" | at once in the Baudot TX field and in the verbose terminal's input line; text already in the terminal is recoloured | ⬜ |
+| 3 | Theme Dark | unchanged: RX light blue, TX gold, terminal on the dark background | ⬜ |
+| 4 | Dialog: pick pale yellow for "TX text" on white | warning "Low contrast: TX text on background (x.x : 1)" under the preview; OK still works | ⬜ |
+| 5 | Baudot: send a few characters (SEND) | sent characters inverse: background = TX colour, text = background colour; readable on Air and on Dark | ⬜ |
+
+**Status:** ⬜ OPEN — visual check by the operator.
+
+---
+
 ### T160 — `host_params_probe --part A --exclude IL`, device B: the Packet monitor flags (P73)
 
 `python tools/hw_check.py --port COM6 host_params_probe --part A --exclude IL`
