@@ -57,6 +57,24 @@ und nicht nachträglich vereinheitlicht, um nichts zu erfinden.
 
 ---
 
+## Firmware-Fingerabdruck (P78) - Eindeutigkeit
+
+Wurde beim Verbinden kein Banner gesehen (TNC schon wach), erkennt die App die
+Generation am Befehl `EXPERT` (`comm/devices.py`, `KNOWN_DEVICES`):
+
+| Gerät | verbose `EXPERT` | Host `EX` (Abfrage) |
+|---|---|---|
+| B (01.AUG.91) | `?What?` | Fehlercode `$07` |
+| A (13.SEP.95) | `ON`/`OFF` | `EXY`/`EXN` |
+| C (30.12.1988) | ungemessen | ungemessen |
+
+**Der Fingerabdruck gilt nur, solange diese Tabelle je Generation genau ein Gerät
+führt.** Kommt ein weiteres Gerät derselben Generation hinzu (oder wird Gerät C
+gemessen und verhält sich wie A oder B), ist er mehrdeutig: `KNOWN_DEVICES` in
+`comm/devices.py` und diese Tabelle gemeinsam ergänzen - `infer_release()` liefert
+bei Mehrdeutigkeit `None`, nie eine Vermutung. Gerät C bleibt bewusst ungemessen
+(also nie "inferred").
+
 ## Offene Punkte
 
 - Gerät C wurde nie über `hw_check.py` angeschlossen — Prompt-Klammernform,

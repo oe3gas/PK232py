@@ -1268,3 +1268,38 @@ Grows over time.
     with `EXPERT OFF` all 39 are accepted, only DAYTIME answers `$10` - as with
     EXPERT ON. ParamApplier needs no EXPERT handling in Host Mode (the verbose
     path keeps its EXPERT ON/OFF wrap on PACTOR firmware).
+
+- **Release without a banner: the EXPERT fingerprint (P78 A, 03.10.2026).** The
+  banner is the only direct source of `tnc_release`; a TNC that was already awake
+  at connect time has none, and P72 then sets NOTHING in Host Mode ("not verified
+  for Host Mode on unknown", T162, device B). The PK-232 has no local VERSION
+  command and `RESTART` would drop links, so the release is INFERRED from one
+  measured generation difference: **EXPERT is unknown on 01.AUG.91** (verbose
+  `?What?`, Host `EX` -> error `$07`, T151/T155) **and known on 13.SEP.95** (a value;
+  Host `EXY`/`EXN`, T151/T152/T158); device C is unmeasured. `comm/devices.py`
+  (`KNOWN_DEVICES`, `infer_release()`) is the one place; the verbose probe is
+  `SerialManager.probe_release_verbose()` (one query per connection, run by
+  `ParamsUploader.upload()` next to `detect_maildrop()`), the Host Mode probe is
+  `SerialParamTransport.release()` (one `EX` query when a Host set is attempted
+  with no release). The banner always wins; `tnc_release_source` is `banner` or
+  `inferred`; the toolbar says "(inferred)". **Valid only while DEVICES.md has one
+  unit per generation** - a second unit makes it ambiguous and `infer_release()`
+  answers `None`.
+- **Verbose changes reach the configuration through ONE parser (P78 B).** The
+  configuration is the source of the init upload and of the mode-switch frames
+  (`MN<monitor>`, P73). A parameter changed in the verbose terminal used to be
+  overwritten by the old configuration value at the next mode switch / Host Mode
+  entry (T162 finding 3). The TNC confirms every taken change as
+  `Name   was a` / `Name   now b` (capitals = shortest abbreviation: `MOnitor`,
+  `UBit   0`, `DAYStamp`); `comm/verbose_parse.py` (`parse_was_now`, chunk-safe
+  `VerboseSync`, `HF_PACKET_FIELDS`) parses it and `MainWindow._take_verbose_change()`
+  writes `HFPacketConfig` - only when the value DIFFERS (the app's own upload and
+  ParamApplier cause the same lines), text compared the way the TNC reformats it,
+  band values (MAXFRAME/SLOTTIME) by the active band, parameters without a field
+  only reported. **Rule: a verbose change lands in the configuration via the was/now
+  parser, nowhere else.**
+- **MONITOR has ONE write path (P78 C).** Parameter mask, Monitor selector of the
+  Packet screens and the verbose parser all write `HFPacketConfig.monitor`; the TNC
+  is set through ParamApplier (set + read-back). Before P78 the selector sent `MN<n>`
+  directly (Host Mode only, no read-back, configuration untouched, and the selector
+  was never filled from the configuration).

@@ -57,7 +57,20 @@ the contrast next to Foreground/RX/TX, red only below the limit for the chosen
 font (WCAG: 3 : 1 from 18 pt or 14 pt bold, else 4.5 : 1; SemiBold counts as bold;
 compared at the shown one-decimal precision). T163 steps 10-13 open.
 
-### Packet parameters mask (P73) — implemented, T160/T161 PASS, T162 open (2026-10-03)
+### Release fingerprint, verbose sync, one way for MONITOR (P78) — implemented, T164 open (2026-10-03)
+
+T162 (device B) failed: with no boot banner `tnc_release` was `None`, so P72 set
+nothing in Host Mode; a verbose `MONITOR 3` was overwritten by the configuration
+at the next Host Mode entry; the Monitor selector bypassed ParamApplier. Now: the
+release is inferred from EXPERT (`comm/devices.py`; "Release 01.AUG.91 (inferred)";
+valid while DEVICES.md has one unit per generation, device C stays unmeasured), the
+TNC's `was/now` answers update `HFPacketConfig` (`comm/verbose_parse.py`), and the
+selector changes the configuration and goes through ParamApplier. Facts:
+`docs/claude/GOTCHAS_SERIAL_TNC.md`. Open: T164 (device B without power-cycling the
+TNC, then A). **Not covered:** was/now answers of parameters outside the Packet
+section (PACTOR, AMTOR, Baudot, Misc) are only reported, not taken.
+
+### Packet parameters mask (P73) — implemented, T160/T161 PASS, T162 FAIL (fixed by P78, T164 open) (2026-10-03)
 
 Parameters -> **Packet...** (was "HF Packet...", class `PacketParamsDialog`):
 three columns (Link | Band & Status | Flags), no scroll area. MAXFRAME and
