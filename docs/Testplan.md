@@ -3209,35 +3209,41 @@ Windows sound "Default Beep" is muted, nothing is heard (not an app setting).
 
 ---
 
-### T160 — `host_params_probe --part A --exclude IL`, device A: the Packet monitor flags (P73)
+### T160 — `host_params_probe --part A --exclude IL`, device B: the Packet monitor flags (P73)
 
 `python tools/hw_check.py --port COM6 host_params_probe --part A --exclude IL`
-(PC 1 only, nothing transmitted). The new rows run automatically: MBELL `ME`,
-MDIGI `MD`, MPROTO `MQ`, MSTAMP `MS`, PASSALL `PX`, BBSMSGS `BB` (FULLDP has no
-mnemonic - verbose only). Device A, `13.SEP.95`. Read the `T151 summary` and the
-per-row verdicts of these seven rows; a mnemonic that is `wrong_param` or
-unknown (`$07`) stays out of `verified_releases`.
+(PC 1 only, nothing transmitted). Device B, banner `release=01.AUG.91`. The new
+rows ran automatically: MBELL `ME`, MDIGI `MD`, MPROTO `MQ`, MSTAMP `MS`,
+PASSALL `PX`, BBSMSGS `BB`; FULLDP has no mnemonic.
 
 | Row | verdict | Note |
 |---|---|---|
-| MBELL / MDIGI / MPROTO / MSTAMP / PASSALL / BBSMSGS | ⬜ | |
-| FULLDP | ⬜ | verbose only |
+| MBELL / MDIGI / MPROTO / MSTAMP / PASSALL / BBSMSGS | ✅ verified | query `<mn>N`, set `<mn> $00`, query `<mn>Y`, verbose `ON`, restored to `OFF` |
+| FULLDP | ✅ unknown | verbose `FULLDP` answers `?What?` - the command does not exist on 01.AUG.91 |
 
-**Status:** ⬜ OPEN — hardware session. A follow-up commit enters the verified
-rows in `comm/host_params.py` (`verified_releases`).
+**Result (03.10.2026 14:41, `hw_logs/20261003_144153_host_params_probe.log`):**
+`T151 summary: no_mnemonic=12, rejected (0x07)=4, rejected (0x10)=1,
+verified=43, verified_query=17`.
+
+**Status:** ✅ PASS. The six flags are in `comm/host_params.py` for `01.AUG.91`;
+FULLDP was removed from config, upload, host_params and the dialog.
 
 ---
 
-### T161 — `host_params_probe --part A --exclude IL`, device B: the Packet monitor flags (P73)
+### T161 — `host_params_probe --part A --exclude IL`, device A: the Packet monitor flags (P73)
 
-Same as T160 on device B (`01.AUG.91`).
+Same as T160 on device A, banner `release=13.SEP.95` (PACTOR firmware).
 
 | Row | verdict | Note |
 |---|---|---|
-| MBELL / MDIGI / MPROTO / MSTAMP / PASSALL / BBSMSGS | ⬜ | |
-| FULLDP | ⬜ | verbose only |
+| MBELL / MDIGI / MPROTO / MSTAMP / PASSALL / BBSMSGS | ✅ verified | same sequence as T160 |
+| FULLDP | ✅ unknown | verbose `FULLDP` answers `?What?` - the command does not exist on 13.SEP.95 |
 
-**Status:** ⬜ OPEN — hardware session.
+**Result (03.10.2026 14:50, `hw_logs/20261003_145006_host_params_probe.log`):**
+`T151 summary: no_mnemonic=12, rejected (0x10)=1, verified=45,
+verified_query=19`.
+
+**Status:** ✅ PASS. The six flags are in `comm/host_params.py` for `13.SEP.95`.
 
 ---
 
