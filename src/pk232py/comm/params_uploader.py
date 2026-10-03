@@ -26,6 +26,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Optional
 
+from pk232py.comm.host_params import BAND_HF, BAND_PARAMS, BAND_VHF, band_value
+
 if TYPE_CHECKING:
     from pk232py.comm.serial_manager import SerialManager
     from pk232py.config import AppConfig, AMTORConfig, BaudotConfig, MiscConfig, MailDropConfig
@@ -328,11 +330,26 @@ class ParamsUploader:
         cmds += self._access_filter_cmds("MTO",   hf.mto_mode,   hf.mto_calls)
 
         # Individual flags (P13.3) - 8BITCONV (8B) and HID (HI) confirmed
-        # against the TRM. MBELL is deliberately NOT sent: it is absent from
-        # the TRM's 1987 Host Mode command list (see HFPacketConfig.mbell).
+        # against the TRM.
         cmds += [
             self._bool("8BITCONV", hf.bitconv8),
             self._bool("HID",      hf.hid),
+        ]
+
+        # Packet monitor flags (P73 C). MBELL used to be left out because it is
+        # not in the TRM's 1987 command list (HFPacketConfig.mbell); the other
+        # six were checkboxes with no config field at all - ticking one did
+        # nothing. Now all seven are sent (P73 spec B.4: a checkbox in the
+        # dialog must reach the TNC). Until T160/T161 measure them, a TNC that
+        # does not know one answers "?What?" and the init log shows it.
+        cmds += [
+            self._bool("MBELL",   hf.mbell),
+            self._bool("MDIGI",   hf.mdigi),
+            self._bool("MPROTO",  hf.mproto),
+            self._bool("MSTAMP",  hf.mstamp),
+            self._bool("PASSALL", hf.passall),
+            self._bool("BBSMSGS", hf.bbsmsgs),
+            self._bool("FULLDP",  hf.fulldp),
         ]
 
         # UBIT 0 (P74): verbose form "UBIT 0 ON|OFF", the one the operator
@@ -465,12 +482,20 @@ class ParamsUploader:
     def changed_with_old(
         cls, before: AppConfig, after: AppConfig,
         has_pactor: bool = True, has_maildrop: bool = True,
+        band: Optional[str] = None,
     ) -> list[tuple[str, str, Optional[str]]]:
         """(name, new value, old value) for every command that
         _build_commands(after) emits and _build_commands(before) does not
         emit byte-for-byte. The SAME source as the init upload - there is
         no second list of parameters. *old* is the value *before* sent
-        under that name (None if it sent none)."""
+        under that name (None if it sent none).
+
+        P73 B: MAXFRAME and SLOTTIME have one value per band (BAND_PARAMS).
+        They are reported for the ACTIVE *band* ("HF" / "VHF") only, with
+        that band's value; with *band* None (no Packet mode active) they are
+        not reported at all. The other band's change is
+        deferred_band_changes()'s business - sending it now would overwrite
+        the value the TNC is using."""
         def build(cfg: AppConfig) -> list[bytes]:
             return cls(serial=None, config=cfg)._build_commands(
                 has_pactor=has_pactor, has_maildrop=has_maildrop)
@@ -496,17 +521,45 @@ class ParamsUploader:
             gone = [v for v in old_by_name.get(name, [])
                     if cls._cmd(name, v) not in new_cmds]
             out.append((name, value, gone[0] if gone else None))
+        # P73 B: replace the (HF-based) band entries by the active band's.
+        out = [t for t in out if t[0] not in BAND_PARAMS]
+        if band is not None:
+            for name in BAND_PARAMS:
+                new = band_value(after.hf_packet, name, band)
+                old = band_value(before.hf_packet, name, band)
+                if new != old:
+                    out.append((name, str(new), str(old)))
+        return out
+
+    @classmethod
+    def deferred_band_changes(
+        cls, before: AppConfig, after: AppConfig, band: Optional[str],
+    ) -> list[tuple[str, str, str, str]]:
+        """(name, band of the value, new, old) for every changed band value
+        whose band is NOT the active one - saved in the configuration, applied
+        when that band's Packet mode is selected (P73 B)."""
+        out = []
+        for name in BAND_PARAMS:
+            for b in (BAND_HF, BAND_VHF):
+                if b == band:
+                    continue
+                new = band_value(after.hf_packet, name, b)
+                old = band_value(before.hf_packet, name, b)
+                if new != old:
+                    out.append((name, b, str(new), str(old)))
         return out
 
     @classmethod
     def changed_values(
         cls, before: AppConfig, after: AppConfig,
         has_pactor: bool = True, has_maildrop: bool = True,
+        band: Optional[str] = None,
     ) -> list[tuple[str, str]]:
         """(name, new value) for every parameter whose verbose command
-        differs between the two snapshots (P72, Teil B)."""
+        differs between the two snapshots (P72, Teil B); band values only
+        for the active *band* (P73 B)."""
         return [(n, v) for n, v, _old in
-                cls.changed_with_old(before, after, has_pactor, has_maildrop)]
+                cls.changed_with_old(before, after, has_pactor, has_maildrop, band)]
 
     # ------------------------------------------------------------------
     # Helpers
