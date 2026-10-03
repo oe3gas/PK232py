@@ -115,15 +115,56 @@ def role_colors(theme_key: str, bg_color: str) -> RoleColors:
     return THEME_ROLE_COLORS["air" if is_light_background(bg_color) else "dark"]
 
 
-def low_contrast_warnings(bg: str, fg: str, rx: str, tx: str) -> list[str]:
+# WCAG relaxes the limit for LARGE text: >= 18 pt, or >= 14 pt and bold.
+LARGE_TEXT_CONTRAST = 3.0
+
+_BOLD_WORDS = ("semibold", "demibold", "bold", "black", "heavy")
+
+
+def font_is_bold(family: str, weight: int = 400) -> bool:
+    """True for a bold font: a weight of 600 (SemiBold/DemiBold) or more, or a
+    family name that says so ("Cascadia Mono SemiBold", "Segoe UI Bold").
+
+    The name check matters on Windows, where a font like "Cascadia Mono
+    SemiBold" is installed as its own family and Qt reports a normal weight.
+    SemiBold counts as bold (WCAG says 700, but the operator's own font is
+    SemiBold and reads as bold).
+    """
+    name = family.lower()
+    return weight >= 600 or any(word in name for word in _BOLD_WORDS)
+
+
+def required_contrast(point_size: float, bold: bool) -> float:
+    """The WCAG 2.x AA limit for text of this size: 3 : 1 for large text
+    (>= 18 pt, or >= 14 pt bold), otherwise 4.5 : 1."""
+    if point_size >= 18 or (bold and point_size >= 14):
+        return LARGE_TEXT_CONTRAST
+    return MIN_CONTRAST
+
+
+def meets_contrast(color: str, bg: str, required: float = MIN_CONTRAST) -> bool:
+    """True if the contrast of *color* on *bg* reaches *required*.
+
+    Compared at the precision that is SHOWN (one decimal): a ratio the dialog
+    displays as "3.0 : 1" is not marked red against a 3 : 1 limit, which would
+    look like a bug (#00aa7f on white is 2.976).
+    """
+    return round(contrast_ratio(color, bg), 1) >= required
+
+
+def low_contrast_warnings(bg: str, fg: str, rx: str, tx: str,
+                          required: float = MIN_CONTRAST) -> list[str]:
     """One "Low contrast: <what> on background (2.1 : 1)" line per text colour
-    whose contrast to *bg* is below MIN_CONTRAST. Empty list = all fine.
+    whose contrast to *bg* is below *required* (default 4.5; the Appearance
+    dialog passes the limit for its font, see required_contrast()). Empty list
+    = all fine.
 
     A pure function, so the Appearance dialog's warning is testable without Qt.
     """
     out = []
     for label, color in (("Foreground text", fg), ("RX text", rx), ("TX text", tx)):
-        ratio = contrast_ratio(color, bg)
-        if ratio < MIN_CONTRAST:
-            out.append(f"Low contrast: {label} on background ({ratio:.1f} : 1)")
+        if not meets_contrast(color, bg, required):
+            out.append(
+                f"Low contrast: {label} on background "
+                f"({contrast_ratio(color, bg):.1f} : 1)")
     return out
