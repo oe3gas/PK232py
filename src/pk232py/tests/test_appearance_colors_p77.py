@@ -215,7 +215,8 @@ class TestOneColorSource:
         win._on_appearance()
         a = win._app_config.appearance
         assert (a.tx_color, a.rx_color) == ("#aa0000", "#0000aa")
-        assert a.theme == "custom"
+        assert a.theme == "air"            # P79: the edited theme stays selected
+        assert a.overrides["air"] == {"tx_color": "#aa0000", "rx_color": "#0000aa"}
         tx = win._opmode_screens["Baudot RTTY"].tx_input
         assert tx._tx_fg_color == "#aa0000"
         assert "#aa0000" in win._vt_input.styleSheet()
