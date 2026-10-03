@@ -85,15 +85,48 @@ class TestPlan:
         with pytest.raises(ValueError):
             hw_check.restart_probe_variants("D")
 
-    def test_b0_has_no_operator_step_it_involves_no_connection(self):
-        assert hw_check.restart_probe_steps("B0", "OE3GAS") == []
+    def test_b0_has_no_step_of_its_own_it_involves_no_connection(self):
+        keys = [k for k, _ in hw_check.restart_probe_steps("B0", "OE3GAS")]
+        assert keys == ["start"]               # only the preparation questions
 
-    def test_two_steps_per_variant_all_on_pc2(self):
-        for part, n in (("A", 2), ("all", 6)):
-            steps = hw_check.restart_probe_steps(part, "OE3GAS")
-            assert len(steps) == n
-            assert all(s.where == hw_check.WHERE_PC2 and s.do and s.then
-                       for _, s in steps)
+    def test_every_question_is_a_planned_framed_step(self):
+        """T168 B, 22:59:18: a question vanished between log lines. Every
+        question belongs to a step: start (callsign, ready), connect (y/n),
+        check (alive?), cleanup (DI y/n per channel); the call step ends with ENTER."""
+        keys = [k for k, _ in hw_check.restart_probe_steps("A", "OE3GAS")]
+        assert keys == ["start", "A.connect", "A.call", "A.check", "A.cleanup"]
+        steps = hw_check.restart_probe_steps("all", "OE3GAS")
+        assert len(steps) == 1 + 3 * 4
+        assert all(step.do and step.then for _, step in steps)
+        assert steps[0][1].where == hw_check.WHERE_PC1
+
+    def test_a_step_is_shown_only_after_the_queued_log_lines_settled(self, monkeypatch):
+        log = hw_check.RunLog(None)
+        session = hw_check.Session("DRYRUN", 9600, True, log, AppConfig())
+        plan = hw_check._rp_plan("A", "OE3GAS", log)
+        order: list = []
+        monkeypatch.setattr(session, "_pump", lambda seconds: order.append(("pump", seconds)))
+        monkeypatch.setattr(plan, "show", lambda key: order.append(("show", key)))
+        hw_check._rp_show(session, plan, "start")
+        assert order == [("pump", 0.5), ("show", "start")]
+
+
+class TestDebugLinesStayInTheFile:
+    def test_comm_debug_lines_are_not_printed_but_logged(self, tmp_path, capsys):
+        import logging
+        path = tmp_path / "run.log"
+        log = hw_check.RunLog(path)
+        handler = hw_check._RunLogHandler(log)
+        record = logging.LogRecord("pk232py.comm", logging.DEBUG, __file__, 1,
+                                   "Init: step 1 response", None, None)
+        handler.emit(record)
+        log.line("a normal line")
+        log.close()
+        out = capsys.readouterr().out
+        assert "Init: step 1 response" not in out
+        assert "a normal line" in out
+        text = path.read_text(encoding="utf-8")
+        assert "Init: step 1 response" in text and "a normal line" in text
 
 
 class TestDryRun:
@@ -102,7 +135,7 @@ class TestDryRun:
         session = hw_check.Session("DRYRUN", 9600, True, log, AppConfig())
         hw_check.test_restart_probe(session, log, "all", AppConfig())
         out = capsys.readouterr().out
-        assert "STEP 6 of 6" in out
+        assert "STEP 13 of 13" in out
         assert not session.sm.is_connected
 
 

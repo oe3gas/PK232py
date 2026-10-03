@@ -282,10 +282,13 @@ class RunLog:
         # so device provenance survives a "just read the tail" skim.
         self.device_line: Optional[str] = None
 
-    def line(self, text: str = "") -> None:
+    def line(self, text: str = "", console: bool = True) -> None:
+        """One timestamped line. *console* False = file only (P81: the SerialManager's
+        DEBUG lines used to land between an operator question and its answer)."""
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         msg = f"[{ts}] {text}" if text else ""
-        print(msg)
+        if console:
+            print(msg)
         if self._fh:
             self._fh.write(msg + "\n")
             self._fh.flush()
@@ -1964,7 +1967,7 @@ class _RunLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self._log.line(f"[{record.name}] {self.format(record)}")
+            self._log.line(f"[{record.name}] {self.format(record)}", console=False)
         except Exception:
             self.handleError(record)
 
@@ -7062,14 +7065,30 @@ def restart_probe_verdict(links_init: Optional[dict], links_after: Optional[dict
     return "; ".join(parts)
 
 
-def restart_probe_steps(part: str, mycall: str) -> list:
+def restart_probe_steps(part: str, mycall: str, target: str = "") -> list:
     """The ordered operator plan, as (key, ProbeStep) pairs (built before the
-    first transmission, like channel_probe_steps)."""
+    first transmission, like channel_probe_steps). EVERY question the run asks
+    is one of these steps, so it is framed and counted ('STEP n of N') and
+    cannot disappear between log lines."""
     me = mycall or "<TNC MYCALL>"
-    plan: list = []
+    box = target or _CHANNEL_PROBE_TARGET
+    plan: list = [("start", ProbeStep(
+        "T168  preparation", WHERE_PC1, 2,
+        [f"PC 2: the TinyBox {box} is running; QtTermTCP has {_RP_CALLER} DISCONNECTED.",
+         "PC 1: PK232PY is closed. The app's own upload overwrites TNC parameters "
+         "(that is the measurement).",
+         "Answer the two questions below: the counterpart callsign, then y to start."],
+        "type the callsign (or ENTER for the default), then y and ENTER."))]
     for v in restart_probe_variants(part):
         if v == "B0":
             continue        # no connection, nothing for the operator to do
+        if v == "C":
+            conn_do = [f"Answer y to send the verbose CONNECT {box} (the TNC stays in Converse)."]
+        else:
+            conn_do = [f"Answer y to connect channel 1 of the TNC to {box} from Host Mode."]
+        plan.append((f"{v}.connect", ProbeStep(
+            f"T168 {v}  connect to the TinyBox", WHERE_PC1, 1, conn_do,
+            "answer y (connect) or n (skip this variant) and press ENTER.")))
         plan.append((f"{v}.call", ProbeStep(
             f"T168 {v}  incoming call ({_RP_VARIANTS[v].split(' (')[0]})", WHERE_PC2, 2,
             [f"In QtTermTCP, use the session with callsign {_RP_CALLER}.",
@@ -7082,14 +7101,20 @@ def restart_probe_steps(part: str, mycall: str) -> list:
             f"T168 {v}  is the link still alive after the restart?", WHERE_PC2, 2,
             [f"Look at the QtTermTCP session {_RP_CALLER}: still connected?",
              "Type ONE short line in that session and send it."],
-            "go back to PC 1, answer the question on this screen and press ENTER.")))
+            "go back to PC 1, answer the question on this screen (y/N) and press ENTER.")))
+        plan.append((f"{v}.cleanup", ProbeStep(
+            f"T168 {v}  disconnect the links", WHERE_PC1, 1,
+            ["Answer y to each question on this screen: the program sends DI on every "
+             "channel that is still connected (this keys the transmitter briefly)."],
+            "answer y or n for each channel and press ENTER; the next variant follows.")))
     return plan
 
 
-def _rp_plan(part: str, mycall: str, log: Optional[RunLog]) -> "ProbePlan":
+def _rp_plan(part: str, mycall: str, log: Optional[RunLog],
+             target: str = "") -> "ProbePlan":
     """A ProbePlan (show/skip) over restart_probe_steps()."""
     plan = ProbePlan.__new__(ProbePlan)
-    keyed = restart_probe_steps(part, mycall)
+    keyed = restart_probe_steps(part, mycall, target)
     plan.by_key = dict(keyed)
     plan.run = StepRun([step for _, step in keyed], log)
     plan.log = log
@@ -7213,16 +7238,18 @@ def _rp_make_links(
         return {ch: r.partner for ch, r in results.items()
                 if not r.unparsed and r.error_code is None and r.connected}
     if v == "C":
+        _rp_show(session, plan, "C.connect")
         if not confirm_tx(f"Verbose CONNECT {target} (the TNC stays in Converse)."):
             return None
         log.line(f"C CONNECT echo: {session.verbose(f'CONNECT {target}')!r}")
         log.line(f"C waiting: {session.read_until_idle(idle=2.0, max_total=30.0)!r}")
-        plan.show("C.call")
+        _rp_show(session, plan, "C.call")
         wait_for_enter(session._pump, 120.0)
         session._pump(0.3)
         return {}     # in Converse nothing can be asked without leaving it
     session.enter_host_mode()
     session.drain_pending_frames()
+    _rp_show(session, plan, f"{v}.connect")
     if not _probe_connect(session, log, target, 1):
         session.exit_host_mode()
         return None
@@ -7230,7 +7257,7 @@ def _rp_make_links(
     captured: list = []
     session.sm.frame_received.connect(captured.append)
     try:
-        plan.show(f"{v}.call")
+        _rp_show(session, plan, f"{v}.call")
         wait_for_enter(session._pump, 120.0)
         session._pump(0.3)
     finally:
@@ -7247,8 +7274,11 @@ def _rp_make_links(
     return before
 
 
-def _rp_cleanup(session: "Session", log: RunLog, frames: dict) -> None:
+def _rp_cleanup(session: "Session", log: RunLog, frames: dict,
+                plan: "ProbePlan", v: str) -> None:
     """DI on every channel the TNC still shows connected, then leave Host Mode."""
+    if f"{v}.cleanup" in plan.by_key:
+        _rp_show(session, plan, f"{v}.cleanup")
     if session.sm.is_host_mode:
         session.exit_host_mode()
     _confirm_command_prompt_light(session, "cleanup", log)
@@ -7257,6 +7287,15 @@ def _rp_cleanup(session: "Session", log: RunLog, frames: dict) -> None:
         _probe_disconnect_all(session, log, frames, "cleanup")
     finally:
         session.exit_host_mode()
+
+
+def _rp_show(session: "Session", plan: "ProbePlan", key: str) -> None:
+    """Show one framed step. First let the SerialManager's reader threads and
+    queued log lines settle (0.5 s of Qt pumping) so nothing is printed between
+    the frame and the operator's answer (T168 B, 22:59:18)."""
+    session._pump(0.5)
+    sys.stdout.flush()
+    plan.show(key)
 
 
 def _rp_skip(plan: "ProbePlan", key: str) -> None:
@@ -7275,8 +7314,8 @@ def _rp_variant(
     before = _rp_make_links(session, log, v, target, frames, plan)
     if before is None:
         log.result(f"T168 {v}", "INFO", "skipped by operator")
-        _rp_skip(plan, f"{v}.call")
-        _rp_skip(plan, f"{v}.check")
+        for key in ("call", "check", "cleanup"):
+            _rp_skip(plan, f"{v}.{key}")
         return True
     log.line(f"{v} links before the crash: {before}")
     _rp_simulate_crash(session, log)
@@ -7286,11 +7325,13 @@ def _rp_variant(
                    f"the TNC did not answer the app's init within {_RP_INIT_WAIT:.0f} s "
                    f"(links before the crash: {before})")
         _rp_skip(plan, f"{v}.check")
+        _rp_skip(plan, f"{v}.cleanup")
         return False
     if session.sm.is_host_mode:
         log.result(f"T168 {v}", "INFO",
                    "init ended in Host Mode - upload not possible, nothing measured")
         _rp_skip(plan, f"{v}.check")
+        _rp_skip(plan, f"{v}.cleanup")
         return False
     links_init = _rp_cstatus_links(session, log, f"{v} after init")
     records = _rp_upload_logged(session, log, app_config)
@@ -7301,7 +7342,7 @@ def _rp_variant(
         log.line(f"{v} REJECTED: {cmd}")
     alive = None
     if f"{v}.check" in plan.by_key:
-        plan.show(f"{v}.check")
+        _rp_show(session, plan, f"{v}.check")
         alive = input("Is the QtTermTCP session still connected, and did your "
                       "line go out? [y/N] ").strip().lower() == "y"
     verdict = restart_probe_verdict(links_init, links_after, rejected)
@@ -7309,7 +7350,7 @@ def _rp_variant(
         f"T168 {v}", "INFO",
         f"links_before={before} links_init={links_init} links_after={links_after} "
         f"rejected={rejected} silent={silent} pc2_link_alive={alive} -- {verdict}")
-    _rp_cleanup(session, log, frames)
+    _rp_cleanup(session, log, frames, plan, v)
     return True
 
 
@@ -7342,14 +7383,12 @@ def test_restart_probe(
     if not mycall:
         log.result("T168", "SKIPPED", "MYCALL not parseable -- nothing touched")
         return
-    target = input(f"Counterpart callsign for the connect [{target}]? ").strip() or target
-    plan = _rp_plan(part, mycall, log)
+    plan = _rp_plan(part, mycall, log, target)
     print()
     print(f"restart_probe --part {part}: {plan.run.total} steps; the program "
           f"simulates the crash itself (no action for you).")
-    print(f"Before we start: PC 2 has the TinyBox {target} running and QtTermTCP "
-          f"with {_RP_CALLER} DISCONNECTED; PC 1: PK232PY is closed. The app's own "
-          f"upload overwrites the TNC parameters (that is the measurement).")
+    _rp_show(session, plan, "start")
+    target = input(f"Counterpart callsign for the connect [{target}]? ").strip() or target
     if input("Ready to continue? [y/N] ").strip().lower() != "y":
         log.result("T168", "INFO", "skipped by operator")
         return
