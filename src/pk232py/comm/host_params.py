@@ -181,15 +181,33 @@ _VERIFIED_B_T160 = _PACKET_MONITOR_FLAGS
 _VERIFIED_A_T161 = _PACKET_MONITOR_FLAGS
 
 
+# P80: the measurement behind each (release, parameter) pair - the registry
+# (comm/mnemonic_registry.py) takes its evidence from here, never retypes it.
+_VERIFIED_SETS = (
+    (RELEASE_B, "T151", _VERIFIED_B_T151),
+    (RELEASE_B, "T138", _VERIFIED_B_T138),
+    (RELEASE_B, "T156", _VERIFIED_B_T156),
+    (RELEASE_B, "T160", _VERIFIED_B_T160),
+    (RELEASE_A, "T151", _VERIFIED_A_T151),
+    (RELEASE_A, "T152", _VERIFIED_A_T152),
+    (RELEASE_A, "T156", _VERIFIED_A_T156),
+    (RELEASE_A, "T161", _VERIFIED_A_T161),
+)
+
+
+def verified_sources(name: str) -> dict:
+    """{release: "T151, T152"} - which measurements verified parameter *name*."""
+    found: dict = {}
+    for release, test, names in _VERIFIED_SETS:
+        if name in names:
+            found.setdefault(release, []).append(test)
+    return {rel: ", ".join(tests) for rel, tests in found.items()}
+
+
 def _verified_releases(name: str) -> tuple:
-    releases = []
-    if name in _VERIFIED_B_T151 or name in _VERIFIED_B_T138 or name in _VERIFIED_B_T156 \
-            or name in _VERIFIED_B_T160:
-        releases.append(RELEASE_B)
-    if name in _VERIFIED_A_T151 or name in _VERIFIED_A_T152 or name in _VERIFIED_A_T156 \
-            or name in _VERIFIED_A_T161:
-        releases.append(RELEASE_A)
-    return tuple(releases)
+    sources = verified_sources(name)
+    # Same order as before P80: device B first, then device A.
+    return tuple(rel for rel in (RELEASE_B, RELEASE_A) if rel in sources)
 
 
 # ---------------------------------------------------------------------------

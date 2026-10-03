@@ -1,0 +1,298 @@
+# pk232py - Modern multimode terminal for AEA PK-232 / PK-232MBX TNC
+# Copyright (C) 2026  OE3GAS  -  GPL v2
+"""comm/mnemonic_registry.py - every Host Mode mnemonic the application sends,
+with what it means and the evidence per firmware release (P80). Qt-free.
+
+CLAUDE.md rule 6: never guess a mnemonic. This module is where the guessing is
+made visible: a mnemonic WITHOUT evidence (``evidence == {}``) has only a
+hypothesis behind it (the firmware matrix, docs/PK232_firmware_matrix.md,
+"every row is a hypothesis"). tests/test_mnemonic_registry.py scans the source
+for every mnemonic the application sends and fails when one is missing here,
+so a NEW mnemonic cannot enter the code without an entry. docs/MNEMONIC_AUDIT.md
+is generated from this table (tools/gen_mnemonic_audit.py).
+
+``evidence`` maps a release (as printed in the boot banner) to the measurement:
+  * for parameters in comm/host_params.py it is TAKEN from there
+    (host_params.verified_sources) - never retyped;
+  * for the rest it names the Testplan entry (``T112 (...)``);
+  * a measurement without a known device is attributed to 13.SEP.95, because
+    everything measured before device B (P37) came from device A (matrix 2a).
+``meaning`` says what the matrix calls it; where the application USES the
+mnemonic for something else, the text says so ("conflict") - those are the
+first candidates for the measurement package (P80 Teil D).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from pk232py.comm.host_params import HOST_PARAMS, verified_sources
+
+# The columns of docs/MNEMONIC_AUDIT.md, as printed in the boot banner.
+RELEASES = ("01.AUG.91", "13.SEP.95", "30.12.1988")
+
+
+@dataclass(frozen=True)
+class MnemonicEntry:
+    mnemonic: bytes
+    meaning: str              # e.g. "PACKET (global); matrix line 332, confidence M"
+    kind: str                 # "mode" | "param" | "query" | "action" | "channel"
+    evidence: dict = field(default_factory=dict)   # release -> "T151, T152"
+    transmits: bool = False   # keys the transmitter (XM, CQ, ARQ call, connect ...)
+
+
+# (mnemonic, meaning, kind, transmits, evidence outside host_params)
+_TABLE: tuple = (
+    ('3R', '3RDPARTY (maildrop); matrix line 260, confidence L',
+     'param', False, {}),
+    ('8B', '8BITCONV (rtty); matrix line 353, confidence M',
+     'param', False, {}),
+    ('AC', 'ARQ: app sends it as ARQ call (amtor.py, main_window.py) but pactor.py sends ARQTMO with it (conflict) [matrix line 180]',
+     'action', True, {}),
+    ('AD', 'ADELAY (amtor); matrix line 178, confidence M',
+     'param', False, {}),
+    ('AG', 'ACHG (amtor); matrix line 177, confidence M',
+     'action', False, {}),
+    ('AK', 'ACRPACK (packet); matrix line 292, confidence M',
+     'param', False, {}),
+    ('AL', 'ALIST (amtor); matrix line 179, confidence M',
+     'action', False, {}),
+    ('AM', 'AMTOR (global); matrix line 221, confidence M',
+     'mode', False, {}),
+    ('AO', 'ARQTMO; T151: AO answers the ARQTMO value, not ARQTOL [matrix line 181, confidence M]',
+     'param', False, {}),
+    ('AP', 'ALFPACK (packet); matrix line 293, confidence M',
+     'param', False, {}),
+    ('AR', 'ALFRTTY (rtty); matrix line 356, confidence M',
+     'param', False, {}),
+    ('AS', 'ASCII (global); matrix line 222, confidence M',
+     'mode', False, {}),
+    ('AU', 'AAB (amtor); matrix line 176, confidence M',
+     'param', False, {}),
+    ('AV', 'AX25L2V2 (packet); matrix line 294, confidence M',
+     'param', False, {}),
+    ('AY', 'ASPECT (fax); matrix line 201, confidence M',
+     'param', False, {}),
+    ('Ao', 'ARQTOL as amtor.py sends it; ARQTOL is ?What? on 01.AUG.91 (T151), the mixed-case form is a guess - not in matrix',
+     'param', False, {}),
+    ('BA', 'BAUDOT (global); matrix line 224, confidence M',
+     'mode', False, {}),
+    ('BB', 'BBSMSGS (maildrop); matrix line 261, confidence L',
+     'param', False, {}),
+    ('BT', 'BTEXT (packet); matrix line 298, confidence M',
+     'param', False, {}),
+    ('CF', 'CFROM (packet); matrix line 300, confidence M',
+     'param', False, {}),
+    ('CG', 'CONSTAMP (packet); matrix line 308, confidence M',
+     'param', False, {}),
+    ('CI', 'CPACTIME: app sends CODE (rtty_baudot.py), matrix: CPACTIME [matrix line 309]',
+     'param', False, {}),
+    ('CK', 'CHECK (packet); matrix line 303, confidence M',
+     'param', False, {}),
+    ('CL', 'CANLINE (global); matrix line 226, confidence M',
+     'param', False, {}),
+    ('CN', 'COMMAND (global); matrix line 228, confidence M',
+     'param', False, {}),
+    ('CO', 'CONNECT (packet); matrix line 306, confidence M',
+     'channel', True, {'01.AUG.91': 'T148 (own connect lands on chip 1, observed)'}),
+    ('CT', 'CTEXT (maildrop); matrix line 263, confidence L',
+     'param', False, {}),
+    ('DA', 'DAYTIME (global); matrix line 230, confidence M',
+     'param', False, {}),
+    ('DD', 'DIDDLE (rtty); matrix line 359, confidence M',
+     'param', False, {}),
+    ('DF', 'DFROM (packet); matrix line 310, confidence M',
+     'param', False, {}),
+    ('DI', 'DISCONNECT (packet); matrix line 311, confidence M',
+     'channel', True, {}),
+    ('DS', 'DAYSTAMP (global); matrix line 229, confidence M',
+     'param', False, {}),
+    ('DW', 'DWAIT (packet); matrix line 312, confidence M',
+     'param', False, {}),
+    ('EA', 'EAS (amtor); matrix line 185, confidence M',
+     'param', False, {}),
+    ('EE', 'ERRCHAR (amtor.py, rtty_ascii.py) - not in matrix',
+     'param', False, {}),
+    ('EX', 'EXPERT (global); matrix line 233, confidence L',
+     'param', False, {}),
+    ('FA', 'FAX (global); matrix line 234, confidence M',
+     'mode', False, {}),
+    ('FE', 'FEC (amtor); matrix line 186, confidence M',
+     'action', True, {}),
+    ('FN', 'FAXNEG (fax); matrix line 204, confidence M',
+     'param', False, {}),
+    ('FR', 'FRACK (packet); matrix line 313, confidence M',
+     'param', False, {}),
+    ('FS', 'FSPEED (fax); matrix line 205, confidence M',
+     'param', False, {}),
+    ('HB', 'HBAUD (packet); matrix line 315, confidence M',
+     'param', False, {'13.SEP.95': 'T112 (restore reports HBaud was 300)'}),
+    ('HD', 'HEADERLN (packet); matrix line 316, confidence M',
+     'param', False, {}),
+    ('HM', 'HOMEBBS (maildrop); matrix line 267, confidence L',
+     'param', False, {}),
+    ('HO', 'HOST (global); matrix line 236, confidence M',
+     'action', False, {}),
+    ('HP', 'HPOLL (packet); matrix line 317, confidence M',
+     'param', False, {'13.SEP.95': 'T86 (late response frame after Host Mode entry)'}),
+    ('IL', 'ILFPACK (packet); matrix line 318, confidence M',
+     'param', False, {}),
+    ('KL', 'KILONFWD (maildrop); matrix line 268, confidence L',
+     'param', False, {}),
+    ('LO', 'LOCK (fax); matrix line 209, confidence M',
+     'action', False, {}),
+    ('MD', 'MDIGI (T160/T161); the app has no MDPROMPT [matrix line 274, confidence L]',
+     'param', False, {}),
+    ('ME', 'MBELL (maildrop); matrix line 271, confidence L',
+     'param', False, {}),
+    ('MF', 'MFROM (packet); matrix line 322, confidence M',
+     'param', False, {}),
+    ('MG', 'MYSELCAL (amtor); matrix line 190, confidence M',
+     'param', False, {}),
+    ('MH', 'MHEARD (packet); matrix line 323, confidence M',
+     'query', False, {}),
+    ('MI', 'MFILTER: app sends MID (morse.py) and a MID toggle (main_window.py); measured: MFILTER (T115) [matrix line 345]',
+     'param', False, {'13.SEP.95': 'T115 (MI$80 = verbose MFILTER $80)'}),
+    ('MK', 'MYALTCAL; pactor.py also sends it as MYPTCALL; the matrix MDCHECK row is refuted (no MDCHECK mnemonic, T118) [matrix line 189, confidence M]',
+     'param', False, {}),
+    ('ML', 'MYCALL (packet); matrix line 327, confidence M',
+     'param', False, {}),
+    ('MN', 'MONITOR (packet); matrix line 324, confidence M',
+     'param', False, {'13.SEP.95': 'T31 (ACK only)'}),
+    ('MO', 'MORSE (global); matrix line 238, confidence M',
+     'mode', False, {}),
+    ('MP', 'MSPEED (morse); matrix line 286, confidence M',
+     'param', False, {}),
+    ('MQ', 'MPROTO (maildrop); matrix line 277, confidence L',
+     'param', False, {}),
+    ('MR', 'MRPT (packet); matrix line 325, confidence M',
+     'param', False, {}),
+    ('MS', 'MSTAMP (maildrop); matrix line 278, confidence L',
+     'param', False, {}),
+    ('MT', 'MTO (packet); matrix line 326, confidence M',
+     'param', False, {}),
+    ('MU', 'MMSG (maildrop); matrix line 276, confidence L',
+     'param', False, {}),
+    ('MV', 'MAILDROP (maildrop); matrix line 270, confidence L',
+     'param', False, {}),
+    ('MW', 'MARSDISP: app sends MWEIGHT (morse.py), matrix: MARSDISP [matrix line 188]',
+     'param', False, {}),
+    ('MX', 'MAXFRAME (packet); matrix line 320, confidence M',
+     'param', False, {'13.SEP.95': 'T31 (ACK only)'}),
+    ('MY', 'MYGATE: app sends MYIDENT (amtor.py), matrix: MYGATE [matrix line 280]',
+     'param', False, {}),
+    ('NA', 'NAVTEX (navtex); matrix line 290, confidence L',
+     'mode', False, {}),
+    ('NE', 'NEWMODE: app sends it as NAVTEX mode switch (hostmode.py), matrix: NEWMODE; navtex.py sends NA [matrix line 346]',
+     'mode', False, {}),
+    ('NM', 'NAVMSG (navtex); matrix line 288, confidence L',
+     'param', False, {}),
+    ('NS', 'NAVSTN (navtex); matrix line 289, confidence L',
+     'param', False, {}),
+    ('OP', 'OPMODE (global); matrix line 242, confidence M',
+     'query', False, {'13.SEP.95': 'T141 (OP queried in Host Mode)'}),
+    ('P2', 'PT200 as pactor.py sends it; the matrix has PB for PT200 (conflict) - not in matrix',
+     'param', False, {}),
+    ('PA', 'PACKET (global); matrix line 243, confidence M',
+     'mode', False, {'13.SEP.95': 'T31 (init frames ACKed, 2026-05-17, ACK only)'}),
+    ('PB', 'PT200 (matrix line 347) [matrix line 347, confidence L]',
+     'param', False, {}),
+    ('PD', 'PTSEND; main_window.py sends it with "1,2" [matrix line 351, confidence L]',
+     'action', True, {}),
+    ('PE', 'PERSIST (packet); matrix line 331, confidence M',
+     'param', False, {}),
+    ('PH', 'PTHUFF (matrix section 3 text, no table row)',
+     'param', False, {}),
+    ('PL', 'PACLEN (packet); matrix line 328, confidence M',
+     'param', False, {}),
+    ('PN', 'PTLIST (pactor); matrix line 349, confidence M',
+     'query', False, {}),
+    ('PP', 'PPERSIST (packet); matrix line 332, confidence M',
+     'param', False, {}),
+    ('PT', 'PACTIME: app sends it as PACTOR mode switch, matrix: PACTIME [matrix line 329]',
+     'mode', False, {}),
+    ('PV', 'PTOVER (pactor); matrix line 350, confidence L',
+     'param', False, {}),
+    ('PX', 'PASSALL (packet); matrix line 330, confidence M',
+     'param', False, {'13.SEP.95': 'T86, T111 (PXN/PXY)'}),
+    ('Pr', 'PTROUND (pactor.py), mixed-case form - not in matrix',
+     'param', False, {}),
+    ('RB', 'RBAUD (rtty); matrix line 361, confidence M',
+     'param', False, {}),
+    ('RC', 'RCVE (return to receive) [matrix line 212, confidence M]',
+     'action', False, {}),
+    ('RF', 'RFEC (amtor); matrix line 192, confidence M',
+     'param', False, {}),
+    ('RP', 'RESPTIME (packet); matrix line 335, confidence M',
+     'param', False, {}),
+    ('RT', 'RESTART (danger); matrix line 200, confidence H',
+     'action', False, {}),
+    ('RV', 'RXREV as main_window.py sends it; host_params has RX for RXREV (conflict) - not in matrix',
+     'param', False, {}),
+    ('RX', 'RXREV (amtor); matrix line 193, confidence M',
+     'param', False, {}),
+    ('RY', 'RETRY (packet); matrix line 336, confidence M',
+     'param', False, {}),
+    ('SA', 'SAMPLE (global); matrix line 248, confidence M',
+     'action', False, {}),
+    ('SE', 'SELFEC (amtor); matrix line 194, confidence M',
+     'action', True, {}),
+    ('SI', 'SIGNAL (global); matrix line 249, confidence M',
+     'mode', False, {}),
+    ('SL', 'SLOTTIME (packet); matrix line 338, confidence M',
+     'param', False, {'13.SEP.95': 'T112 (30 -> 10)'}),
+    ('SP', 'SENDPAC (packet); matrix line 337, confidence M',
+     'param', False, {}),
+    ('SQ', 'SQUELCH toggle (main_window.py) [matrix line 339, confidence M]',
+     'param', False, {}),
+    ('SR', 'SRXALL (amtor); matrix line 195, confidence M',
+     'param', False, {}),
+    ('TD', 'TXDELAY (rtty); matrix line 362, confidence M',
+     'param', False, {}),
+    ('TL', 'TMAIL (maildrop); matrix line 281, confidence L',
+     'param', False, {}),
+    ('TN', 'TDCHAN (signal); matrix line 368, confidence L',
+     'param', False, {}),
+    ('TU', 'TDBAUD (signal); matrix line 367, confidence L',
+     'param', False, {}),
+    ('TV', 'TDM (signal); matrix line 369, confidence L',
+     'mode', False, {}),
+    ('TX', 'TXREV (amtor); matrix line 196, confidence M',
+     'param', False, {}),
+    ('UB', 'UBIT (maildrop); matrix line 282, confidence L',
+     'param', False, {}),
+    ('UN', 'UNPROTO (packet); matrix line 342, confidence M',
+     'param', False, {'13.SEP.95': 'T101 (UI frame sent with the UNPROTO path)'}),
+    ('UR', 'USERS (maildrop); matrix line 283, confidence L',
+     'param', False, {}),
+    ('US', 'USOS (rtty); matrix line 363, confidence M',
+     'param', False, {}),
+    ('VH', 'VHF (packet); matrix line 343, confidence M',
+     'param', False, {'13.SEP.95': 'T112 (restore reports Vhf was OFF)'}),
+    ('WI', 'WIDESHFT (amtor.py, rtty_baudot.py) - not in matrix',
+     'param', False, {}),
+    ('WO', 'WORDOUT (amtor); matrix line 197, confidence M',
+     'param', False, {}),
+    ('XL', 'XLENGTH (amtor.py, rtty_ascii.py) - not in matrix',
+     'param', False, {}),
+    ('XM', 'XMIT (fax); matrix line 214, confidence M',
+     'action', True, {}),
+    ('XO', 'XMITOK (global); matrix line 257, confidence M',
+     'param', False, {}),
+)
+
+
+def _build() -> dict:
+    registry: dict = {}
+    for mnemonic, meaning, kind, transmits, evidence in _TABLE:
+        registry[mnemonic.encode("ascii")] = MnemonicEntry(
+            mnemonic.encode("ascii"), meaning, kind, dict(evidence), transmits)
+    # Parameters measured through host_params: take the evidence from there.
+    for row in HOST_PARAMS:
+        entry = registry.get(row.mnemonic)
+        if entry is not None:
+            entry.evidence.update(verified_sources(row.name))
+    return dict(sorted(registry.items()))
+
+
+REGISTRY: dict = _build()
