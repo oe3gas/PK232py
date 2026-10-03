@@ -3296,7 +3296,40 @@ Device B, PK232PY in Host Mode, nothing transmitted. Software:
 | 4 | select HF Packet, then VHF Packet again; leave Host Mode; verbose `MAXFRAME` | `5` | ⬜ |
 | 5 | the Parameters tab at 100 %: three columns, no scrollbar | as stated | ⬜ |
 
-**Status:** ⬜ OPEN — hardware session.
+**Result (03.10.2026, device B, operator, screenshots): ❌ FAIL.** The TNC was
+already awake when the app connected, so there was no boot banner and
+`tnc_release` stayed `None` (toolbar "TNC-Firmware: —"):
+1. Host Mode, VHF Packet, MONITOR 4 -> 6, OK: "MONITOR not verified for Host Mode
+   on **unknown** - saved, TNC unchanged"; a MAXFRAME change likewise had no effect.
+2. The same change through the Monitor selector of the VHF Packet screen worked
+   at once (verbose afterwards: 6) - it sent `MN6` directly, bypassing ParamApplier
+   and the configuration.
+3. verbose `MONITOR 3`, back into Host Mode: selector and TNC showed 6 again (the
+   configuration was never told about the verbose change).
+4. The hint dialog was still titled "HF Packet parameters not taken...".
+Fixed by P78 (release fingerprint, verbose was/now sync, one way for MONITOR);
+re-checked by T164.
+
+**Status:** ❌ FAIL (device B, 03.10.2026) - see T164.
+
+---
+
+### T164 — App without a banner: release fingerprint, verbose sync, MONITOR (P78)
+
+Device B first, then A. The TNC stays powered the whole time: **do not switch it
+off and on** (that would print the banner and hide exactly what is tested).
+Software: `test_p78_devices_parse.py`, `test_p78_release_and_sync.py`.
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Connect the app while the TNC is already running | toolbar "Release 01.AUG.91 (inferred)" (device A: "Release 13.SEP.95 (inferred)") | ⬜ |
+| 2 | Host Mode, VHF Packet, Parameters -> Packet...: MONITOR 4 -> 6, OK | MON: `MONITOR  4 -> 6  ok` | ⬜ |
+| 3 | VHF MAXFRAME 4 -> 5, OK; Leave Host Mode; verbose `MAXFRAME` | `ok`; `5` | ⬜ |
+| 4 | verbose `MONITOR 3` | terminal: `[SYS] MONITOR 3 taken into the parameters`; Ctrl+H: the selector shows 3; Leave Host Mode, `MONITOR` -> 3 | ⬜ |
+| 5 | Change the Monitor selector in the VHF Packet screen | MON: `MONITOR  3 -> n  ok` (through ParamApplier, one set + one read-back); the parameter mask shows n | ⬜ |
+| 6 | Repeat 1-5 on device A | as above (step 1: "13.SEP.95 (inferred)") | ⬜ |
+
+**Status:** ⬜ OPEN — hardware session (device B, then A).
 
 ---
 
