@@ -23,11 +23,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QActionGroup, QFont, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QActionGroup, QFont, QKeySequence, QPalette, QShortcut
 from PyQt6.QtWidgets import (
-    QApplication,
+    QApplication, QDialog,
     QComboBox, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
-    QPushButton, QSplitter, QStackedWidget, QTextEdit, QToolBar,
+    QPushButton, QSplitter, QStackedWidget, QStyleFactory, QTextEdit, QToolBar,
     QVBoxLayout, QWidget, QWidgetAction,
 )
 
@@ -4980,6 +4980,36 @@ class MainWindow(QMainWindow):
             app.setStyle("Fusion")
             app.setPalette(pal)
 
+    def _standard_palette(self) -> QPalette:
+        """The palette the platform's own style would use (no theme)."""
+        pal = getattr(self, "_std_palette_cache", None)
+        if pal is None:
+            style = QStyleFactory.create(self._system_style_name)
+            pal = style.standardPalette() if style is not None \
+                else QApplication.style().standardPalette()
+            self._std_palette_cache = pal
+        return pal
+
+    def _give_dialog_standard_look(self, dlg: QDialog) -> None:
+        """Give *dlg* (and so all its children) the standard palette.
+
+        Lernmodus: _apply_palette() sets the theme palette on the whole
+        QApplication - that is how the main window's buttons, menus and the
+        status bar follow a dark theme. Every dialog inherits the application
+        palette, so a Retro (orange on black) theme made the Appearance dialog
+        and the colour picker unreadable. A palette set on a widget beats the
+        application palette and propagates to its children, so ONE hook - the
+        application-wide event filter, on the dialog's Show event - restores
+        the standard look for all dialogs, present and future, without each
+        dialog having to know. (Palette propagation does not cross into a
+        child top-level window by itself, which is why the dialog is hooked
+        directly rather than relying on the main window.)
+        """
+        if dlg.property("pk232StandardLook"):
+            return
+        dlg.setProperty("pk232StandardLook", True)
+        dlg.setPalette(self._standard_palette())
+
     def _on_theme_selected(self, key: str) -> None:
         """Apply a theme preset from the submenu — live preview + persisted."""
         from pk232py.ui.themes import THEMES
@@ -5591,6 +5621,11 @@ class MainWindow(QMainWindow):
 
         In Verbose Mode: handle _vt_input Enter / Ctrl keys.
         """
+        # P77b: every dialog (settings dialogs, QColorDialog, QMessageBox ...)
+        # keeps the standard look - the display theme is for the display
+        # surfaces only. See _give_dialog_standard_look().
+        if event.type() == QEvent.Type.Show and isinstance(obj, QDialog):
+            self._give_dialog_standard_look(obj)
         if event.type() == QEvent.Type.KeyPress:
             # --- Host Mode: full TX key routing ---
             # Guard against re-entry: insertPlainText() generates
