@@ -3060,8 +3060,8 @@ USERS 10 (new default) unless step 3b.
 | 4 | PC 1 | chip 0 → Disconnect | briefly "disconnecting", then free | ⬜ |
 | 5 | PC 1 | verbose, `CONNECT OE3GAS-1`, Ctrl+H | chip 0 connected with OE3GAS-1 (the open point of T144 step 3) | ⬜ |
 
-**Status:** ⬜ OPEN — partly observed (device B, 03.10.2026, operator; steps not
-recorded one by one, so no step is ticked):
+**Status:** ✅ PASS (device B, 03.10.2026, operator decision; steps not recorded
+one by one, so no step is ticked). Observations:
 - An incoming call lands on chip 0 (OE3XTC), an own connect on chip 1 (OE3GAS-1),
   as measured in T147.
 - Unproto from MON goes out as a UI frame over a free channel; Direwolf on PC 2
