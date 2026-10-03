@@ -1162,6 +1162,9 @@ class MainWindow(QMainWindow):
         self._serial.status_message.connect(self._on_status_message)
         self._serial.verbose_mode_ready.connect(self._on_verbose_mode_ready)
         self._serial.verbose_resumed.connect(self._update_tnc_menu_gating)
+        # P78 A: a release inferred without a banner (queued from the upload
+        # thread) shows in the toolbar like a banner release.
+        self._serial.release_changed.connect(self._show_release)
         self._serial.params_upload_required.connect(self._on_params_upload_required)
         self._serial.raw_data_received.connect(self._on_raw_data_received)
         self._serial.init_failed.connect(self._on_init_failed)
@@ -1388,11 +1391,24 @@ class MainWindow(QMainWindow):
         if self._banner_buffer:
             self._on_vt_rx_data(bytes(self._banner_buffer))
         release = _parse_release(bytes(self._banner_buffer))
-        if release and hasattr(self, '_lbl_firmware'):
-            self._lbl_firmware.setText(f"Release {release}")
+        if release:
+            self._show_release(release, "banner")
         self._banner_buffer = bytearray()
         self._vt_append("[SYS] TNC ready in verbose mode\n")
         self._start_param_upload_thread()
+
+    def _show_release(self, release: str, source: str) -> None:
+        """Toolbar firmware label: "Release 01.AUG.91" from the banner,
+        "Release 01.AUG.91 (inferred)" when it was inferred from the EXPERT
+        fingerprint (P78 A)."""
+        if not hasattr(self, '_lbl_firmware'):
+            return
+        suffix = " (inferred)" if source == "inferred" else ""
+        self._lbl_firmware.setText(f"Release {release}{suffix}")
+        self._lbl_firmware.setToolTip(
+            "TNC firmware release from the boot banner" if not suffix else
+            "TNC firmware release inferred from the EXPERT command (no boot "
+            "banner was seen - the TNC was already awake)")
 
     def _start_param_upload_thread(self) -> None:
         """Run _run_param_upload() on a background thread (P49 - extracted
