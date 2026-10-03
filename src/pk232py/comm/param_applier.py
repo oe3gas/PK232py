@@ -56,6 +56,10 @@ class ApplyResult:
     reason: str                 # "ok", the TNC's literal answer, or why nothing was sent
     was: Optional[str] = None   # the value before the change (for the message)
     sent: bool = field(default=False, compare=False)   # something went to the TNC
+    # P73 B: a band value (MAXFRAME/SLOTTIME) of the band that is NOT active:
+    # saved, applied when that band's Packet mode is selected - not an error.
+    band: Optional[str] = None
+    deferred: bool = False
 
 
 class ParamTransport(Protocol):
@@ -75,6 +79,8 @@ class ParamTransport(Protocol):
 
 def format_result(r: ApplyResult) -> str:
     """The one-line message of the spec (shown in MON / the verbose terminal)."""
+    if r.deferred:
+        return f"{r.name} ({r.band}) {r.reason}"
     if r.ok:
         arrow = f"{r.was} -> {r.wanted}" if r.was is not None else f"-> {r.wanted}"
         return f"{r.name}  {arrow}  ok"
@@ -112,22 +118,36 @@ class ParamApplier:
 
     def apply(
         self, before, after, has_pactor: bool = True, has_maildrop: bool = True,
-        needs_expert: bool = False,
+        needs_expert: bool = False, band: Optional[str] = None,
     ) -> list[ApplyResult]:
         """One ApplyResult per changed parameter (empty list: nothing
         changed). *needs_expert*: wrap the verbose commands in EXPERT ON/OFF
-        like the init upload does on PACTOR firmware."""
+        like the init upload does on PACTOR firmware.
+
+        *band* ("HF" / "VHF" / None) is the band of the active Packet mode
+        (P73 B): MAXFRAME and SLOTTIME exist once in the TNC, so only the
+        active band's value is applied; a change of the other band's value is
+        answered with a "saved - applies when ... is selected" result and
+        nothing is sent."""
+        deferred = [
+            ApplyResult(n, v, None, False,
+                        f"saved - applies when {b} Packet is selected", o,
+                        band=b, deferred=True)
+            for n, b, v, o in ParamsUploader.deferred_band_changes(before, after, band)
+        ]
         changes = ParamsUploader.changed_with_old(
-            before, after, has_pactor=has_pactor, has_maildrop=has_maildrop)
+            before, after, has_pactor=has_pactor, has_maildrop=has_maildrop,
+            band=band)
         if not changes:
-            return []
+            return deferred
         mode = self._t.mode()
         if mode == "disconnected":
-            return self._unsent(changes, "not connected")
+            return self._unsent(changes, "not connected") + deferred
         if mode == "unconfirmed":
             return self._unsent(
-                changes, "TNC state not confirmed (no cmd: prompt seen this session)")
-        results: list[ApplyResult] = []
+                changes, "TNC state not confirmed (no cmd: prompt seen this session)"
+            ) + deferred
+        results: list[ApplyResult] = list(deferred)
         live = []
         for name, value, old in changes:
             if name in _NEVER_LIVE:
