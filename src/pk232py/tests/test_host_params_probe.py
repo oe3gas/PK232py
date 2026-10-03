@@ -49,7 +49,13 @@ class TestTableCoversTheUploader:
         commands = ParamsUploader(serial=None, config=_full_config())._build_commands(
             has_pactor=True, has_maildrop=True)
         built = {c.decode().split()[0] for c in commands}
-        assert built == {p.name for p in HOST_PARAMS}
+        names = {p.name for p in HOST_PARAMS}
+        # P80b: the 12 rows measured by T166/T167 (per-mode screen parameters) are
+        # in the table before the uploader sends them; ParamApplier only reaches
+        # rows ParamsUploader names, so they stay inactive until it does.
+        p80b = {"EAS", "WIDESHFT", "SRXALL", "USOS", "WORDOUT", "FAXNEG", "SQUELCH",
+                "ASPECT", "RBAUD", "FSPEED", "NAVMSG", "NAVSTN"}
+        assert built == names - p80b
 
     def test_names_are_unique(self):
         names = [p.name for p in HOST_PARAMS]
@@ -67,11 +73,12 @@ class TestTableCoversTheUploader:
         # P72 Teil A: T151 (B) 37 + UN/CF (T138) + UBIT (T156), T152 (A) 7, T156 (A) UBIT.
         on_b = {p.name for p in HOST_PARAMS if "01.AUG.91" in p.verified_releases}
         on_a = {p.name for p in HOST_PARAMS if "13.SEP.95" in p.verified_releases}
-        # + the six Packet monitor flags (T160 device B / T161 device A, P73).
-        assert len(on_b) == 46 and {"UNPROTO", "CFROM", "USERS", "UBIT", "PASSALL"} <= on_b
+        # + the six Packet monitor flags (T160 device B / T161 device A, P73) and
+        # the eight switches/ASPECT of T166 / T167 (P80b).
+        assert len(on_b) == 54 and {"UNPROTO", "CFROM", "USERS", "UBIT", "PASSALL"} <= on_b
         # Device A: the 37 of T151 (22:07 log) + PTHUFF, PT200 + UBIT (T156);
         # UNPROTO/CFROM only on B.
-        assert len(on_a) == 46 and {"PTHUFF", "PT200", "UBIT", "USERS", "PASSALL"} <= on_a
+        assert len(on_a) == 54 and {"PTHUFF", "PT200", "UBIT", "USERS", "PASSALL"} <= on_a
         assert not {"UNPROTO", "CFROM", "ILFPACK"} & on_a
         assert "ILFPACK" not in on_b       # T155 / B.3: only verified_query
         assert all(p.mnemonic for p in HOST_PARAMS if p.verified_releases)
