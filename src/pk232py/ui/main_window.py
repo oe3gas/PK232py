@@ -46,6 +46,8 @@ from ..comm.params_uploader import ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
 from pk232py.comm.param_applier import ParamApplier, SerialParamTransport, format_result
 from pk232py.comm.host_params import BAND_HF, BAND_VHF, band_of_mode, band_value
+from pk232py.colors import role_colors
+from pk232py.ui.screens.ui_theme import get_theme as _display_colors, recolor_document
 from .dialogs.params_hf      import PacketParamsDialog
 from .appearance_dialog      import AppearanceDialog
 from .dialogs.params_misc    import MiscParamsDialog
@@ -82,11 +84,11 @@ _MORSE_TXCTRL_MS = 50
 _AMTOR_TXCTRL_MS = 50
 
 # Packet RX view (P50 Teil C): a link/status message ("*** ... ***") gets
-# its own eye-catching colour, distinct from ordinary channel data
-# (#66ccff) and monitor traffic (#aaaaaa) - amber, matching this
-# project's existing "needs attention" colour role (e.g. CH_CALLING's
-# chip pulse, MainWindow's own rx_echo).
-_SYSTEM_MSG_COLOR = "#ffaa00"
+# its own eye-catching colour, distinct from ordinary channel data (the RX
+# colour) and monitor traffic (the dim colour) - amber on the dark themes,
+# matching the project's "needs attention" colour role (CH_CALLING's chip
+# pulse, rx_echo). P77a: it is the theme's sys_color, MainWindow._sys_color();
+# the old fixed amber constant is gone.
 
 
 def _recolor_existing_text(widget: QTextEdit, color_map: dict) -> None:
@@ -97,28 +99,7 @@ def _recolor_existing_text(widget: QTextEdit, color_map: dict) -> None:
 
     color_map: {old_hex_lowercase: new_hex}
     """
-    if not color_map:
-        return
-    from PyQt6.QtGui import QTextCursor, QTextCharFormat, QColor
-    doc = widget.document()
-    block = doc.begin()
-    while block.isValid():
-        it = block.begin()
-        while not it.atEnd():
-            frag = it.fragment()
-            if frag.isValid():
-                fg = frag.charFormat().foreground().color().name().lower()
-                new_fg = color_map.get(fg)
-                if new_fg:
-                    c = QTextCursor(doc)
-                    c.setPosition(frag.position())
-                    c.setPosition(frag.position() + frag.length(),
-                                  QTextCursor.MoveMode.KeepAnchor)
-                    new_fmt = QTextCharFormat(frag.charFormat())
-                    new_fmt.setForeground(QColor(new_fg))
-                    c.mergeCharFormat(new_fmt)
-            it += 1
-        block = block.next()
+    recolor_document(widget.document(), color_map)   # P77a: one implementation
 
 
 _ALLOWED_CONTROL_CHARS = ('\r', '\n', '\t')
@@ -246,6 +227,10 @@ class MainWindow(QMainWindow):
             "rx_warning":  "#ff9900",
         }
         self._tx_fg: str = self._app_config.appearance.tx_color
+        # P77a: role colours (sys/ok/err/dim) currently in use, to recolour text
+        # already written when the theme changes.
+        self._role_colors = role_colors(self._app_config.appearance.theme,
+                                        self._app_config.appearance.bg_color)
 
         # Apply the saved theme's palette + style BEFORE building any widgets,
         # so every widget inherits the right palette at construction time.
@@ -840,22 +825,25 @@ class MainWindow(QMainWindow):
         vt_layout.addWidget(sep)
 
         # Lower: command input row
-        cmd_row = QWidget()
+        # P77a: row background = bg_color, "cmd:" prompt and the typed
+        # command = tx_color (the old fixed dark colours ignored the theme);
+        # _apply_appearance() keeps them current.
+        self._vt_cmd_row = cmd_row = QWidget()
         cmd_row.setFixedHeight(36)
-        cmd_row.setStyleSheet("background-color:#1a1a1a;")
+        cmd_row.setStyleSheet(f"background-color:{_a.bg_color};")
         cmd_layout = QHBoxLayout(cmd_row)
         cmd_layout.setContentsMargins(6, 2, 6, 2)
         cmd_layout.setSpacing(4)
 
-        prompt_label = QLabel("cmd:")
+        self._vt_prompt = prompt_label = QLabel("cmd:")
         prompt_label.setFont(QFont("Courier New", 10))
-        prompt_label.setStyleSheet("color:#569cd6; background:transparent;")
+        prompt_label.setStyleSheet(f"color:{_a.tx_color}; background:transparent;")
         cmd_layout.addWidget(prompt_label)
 
         self._vt_input = QTextEdit()
         self._vt_input.setFont(QFont("Courier New", 10))
         self._vt_input.setStyleSheet(
-            "background-color:#1a1a1a; color:#d4d4d4; border:none;"
+            f"background-color:{_a.bg_color}; color:{_a.tx_color}; border:none;"
         )
         self._vt_input.setPlaceholderText("type command, Enter to send...")
         self._vt_input.setFixedHeight(28)
@@ -1465,14 +1453,14 @@ class MainWindow(QMainWindow):
                 # this summary line belongs there too, not just the
                 # Monitor panel, so the whole verification result is
                 # visible in one place regardless of outcome.
-                self._vt_append(f"{msg}\n", color="#3a9e3a")
+                self._vt_append(f"{msg}\n", color=self._ok_color())
             elif applicable:
                 msg = (
                     f"[SYS] parameter upload verification: only "
                     f"{matched}/{applicable} matched - see above for details"
                 )
                 self._log_monitor(msg)
-                self._vt_append(f"{msg}\n", color="#f44747")
+                self._vt_append(f"{msg}\n", color=self._err_color())
         self._update_maildrop_gate_ui()
         if getattr(self._serial, 'has_maildrop', None) is False:
             self._log_monitor(
@@ -1674,7 +1662,7 @@ class MainWindow(QMainWindow):
         self._log_monitor(f"[SYS] Recovery: {message}")
         self._vt_append(
             f"[SYS] {message}\n",
-            color="#3a9e3a" if success else "#f44747",
+            color=self._ok_color() if success else self._err_color(),
         )
         self.statusBar().showMessage(message, 5000)
         if not success:
@@ -2058,7 +2046,7 @@ class MainWindow(QMainWindow):
         channel's own RX document and the merged ALL document (P50 Teil
         B), tagging the ALL copy with its compact "n|" channel indicator
         (P50 Teil C) — reused as-is, not reimplemented here. A link
-        message also gets its own eye-catching colour (_SYSTEM_MSG_COLOR)
+        message also gets its own eye-catching colour (_sys_color())
         instead of the plain channel-data blue, so it stands out from
         ordinary received text (P50 Teil C).
 
@@ -2073,16 +2061,16 @@ class MainWindow(QMainWindow):
         """
         text = f"*** {msg} ***"
         if channel == 15:
-            screen.append_channel_data(MON_VIEW, text, color=_SYSTEM_MSG_COLOR)
+            screen.append_channel_data(MON_VIEW, text, color=self._sys_color())
             return
 
-        screen.append_channel_data(channel, text, color=_SYSTEM_MSG_COLOR)
+        screen.append_channel_data(channel, text, color=self._sys_color())
 
         # Config key name unchanged (hard rule 10); the target is the MON
         # view since P70.
         if self._app_config.hf_packet.show_link_messages_in_ui_channel:
             screen.append_channel_data(
-                MON_VIEW, f"[ch{channel}] {text}", color=_SYSTEM_MSG_COLOR
+                MON_VIEW, f"[ch{channel}] {text}", color=self._sys_color()
             )
 
     def _report_rejected_call(self, screen, channel: int, msg: str) -> None:
@@ -2104,7 +2092,7 @@ class MainWindow(QMainWindow):
             f"(USERS {self._app_config.hf_packet.users})"
         )
         if hasattr(screen, "append_channel_data"):
-            screen.append_channel_data(MON_VIEW, f"*** {note} ***", color=_SYSTEM_MSG_COLOR)
+            screen.append_channel_data(MON_VIEW, f"*** {note} ***", color=self._sys_color())
         self.statusBar().showMessage(note, 8000)
 
     def _apply_link_to_chips(self, channel: int, link) -> None:
@@ -2530,8 +2518,8 @@ class MainWindow(QMainWindow):
                 # EOT marker — emit sentinel, insert visual marker in TX
                 from PyQt6.QtGui import QTextCharFormat as _TCF, QColor as _QC
                 f_eot = _TCF()
-                f_eot.setForeground(_QC("#ffffff"))
-                f_eot.setBackground(_QC("#cc4400"))
+                f_eot.setForeground(_QC(_display_colors()["bg_color"]))
+                f_eot.setBackground(_QC(_display_colors()["sys_color"]))
                 f_eot.setFontWeight(700)
                 tx.setCurrentCharFormat(f_eot)
                 cur = tx.textCursor()
@@ -2557,8 +2545,8 @@ class MainWindow(QMainWindow):
                         n_val = 1
                     from PyQt6.QtGui import QTextCharFormat as _TCF, QColor as _QC
                     f_tmr = _TCF()
-                    f_tmr.setForeground(_QC("#ffffff"))
-                    f_tmr.setBackground(_QC("#8800cc"))
+                    f_tmr.setForeground(_QC(_display_colors()["bg_color"]))
+                    f_tmr.setBackground(_QC(_display_colors()["dim_color"]))
                     f_tmr.setFontWeight(700)
                     tx.setCurrentCharFormat(f_tmr)
                     cur = tx.textCursor()
@@ -4602,7 +4590,7 @@ class MainWindow(QMainWindow):
             screen.append_channel_data(
                 MON_VIEW,
                 "*** all 10 channels are connected - no free channel for unproto ***",
-                color=_SYSTEM_MSG_COLOR,
+                color=self._sys_color(),
             )
             return
         self._send_unproto_path(screen)
@@ -4831,7 +4819,7 @@ class MainWindow(QMainWindow):
             line = f"[SYS] {format_result(r)}"
             self._log_monitor(line)
             if not self._serial.is_host_mode:
-                self._vt_append(f"{line}\n", color="#3a9e3a" if r.ok else "#f44747")
+                self._vt_append(f"{line}\n", color=self._ok_color() if r.ok else self._err_color())
             if r.deferred:
                 continue        # other band's value: intended, not "TNC differs"
             if r.ok:
@@ -5067,7 +5055,9 @@ class MainWindow(QMainWindow):
         # palette module (ui_theme.get_theme(): TX/RX colours of the macros,
         # the TX input, the MailDrop views ...) before anything is styled.
         from pk232py.ui.screens.ui_theme import configure_display_colors
-        configure_display_colors(a.bg_color, a.rx_color, a.tx_color)
+        old_roles = self._role_colors
+        new_roles = role_colors(a.theme, a.bg_color)
+        configure_display_colors(a.bg_color, a.rx_color, a.tx_color, new_roles)
 
         self._apply_palette()   # global QPalette + style (menus, dialogs, buttons)
         font = QFont(a.font_family, a.font_size)
@@ -5094,6 +5084,12 @@ class MainWindow(QMainWindow):
             old_hex = old_colors.get(role)
             if old_hex and old_hex.lower() != new_hex.lower():
                 recolor_map[old_hex.lower()] = new_hex
+        # P77a: the role colours (sys/ok/err/dim) of text already written.
+        for old_hex, new_hex in zip(dataclasses.astuple(old_roles),
+                                    dataclasses.astuple(new_roles)):
+            if old_hex.lower() != new_hex.lower():
+                recolor_map[old_hex.lower()] = new_hex
+        self._role_colors = new_roles
 
         style_rx = (
             f"background-color:{a.bg_color}; "
@@ -5116,7 +5112,12 @@ class MainWindow(QMainWindow):
                 # stylesheet above only affects the widget's fallback colour,
                 # not per-character QTextCharFormat already applied to
                 # existing received/echoed/warning text.
-                _recolor_existing_text(screen.rx_display, recolor_map)
+                if hasattr(screen, "recolor_rx_documents"):
+                    # Packet screens: every channel's own document, MON and
+                    # ALL - rx_display shows only one of them (P77a).
+                    screen.recolor_rx_documents(recolor_map)
+                else:
+                    _recolor_existing_text(screen.rx_display, recolor_map)
                 # P56.A: Packet screens own NINE further RX documents
                 # (one per channel + the merged ALL one) besides whatever
                 # rx_display.setFont() above happens to touch (only the
@@ -5156,6 +5157,10 @@ class MainWindow(QMainWindow):
             f"background-color:{a.bg_color}; "
             f"color:{a.tx_color}; border:none;"          # typed command = TX
         )
+        # The command row around the input: background and "cmd:" prompt (P77a).
+        self._vt_cmd_row.setStyleSheet(f"background-color:{a.bg_color};")
+        self._vt_prompt.setStyleSheet(
+            f"color:{a.tx_color}; background:transparent;")
         # Text already in the terminal follows the new RX/TX colours too.
         _recolor_existing_text(self._vt_display, recolor_map)
         # Block cursor on verbose terminal input
@@ -5681,25 +5686,28 @@ class MainWindow(QMainWindow):
                     if mods & Qt.KeyboardModifier.ShiftModifier:
                         # Shift+Enter: bare CR only
                         self._vt_send_raw(b"\r", echo="[CR]\n",
-                                          color="#888888")
+                                          color=self._dim_color())
                     else:
                         self._on_vt_send()
                     return True
                 # Ctrl+C -> $03: TNC back to COMMAND mode
                 if key == Qt.Key.Key_C and (mods & ctrl):
                     self._vt_send_raw(b"\x03", echo="[CTRL-C]\n",
-                                      color="#ff9900")
+                                      color=self._sys_color())
                     return True
                 # Ctrl+Z -> $1A: PACTOR OVER / PTOVER char
                 if key == Qt.Key.Key_Z and (mods & ctrl):
                     self._vt_send_raw(b"\x1a", echo="[CTRL-Z]\n",
-                                      color="#ff9900")
+                                      color=self._sys_color())
                     return True
         return super().eventFilter(obj, event)
 
     def _vt_send_raw(self, data: bytes, echo: str = "",
-                     color: str = "#888888") -> None:
-        """Send raw bytes to TNC without automatic CR/LF."""
+                     color: Optional[str] = None) -> None:
+        """Send raw bytes to TNC without automatic CR/LF. *color* None = the
+        theme's dim colour (P77a)."""
+        if color is None:
+            color = self._dim_color()
         if echo:
             self._vt_append(echo, color=color)
         if self._serial.is_connected:
@@ -5708,7 +5716,7 @@ class MainWindow(QMainWindow):
                 if not self._mon_btn_decoded.isChecked():
                     self._monitor_raw("tx", data)
         else:
-            self._vt_append("[ERROR] Not connected\n", color="#f44747")
+            self._vt_append("[ERROR] Not connected\n", color=self._err_color())
 
     def _on_vt_send(self) -> None:
         """Send a command in verbose terminal mode (Enter pressed).
@@ -5723,7 +5731,7 @@ class MainWindow(QMainWindow):
         """
         text = self._vt_input.toPlainText().strip()
         if not text:
-            self._vt_send_raw(b"\r", echo="[CR]\n", color="#888888")
+            self._vt_send_raw(b"\r", echo="[CR]\n", color=self._dim_color())
             return
         self._vt_input.clear()
         self._vt_append(f"cmd:{text}\n", color=self._app_config.appearance.tx_color)
@@ -5734,7 +5742,26 @@ class MainWindow(QMainWindow):
                 if not self._mon_btn_decoded.isChecked():
                     self._monitor_raw("tx", raw_tx)
         else:
-            self._vt_append("[ERROR] Not connected\n", color="#f44747")
+            self._vt_append("[ERROR] Not connected\n", color=self._err_color())
+
+    # P77a: the theme's role colours (colors.RoleColors) - the one source of
+    # the system/ok/error/dim text colours of the verbose terminal and the
+    # Packet screens' link messages.
+    @staticmethod
+    def _sys_color() -> str:
+        return _display_colors()["sys_color"]
+
+    @staticmethod
+    def _ok_color() -> str:
+        return _display_colors()["ok_color"]
+
+    @staticmethod
+    def _err_color() -> str:
+        return _display_colors()["err_color"]
+
+    @staticmethod
+    def _dim_color() -> str:
+        return _display_colors()["dim_color"]
 
     def _vt_append(self, text: str, color: Optional[str] = None) -> None:
         """Append coloured text to the verbose terminal display.
@@ -5838,7 +5865,7 @@ class MainWindow(QMainWindow):
             return
 
         self._log_terminal(
-            f"<span style='color:#569cd6;'>&gt; {text}</span>"
+            f"<span style='color:{self._app_config.appearance.tx_color};'>&gt; {text}</span>"
         )
         self._log_monitor(f"[TX] data={text!r}")
 
