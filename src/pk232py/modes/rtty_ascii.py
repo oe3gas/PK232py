@@ -29,8 +29,8 @@ Host Mode mnemonics
   8B   8BITCONV      — 8-bit transparent mode (mnemonic 8B)
   AT   ACRRTTY      — auto CR
   AR   ALFRTTY      — auto LF
-  XL   XLENGTH      — line length
-  EE   ERRCHAR      — error replacement character
+  --   XLENGTH      — NOT sent (P80b, T166/T167)
+  --   ERRCHAR      — NOT sent (P80b, T166/T167)
   RX   RXREV        — RX polarity reverse
   TX   TXREV        — TX polarity reverse
   XO   XMITOK       — transmit enable
@@ -112,8 +112,6 @@ class ASCIIRTTYMode(BaseMode):
             self.rbaud_frame(self.rbaud),
             self.bitconv8_frame(self.bitconv8),
             self.alfrtty_frame(self.alfrtty),
-            self.xlength_frame(self.xlength),
-            self.errchar_frame(self.errchar),
             self.rxrev_frame(self.rxrev),
             self.txrev_frame(self.txrev),
             self.xmitok_frame(self.xmitok),
@@ -203,13 +201,3 @@ class ASCIIRTTYMode(BaseMode):
     def xmitok_frame(enabled: bool) -> bytes:
         """XMITOK — enable/disable transmit (mnemonic XO)."""
         return build_command(b'XO', b'Y' if enabled else b'N')
-
-    @staticmethod
-    def xlength_frame(length: int) -> bytes:
-        """XLENGTH — line length in characters (mnemonic XL)."""
-        return build_command(b'XL', str(length).encode('ascii'))
-
-    @staticmethod
-    def errchar_frame(char: int) -> bytes:
-        """ERRCHAR — error replacement character (mnemonic EE)."""
-        return build_command(b'EE', str(char).encode('ascii'))

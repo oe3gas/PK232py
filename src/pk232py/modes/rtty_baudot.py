@@ -32,7 +32,7 @@ Host Mode mnemonics (TRM Section 4.2.2)
 ----------------------------------------
   BA   BAUDOT       — enter Baudot mode
   RB   RBAUD        — receive baud rate
-  CI   CODE         — character set (0=ITA2, 2=Cyrillic)
+  --   CODE         — NOT sent (P80b, T166/T167): CI is a switch
   AT   ACRRTTY      — auto CR on RTTY
   AR   ALFRTTY      — auto LF on RTTY (mnemonic AR per TRM)
   DI_  DIDDLE flag  — idle character (mnemonic DI conflicts with DISCONNECT)
@@ -40,8 +40,8 @@ Host Mode mnemonics (TRM Section 4.2.2)
                       DIDDLE is set via Host mnemonic (see STABO Ch.12)
   AU   AUDELAY      — auto-unproto delay
   XB   XBAUD        — extra baud rate offset
-  XL   XLENGTH      — line length
-  EE   ERRCHAR      — error replacement character
+  --   XLENGTH      — NOT sent (P80b, T166/T167)
+  --   ERRCHAR      — NOT sent (P80b, T166/T167)
   8B   8BITCONV      — 8-bit conversion
   WR   WRU          — auto answer-back on WRU request
   AB   AAB (AU)     — auto answer-back text (mnemonic AU per TRM mnemonic list)
@@ -156,8 +156,6 @@ class BaudotRTTYMode(BaseMode):
             self.rbaud_frame(self.rbaud), 
             self.alfrtty_frame(self.alfrtty),
             self.usos_frame(self.usos),
-            self.xlength_frame(self.xlength),
-            self.errchar_frame(self.errchar),
             self.rxrev_frame(self.rxrev),
             self.txrev_frame(self.txrev),
             self.xmitok_frame(self.xmitok),
@@ -231,14 +229,6 @@ class BaudotRTTYMode(BaseMode):
         return build_command(b'RB', str(baud).encode('ascii'))
 
     @staticmethod
-    def code_frame(code: int) -> bytes:
-        """CODE — select character set (mnemonic CI).
-
-        0=ITA-2, 2=Cyrillic, 7/8=Extended (MBX).
-        """
-        return build_command(b'CI', str(code).encode('ascii'))
-
-    @staticmethod
     def alfrtty_frame(enabled: bool) -> bytes:
         """ALFRTTY — auto linefeed on RTTY (mnemonic AR)."""
         return build_command(b'AR', b'Y' if enabled else b'N')
@@ -265,20 +255,6 @@ class BaudotRTTYMode(BaseMode):
     def xmitok_frame(enabled: bool) -> bytes:
         """XMITOK — enable/disable transmit (mnemonic XO)."""
         return build_command(b'XO', b'Y' if enabled else b'N')
-
-    @staticmethod
-    def xlength_frame(length: int) -> bytes:
-        """XLENGTH — line length in characters (mnemonic XL)."""
-        return build_command(b'XL', str(length).encode('ascii'))
-
-    @staticmethod
-    def errchar_frame(char: int) -> bytes:
-        """ERRCHAR — error replacement character (mnemonic EE).
-
-        Args:
-            char: ASCII code of replacement char (default 0x5F = '_').
-        """
-        return build_command(b'EE', str(char).encode('ascii'))
 
     @staticmethod
     def aab_frame(text: str) -> bytes:

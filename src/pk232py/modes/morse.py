@@ -30,7 +30,7 @@ Host Mode mnemonics (TRM Section 4.2.2)
 ----------------------------------------
   MO   MORSE    — enter Morse mode (mnemonic MO)
   MP   MSPEED   — send/receive speed in WPM (5-99)
-  MW   MWEIGHT  — dit/dah weight ratio (10-90, default 10)
+  --   MWEIGHT  — NOT sent (P80b, T166/T167): MW is a switch, not MWEIGHT
   --   MID      — NOT sent: MI is MFILTER (T115), no Morse ID mnemonic known (P80a)
   EA   EAS      — echo as sent (Y/N)
   WO   WORDOUT  — send only complete words (Y/N)
@@ -131,7 +131,6 @@ class MorseMode(BaseMode):
         """Return parameter frames sent after Morse mode is confirmed."""
         return [
             self.mspeed_frame(self.mspeed),
-            self.mweight_frame(self.mweight),
             self.eas_frame(self.eas),
             self.wordout_frame(self.wordout),
             self.xmitok_frame(self.xmitok),
@@ -211,16 +210,6 @@ class MorseMode(BaseMode):
         """
         wpm = max(MSPEED_MIN, min(MSPEED_MAX, wpm))
         return build_command(b'MP', str(wpm).encode('ascii'))
-
-    @staticmethod
-    def mweight_frame(weight: int) -> bytes:
-        """MWEIGHT — dit/dah weight ratio (mnemonic MW).
-
-        Range: 10–90.  Default: 10 (standard 1:3 ratio).
-        Higher values produce heavier (longer dash) keying.
-        """
-        weight = max(MWEIGHT_MIN, min(MWEIGHT_MAX, weight))
-        return build_command(b'MW', str(weight).encode('ascii'))
 
     # MID: no frame builder (P80a). MI is MFILTER (T115), so the old
     # mid_frame() changed the wrong parameter; the Morse ID mnemonic is unknown.

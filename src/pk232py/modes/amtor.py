@@ -53,7 +53,7 @@ Host Mode mnemonics (TRM Section 4.2.2)
   AL   ALIST    — AMTOR listen mode
   MG   MYSELCAL — 4-char SELCAL (derived from callsign)
   MK   MYALTCAL — alternative SELCAL
-  MY   MYIDENT  — 7-char CCIR-625 ident
+  --   MYIDENT  — NOT sent (P80b, T166/T167): mapping unproven
   AO   ARQTMO   — ARQ timeout (seconds)
   --   ARQTOL   — no Host Mode command known (T151: "Ao" was a guess, ?What?)
   AD   ADELAY   — ARQ delay
@@ -62,12 +62,12 @@ Host Mode mnemonics (TRM Section 4.2.2)
   AR   ALFRTTY  — auto LF
   RF   RFEC     — receive FEC in ARQ standby
   SR   SRXALL   — receive all SELFEC (not just own SELCAL)
-  EE   ERRCHAR  — error replacement character
+  --   ERRCHAR  — NOT sent (P80b, T166/T167): EE is $07
   EA   EAS      — echo as sent
   RX   RXREV    — RX polarity reverse
   TX   TXREV    — TX polarity reverse
   XO   XMITOK   — transmit enable
-  XL   XLENGTH  — line length
+  --   XLENGTH  — NOT sent (P80b, T166/T167): XL is $07
   WI   WIDESHFT — wide shift (850 Hz)
 """
 
@@ -187,19 +187,15 @@ class AMTORMode(BaseMode):
             frames.append(self.myselcal_frame(self.myselcal))
         if self.myaltcal:
             frames.append(self.myaltcal_frame(self.myaltcal))
-        if self.myident:
-            frames.append(self.myident_frame(self.myident))
         frames += [
             self.arqtmo_frame(self.arqtmo),
             self.adelay_frame(self.adelay),
             self.rfec_frame(self.rfec),
             self.srxall_frame(self.srxall),
-            self.errchar_frame(self.errchar),
             self.eas_frame(self.eas),
             self.rxrev_frame(self.rxrev),
             self.txrev_frame(self.txrev),
             self.xmitok_frame(self.xmitok),
-            self.xlength_frame(self.xlength),
         ]
         return frames
 
@@ -335,14 +331,6 @@ class AMTORMode(BaseMode):
         return build_command(b'MK', altcal.upper().encode('ascii'))
 
     @staticmethod
-    def myident_frame(ident: str) -> bytes:
-        """MYIDENT — 7-character CCIR-625 identifier (mnemonic MY).
-
-        Used for SELFEC and CCIR-625 compatible stations.
-        """
-        return build_command(b'MY', ident.upper().encode('ascii'))
-
-    @staticmethod
     def arqtmo_frame(seconds: int) -> bytes:
         """ARQTMO — ARQ call timeout in seconds (mnemonic AO).
 
@@ -381,13 +369,6 @@ class AMTORMode(BaseMode):
         return build_command(b'EA', b'Y' if enabled else b'N')
 
     @staticmethod
-    def errchar_frame(char: int) -> bytes:
-        """ERRCHAR — error replacement character (mnemonic EE).
-        Dezimalwert, kein $-Prefix im Host Mode.
-        """
-        return build_command(b'EE', str(char).encode('ascii'))
-
-    @staticmethod
     def rxrev_frame(enabled: bool) -> bytes:
         """RXREV — reverse RX polarity (mnemonic RX)."""
         return build_command(b'RX', b'Y' if enabled else b'N')
@@ -401,11 +382,6 @@ class AMTORMode(BaseMode):
     def xmitok_frame(enabled: bool) -> bytes:
         """XMITOK — enable/disable transmit (mnemonic XO)."""
         return build_command(b'XO', b'Y' if enabled else b'N')
-
-    @staticmethod
-    def xlength_frame(length: int) -> bytes:
-        """XLENGTH — line length in characters (mnemonic XL)."""
-        return build_command(b'XL', str(length).encode('ascii'))
 
     @staticmethod
     def wideshft_frame(enabled: bool) -> bytes:

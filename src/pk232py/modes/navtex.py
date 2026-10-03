@@ -26,13 +26,13 @@ Host Mode frame types (TRM Section 4.4.3)
     $5F  STATUS_ERR  — error
 
   Outgoing:
-    $4F  build_command(b'NE')              — enter NAVTEX mode (mnemonic NE)
+    $4F  build_command(b'NA')              — enter NAVTEX mode (mnemonic NA, T166/T167)
     $4F  build_command(b'NM', filter)      — NAVMSG filter
     $4F  build_command(b'NS', filter)      — NAVSTN filter
 
 Host Mode mnemonics (TRM / STABO manual)
 -----------------------------------------
-  NE   NEWMODE / NAVTEX — enter NAVTEX receive mode (mnemonic NE per TRM)
+  NA   NAVTEX        — enter NAVTEX receive mode (NE is NEWMODE, a parameter: T166/T167)
   NA   NAVTEX           — also documented as direct command (mnemonic NA)
   NM   NAVMSG          — message class filter (ALL / NONE / YES list / NO list)
   NS   NAVSTN           — station ID filter   (ALL / NONE / YES list / NO list)
