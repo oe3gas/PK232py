@@ -39,10 +39,14 @@ output = RX, own commands = TX) and the Baudot-type TX inputs follow it; sent
 characters are drawn inverse (tx_color background, bg_color text);
 `ui_theme.get_theme()` no longer has its own RX/TX colors and picks its widget
 palette by the brightness of the background. Facts: `docs/claude/GOTCHAS_UI_AND_TOOLING.md`.
-**Not done (found by the inventory, not in the spec's commits):** the Packet
-screens still use fixed text colors - channel data `#66ccff` (`packet_screen.py:1633`),
-MON `#aaaaaa` (`:1658`, `:1671`), system messages `_SYSTEM_MSG_COLOR` `#ffaa00`
-(`main_window.py:89`) - unreadable on a light background. Follow-up package.
+**P77a (inventory from the P77 report, 2026-10-03) is done too:** Packet channel
+text uses `rx_color`, MON and timestamps `dim_color`; system messages, green/red
+status lines, the `[CR]` echo and the `[^D]`/`[^T]` markers use the theme's role
+colors `sys_color`/`ok_color`/`err_color`/`dim_color` (`colors.THEME_ROLE_COLORS`,
+no dialog fields); the verbose command row uses `bg_color`/`tx_color`. A test
+checks every text color of every theme against its background (>= 4.5 : 1).
+Left as they were (chrome): menu, status bar, buttons, the OFFLINE badge, the
+READY chip, MailDrop dialog and the other opmode screens' own labels.
 
 ### Packet parameters mask (P73) — implemented, T160/T161 PASS, T162 open (2026-10-03)
 

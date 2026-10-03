@@ -642,7 +642,20 @@
   (`TxInputWidget.set_theme_colors(tx, bg)`), no longer black on `#ddaa00`.
 - **Contrast:** `colors.contrast_ratio()` (WCAG 2.x); the dialog warns below
   `MIN_CONTRAST` 4.5 but never blocks saving.
-- **Still fixed (display surfaces, follow-up):** Packet channel text `#66ccff`
-  (`packet_screen.py:1633`), MON `#aaaaaa` (`:1658`, `:1671`), `_SYSTEM_MSG_COLOR`
-  `#ffaa00` (`main_window.py:89`), the verbose command row `#1a1a1a`/`#d4d4d4`
-  (`main_window.py:845`-`858`), macro/EOT markers.
+- **Role colors (P77a, 2026-10-03).** `colors.RoleColors` / `THEME_ROLE_COLORS`:
+  `sys_color` (link/system messages, `[^D]`), `ok_color`, `err_color`, `dim_color`
+  (MON, timestamps, `[CR]` echo, `[^T]`). Per theme, NOT configurable in a dialog;
+  Dark keeps its old values, the light themes are darker. Handed over with
+  `configure_display_colors(bg, rx, tx, roles)`, read with
+  `ui_theme.get_theme()["sys_color"]` etc.; `MainWindow._sys_color()` and friends
+  are the shortcuts. `semantic_colors()["rx_echo"]` IS `sys_color` (one source;
+  the old light echo `#b36b00` reached only 4.2 : 1 on white). Packet screens:
+  channel text = `rx_color`, MON/timestamps = `dim_color`; the per-channel RX
+  documents are recoloured by `PacketBaseScreen.recolor_rx_documents()` (the widget
+  shows only one of eleven documents). `ui_theme.recolor_document()` is the single
+  recolour implementation.
+- **Rule: every theme text colour must reach 4.5 : 1.** `test_text_colors_p77a.py`
+  checks fg/rx/tx/sys/ok/err/dim and the semantic colours for all four presets
+  against their background - a new theme or role colour that fails shows up there.
+- **Chrome deliberately untouched:** menu, status bar (OFFLINE badge `#888888`,
+  "TNC differs" `#f44747`), buttons, the READY chip, MailDrop dialog colours.
