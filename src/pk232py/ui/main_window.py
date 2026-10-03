@@ -4700,7 +4700,7 @@ class MainWindow(QMainWindow):
         if dlg.exec() == PacketParamsDialog.DialogCode.Accepted:
             self._config_mgr.save()
             self._sync_monitor_selectors()      # P78 C
-            self._apply_changed_params(before, "HF Packet")
+            self._apply_changed_params(before, "Packet")
             # Refresh the USERS tooltip immediately (P11.5) rather than
             # waiting for the next mode (re)activation — HF and VHF Packet
             # share hf_packet config, so update both if either is built.
