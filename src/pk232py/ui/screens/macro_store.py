@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QFont, QKeyEvent, QTextCharFormat, QColor
 from PyQt6.QtCore import Qt
 
+from .ui_theme import get_theme
+
 # Help viewer imported lazily to avoid circular imports
 # from .help_viewer import show_help  (called at runtime)
 
@@ -50,8 +52,8 @@ class MacroTextEdit(QTextEdit):
         # CTRL+D — insert [^D] orange marker (switch to RECEIVE)
         if mods == Qt.KeyboardModifier.ControlModifier and key == Qt.Key.Key_D:
             f_eot = QTextCharFormat()
-            f_eot.setForeground(QColor("#ffffff"))
-            f_eot.setBackground(QColor("#cc4400"))
+            f_eot.setForeground(QColor(get_theme()["bg_color"]))   # P77a: inverse of sys_color
+            f_eot.setBackground(QColor(get_theme()["sys_color"]))
             f_eot.setFontWeight(700)
             f_normal = QTextCharFormat()
             c = self.textCursor()
@@ -76,8 +78,8 @@ class MacroTextEdit(QTextEdit):
             marker = f"[^T:{n}]"
             marker_len = len(marker)
             f_tmr = QTextCharFormat()
-            f_tmr.setForeground(QColor("#ffffff"))
-            f_tmr.setBackground(QColor("#8800cc"))
+            f_tmr.setForeground(QColor(get_theme()["bg_color"]))   # P77a: inverse of dim_color
+            f_tmr.setBackground(QColor(get_theme()["dim_color"]))
             f_tmr.setFontWeight(700)
             f_normal = QTextCharFormat()
             c = self.textCursor()
@@ -361,12 +363,12 @@ class MacroEditDialog(QDialog):
         cursor = te.textCursor()
         f_normal = QTextCharFormat()
         f_eot = QTextCharFormat()
-        f_eot.setForeground(QColor("#ffffff"))
-        f_eot.setBackground(QColor("#cc4400"))
+        f_eot.setForeground(QColor(get_theme()["bg_color"]))   # P77a: inverse of sys_color
+        f_eot.setBackground(QColor(get_theme()["sys_color"]))
         f_eot.setFontWeight(700)
         f_tmr = QTextCharFormat()
-        f_tmr.setForeground(QColor("#ffffff"))
-        f_tmr.setBackground(QColor("#8800cc"))
+        f_tmr.setForeground(QColor(get_theme()["bg_color"]))   # P77a: inverse of dim_color
+        f_tmr.setBackground(QColor(get_theme()["dim_color"]))
         f_tmr.setFontWeight(700)
         i = 0
         while i < len(text):

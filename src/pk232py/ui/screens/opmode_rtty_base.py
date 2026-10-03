@@ -450,8 +450,8 @@ class TxInputWidget(QTextEdit):
         # CTRL+D: insert [^D] EOT marker (switch to RECEIVE when reached)
         if mods == Ctrl and key == Qt.Key.Key_D:
             f_eot = QTextCharFormat()
-            f_eot.setForeground(QColor("#ffffff"))
-            f_eot.setBackground(QColor("#cc4400"))
+            f_eot.setForeground(QColor(get_theme()["bg_color"]))   # P77a: inverse of sys_color
+            f_eot.setBackground(QColor(get_theme()["sys_color"]))
             f_eot.setFontWeight(700)
             c = self.textCursor()
             eot_doc_pos = c.position()
@@ -481,8 +481,8 @@ class TxInputWidget(QTextEdit):
             marker = f"[^T:{n}]"          # e.g. "[^T:5]" = 6 chars
             marker_len = len(marker)       # 6 for n=1..9, 7 for n=10
             f_tmr = QTextCharFormat()
-            f_tmr.setForeground(QColor("#ffffff"))
-            f_tmr.setBackground(QColor("#8800cc"))
+            f_tmr.setForeground(QColor(get_theme()["bg_color"]))   # P77a: inverse of dim_color
+            f_tmr.setBackground(QColor(get_theme()["dim_color"]))
             f_tmr.setFontWeight(700)
             c = self.textCursor()
             tmr_doc_pos = c.position()
