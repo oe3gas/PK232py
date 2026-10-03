@@ -28,6 +28,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from pk232py.comm.frame import build_command
+from pk232py.config import HFPacketConfig
 from pk232py.modes.packet_hf import HFPacketMode
 
 if TYPE_CHECKING:
@@ -49,19 +50,27 @@ class VHFPacketMode(HFPacketMode):
       - MAXFRAME 4 is appropriate for reliable VHF links
       - SLOTTIME 10 (shorter than HF) for faster channel access
 
-    P19.3: the inherited ``maxframe``/``slottime`` constructor
-    parameters (from :class:`HFPacketMode`) are **NOT used here** —
-    ``get_init_frames()`` below deliberately sends VHF's own fixed
-    ``MX 4`` / ``SL 10`` regardless of what a ``VHFPacketMode(maxframe=...,
-    slottime=...)`` call was given. VHF Packet has no config-driven
-    parameter set of its own yet (there is no ``VHFPacketConfig`` —
-    HF Packet's dialog/config is shared, per CLAUDE.md's "USERS" gotcha);
-    adding one is tracked in Backlog.md.
+    P73 B: ``maxframe``/``slottime`` are the VHF values from
+    ``HFPacketConfig.vhf_maxframe`` / ``vhf_slottime``.  They used to be the
+    fixed numbers 4 and 10 (P19.3); the defaults are those numbers, so an
+    old INI changes nothing.  MainWindow._build_mode_instance() passes the
+    configured values in; which config attribute belongs to which band is
+    defined once, in comm/host_params.py (BAND_PARAMS).
     """
 
     name         = "VHF Packet"
     host_command = b'PA'   # same mnemonic as HF Packet
     verbose_command = b"VHF\r\n"
+
+    def __init__(
+        self,
+        maxframe: int = HFPacketConfig.vhf_maxframe,
+        slottime: int = HFPacketConfig.vhf_slottime,
+        monitor: int = HFPacketConfig.monitor,
+    ) -> None:
+        """Same parameters as HFPacketMode, but the defaults are the VHF
+        values (one source of truth: HFPacketConfig, as in P19.3)."""
+        super().__init__(maxframe=maxframe, slottime=slottime, monitor=monitor)
 
     def get_activate_frames(self) -> list[bytes]:
         """Return frames to switch TNC to VHF Packet mode.
@@ -86,8 +95,8 @@ class VHFPacketMode(HFPacketMode):
         """
         return [
             build_command(b'HB', b'1200'),  # HBAUD 1200
-            build_command(b'MX', b'4'),     # MAXFRAME 4
-            build_command(b'SL', b'10'),    # SLOTTIME 10 (10ms units = 100ms)
+            build_command(b'MX', str(self.maxframe).encode('ascii')),  # MAXFRAME (VHF value)
+            build_command(b'SL', str(self.slottime).encode('ascii')),  # SLOTTIME (VHF value, 10 ms units)
             build_command(b'MN', str(self.monitor).encode('ascii')),  # MONITOR (P73 A)
         ]
 
