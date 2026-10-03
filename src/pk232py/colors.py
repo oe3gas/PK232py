@@ -30,6 +30,18 @@ THEME_TEXT_COLORS: dict[str, tuple[str, str]] = {
     "air":   ("#000080", "#006600"),
 }
 
+# P79: per-theme display defaults: theme key -> (font_family, font_size, bg, fg).
+# Qt-free on purpose, so config.py can compute a theme's effective settings
+# without importing the UI (ui/themes.py builds its Theme objects FROM this).
+# "custom" is a fifth theme of its own with the Dark defaults.
+THEME_DISPLAY: dict[str, tuple[str, int, str, str]] = {
+    "dark":   ("Cascadia Mono SemiBold", 14, "#1e1e1e", "#ffffff"),
+    "mono":   ("Courier New",            14, "#ffffff", "#1a1a1a"),
+    "retro":  ("Courier New",            14, "#0d0800", "#ffb000"),
+    "air":    ("Segoe UI",               11, "#ffffff", "#1a1a1a"),
+    "custom": ("Cascadia Mono SemiBold", 14, "#1e1e1e", "#ffffff"),
+}
+
 # Contrast below this is reported by the Appearance dialog (WCAG AA, normal text).
 MIN_CONTRAST = 4.5
 

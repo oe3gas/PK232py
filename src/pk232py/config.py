@@ -25,7 +25,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pk232py.colors import default_text_colors
+from pk232py.colors import THEME_DISPLAY, THEME_TEXT_COLORS
 
 logger = logging.getLogger(__name__)
 
@@ -302,13 +302,22 @@ class MailDropConfig:
     archive_restore_scope: str  = "unread"          # all | unread | none
 
 
+# P79: the settings every theme keeps for itself.
+APPEARANCE_OVERRIDE_KEYS = ("font_family", "font_size", "bg_color", "fg_color",
+                            "rx_color", "tx_color")
+
+
 @dataclass
 class AppearanceConfig:
     """Display appearance settings.
 
-    ``theme`` is the preset key ("dark"/"mono"/"retro"/"air") or "custom" when
-    the user has hand-tuned font/colours in the Font & Colors dialog. The
-    defaults match the Dark preset (see ui/themes.py THEMES["dark"]).
+    P79: every theme has its OWN font, colours and RX/TX colours. ``overrides``
+    holds, per theme key ("dark"/"mono"/"retro"/"air"/"custom"), only the
+    DEVIATIONS from that theme's defaults. The single fields below
+    (font_family ... tx_color) stay the EFFECTIVE values of the current
+    ``theme`` - every reader keeps using them - and are computed in ONE place,
+    effective(): default of the theme, overlaid by its override.
+    The defaults of the fields match the Dark theme.
     """
     theme:        str  = "dark"
     font_family:  str  = "Cascadia Mono SemiBold"
@@ -316,14 +325,57 @@ class AppearanceConfig:
     bg_color:     str  = "#1e1e1e"   # RX/TX display background
     fg_color:     str  = "#ffffff"   # RX/TX display foreground
     # P77: the ONE source of the text colours of every display (RX windows, TX
-    # input, verbose terminal, Packet channels, MON). The themes only supply
-    # defaults (colors.THEME_TEXT_COLORS); a missing INI key takes the stored
-    # theme's value. rx = received text / TNC output, tx = typed text / own commands.
+    # input, verbose terminal, Packet channels, MON). rx = received text / TNC
+    # output, tx = typed text / own commands.
     rx_color:     str  = "#88ccff"
     tx_color:     str  = "#ffee88"
     # P76: ring a bell when a connection is established (Configure ->
     # Appearance -> Connect bell). On by default; a missing INI key = on.
     connect_bell: bool = True
+    # P79: theme key -> {field: value}, only values that differ from the default.
+    overrides:    dict = field(default_factory=dict)
+
+    @staticmethod
+    def defaults(theme: str) -> dict:
+        """The preset values of *theme* (an unknown key counts as Dark)."""
+        family, size, bg, fg = THEME_DISPLAY.get(theme, THEME_DISPLAY["dark"])
+        rx, tx = THEME_TEXT_COLORS.get(theme, THEME_TEXT_COLORS["dark"])
+        return {"font_family": family, "font_size": size, "bg_color": bg,
+                "fg_color": fg, "rx_color": rx, "tx_color": tx}
+
+    def effective(self, theme: str) -> dict:
+        """THE place where default and override meet: default(theme) + overrides[theme]."""
+        values = self.defaults(theme)
+        values.update(self.overrides.get(theme, {}))
+        return values
+
+    def load_effective(self) -> None:
+        """Copy effective(self.theme) into the single fields."""
+        for key, value in self.effective(self.theme).items():
+            setattr(self, key, value)
+
+    def store_overrides(self) -> None:
+        """Remember the single fields as the override of the CURRENT theme:
+        only values that differ from the default are kept, so an override
+        equal to the default disappears (no dead overrides)."""
+        defaults = self.defaults(self.theme)
+        diff = {k: getattr(self, k) for k in APPEARANCE_OVERRIDE_KEYS
+                if getattr(self, k) != defaults[k]}
+        if diff:
+            self.overrides[self.theme] = diff
+        else:
+            self.overrides.pop(self.theme, None)
+
+    def switch_theme(self, theme: str) -> None:
+        """Make *theme* current: keep what the old theme was edited to, then
+        restore the new theme's own settings."""
+        self.store_overrides()
+        self.theme = theme
+        self.load_effective()
+
+    def clear_overrides(self, theme: str | None = None) -> None:
+        """Forget the overrides of *theme* (default: the current one)."""
+        self.overrides.pop(theme or self.theme, None)
 
 
 @dataclass
@@ -733,26 +785,59 @@ class ConfigManager:
             return
         s = self._config["Appearance"]
         a = self.app.appearance
-        a.theme       = s.get("theme",       a.theme)
-        a.font_family = s.get("font_family", a.font_family)
-        a.font_size   = s.getint("font_size", a.font_size)
-        a.bg_color    = s.get("bg_color",    a.bg_color)
-        a.fg_color    = s.get("fg_color",    a.fg_color)
-        # P77: without the keys (an INI from before) the stored theme decides.
-        rx_default, tx_default = default_text_colors(a.theme, a.bg_color)
-        a.rx_color    = s.get("rx_color",    rx_default)
-        a.tx_color    = s.get("tx_color",    tx_default)
+        a.theme        = s.get("theme", a.theme)
         a.connect_bell = s.getboolean("connect_bell", a.connect_bell)
+        a.overrides    = {}
+
+        # P79 migration: before, [Appearance] held ONE set of values. Whatever
+        # deviates from the stored theme's default becomes that theme's override
+        # (theme = custom -> slot "custom"); the old keys are never written again.
+        defaults = a.defaults(a.theme)
+        legacy = {}
+        for key in APPEARANCE_OVERRIDE_KEYS:
+            if key in s:
+                value = self._typed_appearance_value(key, s[key])
+                if value is not None and value != defaults[key]:
+                    legacy[key] = value
+        if legacy:
+            a.overrides[a.theme] = legacy
+
+        # One section per theme with overrides: [Appearance.air] ...
+        for name in self._config.sections():
+            if not name.startswith("Appearance."):
+                continue
+            theme = name.split(".", 1)[1]
+            found = {}
+            for key in APPEARANCE_OVERRIDE_KEYS:
+                if key in self._config[name]:
+                    value = self._typed_appearance_value(key, self._config[name][key])
+                    if value is not None:
+                        found[key] = value
+            if found:
+                a.overrides.setdefault(theme, {}).update(found)
+
+        a.load_effective()
+
+    @staticmethod
+    def _typed_appearance_value(key: str, raw: str):
+        """INI text -> field type; None for an unreadable value (ignored)."""
+        if key == "font_size":
+            try:
+                return int(raw)
+            except ValueError:
+                return None
+        return raw
 
     def _build_appearance(self) -> None:
         a = self.app.appearance
+        a.store_overrides()            # the single fields are the current theme's truth
+        for name in [n for n in self._config.sections() if n.startswith("Appearance.")]:
+            self._config.remove_section(name)      # no stale theme sections
         self._config["Appearance"] = {
-            "theme":       a.theme,
-            "font_family": a.font_family,
-            "font_size":   str(a.font_size),
-            "bg_color":    a.bg_color,
-            "fg_color":    a.fg_color,
-            "rx_color":    a.rx_color,
-            "tx_color":    a.tx_color,
+            "theme":        a.theme,
             "connect_bell": str(a.connect_bell).lower(),
         }
+        for theme, values in a.overrides.items():
+            if values:
+                self._config[f"Appearance.{theme}"] = {
+                    k: str(v) for k, v in values.items()}

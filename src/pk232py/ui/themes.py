@@ -50,7 +50,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtGui import QColor, QPalette
 
-from pk232py.colors import THEME_TEXT_COLORS, role_colors
+from pk232py.colors import THEME_DISPLAY, THEME_TEXT_COLORS, role_colors
 
 
 @dataclass(frozen=True)
@@ -86,8 +86,8 @@ class Theme:
 THEMES: dict[str, Theme] = {
     "dark": Theme(
         key="dark", name="Dark",
-        font_family="Cascadia Mono SemiBold", font_size=14,
-        bg="#1e1e1e", fg="#ffffff", system_palette=False,
+        font_family=THEME_DISPLAY["dark"][0], font_size=THEME_DISPLAY["dark"][1],
+        bg=THEME_DISPLAY["dark"][2], fg=THEME_DISPLAY["dark"][3], system_palette=False,
         rx=THEME_TEXT_COLORS["dark"][0], tx=THEME_TEXT_COLORS["dark"][1],
     ),
     # Mono = classic light paper-white terminal — deliberately NO colour.
@@ -96,22 +96,22 @@ THEMES: dict[str, Theme] = {
     # the white window instead of clamping to white).
     "mono": Theme(
         key="mono", name="Mono",
-        font_family="Courier New", font_size=14,
-        bg="#ffffff", fg="#1a1a1a", system_palette=False,
+        font_family=THEME_DISPLAY["mono"][0], font_size=THEME_DISPLAY["mono"][1],
+        bg=THEME_DISPLAY["mono"][2], fg=THEME_DISPLAY["mono"][3], system_palette=False,
         rx=THEME_TEXT_COLORS["mono"][0], tx=THEME_TEXT_COLORS["mono"][1],
     ),
     "retro": Theme(
         key="retro", name="Retro",
-        font_family="Courier New", font_size=14,
-        bg="#0d0800", fg="#ffb000", system_palette=False,
+        font_family=THEME_DISPLAY["retro"][0], font_size=THEME_DISPLAY["retro"][1],
+        bg=THEME_DISPLAY["retro"][2], fg=THEME_DISPLAY["retro"][3], system_palette=False,
         rx=THEME_TEXT_COLORS["retro"][0], tx=THEME_TEXT_COLORS["retro"][1],
     ),
     # Air keeps the native look; bg/fg are light values used ONLY for the
     # RX/TX text panels (the global palette stays the system default).
     "air": Theme(
         key="air", name="Air",
-        font_family="Segoe UI", font_size=11,
-        bg="#ffffff", fg="#1a1a1a", system_palette=True,
+        font_family=THEME_DISPLAY["air"][0], font_size=THEME_DISPLAY["air"][1],
+        bg=THEME_DISPLAY["air"][2], fg=THEME_DISPLAY["air"][3], system_palette=True,
         rx=THEME_TEXT_COLORS["air"][0], tx=THEME_TEXT_COLORS["air"][1],
     ),
 }
