@@ -110,7 +110,7 @@ UNWIRED_OK: dict[tuple[str, str], str] = {
 
     # --- HF Packet: widgets with no HFPacketConfig field -- see Backlog.md ---
     # (8BITCONV, HID, MBELL and the CFROM/DFROM/MFROM/MTO filters were wired
-    # in P13.3, MDIGI/MPROTO/MSTAMP/PASSALL/BBSMSGS/FULLDP in P73 C - no
+    # in P13.3, MDIGI/MPROTO/MSTAMP/PASSALL/BBSMSGS in P73 C - no
     # longer exceptions here.)
     ("PacketParamsDialog", "_le_mbx"): "no config field yet — see Backlog",
 

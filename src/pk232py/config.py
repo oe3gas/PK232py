@@ -152,13 +152,13 @@ class HFPacketConfig:
     # Packet monitor flags (P73 C). They were checkboxes in the dialog that
     # neither reached the INI nor the TNC. Defaults = the old checkbox
     # pre-setting (all off). Matrix mnemonics: MDIGI MD, MPROTO MQ, MSTAMP MS,
-    # PASSALL PX, BBSMSGS BB; FULLDP is not in the matrix (comm/host_params.py).
+    # PASSALL PX, BBSMSGS BB (verified T160/T161). There is no FULLDP: the TNC
+    # answers ?What? on both devices.
     mdigi:    bool = False
     mproto:   bool = False
     mstamp:   bool = False
     passall:  bool = False
     bbsmsgs:  bool = False
-    fulldp:   bool = False
 
     # UBIT 0 (CUSTOM bit 0, P74). False = "UBIT 0 OFF": every packet with a
     # correct CRC is processed. The factory default UBIT 0 ON silently drops
@@ -461,7 +461,6 @@ class ConfigManager:
         hf.mstamp    = s.getboolean("mstamp",   hf.mstamp)
         hf.passall   = s.getboolean("passall",  hf.passall)
         hf.bbsmsgs   = s.getboolean("bbsmsgs",  hf.bbsmsgs)
-        hf.fulldp    = s.getboolean("fulldp",   hf.fulldp)
         hf.ubit0     = s.getboolean("ubit0",    hf.ubit0)
         hf.show_link_messages_in_ui_channel = s.getboolean(
             "show_link_messages_in_ui_channel",
@@ -573,7 +572,6 @@ class ConfigManager:
             "mstamp":   str(hf.mstamp).lower(),
             "passall":  str(hf.passall).lower(),
             "bbsmsgs":  str(hf.bbsmsgs).lower(),
-            "fulldp":   str(hf.fulldp).lower(),
             "ubit0":    str(hf.ubit0).lower(),
             "show_link_messages_in_ui_channel":
                 str(hf.show_link_messages_in_ui_channel).lower(),

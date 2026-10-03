@@ -4,8 +4,8 @@
 
   B   MAXFRAME/SLOTTIME exist once per band; a live change only reaches the
       TNC for the band whose Packet mode is active.
-  C   the seven Packet monitor flags (MBELL MDIGI MPROTO MSTAMP PASSALL
-      BBSMSGS FULLDP) reach the config AND the TNC upload - no dead switch.
+  C   the six Packet monitor flags (MBELL MDIGI MPROTO MSTAMP PASSALL
+      BBSMSGS) reach the config AND the TNC upload - no dead switch.
   D   three columns, no scroll area, the menu entry is "Packet...".
 
 (Teil A, MONITOR instead of MN Y, is tested in test_packet_hf.py.)
@@ -41,7 +41,7 @@ _app = QApplication.instance() or QApplication([])
 
 B = "01.AUG.91"   # MAXFRAME / SLOTTIME verified for Host Mode (T151)
 
-NEW_FLAGS = ("MBELL", "MDIGI", "MPROTO", "MSTAMP", "PASSALL", "BBSMSGS", "FULLDP")
+NEW_FLAGS = ("MBELL", "MDIGI", "MPROTO", "MSTAMP", "PASSALL", "BBSMSGS")
 
 
 def _pair(**changes):
@@ -166,7 +166,7 @@ class TestParamApplierBands:
 
 
 # ---------------------------------------------------------------------------
-# C - the seven monitor flags
+# C - the six monitor flags
 # ---------------------------------------------------------------------------
 
 def _flag_checkboxes(dlg):
@@ -182,7 +182,7 @@ class TestMonitorFlags:
         base_cfg = dataclasses.asdict(HFPacketConfig())
         first = PacketParamsDialog(HFPacketConfig())
         count = len(_flag_checkboxes(first))
-        assert count >= 20
+        assert count >= 19
         failures = []
         for i in range(count):
             dlg = PacketParamsDialog(HFPacketConfig())
@@ -200,14 +200,14 @@ class TestMonitorFlags:
                 failures.append(f"{box.text()}: no upload command changed")
         assert not failures, "\n".join(failures)
 
-    def test_the_seven_are_all_in_the_dialog(self):
+    def test_the_six_are_all_in_the_dialog(self):
         dlg = PacketParamsDialog(HFPacketConfig())   # keep it alive: Qt deletes the children with it
         names = {b.text() for b in _flag_checkboxes(dlg)}
         assert set(NEW_FLAGS) <= names
 
     def test_upload_sends_each_as_a_verbose_switch(self):
         app = AppConfig()
-        for attr in ("mbell", "mdigi", "mproto", "mstamp", "passall", "bbsmsgs", "fulldp"):
+        for attr in ("mbell", "mdigi", "mproto", "mstamp", "passall", "bbsmsgs"):
             setattr(app.hf_packet, attr, True)
         cmds = ParamsUploader(None, app)._build_commands(has_pactor=True)
         for name in NEW_FLAGS:
@@ -218,24 +218,23 @@ class TestMonitorFlags:
 
     def test_flags_survive_the_ini(self, tmp_path):
         mgr = ConfigManager(tmp_path / "pk232py.ini")
-        for attr in ("mdigi", "mproto", "mstamp", "passall", "bbsmsgs", "fulldp"):
+        for attr in ("mdigi", "mproto", "mstamp", "passall", "bbsmsgs"):
             setattr(mgr.app.hf_packet, attr, True)
         mgr.save()
         again = ConfigManager(tmp_path / "pk232py.ini")
         again.load()
-        for attr in ("mdigi", "mproto", "mstamp", "passall", "bbsmsgs", "fulldp"):
+        for attr in ("mdigi", "mproto", "mstamp", "passall", "bbsmsgs"):
             assert getattr(again.app.hf_packet, attr) is True
 
     def test_host_rows_exist_with_the_matrix_mnemonics_and_are_verified_on_both(self):
         expected = {"MBELL": b"ME", "MDIGI": b"MD", "MPROTO": b"MQ", "MSTAMP": b"MS",
-                    "PASSALL": b"PX", "BBSMSGS": b"BB", "FULLDP": b""}
+                    "PASSALL": b"PX", "BBSMSGS": b"BB"}
         for name, mn in expected.items():
             row = param_by_name(name)
             assert row is not None and row.mnemonic == mn, name
-            # T160 (device B, 01.AUG.91) and T161 (device A, 13.SEP.95);
-            # FULLDP has no mnemonic and is removed in the next commit.
-            expected_rel = () if name == "FULLDP" else ("01.AUG.91", "13.SEP.95")
-            assert row.verified_releases == expected_rel, name
+            # T160 (device B, 01.AUG.91) and T161 (device A, 13.SEP.95).
+            assert row.verified_releases == ("01.AUG.91", "13.SEP.95"), name
+        assert param_by_name("FULLDP") is None      # ?What? on both devices
 
     def test_live_change_of_a_flag_is_set_in_host_mode_and_read_back(self):
         t = FakeTransport(release=B, host_answers={
@@ -318,3 +317,21 @@ class TestMenuEntry:
         texts = {a.text().replace("&", "") for a in win.findChildren(QAction)}
         assert "Packet..." in texts
         assert "HF Packet..." not in texts
+
+
+class TestFulldpIsGone:
+    """FULLDP answers ?What? on 01.AUG.91 and 13.SEP.95 (T160/T161)."""
+
+    def test_not_in_config_upload_or_dialog(self):
+        assert not hasattr(HFPacketConfig(), "fulldp")
+        cmds = ParamsUploader(None, AppConfig())._build_commands(has_pactor=True)
+        assert not [c for c in cmds if b"FULLDP" in c]
+        dlg = PacketParamsDialog(HFPacketConfig())
+        assert "FULLDP" not in {b.text() for b in _flag_checkboxes(dlg)}
+
+    def test_an_old_ini_with_fulldp_still_loads(self, tmp_path):
+        ini = tmp_path / "pk232py.ini"
+        ini.write_text("[HF_Packet]\nfulldp = true\nmdigi = true\n", encoding="utf-8")
+        mgr = ConfigManager(ini)
+        mgr.load()
+        assert mgr.app.hf_packet.mdigi is True

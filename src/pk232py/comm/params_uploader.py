@@ -349,7 +349,6 @@ class ParamsUploader:
             self._bool("MSTAMP",  hf.mstamp),
             self._bool("PASSALL", hf.passall),
             self._bool("BBSMSGS", hf.bbsmsgs),
-            self._bool("FULLDP",  hf.fulldp),
         ]
 
         # UBIT 0 (P74): verbose form "UBIT 0 ON|OFF", the one the operator

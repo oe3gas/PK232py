@@ -83,14 +83,13 @@ _ROWS: tuple = (
     HostParam("HID", b"", "bool"),   # not in matrix
     # P73 C: the Packet monitor flags. The mnemonics are matrix hypotheses that
     # T160 (device B) and T161 (device A) verified - see _PACKET_MONITOR_FLAGS.
-    # FULLDP is not in the matrix and unknown to the TNC (removed again).
+    # There is no FULLDP row: the TNC answers ?What? on 01.AUG.91 and 13.SEP.95.
     HostParam("MBELL", b"ME", "bool"),      # confidence L
     HostParam("MDIGI", b"MD", "bool"),      # confidence L
     HostParam("MPROTO", b"MQ", "bool"),     # confidence L
     HostParam("MSTAMP", b"MS", "bool"),     # confidence L
     HostParam("PASSALL", b"PX", "bool"),    # confidence M (CLAUDE.md rule 6: PASSALL = PX)
     HostParam("BBSMSGS", b"BB", "bool"),    # confidence L
-    HostParam("FULLDP", b"", "bool"),       # not in matrix
     # UBIT 0 (P74/P72): mnemonic UB per manual (matrix: confidence L, not BASE);
     # the Host Mode form was measured by T156 on device A: set "UB0 N|Y" (with a
     # space), query "UB0" -> "UBN"/"UBY" (see host_set_args / parse_host_answer).

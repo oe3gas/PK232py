@@ -210,17 +210,14 @@ class PacketParamsDialog(QDialog):
         self._chk_passall   = chk("PASSALL",    False)
         self._chk_hid       = chk("HID",        False)
         self._chk_bbsmsgs   = chk("BBSMSGS",    False)
-        self._chk_fulldp    = chk("FULLDP",     False)
-        # P73 C: these seven used to be dead (MBELL saved but never sent, the
-        # others not even saved). Not measured on the TNC yet (T160/T161): until
-        # then a live change is saved and applied at the next initialisation.
+        # P73 C: these six used to be dead (MBELL saved but never sent, the
+        # others not even saved). Verified in Host Mode on 01.AUG.91 and
+        # 13.SEP.95 (T160/T161), so a change is applied at once.
         for c in (self._chk_mbell, self._chk_mdigi, self._chk_mproto,
-                  self._chk_mstamp, self._chk_passall, self._chk_bbsmsgs,
-                  self._chk_fulldp):
+                  self._chk_mstamp, self._chk_passall, self._chk_bbsmsgs):
             c.setToolTip(
-                f"Sent to the TNC as {c.text()} ON/OFF at every initialisation. "
-                "Applied live only for TNC releases where it has been measured "
-                "(T160/T161)."
+                f"Sent to the TNC as {c.text()} ON/OFF at every initialisation "
+                "and applied at once when you press OK."
             )
         # P74: UBIT 0 is a TNC-wide flag (all modes), shown here because the
         # symptom appears in Packet. Checked = UBIT 0 ON (factory default,
@@ -240,7 +237,7 @@ class PacketParamsDialog(QDialog):
             self._chk_xmitok, self._chk_8bitconv, self._chk_mbell,
             self._chk_mdigi, self._chk_mproto, self._chk_mstamp,
             self._chk_passall, self._chk_hid, self._chk_bbsmsgs,
-            self._chk_fulldp, self._chk_ubit0,
+            self._chk_ubit0,
         ]
         per_col = (len(flags) + 1) // 2
         for i, c in enumerate(flags):
@@ -415,7 +412,6 @@ class PacketParamsDialog(QDialog):
         self._chk_mstamp.setChecked(c.mstamp)
         self._chk_passall.setChecked(c.passall)
         self._chk_bbsmsgs.setChecked(c.bbsmsgs)
-        self._chk_fulldp.setChecked(c.fulldp)
         self._chk_ubit0.setChecked(c.ubit0)
 
         self._chk_show_link_ui.setChecked(c.show_link_messages_in_ui_channel)
@@ -473,7 +469,6 @@ class PacketParamsDialog(QDialog):
         config.mstamp   = self._chk_mstamp.isChecked()
         config.passall  = self._chk_passall.isChecked()
         config.bbsmsgs  = self._chk_bbsmsgs.isChecked()
-        config.fulldp   = self._chk_fulldp.isChecked()
         config.ubit0    = self._chk_ubit0.isChecked()
 
         config.show_link_messages_in_ui_channel = \
