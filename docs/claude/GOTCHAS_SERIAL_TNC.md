@@ -511,7 +511,17 @@ Grows over time.
   actually is; the file's own header is left untouched (historical
   artefact).
 
-  **Hardware-confirmed Host Mode mnemonics** (add every new hardware
+  **New Host Mode mnemonics only with a registry entry (P80).**
+`comm/mnemonic_registry.py` has one `MnemonicEntry` per mnemonic the application
+sends (meaning, kind, `transmits`, evidence per release);
+`tests/test_mnemonic_registry.py` scans the source (`ast`, via
+`tools/gen_mnemonic_audit.py`) and FAILS for a mnemonic that is not registered.
+Evidence of `host_params` rows is taken from `host_params.verified_sources()`,
+never retyped; everything else names the Testplan entry, or stays `{}`
+(= hypothesis only). After a change run `python tools/gen_mnemonic_audit.py
+--update` - the test also fails for a stale `docs/MNEMONIC_AUDIT.md`.
+
+**Hardware-confirmed Host Mode mnemonics** (add every new hardware
   finding to this table, source in the third column):
 
   | Mnemonic | Meaning | Evidence |
