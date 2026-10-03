@@ -3221,6 +3221,14 @@ real TNC output). Software: `test_appearance_colors_p77.py`.
 | 3 | Theme Dark | unchanged: RX light blue, TX gold, terminal on the dark background | ⬜ |
 | 4 | Dialog: pick pale yellow for "TX text" on white | warning "Low contrast: TX text on background (x.x : 1)" under the preview; OK still works | ⬜ |
 | 5 | Baudot: send a few characters (SEND) | sent characters inverse: background = TX colour, text = background colour; readable on Air and on Dark | ⬜ |
+| 6 | (P77a) Theme Air, VHF Packet: receive a connection / monitor traffic | channel text in the RX colour, MON text and timestamps grey (dim), link messages (`*** CONNECTED ***`) dark amber - all readable on white | ⬜ |
+| 7 | (P77a) Theme Air, verbose terminal: press Enter on an empty line while not connected | `[CR]` grey, `[ERROR] Not connected` dark red; the command row at the bottom is white with the "cmd:" prompt and typed text in the TX colour | ⬜ |
+| 8 | (P77a) Baudot: Ctrl+D and Ctrl+T in the TX field | `[^D]` inverse on amber, `[^T:n]` inverse on grey; readable on Air and Dark | ⬜ |
+| 9 | (P77a) Switch Air <-> Dark with text already in a Packet channel you are not looking at | its text follows the new colours when you switch to that channel | ⬜ |
+
+P77a (inventory from the P77 report) is covered in software by
+`test_text_colors_p77a.py`: every text colour of every theme reaches 4.5 : 1
+against its background (WCAG). Menu chrome, status bar and buttons are unchanged.
 
 **Status:** ⬜ OPEN — visual check by the operator.
 
