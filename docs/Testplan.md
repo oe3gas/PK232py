@@ -3404,12 +3404,14 @@ capture of every restart (`LoggingSerialPort`, `>> hex=… text=…` / `<< …`)
 the run (power-cycle the TNC, then run the remaining parts separately).
 
 **First run 03.10.2026 22:06 (`hw_logs/20261003_220612_restart_probe.log`, banner
-`release=13.SEP.95` = device A, not B):**
+`release=01.AUG.91  pactor=no` = device B).** (The shorter log `..._220341_...` is an
+aborted start on device A, `13.SEP.95`, nothing measured.)
 - **A** (verbose command mode): init found both links, the upload kept them. The TNC
   rejected 10 commands: `?not while connected` for `MYCALL OE3GAS` and `AX25L2V2 ON`
   (these two really need no link); `?What?` for `EXPERT ON/OFF`, `MYPTCALL`, `PTHUFF`,
-  `PT200`, `PTOVER`, `ARQTOL`, `MOPT` (commands this firmware does not know in the
-  verbose upload - see Backlog: filter the upload per firmware).
+  `PT200`, `PTOVER`, `ARQTOL`, `MOPT` (this device has no PACTOR, and `EXPERT` is unknown
+  on 01.AUG.91; the restarted app had no banner, so the upload assumed PACTOR - see
+  Backlog: filter the upload per firmware).
 - **B** (Host Mode, 2 links): `FAIL` - no answer within 8 s; the TNC stayed in Host Mode
   with both links (the run was not stopped, so C started in a wrong state).
 - **C**: not a clean Converse run (the TNC still held B's links: `?already connected`),
@@ -3417,7 +3419,7 @@ the run (power-cycle the TNC, then run the remaining parts separately).
 - Open question for B: did the detection chain simply need longer than 8 s? -> rerun
   `--part B0`, then `--part B` with the 60 s wait and the chain capture.
 
-**Status:** ⬜ OPEN — A measured (device A); B0, B (rerun) and C (clean rerun) open.
+**Status:** ⬜ OPEN — A measured (device B); B0, B (rerun) and C (clean rerun) open.
 
 ---
 
