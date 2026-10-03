@@ -1,8 +1,9 @@
 """
 ui_theme.py — Theme system for PK232PY UI screens.
 
-Provides two themes (dark / light) and helper functions to apply
-them to QApplication and individual widgets.
+Provides two widget palettes (dark / light) and helper functions to apply
+them to QApplication and individual widgets. The RX/TX text colours are NOT
+defined here (P77): they come from AppearanceConfig.
 
 Used by all opmode screens and the mockup launcher.
 
@@ -41,8 +42,6 @@ THEMES: dict[str, dict] = {
         "fg_combo":          "#ffffff",
         "fg_line":           "#ffffff",
         "fg_tooltip":        "#d0e4f4",
-        "rx_color":          "#88ccff",
-        "tx_color":          "#ffee88",
         "border_input":      "#334455",
         "border_button":     "#334455",
         "border_spin":       "#445566",
@@ -71,8 +70,6 @@ THEMES: dict[str, dict] = {
         "fg_combo":          "#000000",
         "fg_line":           "#000000",
         "fg_tooltip":        "#333333",
-        "rx_color":          "#000080",
-        "tx_color":          "#006600",
         "border_input":      "#a0a8b0",
         "border_button":     "#a0a8b0",
         "border_spin":       "#a0a8b0",
@@ -80,19 +77,40 @@ THEMES: dict[str, dict] = {
     },
 }
 
-_current_theme: str = "dark"
+# P77: the display colours have ONE source - AppearanceConfig (bg_color,
+# rx_color, tx_color). MainWindow._apply_appearance() hands them over with
+# configure_display_colors(); get_theme() adds rx_color/tx_color to the widget
+# palette below. The palette itself (buttons, borders ...) is chosen by the
+# BRIGHTNESS of the background - one function, colors.is_light_background() -
+# not by a separate "dark"/"light" switch that knew nothing about the theme.
+_display_bg: str = "#1e1e1e"
+_display_rx: str = "#88ccff"
+_display_tx: str = "#ffee88"
+
+
+def configure_display_colors(bg: str, rx: str, tx: str) -> None:
+    """Set the display background and the RX/TX text colours (from AppearanceConfig)."""
+    global _display_bg, _display_rx, _display_tx
+    _display_bg, _display_rx, _display_tx = bg, rx, tx
 
 
 def get_theme() -> dict:
-    """Return the currently active theme dict."""
-    return THEMES[_current_theme]
+    """The widget palette for the current display background, plus the
+    configured ``rx_color`` / ``tx_color``."""
+    from pk232py.colors import is_light_background
+    palette = THEMES["light" if is_light_background(_display_bg) else "dark"]
+    return dict(palette, rx_color=_display_rx, tx_color=_display_tx)
 
 
 def set_theme(name: str) -> None:
-    """Set the active theme ('dark' or 'light')."""
-    global _current_theme
-    if name in THEMES:
-        _current_theme = name
+    """Stand-alone screens / mockups only: configure the display colours with
+    the defaults of the 'dark' or 'light' palette. The application itself
+    never calls this - it uses configure_display_colors()."""
+    from pk232py.colors import THEME_TEXT_COLORS
+    if name == "dark":
+        configure_display_colors("#1e1e1e", *THEME_TEXT_COLORS["dark"])
+    elif name == "light":
+        configure_display_colors("#ffffff", *THEME_TEXT_COLORS["air"])
 
 
 def apply_app_style(app, theme: str = "dark") -> None:
