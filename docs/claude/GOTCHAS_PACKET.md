@@ -668,10 +668,14 @@
   active band's values afterwards.
 - **Packet monitor flags were dead switches (found P73, 2026-10-03).** In the
   Flags column MBELL (saved, never sent), MDIGI, MPROTO, MSTAMP, PASSALL,
-  BBSMSGS and FULLDP (not even saved) did nothing. Now all seven are config
-  fields, INI keys and verbose upload commands. `comm/host_params.py` rows:
-  `ME MD MQ MS PX BB` are matrix hypotheses with EMPTY `verified_releases`
-  until T160/T161 measure them (P72 therefore reports a live change as "not
-  verified for Host Mode" - applied at the next init); FULLDP has no mnemonic.
+  BBSMSGS and FULLDP (not even saved) did nothing. Now the six that exist are
+  config fields, INI keys, verbose upload commands and Host Mode rows in
+  `comm/host_params.py`: `ME MD MQ MS PX BB`, **verified on 01.AUG.91 (T160,
+  `hw_logs/20261003_144153_host_params_probe.log`) and 13.SEP.95 (T161,
+  `hw_logs/20261003_145006_host_params_probe.log`)** - set ACK `$00`, read back
+  `Y`, verbose cross-check ON. **FULLDP does not exist: the verbose command
+  answers `?What?` on 01.AUG.91 and 13.SEP.95** (both logs, line "original
+  FULLDP = None"), so it was removed from config, upload, host_params and the
+  Packet dialog; an old INI key `fulldp` is ignored. Device C: not measured.
   `test_packet_params_p73.py::TestMonitorFlags` derives the switch list from
   the dialog, so a future unwired checkbox fails there.

@@ -29,18 +29,17 @@ default, saved at once). Only link messages ring (`LinkTable.subscribe_events`),
 never the reconciliation after a Host Mode entry. Done after hardware check
 T159. P75 (line endings) stays reserved.
 
-### Packet parameters mask (P73) — implemented, T160–T162 open (2026-10-03)
+### Packet parameters mask (P73) — implemented, T160/T161 PASS, T162 open (2026-10-03)
 
 Parameters -> **Packet...** (was "HF Packet...", class `PacketParamsDialog`):
 three columns (Link | Band & Status | Flags), no scroll area. MAXFRAME and
 SLOTTIME exist per band (HF | VHF table, `vhf_maxframe`/`vhf_slottime`, defaults
 4 / 10); P72 sends only the active band's value. HF and VHF Packet send
-`MN <MONITOR>` instead of `MN Y` (which reset MONITOR to 4). The seven dead
-flags (MBELL MDIGI MPROTO MSTAMP PASSALL BBSMSGS FULLDP) are saved and uploaded
-now. Facts: `docs/claude/GOTCHAS_PACKET.md`. Open: T160/T161 (probe the new
-Host mnemonics on device A/B; `verified_releases` stays empty until then),
-T162 (app, device B). The init upload now sends seven more verbose commands -
-a TNC that does not know one answers `?What?`.
+`MN <MONITOR>` instead of `MN Y` (which reset MONITOR to 4). The six dead
+flags (MBELL MDIGI MPROTO MSTAMP PASSALL BBSMSGS) are saved, uploaded and
+verified in Host Mode on both firmwares (T160/T161); FULLDP does not exist
+(`?What?`) and was removed. Facts: `docs/claude/GOTCHAS_PACKET.md`. Open: T162
+(app, device B). The init upload sends six more verbose commands.
 
 ### Channel bar MON · 0–9 (P70) — ✅ DONE (P70, 2026-09-30; hardware check T148 open)
 
