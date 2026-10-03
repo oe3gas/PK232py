@@ -164,14 +164,14 @@ class TxInputWidget(QTextEdit):
     - char_typed signal — fired on every printable keystroke and paste
     - colour_at()       — inverse-colours one char after DATA_ACK
     - set_cycle_anchor() — updates doc position anchor for colour_at()
-    - Edit protection   — already-sent chars (inverse green) cannot be modified
+    - Edit protection   — already-sent chars (inverse) cannot be modified
     - CTRL+D            — inserts [^D] EOT marker (char = \x04)
     - CTRL+T            — opens n dialog, inserts [^T:n] timed marker (char = \x1b + str(n))
     - insertFromMimeData — paste fires char_typed per character
 
     Colour conventions (theme-aware):
-        Unsent  : normal TX foreground (yellow/green depending on theme)
-        ACK'd   : white text on dark green background (inverse)
+        Unsent  : the TX colour (AppearanceConfig.tx_color)
+        ACK'd   : inverse - background tx_color, text bg_color (P77)
         EOT [^D]: white text on orange background
     """
 
@@ -191,8 +191,10 @@ class TxInputWidget(QTextEdit):
         # SEND), so already-transmitted chars lock as soon as they are sent.
         self._sent_boundary = 0   # doc position just past the last sent char
 
-        # Fallback until set_theme_colors() is called by MainWindow.
+        # Fallbacks (the Dark defaults) until set_theme_colors() is called by
+        # MainWindow with AppearanceConfig.tx_color / bg_color.
         self._tx_fg_color: str = "#ffee88"
+        self._tx_bg_color: str = "#1e1e1e"
 
     def set_theme_colors(self, fg: str, bg: str) -> None:
         """Update the per-character colours used for unsent TX text.
@@ -245,7 +247,7 @@ class TxInputWidget(QTextEdit):
     def colour_at(self, arr_idx: int, sent: bool = True) -> None:
         """Colour one character at arr_idx.
 
-        sent=True  → inverse yellow: black text on yellow (ACK'd)
+        sent=True  → inverse: background tx_color, text bg_color (ACK'd)
         sent=False → normal TX colour (unsent)
         """
         doc_pos = self._doc_offset + (arr_idx - self._cycle_start)
@@ -267,9 +269,10 @@ class TxInputWidget(QTextEdit):
             return
         f = QTextCharFormat()
         if sent:
-            # Inverse yellow — black text on yellow (sent & confirmed)
-            f.setForeground(QColor("#000000"))
-            f.setBackground(QColor("#ddaa00"))
+            # Inverse (P77): background = TX colour, text = display background
+            # - readable on every theme, unlike the old fixed black on gold.
+            f.setForeground(QColor(self._tx_bg_color))
+            f.setBackground(QColor(self._tx_fg_color))
             # Lock this just-sent char: advance the edit-protection boundary
             # so the cursor can no longer be moved back into it mid-SEND.
             if doc_pos + 1 > self._sent_boundary:
@@ -576,7 +579,7 @@ class TxInputWidget(QTextEdit):
         # the space would therefore never be coloured. To avoid this and
         # prevent bypassing edit protection with uncoloured spaces, we
         # colour the space immediately when SEND is active.
-        # In RECEIVE mode (pre-type), space stays yellow (normal).
+        # In RECEIVE mode (pre-type), space keeps the normal TX colour.
         if text == ' ':
             # Resolve TxController via cached ref or parent-chain walk
             # (same pattern as insertFromMimeData).
@@ -606,10 +609,10 @@ class TxInputWidget(QTextEdit):
             self.char_typed.emit(' ', ' ', space_doc_pos)
 
             if send_active:
-                # Immediately colour as sent (inverse yellow).
+                # Immediately colour as sent (inverse: tx colour / bg colour).
                 f_sent = QTextCharFormat()
-                f_sent.setForeground(QColor('#000000'))
-                f_sent.setBackground(QColor('#ddaa00'))
+                f_sent.setForeground(QColor(self._tx_bg_color))
+                f_sent.setBackground(QColor(self._tx_fg_color))
                 cur2 = self.textCursor()
                 cur2.setPosition(space_doc_pos)
                 cur2.movePosition(
