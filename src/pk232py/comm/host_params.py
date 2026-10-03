@@ -81,10 +81,9 @@ _ROWS: tuple = (
     HostParam("MTO", b"MT", "text"),   # matrix line 326, confidence M
     HostParam("8BITCONV", b"8B", "bool"),   # matrix line 353, confidence M
     HostParam("HID", b"", "bool"),   # not in matrix
-    # P73 C: the Packet monitor flags. Mnemonics are the matrix hypotheses,
-    # verified_releases stays EMPTY until T160/T161 (host_params_probe) measure
-    # them - until then P72 reports them as "not verified for Host Mode" and the
-    # next verbose init applies them. FULLDP is not in the matrix.
+    # P73 C: the Packet monitor flags. The mnemonics are matrix hypotheses that
+    # T160 (device B) and T161 (device A) verified - see _PACKET_MONITOR_FLAGS.
+    # FULLDP is not in the matrix and unknown to the TNC (removed again).
     HostParam("MBELL", b"ME", "bool"),      # confidence L
     HostParam("MDIGI", b"MD", "bool"),      # confidence L
     HostParam("MPROTO", b"MQ", "bool"),     # confidence L
@@ -171,13 +170,25 @@ _VERIFIED_A_T156 = frozenset({"UBIT"})
 # banner `release=01.AUG.91`): `UB0 N` -> `UB $00`, query `UB0` -> `UBN`, verbose
 # `UBIT 0` = OFF, survives the VHF mode-switch frames. Same form as on device A.
 _VERIFIED_B_T156 = frozenset({"UBIT"})
+# T160 (device B, 03.10.2026 14:41, hw_logs/20261003_144153_host_params_probe.log,
+# banner `release=01.AUG.91`) and T161 (device A, 03.10.2026 14:50,
+# hw_logs/20261003_145006_host_params_probe.log, banner `release=13.SEP.95`):
+# the Packet monitor flags (P73 C). Per row on both devices: query `<mn>N`, set
+# `<mn> $00`, query `<mn>Y`, verbose cross-check ON, restored to OFF.
+_PACKET_MONITOR_FLAGS = frozenset({
+    "MBELL", "MDIGI", "MPROTO", "MSTAMP", "PASSALL", "BBSMSGS",
+})
+_VERIFIED_B_T160 = _PACKET_MONITOR_FLAGS
+_VERIFIED_A_T161 = _PACKET_MONITOR_FLAGS
 
 
 def _verified_releases(name: str) -> tuple:
     releases = []
-    if name in _VERIFIED_B_T151 or name in _VERIFIED_B_T138 or name in _VERIFIED_B_T156:
+    if name in _VERIFIED_B_T151 or name in _VERIFIED_B_T138 or name in _VERIFIED_B_T156 \
+            or name in _VERIFIED_B_T160:
         releases.append(RELEASE_B)
-    if name in _VERIFIED_A_T151 or name in _VERIFIED_A_T152 or name in _VERIFIED_A_T156:
+    if name in _VERIFIED_A_T151 or name in _VERIFIED_A_T152 or name in _VERIFIED_A_T156 \
+            or name in _VERIFIED_A_T161:
         releases.append(RELEASE_A)
     return tuple(releases)
 

@@ -226,21 +226,24 @@ class TestMonitorFlags:
         for attr in ("mdigi", "mproto", "mstamp", "passall", "bbsmsgs", "fulldp"):
             assert getattr(again.app.hf_packet, attr) is True
 
-    def test_host_rows_exist_with_the_matrix_mnemonics_and_are_not_verified(self):
+    def test_host_rows_exist_with_the_matrix_mnemonics_and_are_verified_on_both(self):
         expected = {"MBELL": b"ME", "MDIGI": b"MD", "MPROTO": b"MQ", "MSTAMP": b"MS",
                     "PASSALL": b"PX", "BBSMSGS": b"BB", "FULLDP": b""}
         for name, mn in expected.items():
             row = param_by_name(name)
             assert row is not None and row.mnemonic == mn, name
-            # Unmeasured until T160/T161: P72 must NOT set them in Host Mode.
-            assert row.verified_releases == (), name
+            # T160 (device B, 01.AUG.91) and T161 (device A, 13.SEP.95);
+            # FULLDP has no mnemonic and is removed in the next commit.
+            expected_rel = () if name == "FULLDP" else ("01.AUG.91", "13.SEP.95")
+            assert row.verified_releases == expected_rel, name
 
-    def test_live_change_of_an_unverified_flag_is_not_sent_in_host_mode(self):
-        t = FakeTransport(release=B)
+    def test_live_change_of_a_flag_is_set_in_host_mode_and_read_back(self):
+        t = FakeTransport(release=B, host_answers={
+            (b"PX", b"Y"): b"PX\x00", (b"PX", b""): b"PXY"})
         before, after = _pair(passall=True)
         (r,) = ParamApplier(t).apply(before, after, band=BAND_HF)
-        assert t.log == []
-        assert not r.ok and "not verified for Host Mode" in r.reason
+        assert t.log == [("host", b"PX", b"Y"), ("host", b"PX", b"")]
+        assert r.ok
 
 
 # ---------------------------------------------------------------------------

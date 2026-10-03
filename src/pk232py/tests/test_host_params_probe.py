@@ -67,10 +67,11 @@ class TestTableCoversTheUploader:
         # P72 Teil A: T151 (B) 37 + UN/CF (T138) + UBIT (T156), T152 (A) 7, T156 (A) UBIT.
         on_b = {p.name for p in HOST_PARAMS if "01.AUG.91" in p.verified_releases}
         on_a = {p.name for p in HOST_PARAMS if "13.SEP.95" in p.verified_releases}
-        assert len(on_b) == 40 and {"UNPROTO", "CFROM", "USERS", "UBIT"} <= on_b
+        # + the six Packet monitor flags (T160 device B / T161 device A, P73).
+        assert len(on_b) == 46 and {"UNPROTO", "CFROM", "USERS", "UBIT", "PASSALL"} <= on_b
         # Device A: the 37 of T151 (22:07 log) + PTHUFF, PT200 + UBIT (T156);
         # UNPROTO/CFROM only on B.
-        assert len(on_a) == 40 and {"PTHUFF", "PT200", "UBIT", "USERS"} <= on_a
+        assert len(on_a) == 46 and {"PTHUFF", "PT200", "UBIT", "USERS", "PASSALL"} <= on_a
         assert not {"UNPROTO", "CFROM", "ILFPACK"} & on_a
         assert "ILFPACK" not in on_b       # T155 / B.3: only verified_query
         assert all(p.mnemonic for p in HOST_PARAMS if p.verified_releases)
