@@ -1803,6 +1803,7 @@ class MainWindow(QMainWindow):
         self._switch_opmode(name)
         # Wire active mode callbacks to UI
         self._wire_mode_callbacks()
+        self._sync_monitor_selectors()      # P78 C: the selector shows the config
         # Focus: TX window is handled by _switch_opmode via singleShot.
         # Only override focus to verbose terminal if not in Host Mode.
         if not self._serial.is_host_mode:
@@ -3734,18 +3735,31 @@ class MainWindow(QMainWindow):
         self._log_monitor(f"[PACKET] HBAUD \u2192 {value}")
 
     def _on_packet_monitor_changed(self, index: int) -> None:
-        """Monitor dropdown changed — send MN {level} to TNC."""
-        if not self._serial.is_connected or not self._serial.is_host_mode:
-            return
+        """Monitor dropdown changed - the configuration is changed and the TNC
+        is set through ParamApplier, exactly like the parameter mask (P78 C).
+
+        Before P78 this sent ``MN <level>`` straight to the TNC (Host Mode
+        only, no read-back) and never touched the configuration, so the next
+        mode switch sent the configured value over it - and the selector
+        itself was never filled from the configuration. MONITOR now has ONE
+        write path: configuration -> ParamApplier (the verbose terminal's
+        was/now answers reach the configuration through VerboseSync).
+        """
         screen = self._opmode_stack.currentWidget()
         combo = getattr(screen, "combo_monitor", None)
         if combo is None:
             return
-        value = combo.currentText()
-        from pk232py.comm.frame import build_command
-        frame = build_command(b'MN', value.encode('ascii'))
-        self._serial.send_command(frame[2:4], frame[4:-1])
-        self._log_monitor(f"[PACKET] Monitor level \u2192 {value}")
+        try:
+            level = int(combo.currentText())
+        except ValueError:
+            return
+        hf = self._app_config.hf_packet
+        if hf.monitor == level:
+            return
+        before = copy.deepcopy(self._app_config)
+        hf.monitor = level
+        self._config_mgr.save()
+        self._apply_changed_params(before, "Packet")
 
     def _on_packet_toggle(self, mnemonic: bytes, checked: bool) -> None:
         """Generic toggle for EAS / PASSALL / MRPT / MID / SQUELCH.
@@ -4685,6 +4699,7 @@ class MainWindow(QMainWindow):
         dlg = PacketParamsDialog(self._app_config.hf_packet, parent=self)
         if dlg.exec() == PacketParamsDialog.DialogCode.Accepted:
             self._config_mgr.save()
+            self._sync_monitor_selectors()      # P78 C
             self._apply_changed_params(before, "HF Packet")
             # Refresh the USERS tooltip immediately (P11.5) rather than
             # waiting for the next mode (re)activation — HF and VHF Packet
