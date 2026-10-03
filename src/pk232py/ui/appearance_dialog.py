@@ -11,7 +11,10 @@ from PyQt6.QtWidgets import (
     QFormLayout, QGroupBox, QHBoxLayout, QLabel,
     QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
-from pk232py.colors import low_contrast_warnings
+from pk232py.colors import (
+    contrast_ratio, font_is_bold, low_contrast_warnings, meets_contrast,
+    required_contrast,
+)
 from pk232py.config import AppearanceConfig
 
 logger = logging.getLogger(__name__)
@@ -43,6 +46,10 @@ class ColorButton(QPushButton):
         return self._color
 
     def _pick_color(self) -> None:
+        # P77b: no options on purpose - in particular NOT DontUseNativeDialog,
+        # so the platform's own colour picker is used wherever Qt offers one.
+        # Where it falls back to Qt's dialog, MainWindow's dialog hook gives it
+        # the standard palette (it is a QDialog like any other).
         c = QColorDialog.getColor(
             QColor(self._color), self, "Select Color"
         )
@@ -108,15 +115,32 @@ class AppearanceDialog(QDialog):
         self._bg_btn = ColorButton()
         color_form.addRow("Background:", self._bg_btn)
 
+        # Each text colour shows its contrast to the background next to it
+        # (P77b): neutral when it reaches the limit for the chosen font, red
+        # when it does not. The limit depends on the font size/weight (WCAG).
+        def color_row(btn: ColorButton) -> tuple[QWidget, QLabel]:
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            ratio = QLabel()
+            ratio.setMinimumWidth(70)
+            lay.addWidget(btn)
+            lay.addWidget(ratio)
+            lay.addStretch()
+            return row, ratio
+
         self._fg_btn = ColorButton()
-        color_form.addRow("Foreground (text):", self._fg_btn)
+        row, self._fg_ratio = color_row(self._fg_btn)
+        color_form.addRow("Foreground (text):", row)
 
         # P77: received text / TNC output, and typed text / own commands.
         self._rx_btn = ColorButton()
-        color_form.addRow("RX text:", self._rx_btn)
+        row, self._rx_ratio = color_row(self._rx_btn)
+        color_form.addRow("RX text:", row)
 
         self._tx_btn = ColorButton()
-        color_form.addRow("TX text:", self._tx_btn)
+        row, self._tx_ratio = color_row(self._tx_btn)
+        color_form.addRow("TX text:", row)
 
         root.addWidget(color_group)
 
@@ -140,7 +164,8 @@ class AppearanceDialog(QDialog):
         root.addWidget(preview_group)
 
         # Update preview on change
-        self._font_combo.currentFontChanged.connect(self._update_preview)
+        self._family_name = ""     # the family the contrast limit is judged by
+        self._font_combo.currentFontChanged.connect(self._on_font_changed)
         self._font_size.valueChanged.connect(self._update_preview)
         for btn in (self._bg_btn, self._fg_btn, self._rx_btn, self._tx_btn):
             btn.colorChanged.connect(self._update_preview)
@@ -161,6 +186,10 @@ class AppearanceDialog(QDialog):
     def _populate(self) -> None:
         c = self._config
         self._font_combo.setCurrentFont(QFont(c.font_family))
+        # The configured NAME decides bold-ness: a font that is not installed
+        # here ("Cascadia Mono SemiBold" on another PC) would otherwise be
+        # judged by whatever the combo box fell back to.
+        self._family_name = c.font_family
         self._font_size.setValue(c.font_size)
         self._bg_btn.set_color(c.bg_color)
         self._fg_btn.set_color(c.fg_color)
@@ -168,19 +197,37 @@ class AppearanceDialog(QDialog):
         self._tx_btn.set_color(c.tx_color)
         self._update_preview()
 
+    def _on_font_changed(self, font: QFont) -> None:
+        self._family_name = font.family()
+        self._update_preview()
+
+    def _required_contrast(self) -> float:
+        """3 : 1 for large text (>= 18 pt, or >= 14 pt bold), else 4.5 : 1."""
+        weight = self._font_combo.currentFont().weight()
+        bold = font_is_bold(self._family_name, int(weight))
+        return required_contrast(self._font_size.value(), bold)
+
     def _update_preview(self) -> None:
         font = self._font_combo.currentFont()
         font.setPointSize(self._font_size.value())
         self._preview.setFont(font)
         bg, fg = self._bg_btn.color(), self._fg_btn.color()
         rx, tx = self._rx_btn.color(), self._tx_btn.color()
+        required = self._required_contrast()
+        for color, label in ((fg, self._fg_ratio), (rx, self._rx_ratio),
+                             (tx, self._tx_ratio)):
+            label.setText(f"{contrast_ratio(color, bg):.1f} : 1")
+            label.setToolTip(f"Contrast to the background; this font needs "
+                             f"{required:g} : 1.")
+            label.setStyleSheet(
+                "" if meets_contrast(color, bg, required) else "color:#c0392b;")
         self._preview.setStyleSheet(f"background-color:{bg}; color:{fg};")
         self._preview.setText(
             f'<span style="color:{fg}">Foreground text</span><br>'
             f'<span style="color:{rx}">AEA PK-232MBX  Ver. 7.1</span><br>'
             f'<span style="color:{tx}">cmd: MYCALL OE3GAS</span>'
         )
-        warnings = low_contrast_warnings(bg, fg, rx, tx)
+        warnings = low_contrast_warnings(bg, fg, rx, tx, required)
         self._warning.setText("<br>".join(warnings))
         self._warning.setVisible(bool(warnings))
 
@@ -203,6 +250,7 @@ class AppearanceDialog(QDialog):
         from pk232py.ui.themes import THEMES
         t = THEMES.get(self._config.theme, THEMES["dark"])
         self._font_combo.setCurrentFont(QFont(t.font_family))
+        self._family_name = t.font_family
         self._font_size.setValue(t.font_size)
         self._bg_btn.set_color(t.bg)
         self._fg_btn.set_color(t.fg)
