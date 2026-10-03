@@ -16,6 +16,8 @@ AA threshold for normal-size text.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 # Per-theme default text colours: theme key -> (rx_color, tx_color).
 # rx = received text and TNC output; tx = typed/sent text and own commands.
 # Dark keeps the colours the application always used (#88ccff / #ffee88); the
@@ -76,6 +78,41 @@ def default_text_colors(theme_key: str, bg_color: str) -> tuple[str, str]:
     if theme_key in THEME_TEXT_COLORS:
         return THEME_TEXT_COLORS[theme_key]
     return THEME_TEXT_COLORS["air" if is_light_background(bg_color) else "dark"]
+
+
+@dataclass(frozen=True)
+class RoleColors:
+    """Fixed-meaning text colours of a theme (P77a). Not configurable in a
+    dialog - only the theme decides, so each one is readable on its theme's
+    background (tests/test_text_colors_p77a.py).
+
+    sys_color  link/system messages, warnings, the [^D] marker
+    ok_color   success lines (green)
+    err_color  error lines (red)
+    dim_color  muted text: the MON view, timestamps, the [CR] echo, the [^T] marker
+    """
+    sys_color: str
+    ok_color: str
+    err_color: str
+    dim_color: str
+
+
+# Dark keeps the colours the application always used (nothing changes there);
+# the light themes get darker variants (>= 4.5 : 1 on white), Retro stays amber.
+THEME_ROLE_COLORS: dict[str, RoleColors] = {
+    "dark":  RoleColors("#ffaa00", "#3a9e3a", "#f44747", "#aaaaaa"),
+    "mono":  RoleColors("#a35f00", "#1e6b1e", "#a31515", "#595959"),
+    "retro": RoleColors("#ffaa00", "#7fd34a", "#ff5a3c", "#a8803a"),
+    "air":   RoleColors("#a35f00", "#1e6b1e", "#a31515", "#595959"),
+}
+
+
+def role_colors(theme_key: str, bg_color: str) -> RoleColors:
+    """Role colours of a theme; "custom" (or unknown) is judged by the
+    background, like default_text_colors()."""
+    if theme_key in THEME_ROLE_COLORS:
+        return THEME_ROLE_COLORS[theme_key]
+    return THEME_ROLE_COLORS["air" if is_light_background(bg_color) else "dark"]
 
 
 def low_contrast_warnings(bg: str, fg: str, rx: str, tx: str) -> list[str]:

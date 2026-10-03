@@ -50,7 +50,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtGui import QColor, QPalette
 
-from pk232py.colors import THEME_TEXT_COLORS
+from pk232py.colors import THEME_TEXT_COLORS, role_colors
 
 
 @dataclass(frozen=True)
@@ -251,6 +251,8 @@ def semantic_colors(theme: Theme) -> dict[str, str]:
         # P77: the received-text colour is the configured RX colour (the
         # Theme carries AppearanceConfig.rx_color); echo/warning stay luma-bucketed.
         "rx_received": theme.rx,
-        "rx_echo":     "#ffaa00" if dark_bg else "#b36b00",
+        # P77a: the echo colour IS the theme's system colour (one source;
+        # the old light value #b36b00 reached only 4.2 : 1 on white).
+        "rx_echo":     role_colors(theme.key, theme.bg).sys_color,
         "rx_warning":  "#ff9900" if dark_bg else "#b34700",
     }
