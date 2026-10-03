@@ -14,6 +14,8 @@ Usage:
 
 from __future__ import annotations
 
+from pk232py.colors import THEME_ROLE_COLORS, THEME_TEXT_COLORS, is_light_background
+
 # ---------------------------------------------------------------------------
 # Theme definitions
 # ---------------------------------------------------------------------------
@@ -86,31 +88,74 @@ THEMES: dict[str, dict] = {
 _display_bg: str = "#1e1e1e"
 _display_rx: str = "#88ccff"
 _display_tx: str = "#ffee88"
+# P77a: the theme's role colours (sys/ok/err/dim), see colors.RoleColors.
+_display_roles = THEME_ROLE_COLORS["dark"]
 
 
-def configure_display_colors(bg: str, rx: str, tx: str) -> None:
-    """Set the display background and the RX/TX text colours (from AppearanceConfig)."""
-    global _display_bg, _display_rx, _display_tx
+def configure_display_colors(bg: str, rx: str, tx: str, roles=None) -> None:
+    """Set the display background, the RX/TX text colours (from
+    AppearanceConfig) and the theme's role colours (colors.RoleColors; None =
+    the Dark ones)."""
+    global _display_bg, _display_rx, _display_tx, _display_roles
     _display_bg, _display_rx, _display_tx = bg, rx, tx
+    _display_roles = roles if roles is not None else THEME_ROLE_COLORS["dark"]
 
 
 def get_theme() -> dict:
     """The widget palette for the current display background, plus the
-    configured ``rx_color`` / ``tx_color``."""
-    from pk232py.colors import is_light_background
+    configured ``rx_color`` / ``tx_color``, the display ``bg_color`` and the
+    role colours ``sys_color`` / ``ok_color`` / ``err_color`` / ``dim_color``."""
     palette = THEMES["light" if is_light_background(_display_bg) else "dark"]
-    return dict(palette, rx_color=_display_rx, tx_color=_display_tx)
+    r = _display_roles
+    return dict(palette, rx_color=_display_rx, tx_color=_display_tx,
+                bg_color=_display_bg, sys_color=r.sys_color, ok_color=r.ok_color,
+                err_color=r.err_color, dim_color=r.dim_color)
 
 
 def set_theme(name: str) -> None:
     """Stand-alone screens / mockups only: configure the display colours with
     the defaults of the 'dark' or 'light' palette. The application itself
     never calls this - it uses configure_display_colors()."""
-    from pk232py.colors import THEME_TEXT_COLORS
     if name == "dark":
-        configure_display_colors("#1e1e1e", *THEME_TEXT_COLORS["dark"])
+        configure_display_colors("#1e1e1e", *THEME_TEXT_COLORS["dark"],
+                                 roles=THEME_ROLE_COLORS["dark"])
     elif name == "light":
-        configure_display_colors("#ffffff", *THEME_TEXT_COLORS["air"])
+        configure_display_colors("#ffffff", *THEME_TEXT_COLORS["air"],
+                                 roles=THEME_ROLE_COLORS["air"])
+
+
+def recolor_document(doc, color_map: dict) -> None:
+    """Rewrite the FOREGROUND colour of every text fragment of *doc* whose
+    colour is a key of *color_map* ({old_hex_lowercase: new_hex}) - used after a
+    theme/colour change for text that is already rendered. Backgrounds (the
+    sent-character highlight, markers) are left alone.
+
+    Lernmodus: a per-character QTextCharFormat is NOT touched by a widget
+    stylesheet, so already-written text keeps its old colour unless it is
+    rewritten here. Takes a QTextDocument (not a widget) because a Packet
+    screen owns eleven documents of which only one is attached to the widget.
+    """
+    if not color_map:
+        return
+    from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
+    block = doc.begin()
+    while block.isValid():
+        it = block.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            if frag.isValid():
+                new_fg = color_map.get(
+                    frag.charFormat().foreground().color().name().lower())
+                if new_fg:
+                    c = QTextCursor(doc)
+                    c.setPosition(frag.position())
+                    c.setPosition(frag.position() + frag.length(),
+                                  QTextCursor.MoveMode.KeepAnchor)
+                    fmt = QTextCharFormat(frag.charFormat())
+                    fmt.setForeground(QColor(new_fg))
+                    c.mergeCharFormat(fmt)
+            it += 1
+        block = block.next()
 
 
 def apply_app_style(app, theme: str = "dark") -> None:
