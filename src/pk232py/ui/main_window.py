@@ -821,8 +821,9 @@ class MainWindow(QMainWindow):
         self._vt_display = QTextEdit()
         self._vt_display.setReadOnly(True)
         self._vt_display.setFont(QFont("Courier New", 10))
-        # P77: colours from AppearanceConfig (the old fixed #0c0c0c/#cccccc
-        # ignored the theme); _apply_appearance() keeps them current.
+        # P77: colours from AppearanceConfig (the old fixed dark background
+        # and light-grey text ignored the theme); _apply_appearance() keeps
+        # them current.
         _a = self._app_config.appearance
         self._vt_display.setStyleSheet(
             f"background-color:{_a.bg_color}; color:{_a.rx_color}; border:none;"
