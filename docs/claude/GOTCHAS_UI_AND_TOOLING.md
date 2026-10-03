@@ -616,3 +616,33 @@
   as control characters in the help.
 
 ---
+
+### Display colors: one source (P77, 2026-10-03)
+
+- **RX/TX text colors live in `AppearanceConfig.rx_color` / `tx_color` - nowhere
+  else.** Themes (`ui/themes.py`, `colors.THEME_TEXT_COLORS`) only supply defaults;
+  a theme selection copies them into the config, a hand change in the Appearance
+  dialog makes the theme `custom`. Before P77 `ui/screens/ui_theme.py` had its own
+  `rx_color`/`tx_color` per dark/light palette and the app always used the DARK
+  one - gold `#ffee88` on a white background (screenshots 03.10.2026).
+- **`ui_theme.get_theme()` = widget palette + configured colors.**
+  `MainWindow._apply_appearance()` calls `configure_display_colors(bg, rx, tx)`;
+  the dark/light palette is chosen by `colors.is_light_background(bg)` (one
+  function), no separate `_current_theme` switch. `set_theme()` remains only for
+  the stand-alone screen mockups.
+- **`colors.py` is Qt-free on purpose.** `config.py` needs the theme defaults to
+  fill a missing INI key, and `config.py` must not import `pk232py.ui` (its
+  `__init__` imports MainWindow, which imports config - a circle).
+- **Verbose terminal:** `_vt_append(text, color=None)` = RX colour; own commands
+  `cmd:...` use the TX colour; green/red status lines and the grey `[CR]` echo stay
+  fixed. Text already in the terminal is recoloured on a colour change
+  (`_recolor_existing_text`). The first fragment of the terminal document is an
+  empty block's separator - tests must skip fragments without text.
+- **Sent-character highlight:** background `tx_color`, text `bg_color`
+  (`TxInputWidget.set_theme_colors(tx, bg)`), no longer black on `#ddaa00`.
+- **Contrast:** `colors.contrast_ratio()` (WCAG 2.x); the dialog warns below
+  `MIN_CONTRAST` 4.5 but never blocks saving.
+- **Still fixed (display surfaces, follow-up):** Packet channel text `#66ccff`
+  (`packet_screen.py:1633`), MON `#aaaaaa` (`:1658`, `:1671`), `_SYSTEM_MSG_COLOR`
+  `#ffaa00` (`main_window.py:89`), the verbose command row `#1a1a1a`/`#d4d4d4`
+  (`main_window.py:845`-`858`), macro/EOT markers.

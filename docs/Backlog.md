@@ -29,6 +29,21 @@ default, saved at once). Only link messages ring (`LinkTable.subscribe_events`),
 never the reconciliation after a Host Mode entry. Done after hardware check
 T159. P75 (line endings) stays reserved.
 
+### RX/TX colors in Appearance (P77) — implemented, T163 open (2026-10-03)
+
+`AppearanceConfig.rx_color` / `tx_color` are the ONE source of the display text
+colors (INI keys; missing = the stored theme's defaults, `colors.THEME_TEXT_COLORS`).
+Appearance -> Font & Colors has "RX text" / "TX text", a preview line each and a
+WCAG contrast warning (below 4.5 : 1). The verbose terminal (background, TNC
+output = RX, own commands = TX) and the Baudot-type TX inputs follow it; sent
+characters are drawn inverse (tx_color background, bg_color text);
+`ui_theme.get_theme()` no longer has its own RX/TX colors and picks its widget
+palette by the brightness of the background. Facts: `docs/claude/GOTCHAS_UI_AND_TOOLING.md`.
+**Not done (found by the inventory, not in the spec's commits):** the Packet
+screens still use fixed text colors - channel data `#66ccff` (`packet_screen.py:1633`),
+MON `#aaaaaa` (`:1658`, `:1671`), system messages `_SYSTEM_MSG_COLOR` `#ffaa00`
+(`main_window.py:89`) - unreadable on a light background. Follow-up package.
+
 ### Packet parameters mask (P73) — implemented, T160/T161 PASS, T162 open (2026-10-03)
 
 Parameters -> **Packet...** (was "HF Packet...", class `PacketParamsDialog`):
