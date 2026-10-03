@@ -17,6 +17,7 @@ Layout:
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -238,12 +239,13 @@ class MainWindow(QMainWindow):
         # colour, both theme-dependent. Sensible Dark-theme defaults here;
         # _apply_appearance() recomputes and updates them on every theme
         # change (and recolours already-rendered text accordingly).
+        # P77: rx_received/_tx_fg start from AppearanceConfig (the ONE colour source).
         self._semantic_colors: dict = {
-            "rx_received": "#88ccff",
+            "rx_received": self._app_config.appearance.rx_color,
             "rx_echo":     "#ffaa00",
             "rx_warning":  "#ff9900",
         }
-        self._tx_fg: str = "#ffee88"
+        self._tx_fg: str = self._app_config.appearance.tx_color
 
         # Apply the saved theme's palette + style BEFORE building any widgets,
         # so every widget inherits the right palette at construction time.
@@ -819,8 +821,11 @@ class MainWindow(QMainWindow):
         self._vt_display = QTextEdit()
         self._vt_display.setReadOnly(True)
         self._vt_display.setFont(QFont("Courier New", 10))
+        # P77: colours from AppearanceConfig (the old fixed #0c0c0c/#cccccc
+        # ignored the theme); _apply_appearance() keeps them current.
+        _a = self._app_config.appearance
         self._vt_display.setStyleSheet(
-            "background-color:#0c0c0c; color:#cccccc; border:none;"
+            f"background-color:{_a.bg_color}; color:{_a.rx_color}; border:none;"
         )
         self._vt_display.setPlaceholderText(
             "TNC verbose mode - echo and responses appear here."
@@ -2884,7 +2889,7 @@ class MainWindow(QMainWindow):
             wire    = char.encode('ascii', errors='replace')
 
         self._serial.send_data(wire, channel=0)
-        # RX echo (yellow) will appear in _on_rtty_data_ack
+        # RX echo (semantic "rx_echo" colour) will appear in _on_rtty_data_ack
         # when TNC sends DATA_ACK for this character.
         self._log_monitor(f'[TX] {char!r}')
 
@@ -4093,7 +4098,7 @@ class MainWindow(QMainWindow):
             self._log_terminal(text)
         else:
             # Verbose Mode: show decoded data in verbose terminal
-            self._vt_append(text, color="#88ccff")
+            self._vt_append(text)          # TNC output: RX colour
 
         # Monitor panel (always, if visible)
         if self._monitor_container.isVisible():
@@ -4957,11 +4962,13 @@ class MainWindow(QMainWindow):
         from pk232py.ui.themes import THEMES, Theme
         a = self._app_config.appearance
         if a.theme == "air":
-            return THEMES["air"]
+            # The native-look preset, but with the configured text colours.
+            return dataclasses.replace(THEMES["air"], rx=a.rx_color, tx=a.tx_color)
         return Theme(
             key=a.theme, name=a.theme.title(),
             font_family=a.font_family, font_size=a.font_size,
             bg=a.bg_color, fg=a.fg_color, system_palette=False,
+            rx=a.rx_color, tx=a.tx_color,
         )
 
     def _apply_palette(self) -> None:
@@ -4996,6 +5003,8 @@ class MainWindow(QMainWindow):
         a.font_size   = theme.font_size
         a.bg_color    = theme.bg
         a.fg_color    = theme.fg
+        a.rx_color    = theme.rx     # P77: a theme sets the text-colour defaults
+        a.tx_color    = theme.tx
         self._config_mgr.save()
         self._apply_appearance()
         self._sync_theme_checks()
@@ -5050,15 +5059,21 @@ class MainWindow(QMainWindow):
             a.fg_color    = preset.fg
             a.font_family = preset.font_family
             a.font_size   = preset.font_size
+            a.rx_color    = preset.rx
+            a.tx_color    = preset.tx
+
+        # P77: the display colours have ONE source. Hand them to the widget
+        # palette module (ui_theme.get_theme(): TX/RX colours of the macros,
+        # the TX input, the MailDrop views ...) before anything is styled.
+        from pk232py.ui.screens.ui_theme import configure_display_colors
+        configure_display_colors(a.bg_color, a.rx_color, a.tx_color)
 
         self._apply_palette()   # global QPalette + style (menus, dialogs, buttons)
         font = QFont(a.font_family, a.font_size)
-        # TX text colour: a distinct gold accent ONLY on the Dark theme (where
-        # it reads well and separates TX from RX). On every other theme — Mono
-        # (grey, no colour), Retro (amber), Air (dark on light), or a custom
-        # scheme — use the theme foreground so the TX text never ends up an
-        # unreadable gold-on-light (the Air bug).
-        tx_fg = "#ffee88" if a.theme == "dark" else a.fg_color
+        # TX text colour: AppearanceConfig.tx_color. The themes only supply
+        # its default (Dark: gold, the light themes: dark green/black), so the
+        # TX text is never an unreadable gold-on-white (the Air bug, P77).
+        tx_fg = a.tx_color
 
         # RX highlight roles (received/echo/warning), theme-aware. Capture the
         # previous values BEFORE overwriting self._semantic_colors/_tx_fg —
@@ -5089,7 +5104,7 @@ class MainWindow(QMainWindow):
         )
         style_vt = (
             f"background-color:{a.bg_color}; "
-            f"color:{a.fg_color}; border:none;"
+            f"color:{a.rx_color}; border:none;"
         )
         # Opmode screens: apply font + colors to all screens' RX and TX widgets
         for screen in self._opmode_screens.values():
@@ -5112,8 +5127,8 @@ class MainWindow(QMainWindow):
             if hasattr(screen, "tx_input"):
                 screen.tx_input.setFont(font)
                 screen.tx_input.setStyleSheet(style_tx)
-                # TX text color: always yellow so it is visually distinct
-                # from RX text (blue) even before SEND is pressed.
+                # TX text colour (AppearanceConfig.tx_color): distinct from the
+                # RX colour even before SEND is pressed.
                 from PyQt6.QtGui import QTextCharFormat, QColor
                 _tx_fmt = QTextCharFormat()
                 _tx_fmt.setForeground(QColor(tx_fg))  # theme-aware TX colour
@@ -5138,8 +5153,10 @@ class MainWindow(QMainWindow):
         self._vt_input.setFont(font)
         self._vt_input.setStyleSheet(
             f"background-color:{a.bg_color}; "
-            f"color:{a.fg_color}; border:none;"
+            f"color:{a.tx_color}; border:none;"          # typed command = TX
         )
+        # Text already in the terminal follows the new RX/TX colours too.
+        _recolor_existing_text(self._vt_display, recolor_map)
         # Block cursor on verbose terminal input
         char_w_vt = self._vt_input.fontMetrics().averageCharWidth()
         self._vt_input.setCursorWidth(char_w_vt)
@@ -5708,7 +5725,7 @@ class MainWindow(QMainWindow):
             self._vt_send_raw(b"\r", echo="[CR]\n", color="#888888")
             return
         self._vt_input.clear()
-        self._vt_append(f"cmd:{text}\n", color="#569cd6")
+        self._vt_append(f"cmd:{text}\n", color=self._app_config.appearance.tx_color)
         if self._serial.is_connected:
             raw_tx = f"{text}\r\n".encode('ascii', errors='replace')
             self._serial.write_verbose(raw_tx)
@@ -5718,8 +5735,15 @@ class MainWindow(QMainWindow):
         else:
             self._vt_append("[ERROR] Not connected\n", color="#f44747")
 
-    def _vt_append(self, text: str, color: str = "#cccccc") -> None:
-        """Append coloured text to the verbose terminal display."""
+    def _vt_append(self, text: str, color: Optional[str] = None) -> None:
+        """Append coloured text to the verbose terminal display.
+
+        *color* None = the RX colour of AppearanceConfig (TNC output and
+        [SYS] lines); own commands pass the TX colour, status lines their
+        fixed green/red.
+        """
+        if color is None:
+            color = self._app_config.appearance.rx_color
         from PyQt6.QtGui import QTextCursor, QColor
         cursor = self._vt_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -5747,7 +5771,7 @@ class MainWindow(QMainWindow):
         text = _filter_control_chars(text)
         # Insert blank line before cmd: to separate response blocks
         text = text.replace('cmd:', '\ncmd:')
-        self._vt_append(text, color="#cccccc")
+        self._vt_append(text)              # TNC output: RX colour (P77)
         # P67, Teil C.4: every RECEIVED verbose line feeds the
         # LinkTable - a typed CONVERSE/CONV/K or Ctrl-C only changes
         # .converse once the TNC's own response confirms it (an echo
