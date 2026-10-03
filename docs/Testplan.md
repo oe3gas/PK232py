@@ -3343,6 +3343,28 @@ Software: `test_p78_devices_parse.py`, `test_p78_release_and_sync.py`.
 
 ---
 
+### T166 / T167 — `mnemonic_probe`: the unproven Host Mode mnemonics (P80 Teil D)
+
+`python tools/hw_check.py mnemonic_probe --part A|B|C|all` — T166 on device B,
+T167 on device A (the tool picks the number by `has_pactor`); PC 1 only, nothing
+is transmitted, no dummy load needed. Software: `test_hw_check_mnemonic_probe.py`.
+Switch the TNC off and on before each device's run. **Never** sends a
+transmitting mnemonic (XM, AC, FE, SE, CO, DI, PD) or any `action` kind.
+
+| Part | What | Expected in the log |
+|---|---|---|
+| A | mode switches BA AS MO AM PT FA SI TV NA NE, each followed by `OP`, back to `PA` | `T16x mode <mn> … changed_and_returned` (or `unchanged` / `not_returned`); PT only on device A; `T16x mode NA vs NE … same/DIFFERENT` |
+| B | unproven parameters (EA WI SR US WO FN SQ XL AY MW RB FS CI EE MY NM NS) through the `host_params_probe` engine, then the MID scan (verbose `MID` 7, harmless `M?` queries) | `T16x <NAME> (<mn>) … verdict` per parameter, `T16x MID scan … hits=[…]` |
+| C | queries `MH` and (device A) `PN` | `T16x query MH/PN … frames=[…]` |
+
+After the run: `python tools/hw_check.py mnemonic_probe --reevaluate <log>` prints
+the evidence to enter in `comm/mnemonic_registry.py` (parameter rows: also
+`host_params_probe --reevaluate` on the same log). Nothing is typed from the log by hand.
+
+**Status:** ⬜ OPEN — hardware session (device B = T166, device A = T167).
+
+---
+
 ### T168 — `restart_probe`: the app's init with live links (P81, Teil 0)
 
 `python tools/hw_check.py restart_probe --part A|B|C|all` (device B; PC 1 =

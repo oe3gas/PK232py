@@ -80,7 +80,21 @@ Built: `hw_check.py restart_probe` (T168). Open: T168 (device B), then P81 A-C
 (`Init: check for live Packet links…`, `Init: parameter upload respects live
 links`, `MainWindow: show live links found at start-up`), tests, T169.
 
-### Mnemonic audit (P80) — Parts A-C and E implemented, Part D waits for the operator (2026-10-03)
+### Mnemonic audit (P80) — Parts A-C, E, P80a and the Part D tool done; T166/T167 open (2026-10-03)
+
+**P80a (done):** `host_params.verified_mnemonic()` is the one source for measured
+mnemonics: FAX RXREV sends `RX` (was `RV`), PT200 `PB` (was `P2`), PACTOR ARQTMO `AO`
+(was `AC`). ARQTOL (`Ao`) is not sent any more (no frame builder); the Packet "MID"
+button and the Morse-ID controls (`MI` is MFILTER, T115) send nothing and are greyed
+out with the tooltip "Host mnemonic unverified - MI is MFILTER (T115)". The registry
+keeps `MI` and `Ao` as `sent=False` entries; `RV`/`P2` are gone. Not changed: the
+AMTOR parameters dialog still has its ARQTOL spin box (it feeds the verbose upload,
+not a Host Mode frame).
+**Part D (tool built):** `hw_check.py mnemonic_probe` (T166/T167). Open: the runs, then
+`--reevaluate` into the registry.
+
+(Earlier status: Parts A-C and E implemented, 2026-10-03.)
+
 
 `comm/mnemonic_registry.py` lists every Host Mode mnemonic the application sends
 (118, found by an `ast` scan: `build_command`, `build_ch_cmd`, `send_command`,
