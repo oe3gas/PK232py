@@ -222,6 +222,10 @@ class MorseScreen(QWidget):
         param_row.addWidget(self.sb_mid)
         self.btn_mid_up = _small_btn("+")
         param_row.addWidget(self.btn_mid_up)
+        # P80a: MI is MFILTER (T115), no Morse ID mnemonic is known - the
+        # controls send nothing and are greyed out (tooltip: tooltips.py).
+        for _w in (self.btn_mid_down, self.sb_mid, self.btn_mid_up):
+            _w.setEnabled(False)
         self.btn_mid_down.clicked.connect(
             lambda: self.sb_mid.setValue(self.sb_mid.value() - 1)
         )

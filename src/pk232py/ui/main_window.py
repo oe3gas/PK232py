@@ -3162,11 +3162,11 @@ class MainWindow(QMainWindow):
         # toggle — this was the 2026-06-22 fix's own mistake (PA -> PS
         # instead of PA -> PX), corrected 21.09.2026 against real hardware
         # (Testplan T86: Host Mode raw frames 'PXN' for PX, 'PS$16' for PS).
+        # P80a: no MID entry - MI is MFILTER (T115); the MID button is greyed out.
         toggle_map = [
             (screen.btn_eas,     b'EA'),
             (screen.btn_passall, b'PX'),
             (screen.btn_mrpt,    b'MR'),
-            (screen.btn_mid,     b'MI'),
             (screen.btn_squelch, b'SQ'),
         ]
         for btn, mnemonic in toggle_map:
@@ -3904,7 +3904,6 @@ class MainWindow(QMainWindow):
 
         _wire_sb("sb_mspeed",  self._on_morse_mspeed_changed)
         _wire_sb("sb_mweight", self._on_morse_mweight_changed)
-        _wire_sb("sb_mid",     self._on_morse_mid_changed)
         _wire_btn("btn_lock",  self._on_morse_lock)
 
     def _morse_send(self, frame: bytes) -> bool:
@@ -3937,18 +3936,6 @@ class MainWindow(QMainWindow):
                 mode.mweight = value
             self._log_monitor(f"[PARAM] MWEIGHT → {value}")
         self._app_config.baudot.mweight = value
-        self._config_mgr.save()
-
-    def _on_morse_mid_changed(self, value: int) -> None:
-        """MID spinbox changed — send MI frame (mnemonic MI)."""
-        from pk232py.modes.morse import MorseMode
-        frame = MorseMode.mid_frame(value)
-        if self._morse_send(frame):
-            mode = self._modes.current_mode
-            if hasattr(mode, "mid"):
-                mode.mid = value
-            self._log_monitor(f"[PARAM] MID → {value} min")
-        self._app_config.baudot.mid = value
         self._config_mgr.save()
 
     def _on_morse_lock(self) -> None:
@@ -4261,12 +4248,14 @@ class MainWindow(QMainWindow):
 
         RXREV inverts the entire received signal (including sync).
         Different from FAXNEG which only inverts pixel values.
-        TNC mnemonic: RV (RXREV Y/N).
+        TNC mnemonic: RX (RXREV Y/N), taken from comm/host_params.py (T151;
+        "RV" here was a guess - P80a).
         """
         if not self._serial.is_connected or not self._serial.is_host_mode:
             return
         from pk232py.comm.frame import build_command
-        frame = build_command(b'RV', b'Y' if checked else b'N')
+        from pk232py.comm.host_params import verified_mnemonic
+        frame = build_command(verified_mnemonic("RXREV"), b'Y' if checked else b'N')
         self._serial.send_command(frame[2:4], frame[4:-1])
         self._log_monitor(f"[FAX] RXREV → {'ON' if checked else 'OFF'}")
 

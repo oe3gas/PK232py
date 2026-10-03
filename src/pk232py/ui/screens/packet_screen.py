@@ -2054,11 +2054,9 @@ class PacketBaseScreen(QWidget):
         self.btn_eas.setToolTip("Echo As Sent (EA) — show confirmed TX chars in RX window.")
         self.btn_passall.setToolTip("PASSALL (PX) — receive all frames regardless of CRC.")
         self.btn_mrpt.setToolTip("Monitor Repeat (MR) — show digipeated frames.")
-        self.btn_mid.setToolTip(
-            "Morse ID beacon (MI) — enable periodic Morse ID.\n"
-            "NOTE: shares mnemonic MI with the MailDrop login button above\n"
-            "(documented TRM ambiguity — see CLAUDE.md)."
-        )
+        # P80a: MI is MFILTER (T115), so this button sends nothing. The tooltip
+        # comes from tooltips.py (btn_mid) via apply_tooltips().
+        self.btn_mid.setEnabled(False)
         self.btn_squelch.setToolTip("SQUELCH (SQ) — suppress duplicate frames.")
         for btn in (self.btn_eas, self.btn_passall, self.btn_mrpt,
                     self.btn_mid, self.btn_squelch):

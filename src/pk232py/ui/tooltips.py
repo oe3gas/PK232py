@@ -58,6 +58,10 @@ from PyQt6.QtWidgets import QWidget, QSizePolicy
 # the majority/default meaning and SCREEN_TOOLTIPS overrides the minority.
 # ---------------------------------------------------------------------------
 
+# P80a: the controls of the Morse ID / MID (mnemonic MI) are greyed out; MI is
+# MFILTER (Testplan T115), no Morse ID mnemonic is known.
+_MI_UNVERIFIED = "Host mnemonic unverified - MI is MFILTER (T115)"
+
 TOOLTIPS: dict[str, str] = {
 
     # ------------------------------------------------------------------
@@ -101,7 +105,7 @@ TOOLTIPS: dict[str, str] = {
 
     "btn_passall":   "PASSALL — receive all frames regardless of CRC errors.\nNormally the TNC discards frames with bad CRC. PASSALL passes them through for monitoring.",
     "btn_mrpt":      "MRPT — Monitor Repeat.\nAlso displays frames that have been digipeated (relayed) through intermediate stations.",
-    "btn_mid":       "MID — Morse ID beacon (interval in 10-second steps).\nEnables automatic periodic Morse code identification. 0 = disabled.",
+    "btn_mid":       _MI_UNVERIFIED,   # P80a: MI is MFILTER, nothing is sent
     "btn_squelch":   "SQUELCH — suppress duplicate frames in the monitor display.\nPrevents the same frame from appearing multiple times when heard via multiple paths.",
 
     "btn_aprs":      "APRS — toggle APRS decode mode.\nDisplays received UI frames as APRS: position, telemetry etc.\nDisplay-only function; raw mode is preserved in the buffer.",
@@ -134,7 +138,9 @@ TOOLTIPS: dict[str, str] = {
     # ------------------------------------------------------------------
     "sb_mspeed":  "MSPEED — Morse sending speed in words per minute.\nRange: 5–99 WPM. The TNC keys at this speed regardless of typing speed.",
     "sb_mweight": "MWEIGHT — dot/dash weight.\nAdjusts the ratio of key-down to key-up time. 50 = standard; >50 = heavier dots/dashes.",
-    "sb_mid":     "MID — Morse ID interval in 10-second steps.\n0 = disabled. Example: 30 = every 300 seconds.",
+    "sb_mid":     _MI_UNVERIFIED,
+    "btn_mid_down": _MI_UNVERIFIED,
+    "btn_mid_up":   _MI_UNVERIFIED,
     "btn_lock":   "LOCK — force Morse receive synchronisation.\nOne-shot command: locks the TNC decoder to the incoming signal's timing.",
     "btn_wordout": "WORDOUT — send whole words instead of character by character.\nThe TNC buffers until a space, then keys the complete word at once.",
 
