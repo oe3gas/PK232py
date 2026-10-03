@@ -3355,7 +3355,7 @@ Software: `test_appearance_per_theme_p79.py`. No TNC needed.
 | 4 | Air -> Font & Colors -> Reset -> OK | Air shows its defaults; Dark and Retro unchanged | ⬜ |
 | 5 | Open an old `pk232py.ini` (one `[Appearance]` section with a font) | the font appears under the stored theme; after saving the INI has `[Appearance.<theme>]` | ⬜ |
 
-**Status:** ⬜ OPEN — visual check (operator).
+**Status:** ✅ PASS (03.10.2026, operator decision; steps not recorded one by one).
 
 ---
 
