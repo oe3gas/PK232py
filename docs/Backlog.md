@@ -48,6 +48,15 @@ checks every text color of every theme against its background (>= 4.5 : 1).
 Left as they were (chrome): menu, status bar, buttons, the OFFLINE badge, the
 READY chip, MailDrop dialog and the other opmode screens' own labels.
 
+**P77b (findings of the T163 visual check, 2026-10-03):** the theme palette was set
+on the whole QApplication (`_apply_palette()`), so every dialog inherited it
+(Retro: orange on black). Now `MainWindow.eventFilter` gives each QDialog the
+platform's standard palette on Show (`_give_dialog_standard_look()`, one place);
+the colour picker keeps the default (native) dialog; the Appearance dialog shows
+the contrast next to Foreground/RX/TX, red only below the limit for the chosen
+font (WCAG: 3 : 1 from 18 pt or 14 pt bold, else 4.5 : 1; SemiBold counts as bold;
+compared at the shown one-decimal precision). T163 steps 10-13 open.
+
 ### Packet parameters mask (P73) — implemented, T160/T161 PASS, T162 open (2026-10-03)
 
 Parameters -> **Packet...** (was "HF Packet...", class `PacketParamsDialog`):

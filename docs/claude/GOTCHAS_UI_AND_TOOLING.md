@@ -657,5 +657,28 @@
 - **Rule: every theme text colour must reach 4.5 : 1.** `test_text_colors_p77a.py`
   checks fg/rx/tx/sys/ok/err/dim and the semantic colours for all four presets
   against their background - a new theme or role colour that fails shows up there.
+- **Dialogs keep the standard look (P77b, 2026-10-03).** There is NO application
+  stylesheet; the theme reaches the dialogs through `_apply_palette()`, which sets
+  `QApplication.setStyle/setPalette` (needed for the main window's buttons, menus
+  and status bar). Every dialog inherits the application palette, so Retro made the
+  Appearance dialog and the QColorDialog unreadable. Fix, ONE place:
+  `MainWindow.eventFilter` (installed on the QApplication) calls
+  `_give_dialog_standard_look(dlg)` on the Show event of any QDialog; it sets
+  `QStyleFactory.create(system_style).standardPalette()` on the dialog (palette
+  propagates to its children). A parented dialog does NOT inherit its parent's
+  palette on its own (no `WA_WindowPropagation`), and `QWidget.setStyle()` does not
+  reach children - so palette-only, hooked on the dialog. A new dialog needs
+  nothing. Test: `test_dialog_look_p77b.py`.
+- **Colour picker:** `QColorDialog.getColor(...)` WITHOUT options - never the
+  option that forces Qt's widget dialog; where Qt falls back to its own dialog
+  the hook above still makes it readable.
+- **Contrast depends on the font (P77b).** `colors.required_contrast(pt, bold)`:
+  3 : 1 for >= 18 pt or >= 14 pt bold, else 4.5 : 1. `font_is_bold()` also reads
+  the family NAME (Windows installs "Cascadia Mono SemiBold" as its own family
+  and Qt reports a normal weight); SemiBold counts as bold. `meets_contrast()`
+  compares the one-decimal value that is displayed (`#00aa7f` on white is 2.976,
+  shown "3.0 : 1", must not be red against 3 : 1). The dialog judges bold-ness by
+  the configured family name, not by the combo's fallback for a font that is not
+  installed on this PC.
 - **Chrome deliberately untouched:** menu, status bar (OFFLINE badge `#888888`,
   "TNC differs" `#f44747`), buttons, the READY chip, MailDrop dialog colours.
