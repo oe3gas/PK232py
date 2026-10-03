@@ -70,6 +70,14 @@ selector changes the configuration and goes through ParamApplier. Facts:
 TNC, then A). **Not covered:** was/now answers of parameters outside the Packet
 section (PACTOR, AMTOR, Baudot, Misc) are only reported, not taken.
 
+### MHEARD via MH0-MH17: prove with a raw capture — open (2026-10-03)
+
+MHEARD over `MH0`-`MH17` is to be proven with a raw capture (so far only the screenshot of 26.09.2026).
+
+### PACTOR in Host Mode: starting point per the P80b report — open (2026-10-03)
+
+PACTOR in Host Mode: starting point per the P80b report - activation only in verbose mode, `AC`/`PD` unmeasured, the standby route unknown, `MK` wrongly assigned.
+
 ### Per-firmware results of T166/T167 (P80b) - done, PACTOR standby open (2026-10-03)
 
 P80b entered T166/T167 into the registry and `host_params` (8 new verified switches/ASPECT rows, 4 query-only rows) and stopped sending the refuted
