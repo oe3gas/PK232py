@@ -3378,7 +3378,7 @@ device A `13.SEP.95` = T167, `hw_logs/20261003_214801_mnemonic_probe.log`). Resu
 
 ### T168 — `restart_probe`: the app's init with live links (P81, Teil 0)
 
-`python tools/hw_check.py restart_probe --part A|B|C|all` (device B; PC 1 =
+`python tools/hw_check.py restart_probe --part A|B0|B|C|all` (PC 1 =
 PK232PY tool + PK-232, PC 2 = TinyBox `OE3GAS-1` + QtTermTCP `OE3GAS-2`).
 Software: `test_hw_check_restart_probe.py`. Simulates the crash (port closed
 WITHOUT HOST OFF / DISCONNECT), then runs the app's own init
@@ -3389,14 +3389,35 @@ measurement); VHF/HBAUD are restored afterwards.
 | # | Variant | TNC when the port is closed | Expected in the log |
 |---|---|---|---|
 | A | `--part A` | verbose command mode, links on ch0 (OE3GAS-2) and ch1 (OE3GAS-1) | `links_before` / `links_init` / `links_after`, rejected commands, PC 2 link alive? |
-| B | `--part B` | Host Mode | same; `RESTART init:` line says whether the init left Host Mode |
+| B0 | `--part B0` | Host Mode, NO connection (no PC 2 step) | same without links; separates Host Mode from the links |
+| B | `--part B` | Host Mode, links on ch0/ch1 | same; `RESTART init:` line says whether the init left Host Mode and after how many seconds |
 | C | `--part C` | Converse (verbose `CONNECT`) | same; `links_before` is `{}` (not measurable in Converse) |
 
 Result per variant: `T168 <v> INFO links_before=… links_init=… links_after=… rejected=[…] silent=[…] pc2_link_alive=… -- <verdict>`.
 P81 parts A-C are built from these lines (parts B/D take the test cases from
 the real log lines).
 
-**Status:** ⬜ OPEN — hardware session (device B).
+**Detection chain (added after the first run):** the log now carries the byte-level
+capture of every restart (`LoggingSerialPort`, `>> hex=… text=…` / `<< …`), the
+`pk232py.comm` DEBUG lines of the detection chain (`Init: step …`) and
+`RESTART init: answered=… after N s`; the wait is 60 s (was 8 s). A failed init stops
+the run (power-cycle the TNC, then run the remaining parts separately).
+
+**First run 03.10.2026 22:06 (`hw_logs/20261003_220612_restart_probe.log`, banner
+`release=13.SEP.95` = device A, not B):**
+- **A** (verbose command mode): init found both links, the upload kept them. The TNC
+  rejected 10 commands: `?not while connected` for `MYCALL OE3GAS` and `AX25L2V2 ON`
+  (these two really need no link); `?What?` for `EXPERT ON/OFF`, `MYPTCALL`, `PTHUFF`,
+  `PT200`, `PTOVER`, `ARQTOL`, `MOPT` (commands this firmware does not know in the
+  verbose upload - see Backlog: filter the upload per firmware).
+- **B** (Host Mode, 2 links): `FAIL` - no answer within 8 s; the TNC stayed in Host Mode
+  with both links (the run was not stopped, so C started in a wrong state).
+- **C**: not a clean Converse run (the TNC still held B's links: `?already connected`),
+  but the upload again kept both links.
+- Open question for B: did the detection chain simply need longer than 8 s? -> rerun
+  `--part B0`, then `--part B` with the 60 s wait and the chain capture.
+
+**Status:** ⬜ OPEN — A measured (device A); B0, B (rerun) and C (clean rerun) open.
 
 ---
 
