@@ -31,6 +31,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
+from pk232py.comm.devices import infer_release
 from pk232py.comm.frame import FrameKind
 from pk232py.comm.host_params import (
     HostParam, host_error_code, host_query_args, host_set_args, norm_value,
@@ -271,7 +272,26 @@ class SerialParamTransport:
         return "verbose" if sm.verbose_confirmed else "unconfirmed"
 
     def release(self) -> Optional[str]:
-        return self._sm.tnc_release
+        """The TNC release: from the banner, else inferred (P78 A).
+
+        An INFERRED release counts exactly like a banner one. That is only
+        sound while docs/DEVICES.md lists one unit per firmware generation
+        (comm/devices.py): a second unit of the same generation would make the
+        EXPERT fingerprint ambiguous, and infer_release() then answers None.
+
+        With no release known in Host Mode, ONE ``EX`` query is made here
+        (once per connection) and its answer fingerprinted - without it
+        nothing could be set in Host Mode on a TNC that was already awake
+        when the app connected (T162).
+        """
+        sm = self._sm
+        if (sm.tnc_release is None and not getattr(sm, "release_probe_attempted", False)
+                and self.mode() == "host"):
+            sm.release_probe_attempted = True
+            found = infer_release(self.host_exchange(b"EX", b""))
+            if found:
+                sm.set_inferred_release(*found)
+        return sm.tnc_release
 
     def in_converse(self) -> bool:
         return bool(self._in_converse())
