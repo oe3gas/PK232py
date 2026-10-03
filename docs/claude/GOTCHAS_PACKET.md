@@ -647,3 +647,31 @@
   `connected`/`unconfirmed`; reconciliation never does. Anything that must react to a NEW
   connection (the connect bell, `MainWindow._ring_connect_bell()`) subscribes
   to events, never to states.
+- **MONITOR is sent as a number, never as `MN Y` (P73, 2026-10-03).** The manual
+  (STABO, UBIT 1 OFF): "With MONITOR ON or YES, MONITOR is set to 4." `MN Y` at
+  every Packet activation therefore threw away the operator's MONITOR value
+  (6 in the dialog, 4 in the TNC after each mode switch). HF and VHF Packet
+  send `MN <HFPacketConfig.monitor>`. `MN<number>` in Host Mode is measured on
+  both devices (T151). The separate monitor toggle (`HFPacketMode.monitor_frame`,
+  `MN Y/N`) is unchanged - it is an explicit operator action.
+- **MAXFRAME and SLOTTIME have one value per band (P73, 2026-10-03).** The TNC
+  holds ONE of each; the configuration holds `maxframe`/`slottime` (HF) and
+  `vhf_maxframe`/`vhf_slottime` (defaults 4 / 10 = the old fixed VHF values).
+  `comm/host_params.py` `BAND_PARAMS` is the only place that assigns config
+  attributes to bands; the mode instances (`MainWindow._build_mode_instance()`)
+  and `ParamsUploader.changed_with_old(band=...)` both read it. P72 sends a
+  band value only while that band's Packet mode is active
+  (`band_of_mode(current_mode_name)`); otherwise MON shows `MAXFRAME (VHF)
+  saved - applies when VHF Packet is selected` and nothing is sent. With no
+  Packet mode active (Baudot, ...) neither band's value is sent. The init upload
+  (`_build_commands()`) still sends the HF values; the mode switch sets the
+  active band's values afterwards.
+- **Packet monitor flags were dead switches (found P73, 2026-10-03).** In the
+  Flags column MBELL (saved, never sent), MDIGI, MPROTO, MSTAMP, PASSALL,
+  BBSMSGS and FULLDP (not even saved) did nothing. Now all seven are config
+  fields, INI keys and verbose upload commands. `comm/host_params.py` rows:
+  `ME MD MQ MS PX BB` are matrix hypotheses with EMPTY `verified_releases`
+  until T160/T161 measure them (P72 therefore reports a live change as "not
+  verified for Host Mode" - applied at the next init); FULLDP has no mnemonic.
+  `test_packet_params_p73.py::TestMonitorFlags` derives the switch list from
+  the dialog, so a future unwired checkbox fails there.

@@ -29,6 +29,19 @@ default, saved at once). Only link messages ring (`LinkTable.subscribe_events`),
 never the reconciliation after a Host Mode entry. Done after hardware check
 T159. P75 (line endings) stays reserved.
 
+### Packet parameters mask (P73) — implemented, T160–T162 open (2026-10-03)
+
+Parameters -> **Packet...** (was "HF Packet...", class `PacketParamsDialog`):
+three columns (Link | Band & Status | Flags), no scroll area. MAXFRAME and
+SLOTTIME exist per band (HF | VHF table, `vhf_maxframe`/`vhf_slottime`, defaults
+4 / 10); P72 sends only the active band's value. HF and VHF Packet send
+`MN <MONITOR>` instead of `MN Y` (which reset MONITOR to 4). The seven dead
+flags (MBELL MDIGI MPROTO MSTAMP PASSALL BBSMSGS FULLDP) are saved and uploaded
+now. Facts: `docs/claude/GOTCHAS_PACKET.md`. Open: T160/T161 (probe the new
+Host mnemonics on device A/B; `verified_releases` stays empty until then),
+T162 (app, device B). The init upload now sends seven more verbose commands -
+a TNC that does not know one answers `?What?`.
+
 ### Channel bar MON · 0–9 (P70) — ✅ DONE (P70, 2026-09-30; hardware check T148 open)
 
 Channel bar `MON · 0 · 1 … 9`: MON is the monitor/unproto view (`MON_VIEW`),
@@ -48,7 +61,7 @@ for (parameter, release) pairs in `comm/host_params.py`
 `verified_releases`; every parameter is read back, a refusal is quoted and
 the status field "TNC differs from parameters" shows what the TNC did not
 take. **P72 is done:** T157 PASS on device B (02.10.2026), T158 PASS on
-device A. P73 (Packet parameters mask) follows.
+device A. P73 (Packet parameters mask) is done, see below.
 
 ### Open probes per device (P72, 2026-10-02) - open
 
