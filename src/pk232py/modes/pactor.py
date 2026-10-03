@@ -22,13 +22,13 @@ Host Mode frame types used (TRM Section 4.3 / 4.4)
     $5F  STATUS_ERR    — data ACK ($00) or error
 
   Outgoing (Host -> TNC):
-    $4F  build_command(b'PT')             — enter PACTOR standby
+    (PT is PACTIME, not a PACTOR standby: T167 - PACTOR is entered in verbose mode)
     $4F  build_command(b'MK', callsign)   — set MYPTCALL
     $2x  build_data(0, data)              — send ARQ data on ch0
 
 PACTOR-specific Host Mode mnemonics (STABO manual, Ch. 12)
 ----------------------------------------------------------
-  PT   PACTOR mode (standby)
+  --   PACTOR standby — no Host Mode command verified (PT is PACTIME, T167)
   MK   MYPTCALL — PACTOR callsign
   PH   PTHUFF   — Huffman compression (Y/N)
   PV   PTOVER   — direction-change character (hex, default $1A = Ctrl-Z)
