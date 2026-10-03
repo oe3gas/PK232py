@@ -250,7 +250,7 @@ from pk232py.comm.params_uploader import ParamsUploader  # noqa: E402
 from pk232py.comm.frame import build_command, _dle_escape  # noqa: E402
 from pk232py.comm.hostmode import HostModeProtocol  # noqa: E402
 from pk232py.comm.host_params import (  # noqa: E402
-    HOST_PARAMS, host_error_code, host_query_args, norm_value, param_by_name,
+    HOST_PARAMS, HostParam, host_error_code, host_query_args, norm_value, param_by_name,
 )
 from pk232py.comm.constants import SOH, ETB  # noqa: E402
 from pk232py.config import AppConfig, ConfigManager  # noqa: E402
@@ -6142,7 +6142,7 @@ def _classify_host_param(
 
 _HP_BYTES = r"(none|b'(?:[^'\\]|\\.)*'|b\"(?:[^\"\\]|\\.)*\")"
 _HP_RESULT_RE = re.compile(
-    r"INFO: T151 (\S+) \((\S+)\) -- (?:\S+(?: \(0x[0-9A-F]{2}\))?)"
+    r"INFO: T1(?:51|66|67) (\S+) \((\S+)\) -- (?:\S+(?: \(0x[0-9A-F]{2}\))?)"
     rf" q1={_HP_BYTES}(?: \([0-9a-f ]*\))? set={_HP_BYTES}(?: \([0-9a-f ]*\))?"
     rf" q2={_HP_BYTES}(?: \([0-9a-f ]*\))? test=(None|'[^']*') verbose=(None|'[^']*')"
 )
@@ -6176,7 +6176,7 @@ def reevaluate_host_params_log(path, out=print) -> dict:
     counts: dict = {}
     for ln in lines:
         m = _HP_RESULT_RE.search(ln)
-        if not m or "T151 " not in ln or "SUMMARY" in ln:
+        if not m or "SUMMARY" in ln:
             continue
         name, mn_text, q1, st, q2, test, vafter = m.groups()
         raw = pass0.get(name)
@@ -6481,7 +6481,7 @@ def expert_off_rejected(rec: dict) -> list:
 
 def _host_params_part_a(
     session: "Session", log: RunLog, run: StepRun, exclude=frozenset(),
-    expert_off: bool = False,
+    expert_off: bool = False, params=None, tag: str = "T151",
 ) -> None:
     """T151. Order (P71a): originals in verbose -> Host Mode: query + set
     test values (not for *exclude*d mnemonics) -> leave -> verbose
@@ -6494,7 +6494,8 @@ def _host_params_part_a(
     ON again, so the verbose cross-check and the restore see the same
     conditions as before. Which parameters the TNC then refuses is logged
     as 'T158 rejected with EXPERT OFF'."""
-    params = list(HOST_PARAMS)
+    # P80 D: mnemonic_probe feeds its candidate rows and its own result tag.
+    params = list(HOST_PARAMS if params is None else params)
     expert = parse_query_value("EXPERT", session.query("EXPERT"))
     session.set_verbose("EXPERT", "ON")
     try:
@@ -6604,7 +6605,7 @@ def _host_params_part_a(
                 f" verbose={vtest.get(p.name)!r} restore={r.get('restore')}"
                 f" after={now.get(p.name)!r}"
             )
-            log.result(f"T151 {p.name} ({p.mnemonic.decode() or '-'})", "INFO",
+            log.result(f"{tag} {p.name} ({p.mnemonic.decode() or '-'})", "INFO",
                        f"{verdict}{raw}")
         # Restore EVERYTHING that differs - also a parameter another
         # mnemonic changed by mistake (a wrong_param's real owner).
@@ -6622,7 +6623,7 @@ def _host_params_part_a(
                 p.name, lambda p=p: session.query(hp_verbose_name(p)),
                 lambda v, n=p.name: session.set_verbose(n, v), orig, log,
             )
-        log.line("--- T151 summary: " + ", ".join(
+        log.line(f"--- {tag} summary: " + ", ".join(
             f"{k}={v}" for k, v in sorted(counts.items())))
         if any(r.get("restore") == "restore_failed" for r in rec.values()):
             log.line("RESTORE FAILED for at least one parameter - "
@@ -7306,6 +7307,300 @@ def test_restart_probe(
             log.line(f"(restore warning: {exc!r})")
 
 
+# ===========================================================================
+# P80 Teil D -- mnemonic_probe (T166 device B, T167 device A): the Host Mode
+# mnemonics the audit (docs/MNEMONIC_AUDIT.md) lists WITHOUT evidence.
+# MEASURES ONLY (hw_check rule 6) and NEVER sends a transmitting mnemonic: no
+# "action" and no transmits=True entry (XM, AC, FE, SE, CO, DI, PD) is in
+# here - those get their own package with confirm_tx().
+#   --part A  mode switches BA AS MO AM PT FA SI TV NA NE, each followed by an
+#             OP query; PT only on a device with PACTOR (device A); NA and NE
+#             are both tried and compared; back to PA after each.
+#   --part B  the unproven parameters (candidate rows below, run through the
+#             host_params_probe engine: query, set, verbose cross-check,
+#             restore) and a scan for the Morse-ID (MID) mnemonic.
+#   --part C  the queries MH and PN (PN only on a device with PACTOR).
+# The registry is completed from the log with --reevaluate (no retyping).
+# ===========================================================================
+
+_MP_MODE_ORDER = ("BA", "AS", "MO", "AM", "PT", "FA", "SI", "TV", "NA", "NE")
+
+
+def mnemonic_probe_mode_frames() -> list:
+    """[(mnemonic text, label, frame, needs_pactor)] - the frames are built by
+    the app's OWN builders (HostModeProtocol / the mode classes), so the probe
+    measures exactly what the app sends."""
+    from pk232py.modes.fax import FAXMode
+    from pk232py.modes.navtex import NAVTEXMode
+    from pk232py.modes.tdm import TDMMode
+    return [
+        ("BA", "BAUDOT", HostModeProtocol.cmd_baudot(), False),
+        ("AS", "ASCII", HostModeProtocol.cmd_ascii_rtty(), False),
+        ("MO", "MORSE", HostModeProtocol.cmd_morse(), False),
+        ("AM", "AMTOR", HostModeProtocol.cmd_amtor(), False),
+        ("PT", "PACTOR", HostModeProtocol.cmd_pactor(), True),
+        ("FA", "FAX", FAXMode().get_activate_frames()[0], False),
+        ("SI", "SIGNAL", SignalMode().get_activate_frames()[0], False),
+        ("TV", "TDM", TDMMode().get_activate_frames()[0], False),
+        ("NA", "NAVTEX (navtex.py)", NAVTEXMode().get_activate_frames()[0], False),
+        ("NE", "NAVTEX (hostmode.cmd_navtex)", HostModeProtocol.cmd_navtex(), False),
+    ]
+
+
+def mnemonic_probe_candidates() -> list:
+    """The unproven parameters as HostParam rows (candidate mnemonics = what the
+    app sends today). Only 'int' and 'bool' rows are SET by the engine; text and
+    char rows are queried only. Rows that exist in host_params with an empty
+    mnemonic (MWEIGHT, CODE, MYIDENT) get the candidate here instead of a second
+    definition."""
+    HP = HostParam
+    return [
+        HP("EAS", b"EA", "bool"), HP("WIDESHFT", b"WI", "bool"),
+        HP("SRXALL", b"SR", "bool"), HP("USOS", b"US", "bool"),
+        HP("WORDOUT", b"WO", "bool"), HP("FAXNEG", b"FN", "bool"),
+        HP("SQUELCH", b"SQ", "bool"),
+        HP("XLENGTH", b"XL", "int", 0, 255), HP("ASPECT", b"AY", "int", 1, 6),
+        HP("MWEIGHT", b"MW", "int", 10, 90),
+        HP("RBAUD", b"RB", "text"), HP("FSPEED", b"FS", "text"),
+        HP("CODE", b"CI", "text"), HP("ERRCHAR", b"EE", "char"),
+        HP("MYIDENT", b"MY", "call"),
+        HP("NAVMSG", b"NM", "text"), HP("NAVSTN", b"NS", "text"),
+    ]
+
+
+def mid_scan_candidates() -> list:
+    """Mnemonics worth asking for the Morse-ID (MID) value: the 'M?' queries
+    mdcheck_scan already proved harmless (never writes, kills or transmits),
+    minus every mnemonic a table already knows (an answer from those proves
+    nothing new)."""
+    from pk232py.comm.mnemonic_registry import REGISTRY
+    known = {p.mnemonic for p in HOST_PARAMS if p.mnemonic} | set(REGISTRY)
+    known |= {p.mnemonic for p in mnemonic_probe_candidates()}
+    return [m for m in mdcheck_scan_candidates() if m not in known]
+
+
+def mid_scan_hits(answers: dict, value: str) -> list:
+    """Mnemonics (text) whose Host Mode answer carries exactly *value* after
+    the two mnemonic letters - the distinctive MID value set in verbose mode."""
+    hits = []
+    for mn, data in answers.items():
+        if not data or not data.startswith(mn):
+            continue
+        if data[len(mn):].decode("ascii", errors="replace").strip() == value:
+            hits.append(mn.decode("ascii"))
+    return hits
+
+
+def classify_mode_switch(baseline: str, after: str, back: str) -> str:
+    """'changed_and_returned' (the OP answer differed, then PA brought the
+    baseline back), 'unchanged' (OP never differed: the frame did nothing or OP
+    does not tell), 'not_returned' (stuck in the new mode) or 'no_answer'."""
+    if not after:
+        return "no_answer"
+    if after == baseline:
+        return "unchanged"
+    return "changed_and_returned" if back == baseline else "not_returned"
+
+
+def mnemonic_probe_steps(part: str) -> list:
+    steps = []
+    if part in ("A", "all"):
+        steps.append(ProbeStep(
+            "T166/T167 A  mode switches and OP", WHERE_PC1, 3,
+            ["Nothing to do: this program switches BA AS MO AM (PT) FA SI TV NA NE "
+             "one after another in Host Mode, asks OPMODE after each and goes back "
+             "to Packet. Nothing is transmitted on the air."],
+            "wait; the next step appears by itself."))
+    if part in ("B", "all"):
+        steps.append(ProbeStep(
+            "T166/T167 B.1  unproven parameters", WHERE_PC1, 4,
+            ["Nothing to do: query, test value, verbose cross-check and restore "
+             "for the candidate parameters (same engine as host_params_probe)."],
+            "wait; the next step appears by itself."))
+        steps.append(ProbeStep(
+            "T166/T167 B.2  restore, check the original values", WHERE_PC1, 3,
+            ["Nothing to do: the values go back in Host Mode and are checked in "
+             "verbose mode."],
+            "wait; the next step appears by itself."))
+        steps.append(ProbeStep(
+            "T166/T167 B.3  scan for the Morse-ID mnemonic", WHERE_PC1, 2,
+            ["Nothing to do: verbose MID is set to 7, the harmless M? queries are "
+             "asked in Host Mode, MID goes back."],
+            "wait; the next step appears by itself."))
+    if part in ("C", "all"):
+        steps.append(ProbeStep(
+            "T166/T167 C  queries MH and PN", WHERE_PC1, 1,
+            ["Nothing to do: MHEARD (MH) and, on a PACTOR device, PTLIST (PN) are "
+             "asked in Host Mode. Nothing is transmitted."],
+            "wait; the run ends by itself with a summary."))
+    return steps
+
+
+def _mp_tag(session: "Session") -> str:
+    """T167 for a device with PACTOR (device A), else T166 (device B)."""
+    return "T167" if getattr(session.sm, "has_pactor", False) else "T166"
+
+
+def _mp_op_text(session: "Session") -> str:
+    frame = session.query_host(b"OP")
+    return frame.text if frame is not None else ""
+
+
+def _mp_modes(session: "Session", log: RunLog, tag: str, run: StepRun) -> None:
+    step = run.steps[run.n]
+    operator_step(run, step.title, step.where, step.do, step.then)
+    pa = HostModeProtocol.cmd_packet()
+    outcome: dict = {}
+    session.enter_host_mode()
+    try:
+        session.drain_pending_frames()
+        _hp_exchange(session, pa, "PA baseline")
+        baseline = _mp_op_text(session)
+        log.line(f"baseline OP (Packet): {baseline!r}")
+        for mn, label, frame, needs_pactor in mnemonic_probe_mode_frames():
+            if needs_pactor and not getattr(session.sm, "has_pactor", False):
+                log.result(f"{tag} mode {mn}", "SKIPPED",
+                           f"{label}: this device has no PACTOR")
+                continue
+            reply = _hp_exchange(session, frame, f"{mn} {label}", timeout=1.5)
+            after = _mp_op_text(session)
+            _hp_exchange(session, pa, f"PA after {mn}")
+            back = _mp_op_text(session)
+            verdict = classify_mode_switch(baseline, after, back)
+            outcome[mn] = (verdict, after)
+            log.result(
+                f"{tag} mode {mn}", "INFO",
+                f"{verdict} -- {label} op={after!r} baseline={baseline!r} back={back!r} "
+                f"reply={[f.data for f in reply]!r}")
+        if "NA" in outcome and "NE" in outcome:
+            same = outcome["NA"] == outcome["NE"]
+            log.result(
+                f"{tag} mode NA vs NE", "INFO",
+                f"{'same' if same else 'DIFFERENT'} -- NA={outcome['NA']} NE={outcome['NE']}")
+    finally:
+        session.exit_host_mode()
+
+
+def _mp_mid_scan(session: "Session", log: RunLog, tag: str, run: StepRun) -> None:
+    step = run.steps[run.n]
+    operator_step(run, step.title, step.where, step.do, step.then)
+    resp = session.query("MID")
+    original = parse_query_value("MID", resp)
+    if original is None or query_error(resp) is not None:
+        log.result(f"{tag} MID scan", "SKIPPED",
+                   f"verbose MID not readable on this firmware: {resp!r}")
+        return
+    candidates = mid_scan_candidates()
+    answers: dict = {}
+    session.set_verbose("MID", "7")
+    try:
+        if parse_query_value("MID", session.query("MID")) != "7":
+            log.result(f"{tag} MID scan", "SKIPPED", "verbose MID would not take 7")
+            return
+        session.enter_host_mode()
+        try:
+            session.drain_pending_frames()
+            for mn in candidates:
+                answers[mn] = _hp_pick(mn, _hp_exchange(
+                    session, HostModeProtocol.build_command(mn), f"MID? {mn.decode()}"))
+        finally:
+            session.exit_host_mode()
+    finally:
+        verify_restore("MID", lambda: session.query("MID"),
+                       lambda v: session.set_verbose("MID", v), original, log)
+    hits = mid_scan_hits(answers, "7")
+    log.result(f"{tag} MID scan", "INFO",
+               f"hits={hits} candidates={[m.decode() for m in candidates]}")
+
+
+def _mp_queries(session: "Session", log: RunLog, tag: str, run: StepRun) -> None:
+    step = run.steps[run.n]
+    operator_step(run, step.title, step.where, step.do, step.then)
+    pa = HostModeProtocol.cmd_packet()
+    session.enter_host_mode()
+    try:
+        session.drain_pending_frames()
+        got = _hp_exchange(session, HostModeProtocol.cmd_mheard(), "MH", timeout=1.5)
+        log.result(f"{tag} query MH", "INFO", f"frames={[f.data for f in got]!r}")
+        if getattr(session.sm, "has_pactor", False):
+            got = _hp_exchange(session, build_command(b"PN"), "PN", timeout=1.5)
+            op = _mp_op_text(session)
+            _hp_exchange(session, pa, "PA after PN")
+            log.result(f"{tag} query PN", "INFO",
+                       f"frames={[f.data for f in got]!r} op={op!r}")
+        else:
+            log.result(f"{tag} query PN", "SKIPPED", "this device has no PACTOR")
+    finally:
+        session.exit_host_mode()
+
+
+def test_mnemonic_probe(session: "Session", log: RunLog, part: str = "all") -> None:
+    if part not in ("A", "B", "C", "all"):
+        raise ValueError(f"part must be A, B, C or all, got {part!r}")
+    log.line(f"--- mnemonic_probe (P80 D, part {part}): modes, parameters, queries ---")
+    steps = mnemonic_probe_steps(part)
+    run = StepRun(steps, log)
+
+    if session.dry_run:
+        for mn, label, frame, needs_pactor in mnemonic_probe_mode_frames():
+            session.send_frame(frame, note=f"mode {mn} {label}"
+                               + (" (PACTOR device only)" if needs_pactor else ""))
+        session.send_frame(HostModeProtocol.cmd_opmode(), note="OP after every switch")
+        for p in mnemonic_probe_candidates():
+            session.send_frame(
+                HostModeProtocol.build_command(p.mnemonic, host_query_args(p)),
+                note=f"param {p.name} query")
+        log.line(f"[dry-run] MID scan over {len(mid_scan_candidates())} M? queries: "
+                 f"{[m.decode() for m in mid_scan_candidates()]}")
+        session.send_frame(HostModeProtocol.cmd_mheard(), note="query MH")
+        session.send_frame(build_command(b"PN"), note="query PN (PACTOR device only)")
+        for step in steps:
+            operator_step(run, step.title, step.where, step.do, step.then)
+        log.result("T166/T167", "INFO", "dry-run, nothing sent")
+        return
+
+    session.normalize()
+    tag = _mp_tag(session)
+    print()
+    print(f"mnemonic_probe --part {part}: {len(steps)} steps ({tag}); nothing is "
+          f"transmitted; a dummy load is not needed.")
+    if input("Ready to continue? [y/N] ").strip().lower() != "y":
+        log.result(tag, "INFO", "skipped by operator")
+        return
+    if part in ("A", "all"):
+        _mp_modes(session, log, tag, run)
+    if part in ("B", "all"):
+        _host_params_part_a(session, log, run, params=mnemonic_probe_candidates(), tag=tag)
+        _mp_mid_scan(session, log, tag, run)
+    if part in ("C", "all"):
+        _mp_queries(session, log, tag, run)
+
+
+def reevaluate_mnemonic_log(path, out=print) -> dict:
+    """The registry's evidence from a mnemonic_probe log, without hardware:
+    one line per mode/query/parameter result plus the release of the device.
+    Prints what to enter in comm/mnemonic_registry.py (nothing is typed by
+    hand from the log); returns {mnemonic text: verdict}."""
+    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    release = next((m.group(1) for ln in lines
+                    if (m := re.search(r"device: release=(\S+)", ln))), "unknown")
+    tag = next((m.group(1) for ln in lines
+                if (m := re.search(r"(?:INFO|SKIPPED): (T16[67]) ", ln))), "T166/T167")
+    verdicts: dict = {}
+    for ln in lines:
+        m = re.search(r"INFO: (T16[67]) mode (\w\w) -- (\w+)", ln)
+        if m:
+            verdicts[m.group(2)] = m.group(3)
+            out(f"{m.group(2)}: {m.group(3)}  ({m.group(1)}, release {release})")
+        m = re.search(r"INFO: (T16[67]) query (\w\w) -- ", ln)
+        if m:
+            verdicts[m.group(2)] = "answered"
+            out(f"{m.group(2)}: answered  ({m.group(1)}, release {release})")
+    out(f"--- {tag} reevaluated: {len(verdicts)} mnemonic(s); release {release}. "
+        "Parameter rows: run host_params_probe --reevaluate on the same log.")
+    return verdicts
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="hw_check.py",
@@ -7331,7 +7626,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
             "maildrop_session", "aprs_query", "aprs_tx", "aprs_reject",
             "link_carry", "link_carry_host", "channel_probe", "host_params_probe",
-            "ubit_probe", "restart_probe", "all",
+            "ubit_probe", "restart_probe", "mnemonic_probe", "all",
         ],
     )
     p.add_argument(
@@ -7343,7 +7638,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "C = find the parameter that breaks verbose commands (T155, "
              "never part of all). "
              "restart_probe (P81, T168): A = TNC left in verbose command mode, "
-             "B = left in Host Mode, C = left in Converse, all = A, B and C"
+             "B = left in Host Mode, C = left in Converse, all = A, B and C. "
+             "mnemonic_probe (P80 D, T166/T167): A = mode switches + OP, "
+             "B = unproven parameters + MID scan, C = queries MH/PN, all = A, B, C"
     )
     p.add_argument(
         "--expert-off", action="store_true",
@@ -7397,13 +7694,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.test == "channel_probe" and args.part == "A":
         parser.error("channel_probe takes --part B, C or all")
-    if args.test == "restart_probe" and args.part not in ("A", "B", "C", "all"):
-        parser.error("restart_probe takes --part A, B, C or all")
+    if args.test in ("restart_probe", "mnemonic_probe") and args.part not in ("A", "B", "C", "all"):
+        parser.error(f"{args.test} takes --part A, B, C or all")
     if args.expert_off and (args.test != "host_params_probe" or args.part != "A"):
         parser.error("--expert-off belongs to host_params_probe --part A")
     if args.reevaluate:
-        if args.test != "host_params_probe":
-            parser.error("--reevaluate belongs to host_params_probe")
+        if args.test not in ("host_params_probe", "mnemonic_probe"):
+            parser.error("--reevaluate belongs to host_params_probe or mnemonic_probe")
+        if args.test == "mnemonic_probe":
+            reevaluate_mnemonic_log(args.reevaluate)
         reevaluate_host_params_log(args.reevaluate)
         return 0
 
@@ -7486,6 +7785,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             lambda s, l: test_host_params_probe(s, l, args.part, exclude, args.expert_off)],
         "ubit_probe": [lambda s, l: test_ubit_probe(s, l)],
         "restart_probe": [lambda s, l: test_restart_probe(s, l, args.part, app_config)],
+        "mnemonic_probe": [lambda s, l: test_mnemonic_probe(s, l, args.part)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
