@@ -3226,6 +3226,17 @@ real TNC output). Software: `test_appearance_colors_p77.py`.
 | 8 | (P77a) Baudot: Ctrl+D and Ctrl+T in the TX field | `[^D]` inverse on amber, `[^T:n]` inverse on grey; readable on Air and Dark | ⬜ |
 | 9 | (P77a) Switch Air <-> Dark with text already in a Packet channel you are not looking at | its text follows the new colours when you switch to that channel | ⬜ |
 
+| 10 | (P77b) Theme Retro: Configure -> Appearance... | the dialog looks like every other dialog (standard palette, readable), not orange on black | ⬜ |
+| 11 | (P77b) In the dialog press a colour button (e.g. TX text) | the colour picker is readable (platform dialog, or Qt's own with the standard palette) - on Retro and on Air | ⬜ |
+| 12 | (P77b) Dialog: Cascadia Mono SemiBold 14 pt, TX text `#00aa7f` on `#ffffff` | "3.0 : 1" next to the field, NOT red; font Courier New 11 pt: the same value in red | ⬜ |
+| 13 | (P77b) Other settings dialogs (TNC configuration, Parameters) on Retro | standard look; the main window, RX/TX areas and terminal stay themed | ⬜ |
+
+P77b (findings of the T163 visual check): dialogs keep the standard look
+(`MainWindow._give_dialog_standard_look()`), the colour picker is the default
+platform dialog, the contrast limit follows the font (3 : 1 large text, else
+4.5 : 1). Software: `test_dialog_look_p77b.py`. Step 11 cannot be proven
+offscreen - whether Windows shows its native picker is for the operator to see.
+
 P77a (inventory from the P77 report) is covered in software by
 `test_text_colors_p77a.py`: every text colour of every theme reaches 4.5 : 1
 against its background (WCAG). Menu chrome, status bar and buttons are unchanged.
