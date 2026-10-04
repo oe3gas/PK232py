@@ -5467,8 +5467,11 @@ class MainWindow(QMainWindow):
             if old_hex and old_hex.lower() != new_hex.lower():
                 recolor_map[old_hex.lower()] = new_hex
         # P77a: the role colours (sys/ok/err/dim) of text already written.
-        for old_hex, new_hex in zip(dataclasses.astuple(old_roles),
-                                    dataclasses.astuple(new_roles)):
+        # Only those four: the side-panel roles (heard_*, panel_*, P77c) never
+        # occur in a document, and some equal a document colour of the OTHER
+        # theme (Dark heard_digi == Dark rx) - they would overwrite its mapping.
+        for field in ("sys_color", "ok_color", "err_color", "dim_color"):
+            old_hex, new_hex = getattr(old_roles, field), getattr(new_roles, field)
             if old_hex.lower() != new_hex.lower():
                 recolor_map[old_hex.lower()] = new_hex
         self._role_colors = new_roles
@@ -5508,6 +5511,9 @@ class MainWindow(QMainWindow):
                 # show a different font again.
                 if hasattr(screen, "apply_rx_font"):
                     screen.apply_rx_font(font)
+                # P77c: side panel and status line colours follow the theme too.
+                if hasattr(screen, "refresh_theme_colors"):
+                    screen.refresh_theme_colors()
             if hasattr(screen, "tx_input"):
                 screen.tx_input.setFont(font)
                 screen.tx_input.setStyleSheet(style_tx)

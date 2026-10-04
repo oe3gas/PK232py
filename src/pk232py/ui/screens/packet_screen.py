@@ -53,14 +53,14 @@ MainWindow integration notes:
       hardcoding channel 1 (see main_window._on_packet_connect/_disconnect/
       _on_packet_tx_enter).
 
-v0.1 channel model (see CLAUDE.md "Channel model"):
-    There is NO CSTATUS poll in Host Mode — the channel a link/data frame
-    belongs to is carried in the low nibble of the frame's CTL byte
-    (``HostFrame.channel``, already decoded by comm/frame.py). ChannelBar is
-    purely a *local* UI concept: it remembers, per channel 0-9, whether we
-    last saw that channel free/calling/connected and who the partner is,
-    driven entirely by HFPacketMode.on_channel_state (P3). Channel 0 is the
-    only channel used outside Packet mode (unproto/monitor default).
+Channel model (corrected P81/P77c; see docs/claude/GOTCHAS_PACKET.md):
+    The channel a link/data frame belongs to is carried in the low nibble of
+    the frame's CTL byte (``HostFrame.channel``, decoded by comm/frame.py). The
+    state of each channel can also be ASKED: Host Mode CO (TRM 4.3.3, measured
+    T142) and verbose CSTATUS. ChannelBar draws what comm/link_table.py's
+    LinkTable says - the one source, fed by link messages, CO answers and
+    CSTATUS, and reconciled at every verbose<->Host Mode switch (P67) and at
+    start-up (P81). ChannelBar itself decides nothing.
 """
 
 from __future__ import annotations
@@ -103,12 +103,12 @@ logger = logging.getLogger(__name__)
 CALL_W = 100    # width of callsign QLineEdit/QComboBox fields (px)
 
 # Status label states — dot prefix, same style as PactorScreen
-STATUS_STYLES: dict[str, tuple[str, str]] = {
-    "STBY":         ("●  STBY",           "#888888"),
-    "CALLING":      ("●  CALLING …",      "#cc8800"),
-    "CONNECTED":    ("●  CONNECTED",      "#3a9e3a"),
-    "DISCONNECTED": ("●  DISCONNECTED",   "#cc4444"),
-    "UNPROTO TX":   ("●  UNPROTO TX",     "#2266cc"),
+STATUS_STYLES: dict[str, tuple[str, str]] = {  # state -> (text, THEME ROLE, P77c)
+    "STBY":         ("●  STBY",           "panel_dim_color"),
+    "CALLING":      ("●  CALLING …",      "panel_sys_color"),
+    "CONNECTED":    ("●  CONNECTED",      "panel_ok_color"),
+    "DISCONNECTED": ("●  DISCONNECTED",   "panel_err_color"),
+    "UNPROTO TX":   ("●  UNPROTO TX",     "rx_color"),
 }
 
 # Band metadata for the header band indicator. HFPacketScreen/VHFPacketScreen
@@ -499,10 +499,12 @@ class ChannelBar(QWidget):
     A 2px amber border marks the *current* channel, independent of fill.
     Since P42, the chip is also where a connect happens — see ChannelChip.
 
-    Lernmodus — why a local model and not a TNC query: the PK-232 Host Mode
-    has no CSTATUS command; the channel is only ever known from the CTL
-    nibble of frames that already went by (CONNECT/DISCONNECT/data/link-msg).
-    So ChannelBar simply remembers what HFPacketMode.on_channel_state told it.
+    Lernmodus - where the state comes from: the TNC reports a channel's state
+    per channel on request (Host Mode CO, T142; verbose CSTATUS) and by link
+    messages ($5x). MainWindow feeds all of them into ONE LinkTable (P67) and
+    calls set_channel_state() from the table's subscription only; ChannelBar
+    just shows it. At start-up (P81) CSTATUS finds links that were already up,
+    and the CO round of the Host Mode entry confirms them.
     """
 
     # int 0-9, or MON_VIEW (a str) for the MON chip (P70)
@@ -971,9 +973,14 @@ class _MheardRowWidget(QWidget):
             # means CH_CONNECTED's green everywhere, not amber here and
             # green on the chip (the chip already uses amber for CALLING,
             # so amber here used to contradict it).
-            lbl_c.setStyleSheet(f"color: {_CHIP_FILL[CH_CONNECTED]};")
+            # P77c: connected = green, from the theme (the chip's own fill,
+            # #3a9e3a, is only 3.4 : 1 as TEXT on white).
+            lbl_c.setStyleSheet(f"color: {get_theme()['panel_ok_color']};")
         else:
-            lbl_c.setStyleSheet("color: #66ee66;" if direct else "color: #88ccff;")
+            # P77c: theme colours, not fixed #66ee66 / #88ccff (unreadable on white).
+            t = get_theme()
+            lbl_c.setStyleSheet(
+                f"color: {t['heard_direct_color'] if direct else t['heard_digi_color']};")
         lbl_t = QLabel(time_str)
         lbl_t.setFont(QFont("Courier New", 9))
         lbl_t.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -1435,9 +1442,20 @@ class PacketBaseScreen(QWidget):
         now = datetime.now(timezone.utc)
         self.lbl_utc.setText(now.strftime("UTC  %H:%M:%S"))
 
+    def refresh_theme_colors(self) -> None:
+        """Re-apply the theme colours of the side panel and the title row after
+        a theme change (P77c): MHEARD rows, the status text and the hint were
+        coloured when they were created and would keep the old theme's colours."""
+        self.mheard_panel._render()
+        self._set_status(getattr(self, "_status_state", "STBY"))
+        self.lbl_param_hint.setStyleSheet(f"color: {get_theme()['panel_dim_color']};")
+
     def _set_status(self, state: str) -> None:
         """Update status label. Called by MainWindow._make_link_handler()."""
-        text, color = STATUS_STYLES.get(state, (f"●  {state}", "#888888"))
+        self._status_state = state
+        theme = get_theme()
+        text, role = STATUS_STYLES.get(state, (f"●  {state}", "panel_dim_color"))
+        color = theme[role]
         self.lbl_status.setText(text)
         self.lbl_status.setStyleSheet(
             f"color: {color}; font-weight: bold; font-size: 10pt;"
@@ -1948,7 +1966,7 @@ class PacketBaseScreen(QWidget):
 
         self.lbl_param_hint = QLabel(band_info["hint"])
         self.lbl_param_hint.setFont(QFont("Segoe UI", 8))
-        self.lbl_param_hint.setStyleSheet("color: #888888;")
+        self.lbl_param_hint.setStyleSheet(f"color: {get_theme()['panel_dim_color']};")
         title_row.addSpacing(8)
         title_row.addWidget(self.lbl_param_hint)
 

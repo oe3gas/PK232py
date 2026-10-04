@@ -27,6 +27,10 @@ _app = QApplication.instance() or QApplication([])
 
 UI_DIR = pathlib.Path(__file__).resolve().parent.parent / "ui"
 ROLES = ("sys_color", "ok_color", "err_color", "dim_color")
+# P77c: the side panel / status line colours sit on the WIDGET window colour as
+# well as on the display background - both are checked.
+PANEL_ROLES = ("heard_direct_color", "heard_digi_color", "panel_ok_color",
+               "panel_sys_color", "panel_err_color", "panel_dim_color")
 
 
 def _fragment_color(doc, needle: str) -> str:
@@ -69,6 +73,19 @@ class TestEveryThemeIsReadable:
             if contrast_ratio(col, a.bg_color) < MIN_CONTRAST
         }
         assert not too_low, f"theme {key} (bg {a.bg_color}): {too_low}"
+
+    @pytest.mark.parametrize("key", THEME_ORDER)
+    def test_panel_colors_reach_4_5_to_1_on_display_and_window_background(self, win, key):
+        win._on_theme_selected(key)
+        a = win._app_config.appearance
+        t = ui_theme.get_theme()
+        backgrounds = {"display": a.bg_color, "window": t["bg_window"]}
+        too_low = {
+            f"{role} on {name}": round(contrast_ratio(t[role], bg), 2)
+            for role in PANEL_ROLES for name, bg in backgrounds.items()
+            if contrast_ratio(t[role], bg) < MIN_CONTRAST
+        }
+        assert not too_low, f"theme {key}: {too_low}"
 
     def test_the_four_presets_are_the_ones_checked(self):
         assert set(THEME_ORDER) == set(THEMES) == {"dark", "mono", "retro", "air"}

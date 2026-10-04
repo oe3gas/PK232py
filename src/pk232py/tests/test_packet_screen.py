@@ -710,7 +710,14 @@ class TestMheardColourSemantics(object):
         lbl = row.findChild(QLabel)
 
         assert lbl is not None
-        assert _CHIP_FILL[CH_CONNECTED] in lbl.styleSheet()
+        # P77c: the label colour is the theme's green (readable as text on every
+        # background); same hue family as the chip's fill, not necessarily the
+        # identical hex (the chip fill is only 3.4 : 1 as text on white).
+        from pk232py.ui.screens.ui_theme import get_theme
+        assert get_theme()["panel_ok_color"] in lbl.styleSheet()
+        for col in (_CHIP_FILL[CH_CONNECTED], get_theme()["panel_ok_color"]):
+            r, g, b = int(col[1:3], 16), int(col[3:5], 16), int(col[5:7], 16)
+            assert g > r and g > b, col                 # green in both
 
     def test_mheard_legend_says_green_not_amber(self):
         from PyQt6.QtWidgets import QLabel
