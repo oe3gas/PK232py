@@ -91,6 +91,11 @@ class ModeManager(QObject):
         self._serial       = serial
         self._active_mode: Optional[BaseMode] = None
         self._pending_mode: Optional[BaseMode] = None
+        # P81d: called with every LINK_STATUS ($4x) / LINK_MSG ($5x) frame that
+        # the active mode does not take care of itself (no mode active yet, or
+        # one without handles_link_frames) - MainWindow gives them to the
+        # LinkTable, so a connect in the 300 ms before the activation is not lost.
+        self.link_frame_sink: Optional[Callable[[HostFrame], None]] = None
         self._init_timer   = QTimer(self)
         self._init_timer.setSingleShot(True)
         self._init_timer.timeout.connect(self._send_init_frames)
@@ -222,6 +227,17 @@ class ModeManager(QObject):
         if frame.kind == FrameKind.CMD_RESP:
             self._handle_cmd_resp(frame)
             return
+
+        # P81d: link frames must reach the LinkTable whatever the mode is. A
+        # Packet mode (handles_link_frames) feeds it itself; for all others -
+        # including "no mode active yet" - the sink does.
+        if (frame.kind in (FrameKind.LINK_STATUS, FrameKind.LINK_MSG)
+                and self.link_frame_sink is not None
+                and not getattr(self._active_mode, "handles_link_frames", False)):
+            try:
+                self.link_frame_sink(frame)
+            except Exception as exc:
+                logger.error("link_frame_sink raised: %s", exc)
 
         if self._active_mode is not None:
             try:

@@ -161,6 +161,9 @@ class MainWindow(QMainWindow):
         # P76: EVENTS (a new connect), not states - reconciliation after a
         # Host Mode entry changes states too, but must stay silent.
         self._link_table.subscribe_events(self._on_link_table_event)
+        # P81d: link frames while no Packet mode handles them (activation window,
+        # other modes) go to the LinkTable from here.
+        self._modes.link_frame_sink = self._on_unrouted_link_frame
         # P72: names of parameters the TNC did NOT take (saved in the config,
         # but TNC differs). ONE state variable: filled by _apply_changed_params(),
         # an entry leaves when the same parameter is applied ok, everything
@@ -2514,6 +2517,22 @@ class MainWindow(QMainWindow):
             screen = self._opmode_screens.get(pkt_name)
             if screen is not None and hasattr(screen, "channel_bar"):
                 screen.channel_bar.set_current(target)
+
+    def _on_unrouted_link_frame(self, frame: HostFrame) -> None:
+        """P81d - a $4x link status or $5x link message that no active Packet
+        mode took (ModeManager.link_frame_sink). Same inputs as the Packet
+        mode's callbacks: a status answer goes through _on_mode_link_status()
+        (CO round bookkeeping included), a message through
+        LinkTable.on_host_link_message() (so a new connect fires its event)."""
+        if frame.kind == FrameKind.LINK_STATUS:
+            self._on_mode_link_status(frame.ctl, frame.data)
+            return
+        if not 0 <= frame.channel <= 9:
+            return
+        text = frame.text
+        self._link_table.on_host_link_message(frame.channel, text)
+        self._log_monitor(
+            f"[SYS] link message ch{frame.channel} (no Packet mode active): {text.strip()}")
 
     def _on_mode_link_status(self, ctl: int, data: bytes) -> None:
         """HFPacketMode.on_link_status(ctl, data) - a TRM 4.3.3 Link

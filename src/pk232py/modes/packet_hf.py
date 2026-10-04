@@ -95,6 +95,7 @@ class HFPacketMode(BaseMode):
         channel a partner callsign belongs to.
     """
 
+    handles_link_frames = True      # P81d: feeds the LinkTable itself (MainWindow wiring)
     name         = "HF Packet"
     host_command = b'PA'
     verbose_command = b"PACKET\r\n"
