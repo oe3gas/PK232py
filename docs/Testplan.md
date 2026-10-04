@@ -3451,13 +3451,13 @@ connections. Only `MYCALL` and `AX25L2V2` are refused, and only while a link exi
 
 ---
 
-### T170 — Packet RX as a data stream (P82)
+### T170 — Packet RX as a data stream (P82)  ✅ PASS (device B, 04.10.2026, operator screenshots)
 
 Device B, TinyBox help in the ALL and CH views. `test_packet_rx_stream_p82.py` replays the packet
 boundaries of the T169 screenshot. Expected on the device: words are not cut at packet
 boundaries, no blank line or indent between frames, the prompt without CR is visible at once, ALL
 shows timestamp (if on) and channel tag at the start of a line only, "Partner" changes when the
-connect completes, "RX: n lines" follows the shown document. Result: ⬜ OPEN.
+connect completes, "RX: n lines" follows the shown document. Result: ✅ PASS (device B, 04.10.2026).
 
 ---
 
@@ -3469,6 +3469,18 @@ deferral only for a real difference (real TNC value shown as the starting value)
 notice in MON and the status bar after the switch to Host Mode, the "Waking up the TNC..." notice.
 Rerun: also check the notice (blinking, seconds, stage) during a slow wake-up and that the
 prompt of the TinyBox appears in the ALL view after the connect on chip 1. Second report 04.10.2026: the prompt was still missing in ALL with ALL active the whole time (CH click shows it). `test_packet_all_view_prompt_p81b.py` replays that sequence (real show()/resize(), measured cursor rectangle) and is GREEN - not reproduced, nothing changed. Rerun with DEBUG logging: the `RX append ch=… shown=… bar before=… after=… stack_current=… visible=…` lines (`pk232py.ui.screens.packet_screen`) tell whether the line does not arrive or is only not scrolled into view. **Cause found (third report: only the FIRST appearance of the VHF mask in Host Mode):** `MainWindow._switch_opmode()` pushed the previous screen's RX document (`_shared_rx_doc`) into the incoming Packet screen, replacing its ALL document - lines went to `_rx_doc_all`, the widget showed another document. Fixed (P81b): a Packet screen attaches its own document through `_sync_rx_document()` at build and at every activation, and never hands it on; DEBUG line now has `doc_is_all=`. Recheck in T169.
+
+**T169 findings, round 3 (04.10.2026):** (a) Chips dashed after a restart: CSTATUS gave
+"connected" (solid); the Host Mode entry then marked the links unconfirmed and asked CO - but
+on a restart no Packet mode is active yet, ModeManager activates it on its own timer and
+`ModeManager.on_frame()` drops every frame while none is active, so the CO answers were lost.
+Fixed (P81c): the CO round waits for the mode activation (`test_restart_chips_p81c.py`, red first).
+(b) Parameter dialog while a link exists: `ParamApplier` now reads the TNC value first (equal ->
+"already set", nothing sent), shows the TNC's real value as starting value and reports `$09` /
+"?not while connected" as `busy` - deferred like P81 (MON, status bar, "TNC differs", catch-up after a
+CO round reports all channels free) instead of an error dialog (P82a, `test_apply_busy_p82a.py`).
+(c) NOT an application finding: the disconnect from OE3GAS-1 did not complete and the chip stayed in
+the disconnecting state - the radio path (DISC repetitions) did not deliver the UA.
 Step 1 also checks part B: the `[SYS]` line "2 parameters deferred until all connections
 are closed: MYCALL, AX25L2V2" and the red status field "TNC differs from parameters"; after
 the last link ends (DI on both channels) `MYCALL` and `AX25L2V2` are set (monitor line

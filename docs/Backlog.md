@@ -100,7 +100,16 @@ The init upload (`ParamsUploader`) sends commands the firmware does not know, e.
 ARQTOL on 01.AUG.91 (T151: `?What?`). Later: filter the upload per firmware, based on
 the mnemonic registry (`comm/mnemonic_registry.py`) and T151/T160/T161.
 
-### Packet RX as a data stream (P82) — done, T170 open (2026-10-04)
+### P81c / P82a (T169 round 3) — done, T169 recheck open (2026-10-04)
+
+P81c: after a restart the links found by CSTATUS stay confirmed - the CO round of the Host Mode
+entry waits for the mode activation (frames sent before are dropped by `ModeManager.on_frame()`).
+P82a: `ParamApplier` reads the TNC value before setting (equal -> nothing sent), messages start
+from the real TNC value, `$09` is deferred like P81 (generic for every `HF_PACKET_FIELDS` name,
+`MainWindow._apply_changed_params()` / `_apply_deferred_params()`); MYCALL in Host Mode stays
+deferred (see the `ML` set test entry).
+
+### Packet RX as a data stream (P82) — ✅ T170 PASS (2026-10-04)
 
 T169 screenshot (TinyBox help, ALL): each `$3x` frame was a finished line plus a blank line
 plus a 9-character indent, and the TinyBox's fixed-length packets broke words. Now

@@ -171,6 +171,10 @@ Grows over time.
   when a CO round (`MainWindow._begin_co_round()`) has all ten channels answered free - not on
   the DISCONNECTED message. `$09` / `?not while connected` keeps the name deferred, no dialog.
   `MYCALL` is never set in Host Mode (`ML` unmeasured): it waits for the next init.
+  **P81c/P82a:** `ModeManager.on_frame()` DROPS every frame while no mode is active - a Host Mode
+  query sent in the 300 ms between `set_mode()` and the activation is never answered to the app
+  (the CO round of a restart waits for `mode_changed`). `ParamApplier` reads the TNC value before
+  every set; `$09` / `?not while connected` sets `ApplyResult.busy` and the caller defers.
   The detection chain announces each stage through `SerialManager.init_stage` ("step 2b: ...");
   `MainWindow` shows "Waking up the TNC..." (blinking, seconds, stage) when the chain takes
   more than 0.8 s, and removes it on `verbose_mode_ready`, `init_failed` or a lost connection.
