@@ -42,7 +42,7 @@ from ..mode_manager import ModeManager
 from ..modes.base_mode import BaseMode
 from ..modes.packet_hf import HFPacketMode
 from ..modes.packet_vhf import VHFPacketMode
-from ..comm.params_uploader import ParamsUploader
+from ..comm.params_uploader import DEFER_WITH_LINKS, ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
 from pk232py.comm.param_applier import ParamApplier, SerialParamTransport, format_result
 from pk232py.comm.host_params import (
@@ -136,6 +136,12 @@ class MainWindow(QMainWindow):
       - Menu bar, toolbar, status bar
     """
 
+    # P81: the PK232-ParamUpload thread must not touch widgets (CLAUDE.md
+    # rule 3). It reports through these two signals; the slots run in the
+    # GUI thread.
+    _live_links_found = pyqtSignal(object)     # LiveLinks, or None = not checked
+    _params_deferred = pyqtSignal(object)      # list[str] of held-back names
+
     def __init__(self) -> None:
         super().__init__()
         self._config: TncConfig = TncConfig()
@@ -158,6 +164,12 @@ class MainWindow(QMainWindow):
         # an entry leaves when the same parameter is applied ok, everything
         # clears with the next init upload (_on_verbose_mode_ready()).
         self._tnc_unapplied: set[str] = set()
+        # P81: True from the end of an init until its live-link check ran
+        # (once per init, so the Ctrl+H upload path never repeats it);
+        # _deferred_params = names the upload held back because links
+        # existed, applied when the last link ends.
+        self._live_link_check_pending: bool = False
+        self._deferred_params: set[str] = set()
         # Application config (parameters for all modes)
         from pk232py.config import ConfigManager
         self._config_mgr = ConfigManager()
@@ -1155,6 +1167,14 @@ class MainWindow(QMainWindow):
         self._banner_timer = QTimer(self)
         self._banner_timer.setSingleShot(True)
         self._banner_timer.timeout.connect(self._finish_banner_collection)
+        # P81 B: a parented single-shot timer (rule 15), not
+        # QTimer.singleShot - the catch-up must not run INSIDE the link
+        # message handler that reported the last disconnect.
+        self._deferred_timer = QTimer(self)
+        self._deferred_timer.setSingleShot(True)
+        self._deferred_timer.timeout.connect(self._apply_deferred_params)
+        self._live_links_found.connect(self._on_live_links_found)
+        self._params_deferred.connect(self._on_params_deferred)
 
     # ------------------------------------------------------------------
     # Signal wiring
@@ -1278,6 +1298,9 @@ class MainWindow(QMainWindow):
         site right.
         """
         self._log_monitor("[SYS] TNC in verbose mode")
+        # P81 A: the next _run_param_upload() checks for live links once.
+        self._live_link_check_pending = True
+        self._deferred_params.clear()
         # P72: the init upload below sends every parameter again.
         self._tnc_unapplied.clear()
         self._refresh_params_differ_label()
@@ -1439,6 +1462,7 @@ class MainWindow(QMainWindow):
         """
         connect_mode = self._connect_mode
         fast_init    = self._config.fast_init
+        defer = self._check_live_links()
 
         if fast_init:
             self._vt_append("[SYS] Fast Init — parameter upload skipped\n")
@@ -1456,8 +1480,10 @@ class MainWindow(QMainWindow):
             self._app_config,
             echo_callback=self._vt_append,
         )
-        n = uploader.upload()
+        n = uploader.upload(defer=defer)
         self._params_uploaded_this_session = True
+        if uploader.deferred_names:
+            self._params_deferred.emit(list(uploader.deferred_names))
         self._log_monitor(f"[SYS] {n} parameters uploaded")
         # P40.3: spot-check MYCALL/PACLEN/MAXFRAME against AppConfig,
         # still in verbose mode, before Host Mode entry - cheap
@@ -1498,6 +1524,78 @@ class MainWindow(QMainWindow):
                 f"[SYS] {n} parameters uploaded -- verbose terminal ready\n"
             )
             self._vt_input.setFocus()
+
+    def _check_live_links(self) -> tuple:
+        """P81 A - runs in the upload thread, right after the detection chain
+        and before the upload. Asks verbose CSTATUS / OPMODE / VHF unless the
+        TNC sent a banner (it has just woken up: no connections) and hands the
+        result to the GUI thread (_live_links_found). Returns the parameter
+        names the upload must hold back (P81 B): DEFER_WITH_LINKS while links
+        exist, else ()."""
+        if not self._live_link_check_pending:
+            return ()
+        self._live_link_check_pending = False
+        query = getattr(self._serial, "query_live_links", None)
+        if query is None or getattr(self._serial, "banner_seen_this_init", False):
+            return ()
+        try:
+            links = query()
+        except Exception:
+            logger.exception("live-link check failed - uploading as usual")
+            return ()
+        self._live_links_found.emit(links)
+        return DEFER_WITH_LINKS if links.connections else ()
+
+    def _on_live_links_found(self, links) -> None:
+        """GUI-thread half of the live-link check (P81 A + C): the links go
+        into the LinkTable (chips and the visible channel follow through its
+        subscription), the Packet mode is remembered for the Host Mode entry,
+        and one [SYS] line says what was found. No bell: reconciliation never
+        fires the connect event (P76)."""
+        if links is None:
+            return
+        line = f"[SYS] {links.summary()}"
+        self._log_monitor(line)
+        self._vt_append(f"{line}\n", color=self._sys_color())
+        if not links.connections:
+            return
+        self._link_table.on_verbose_cstatus(links.cstatus)
+        self._select_visible_connected_channel()    # after io_channel is known
+        if links.mode_name:
+            # _update_host_mode_ui(True) restores this mode, marks the table
+            # unconfirmed and runs the CO round - the usual Host Mode entry.
+            self._link_table.mode_name = links.mode_name
+
+    def _on_params_deferred(self, names) -> None:
+        """P81 B: the upload held these back because links exist."""
+        self._deferred_params.update(names)
+        self._tnc_unapplied.update(names)
+        self._refresh_params_differ_label()
+        line = (f"[SYS] {len(names)} parameters deferred until all connections "
+                f"are closed: {', '.join(names)}")
+        self._log_monitor(line)
+        self._vt_append(f"{line}\n", color=self._sys_color())
+
+    def _apply_deferred_params(self) -> None:
+        """P81 B: the last connection has ended - set what the init upload
+        held back. The configuration snapshot "before" differs from the
+        current one in exactly those parameters, so ParamApplier (Host Mode
+        or verbose, with read-back) sends only them."""
+        if not self._deferred_params or not self._serial.is_connected:
+            return
+        if any(link.state != "free" for link in self._link_table.channels):
+            return
+        before = copy.deepcopy(self._app_config)
+        if "MYCALL" in self._deferred_params:
+            before.hf_packet.mycall = "NOCALL"      # never uploaded -> differs
+        if "AX25L2V2" in self._deferred_params:
+            before.hf_packet.ax25l2v2 = not self._app_config.hf_packet.ax25l2v2
+        self._log_monitor(
+            f"[SYS] all connections closed - applying deferred parameters: "
+            f"{', '.join(sorted(self._deferred_params))}")
+        self._apply_changed_params(before, "Deferred")
+        # What the TNC took leaves; a refusal stays for the next "closed".
+        self._deferred_params &= self._tnc_unapplied
 
     def _on_params_upload_required(self) -> None:
         """Called when TNC rebooted same as verbose_mode_ready but with log message."""
@@ -5014,6 +5112,8 @@ class MainWindow(QMainWindow):
         """LinkTable event (P76): ring on a new connect if the bell is on."""
         if event == "connected" and self._app_config.appearance.connect_bell:
             self._ring_connect_bell()
+        elif event == "closed" and self._deferred_params:
+            self._deferred_timer.start(500)     # P81 B
 
     def _ring_connect_bell(self) -> None:
         """The ONE place that makes the connect sound: the application's
