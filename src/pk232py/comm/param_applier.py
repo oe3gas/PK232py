@@ -61,6 +61,9 @@ class ApplyResult:
     # saved, applied when that band's Packet mode is selected - not an error.
     band: Optional[str] = None
     deferred: bool = False
+    # P82a: the TNC refused because a link exists ($09 / "?not while connected"):
+    # not an error - the caller defers the parameter until all channels are free.
+    busy: bool = False
 
 
 class ParamTransport(Protocol):
@@ -82,6 +85,8 @@ def format_result(r: ApplyResult) -> str:
     """The one-line message of the spec (shown in MON / the verbose terminal)."""
     if r.deferred:
         return f"{r.name} ({r.band}) {r.reason}"
+    if r.ok and r.reason == "already set":
+        return f"{r.name}  {r.wanted}  already set in the TNC"
     if r.ok:
         arrow = f"{r.was} -> {r.wanted}" if r.was is not None else f"-> {r.wanted}"
         return f"{r.name}  {arrow}  ok"
@@ -101,6 +106,13 @@ def _compare_value(param: Optional[HostParam], value: str) -> str:
     if param is not None and param.kind == "ubit":
         return words[-1]
     return words[0]
+
+
+def _shown(param: Optional[HostParam], value: Optional[str]) -> Optional[str]:
+    """A switch the TNC answered as Y/N is shown as ON/OFF in messages."""
+    if value is not None and param is not None and param.kind in ("bool", "ubit"):
+        return {"Y": "ON", "N": "OFF"}.get(value.upper(), value)
+    return value
 
 
 def _first_error_line(text: str) -> Optional[str]:
@@ -175,6 +187,15 @@ class ParamApplier:
             return ApplyResult(
                 name, value, None, False,
                 f"not verified for Host Mode on {release or 'unknown'}", old)
+        # P82a: read the TNC's value FIRST. Equal -> nothing is sent; otherwise the
+        # starting value in every message is what the TNC really holds.
+        before = parse_host_answer(
+            p, self._t.host_exchange(p.mnemonic, host_query_args(p)))
+        wanted = _compare_value(p, value) if p.kind == "ubit" else value
+        if before is not None and norm_value(before, p.kind) == norm_value(wanted, p.kind):
+            return ApplyResult(name, value, before, True, "already set", _shown(p, before))
+        if before is not None:
+            old = _shown(p, before)
         reply = self._t.host_exchange(p.mnemonic, host_set_args(p, value))
         if reply is None:
             return ApplyResult(name, value, None, False, "no answer from TNC", old, sent=True)
@@ -194,7 +215,8 @@ class ParamApplier:
         if acked and not same:
             reason = ("read-back differs after ACK" if now is not None
                       else "no readable answer to the read-back")
-        return ApplyResult(name, value, now, acked and same, reason, old, sent=True)
+        return ApplyResult(name, value, now, acked and same, reason, old, sent=True,
+                           busy=(code == 0x09))
 
     def _apply_verbose(self, live, needs_expert: bool) -> list[ApplyResult]:
         if not live:
@@ -219,20 +241,31 @@ class ParamApplier:
                 self._t.return_to_converse()
         return results
 
-    def _apply_verbose_one(self, name: str, value: str, old: Optional[str]) -> ApplyResult:
-        p = param_by_name(name)
-        reply = self._t.verbose_set(name, value)
-        err = _first_error_line(reply)
+    def _read_verbose(self, name: str, p: Optional[HostParam]) -> Optional[str]:
+        """The TNC's value of *name* now (UBIT: the index-0 flag)."""
         if p is not None and p.kind == "ubit":
             m = re.findall(r"\b(ON|OFF)\b", self._t.verbose_query_text("UBIT 0") or "", re.I)
-            now = m[-1].upper() if m else None
-        else:
-            now = self._t.verbose_query(name)
+            return m[-1].upper() if m else None
+        return self._t.verbose_query(name)
+
+    def _apply_verbose_one(self, name: str, value: str, old: Optional[str]) -> ApplyResult:
+        p = param_by_name(name)
         kind = p.kind if p is not None else "text"
+        # P82a: read the TNC's value FIRST (see _apply_host).
+        before = self._read_verbose(name, p)
+        if before is not None and norm_value(before, kind) == norm_value(
+                _compare_value(p, value), kind):
+            return ApplyResult(name, value, before, True, "already set", before)
+        if before is not None:
+            old = before
+        reply = self._t.verbose_set(name, value)
+        err = _first_error_line(reply)
+        now = self._read_verbose(name, p)
         same = now is not None and norm_value(now, kind) == norm_value(
             _compare_value(p, value), kind)
         if err is not None:
-            return ApplyResult(name, value, now, False, f"rejected by TNC: {err}", old, sent=True)
+            return ApplyResult(name, value, now, False, f"rejected by TNC: {err}", old,
+                               sent=True, busy="not while connected" in err.lower())
         if now is None:
             return ApplyResult(name, value, None, False,
                                "no readable answer to the read-back", old, sent=True)

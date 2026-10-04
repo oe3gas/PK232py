@@ -211,17 +211,23 @@ class ParamsUploader:
     _VERIFY_SAMPLE = ("MYCALL", "PACLEN", "MAXFRAME")
 
     @staticmethod
-    def matches_config(config: "AppConfig", name: str, tnc_value: Optional[str]) -> bool:
-        """P81a: does what the TNC holds for *name* (a DEFER_WITH_LINKS name)
-        equal the configuration? An unreadable value (None) never matches."""
-        if tnc_value is None:
+    def matches_config(config: "AppConfig", name: str, tnc_value: Optional[str],
+                       band: Optional[str] = None) -> bool:
+        """P81a/P82a: does what the TNC holds for *name* equal the configuration?
+        Any packet parameter of verbose_parse.HF_PACKET_FIELDS; *band* picks the
+        value of MAXFRAME/SLOTTIME. An unreadable value (None) never matches."""
+        from pk232py.comm.verbose_parse import HF_PACKET_FIELDS
+        if tnc_value is None or name not in HF_PACKET_FIELDS:
             return False
-        hf = config.hf_packet
-        if name == "MYCALL":
-            return tnc_value.strip().upper() == hf.mycall.upper()
-        if name == "AX25L2V2":
-            return norm_value(tnc_value, "bool") == ("Y" if hf.ax25l2v2 else "N")
-        return False
+        field, kind = HF_PACKET_FIELDS[name]
+        if isinstance(field, dict):
+            if band is None:
+                return False
+            field = field[band]
+        want = getattr(config.hf_packet, field)
+        if kind == "bool":
+            want = "Y" if want else "N"
+        return norm_value(tnc_value, kind) == norm_value(str(want), kind)
 
     def verify(self) -> tuple[int, int]:
         """P40.3: spot-check a small sample of just-uploaded parameters

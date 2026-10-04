@@ -124,10 +124,10 @@ class TestParamApplierBands:
 
     def test_vhf_maxframe_changed_in_vhf_mode_is_sent_and_read_back(self):
         t = FakeTransport(release=B, host_answers={
-            (b"MX", b"7"): b"MX\x00", (b"MX", b""): b"MX7"})
+            (b"MX", b"7"): b"MX\x00", (b"MX", b""): [b"MX4", b"MX7"]})
         before, after = _pair(vhf_maxframe=7)
         (r,) = ParamApplier(t).apply(before, after, band=BAND_VHF)
-        assert t.log == [("host", b"MX", b"7"), ("host", b"MX", b"")]
+        assert t.log == [("host", b"MX", b""), ("host", b"MX", b"7"), ("host", b"MX", b"")]
         assert r.ok and not r.deferred
 
     def test_vhf_maxframe_changed_in_hf_mode_is_deferred(self):
@@ -140,10 +140,10 @@ class TestParamApplierBands:
 
     def test_hf_slottime_changed_in_hf_mode_is_sent(self):
         t = FakeTransport(release=B, host_answers={
-            (b"SL", b"12"): b"SL\x00", (b"SL", b""): b"SL12"})
+            (b"SL", b"12"): b"SL\x00", (b"SL", b""): [b"SL30", b"SL12"]})
         before, after = _pair(slottime=12)
         (r,) = ParamApplier(t).apply(before, after, band=BAND_HF)
-        assert r.ok and t.log[0] == ("host", b"SL", b"12")
+        assert r.ok and t.log[1] == ("host", b"SL", b"12")
 
     def test_no_packet_mode_active_sends_no_band_value(self):
         t = FakeTransport(release=B)
@@ -238,10 +238,10 @@ class TestMonitorFlags:
 
     def test_live_change_of_a_flag_is_set_in_host_mode_and_read_back(self):
         t = FakeTransport(release=B, host_answers={
-            (b"PX", b"Y"): b"PX\x00", (b"PX", b""): b"PXY"})
+            (b"PX", b"Y"): b"PX\x00", (b"PX", b""): [b"PXN", b"PXY"]})
         before, after = _pair(passall=True)
         (r,) = ParamApplier(t).apply(before, after, band=BAND_HF)
-        assert t.log == [("host", b"PX", b"Y"), ("host", b"PX", b"")]
+        assert t.log == [("host", b"PX", b""), ("host", b"PX", b"Y"), ("host", b"PX", b"")]
         assert r.ok
 
 

@@ -47,6 +47,8 @@ class _Serial(QObject):
     def send_command(self, mnemonic, args=b""):
         self.writes.append(build_command(mnemonic, args))
         reply = self.answers.get((mnemonic, args))
+        if isinstance(reply, list):          # successive answers: the value changes
+            reply = reply.pop(0) if len(reply) > 1 else reply[0]
         if reply is not None:
             self.frame_received.emit(HostFrame(0x4F, 0xF, reply, FrameKind.CMD_RESP))
         return True
@@ -70,7 +72,7 @@ class _Serial(QObject):
 @pytest.fixture
 def win(monkeypatch):
     w = MainWindow()
-    w._serial = _Serial({(b"UR", b"10"): b"UR\x00", (b"UR", b""): b"UR10"})
+    w._serial = _Serial({(b"UR", b"10"): b"UR\x00", (b"UR", b""): [b"UR1", b"UR10"]})
     w.log: list = []
     w.problems: list = []
     monkeypatch.setattr(w, "_log_monitor", lambda text, raw=b"": w.log.append(text))
@@ -88,8 +90,9 @@ def win(monkeypatch):
 class TestApplyRightAfterOk:
     def test_host_mode_writes_one_host_frame_and_the_query_only(self, win):
         win._on_params_hf_packet()
-        assert win._serial.writes == [bytes.fromhex("01 4F 55 52 31 30 17"),
-                                      bytes.fromhex("01 4F 55 52 17")]
+        assert win._serial.writes == [bytes.fromhex("01 4F 55 52 17"),         # TNC value first
+                                      bytes.fromhex("01 4F 55 52 31 30 17"),   # the set
+                                      bytes.fromhex("01 4F 55 52 17")]         # read-back
         assert "[SYS] USERS  1 -> 10  ok" in win.log
         assert win.problems == []
         assert win._tnc_unapplied == set()
@@ -151,7 +154,7 @@ class TestWriteLogOnly:
     def test_host_mode_users_1_to_10_writes_exactly_the_set_and_query_frame(
             self, monkeypatch):
         w = MainWindow()
-        sm = _Serial({(b"UR", b"10"): b"UR\x00", (b"UR", b""): b"UR10"})
+        sm = _Serial({(b"UR", b"10"): b"UR\x00", (b"UR", b""): [b"UR1", b"UR10"]})
         w._serial = sm
         w._app_config.hf_packet.users = 1
 
@@ -163,7 +166,8 @@ class TestWriteLogOnly:
         w._on_params_hf_packet()
 
         assert sm.writes, "no frame written (the value never reaches the TNC)"
-        assert sm.writes == [bytes.fromhex("01 4F 55 52 31 30 17"),
+        assert sm.writes == [bytes.fromhex("01 4F 55 52 17"),
+                             bytes.fromhex("01 4F 55 52 31 30 17"),
                              bytes.fromhex("01 4F 55 52 17")]
 
 
@@ -196,8 +200,9 @@ class TestActiveBand:
     def test_vhf_maxframe_in_vhf_mode_is_sent(self, win, monkeypatch):
         self._set_mode(win, monkeypatch, "VHF Packet")
         win._app_config.hf_packet.users = 10
-        win._serial.answers = {(b"MX", b"7"): b"MX\x00", (b"MX", b""): b"MX7"}
+        win._serial.answers = {(b"MX", b"7"): b"MX\x00", (b"MX", b""): [b"MX4", b"MX7"]}
         self._change(monkeypatch, vhf_maxframe=7)
         win._on_params_hf_packet()
-        assert win._serial.writes == [build_command(b"MX", b"7"), build_command(b"MX", b"")]
+        assert win._serial.writes == [build_command(b"MX", b""), build_command(b"MX", b"7"),
+                                      build_command(b"MX", b"")]
         assert "[SYS] MAXFRAME  4 -> 7  ok" in win.log

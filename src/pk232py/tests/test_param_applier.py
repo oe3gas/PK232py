@@ -59,7 +59,10 @@ class FakeTransport:
 
     def host_exchange(self, mnemonic, args):
         self.log.append(("host", mnemonic, args))
-        return self.host_answers.get((mnemonic, args))
+        answer = self.host_answers.get((mnemonic, args))
+        if isinstance(answer, list):         # successive answers: the value changes
+            answer = answer.pop(0) if len(answer) > 1 else answer[0]
+        return answer
 
     def verbose_set(self, name, value):
         self.log.append(("vset", name, value))
@@ -96,19 +99,20 @@ def _users_1_to_10():
 class TestHostMode:
     def test_users_is_set_and_read_back_with_two_host_frames_only(self):
         t = FakeTransport(host_answers={
-            (b"UR", b"10"): b"UR\x00", (b"UR", b""): b"UR10"})
+            (b"UR", b"10"): b"UR\x00", (b"UR", b""): [b"UR1", b"UR10"]})
         before, after = _users_1_to_10()
         results = ParamApplier(t).apply(before, after)
-        assert t.log == [("host", b"UR", b"10"), ("host", b"UR", b"")]
+        # P82a: the TNC's value is read first, then set, then read back
+        assert t.log == [("host", b"UR", b""), ("host", b"UR", b"10"), ("host", b"UR", b"")]
         assert results == [ApplyResult("USERS", "10", "10", True, "ok", was="1")]
 
     def test_ubit_off_on_device_a(self):
         t = FakeTransport(release=A, host_answers={
-            (b"UB", b"0 N"): b"UB\x00", (b"UB", b"0"): b"UBN"})
+            (b"UB", b"0 N"): b"UB\x00", (b"UB", b"0"): [b"UBY", b"UBN"]})
         before, after = _cfg_pair(lambda b, a: setattr(a.hf_packet, "ubit0", False)
                                   or setattr(b.hf_packet, "ubit0", True))
         (r,) = ParamApplier(t).apply(before, after)
-        assert t.log[0] == ("host", b"UB", b"0 N")
+        assert t.log[1] == ("host", b"UB", b"0 N")
         assert r.ok and r.tnc_now == "OFF"
 
     def test_not_verified_for_the_release_sends_nothing(self):
@@ -180,10 +184,10 @@ class TestOtherStates:
         assert "cmd:" in r.reason
 
     def test_verbose_command_then_readback(self):
-        t = FakeTransport(mode="verbose")
+        t = FakeTransport(mode="verbose", verbose_values={"USERS": "1"})
         before, after = _users_1_to_10()
         (r,) = ParamApplier(t).apply(before, after)
-        assert t.log == [("vset", "USERS", "10"), ("vquery", "USERS")]
+        assert t.log == [("vquery", "USERS"), ("vset", "USERS", "10"), ("vquery", "USERS")]
         assert r.ok and r.tnc_now == "10"
 
     def test_verbose_error_line_is_quoted(self):
@@ -245,6 +249,8 @@ class FakeSerialManager(QObject):
     def send_command(self, mnemonic, args=b""):
         self.writes.append(build_command(mnemonic, args))
         reply = self._answers.get((mnemonic, args))
+        if isinstance(reply, list):          # successive answers: the value changes
+            reply = reply.pop(0) if len(reply) > 1 else reply[0]
         if reply is not None:
             self.frame_received.emit(HostFrame(0x4F, 0xF, reply, FrameKind.CMD_RESP))
         return True
@@ -267,13 +273,15 @@ class FakeSerialManager(QObject):
 
 class TestWriteLogInHostMode:
     def test_exactly_the_set_and_the_query_frame_nothing_else(self):
-        sm = FakeSerialManager({(b"UR", b"10"): b"UR\x00", (b"UR", b""): b"UR10"})
+        sm = FakeSerialManager({(b"UR", b"10"): b"UR\x00",
+                                (b"UR", b""): [b"UR1", b"UR10"]})
         transport = SerialParamTransport(sm, in_converse=lambda: False,
                                          io_channel_connected=lambda: False)
         before, after = _users_1_to_10()
         (r,) = ParamApplier(transport).apply(before, after)
-        assert sm.writes == [bytes.fromhex("01 4F 55 52 31 30 17"),
-                             bytes.fromhex("01 4F 55 52 17")]
+        assert sm.writes == [bytes.fromhex("01 4F 55 52 17"),          # the TNC's value first
+                             bytes.fromhex("01 4F 55 52 31 30 17"),    # the set
+                             bytes.fromhex("01 4F 55 52 17")]          # the read-back
         assert r.ok and r.tnc_now == "10"
 
     def test_no_answer_times_out_and_still_writes_no_verbose_byte(self):

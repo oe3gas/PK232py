@@ -94,7 +94,7 @@ class TestVerboseFingerprint:
 
 class TestHostModeParametersWithoutBanner:
     def test_monitor_6_is_sent_in_host_mode_although_no_banner_was_seen(self, win):
-        win._serial = _AwakeSerial({(b"MN", b"6"): b"MN\x00", (b"MN", b""): b"MN6"})
+        win._serial = _AwakeSerial({(b"MN", b"6"): b"MN\x00", (b"MN", b""): [b"MN4", b"MN6"]})
         win._app_config.hf_packet.monitor = 4
 
         def fake_exec(dlg):
@@ -174,7 +174,7 @@ class TestMonitorSelector:
         return screen
 
     def test_selector_changes_the_config_and_goes_through_param_applier(self, win):
-        win._serial = _Serial({(b"MN", b"6"): b"MN\x00", (b"MN", b""): b"MN6"})
+        win._serial = _Serial({(b"MN", b"6"): b"MN\x00", (b"MN", b""): [b"MN4", b"MN6"]})
         win._app_config.hf_packet.monitor = 4
         screen = self._vhf(win)
         screen.combo_monitor.blockSignals(True)
@@ -182,8 +182,9 @@ class TestMonitorSelector:
         screen.combo_monitor.blockSignals(False)
         win._on_packet_monitor_changed(6)
         assert win._app_config.hf_packet.monitor == 6
-        # ParamApplier's exchange: ONE set + ONE query, nothing else, nothing twice.
-        assert win._serial.writes == [build_command(b"MN", b"6"), build_command(b"MN", b"")]
+        # ParamApplier's exchange (P82a): the TNC's value, ONE set, ONE read-back, nothing twice.
+        assert win._serial.writes == [build_command(b"MN", b""), build_command(b"MN", b"6"),
+                                      build_command(b"MN", b"")]
         assert "[SYS] MONITOR  4 -> 6  ok" in win.log
 
     def test_offline_the_value_is_saved_and_reported(self, win):
