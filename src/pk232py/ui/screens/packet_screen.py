@@ -1792,9 +1792,10 @@ class PacketBaseScreen(QWidget):
             current = (stack.currentWidget() is self
                        if isinstance(stack, QStackedWidget) else None)
             logger.debug(
-                "RX append ch=%s shown=%r scrolled=%s bar before=%s after=%s "
-                "stack_current=%s visible=%s text=%r",
-                channel, self._rx_current_key, scrolled, before,
+                "RX append ch=%s shown=%r doc_is_all=%s scrolled=%s bar before=%s "
+                "after=%s stack_current=%s visible=%s text=%r",
+                channel, self._rx_current_key,
+                self.rx_display.document() is self._rx_doc_all, scrolled, before,
                 (bar.value(), bar.maximum()), current, self.isVisible(), text[:40])
 
     # ------------------------------------------------------------------
@@ -2141,7 +2142,7 @@ class PacketBaseScreen(QWidget):
         )
         self.rx_display.setMinimumHeight(80)   # never fully squeezed away
         style_rx_widget(self.rx_display)
-        self.rx_display.setDocument(self._rx_doc_all)   # _view_all defaults True
+        self._sync_rx_document()   # the ONE place that attaches a document (P81b)
         self._rxtx_splitter.addWidget(self.rx_display)
 
         tx_container = QWidget()

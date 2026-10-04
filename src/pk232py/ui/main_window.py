@@ -956,7 +956,10 @@ class MainWindow(QMainWindow):
         if old is not None and old is not screen:
             if hasattr(old, 'tx_input') and old.tx_input:
                 self._shared_tx_text = old.tx_input.toPlainText()
-            if hasattr(old, 'rx_display') and old.rx_display:
+            # P81b: a Packet screen owns its RX documents (ALL + one per channel);
+            # its document is never handed on to another screen.
+            if (hasattr(old, 'rx_display') and old.rx_display
+                    and not hasattr(old, '_sync_rx_document')):
                 self._shared_rx_doc = old.rx_display.document()
 
         self._opmode_stack.setCurrentWidget(screen)
@@ -966,7 +969,13 @@ class MainWindow(QMainWindow):
         if hasattr(screen, 'tx_input') and screen.tx_input:
             if self._shared_tx_text:
                 screen.tx_input.setPlainText(self._shared_tx_text)
-        if hasattr(screen, 'rx_display') and screen.rx_display:
+        if hasattr(screen, '_sync_rx_document'):
+            # P81b: the shared document of the previous screen used to replace
+            # the Packet screen's ALL document here, on the FIRST appearance of
+            # the mask (T169): lines went to _rx_doc_all, the widget showed
+            # another document. The screen attaches its own, in one place.
+            screen._sync_rx_document()
+        elif hasattr(screen, 'rx_display') and screen.rx_display:
             if self._shared_rx_doc is not None:
                 screen.rx_display.setDocument(self._shared_rx_doc)
 

@@ -125,3 +125,74 @@ def test_control_the_measurement_can_fail(vhf_window):
     _app.processEvents()
     rect, viewport = _last_line_rect_in_viewport(screen, "TinyBox")
     assert not viewport.contains(rect)
+
+
+# --- P81b second finding: only the FIRST appearance of the mask is wrong ------
+
+def _fresh_window_first_host_mode_entry():
+    """The real path: a fresh MainWindow, connected, the first Host Mode entry
+    with VHF Packet remembered by the LinkTable. ModeManager activates the mode
+    on its own 300 ms timer; the mask only becomes current after that."""
+    import time
+    w = MainWindow()
+    w._serial = _Stub()
+    w._modes._serial = w._serial
+    w.resize(1100, 760)
+    w.show()
+    _app.processEvents()
+    w._link_table.mode_name = "VHF Packet"
+    w._update_host_mode_ui(True)
+    deadline = time.monotonic() + 3.0
+    while w._modes.current_mode_name != "VHF Packet" and time.monotonic() < deadline:
+        _app.processEvents()
+    for _ in range(20):
+        _app.processEvents()
+    return w, w._opmode_screens["VHF Packet"]
+
+
+def test_first_appearance_of_the_mask_shows_the_all_document():
+    w, screen = _fresh_window_first_host_mode_entry()
+    assert w._opmode_stack.currentWidget() is screen
+    assert screen.rx_display.document() is screen._rx_doc_all
+
+
+def test_first_connect_prompt_is_inside_the_viewport_in_all():
+    w, screen = _fresh_window_first_host_mode_entry()
+    screen.channel_bar.set_current(1)
+    _app.processEvents()
+    w._route_packet_link_message(screen, 1, "*** CONNECTED to OE3GAS-1")
+    for i in range(30):
+        w._on_packet_data_received(1, f"Welcome line {i}\r".encode())
+    w._on_packet_data_received(1, PROMPT)
+    _app.processEvents()
+    assert screen.rx_display.document() is screen._rx_doc_all
+    rect, viewport = _last_line_rect_in_viewport(screen, "TinyBox")
+    assert viewport.contains(rect)
+
+
+def test_every_later_activation_keeps_the_all_document():
+    """Leave for another mask and come back, both ways round."""
+    w, screen = _fresh_window_first_host_mode_entry()
+    w._switch_opmode("Baudot RTTY")
+    w._switch_opmode("VHF Packet")
+    assert screen.rx_display.document() is screen._rx_doc_all
+    w._switch_opmode("HF Packet")
+    hf = w._opmode_screens["HF Packet"]
+    assert hf.rx_display.document() is hf._rx_doc_all
+    w._switch_opmode("VHF Packet")
+    assert screen.rx_display.document() is screen._rx_doc_all
+
+
+def test_a_non_packet_mask_does_not_receive_a_packet_document():
+    w, screen = _fresh_window_first_host_mode_entry()
+    w._switch_opmode("Baudot RTTY")
+    baudot = w._opmode_screens["Baudot RTTY"]
+    assert baudot.rx_display.document() not in (screen._rx_doc_all, *screen._rx_docs.values())
+
+
+def test_the_debug_line_carries_the_identity(caplog):
+    w, screen = _fresh_window_first_host_mode_entry()
+    with caplog.at_level(logging.DEBUG, logger="pk232py.ui.screens.packet_screen"):
+        w._on_packet_data_received(1, PROMPT)
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("RX append"))
+    assert "doc_is_all=True" in line, line
