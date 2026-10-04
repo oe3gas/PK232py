@@ -85,7 +85,8 @@ class TestLinkTableEvent:
         t.on_host_link_message(1, "*** CONNECTED to OE3GAS-1")
         t.on_host_link_message(1, "*** DISCONNECTED")
         t.on_host_link_message(1, "*** CONNECTED to OE3GAS-1")
-        assert len(events) == 2
+        # P81 added the "closed" event; the bell only cares about "connected".
+        assert len([e for e in events if e[1] == "connected"]) == 2
 
 
 class TestConfig:

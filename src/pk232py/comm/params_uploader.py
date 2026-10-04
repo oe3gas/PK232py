@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Iterable, Optional
 
 from pk232py.comm.host_params import BAND_HF, BAND_PARAMS, BAND_VHF, band_value
 
@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 # Delay between verbose-mode parameter commands (seconds)
 _PARAM_DELAY = 0.12
+
+# P81 B (T168, device B, 04.10.2026): with a connection up the TNC refuses
+# exactly these two with "?not while connected"; everything else is taken.
+# Held back while links exist, applied when the last one has ended.
+DEFER_WITH_LINKS = ("MYCALL", "AX25L2V2")
 
 
 class ParamsUploader:
@@ -67,16 +72,23 @@ class ParamsUploader:
         self._config = config
         # Optional callback(text, color) for UI display of sent commands
         self._echo = echo_callback
+        # P81 B: names upload(defer=...) held back (only those that would
+        # actually have been sent), in command order.
+        self.deferred_names: list[str] = []
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def upload(self) -> int:
+    def upload(self, defer: Iterable[str] = ()) -> int:
         """Upload all parameters to the TNC in verbose mode.
 
         Sends each command and waits for the TNC "cmd:" prompt
         before sending the next one.
+
+        *defer* (P81 B): command names NOT sent now (DEFER_WITH_LINKS while
+        the TNC holds connections). They are listed in deferred_names; the
+        caller applies them later.
 
         Returns:
             Number of commands sent (0 if refused - see below).
@@ -146,6 +158,18 @@ class ParamsUploader:
         commands = self._build_commands(
             has_pactor=has_pactor, has_maildrop=(has_maildrop is not False),
         )
+        hold = {name.upper() for name in defer}
+        self.deferred_names = []
+        if hold:
+            kept: list[bytes] = []
+            for cmd in commands:
+                name = cmd.decode("ascii", errors="replace").split()[0].upper()
+                if name in hold:
+                    self.deferred_names.append(name)
+                else:
+                    kept.append(cmd)
+            commands = kept
+            logger.info("ParamsUploader: deferred %s", self.deferred_names)
         logger.info("ParamsUploader: uploading %d commands", len(commands))
         sent = 0
         consecutive_silent = 0
@@ -216,7 +240,9 @@ class ParamsUploader:
             "PACLEN": str(hf.paclen),
             "MAXFRAME": str(hf.maxframe),
         }
-        applicable = {name: want for name, want in expected.items() if want is not None}
+        # A parameter upload(defer=...) held back is not in the TNC yet.
+        applicable = {name: want for name, want in expected.items()
+                      if want is not None and name not in self.deferred_names}
         matched = 0
         for name, want in applicable.items():
             got = query(name)

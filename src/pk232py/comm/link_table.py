@@ -66,6 +66,7 @@ class LinkTable:
         self.mode_name: Optional[str] = None
         self._observers: list[Callable[[int, ChannelLink], None]] = []
         self._event_observers: list[Callable[[int, str, str], None]] = []
+        self._silent = False        # reset() must not fire "closed"
 
     # -- Observation -----------------------------------------------------
 
@@ -73,6 +74,10 @@ class LinkTable:
         """Register *callback(channel, event, partner)* for EVENTS (P76) -
         distinct from subscribe(), which reports STATES. The one event so
         far is "connected": a link message said a connection was just made.
+        P81 adds "closed": the last busy channel just became free (no
+        channel left connected, calling, unconfirmed or disconnecting) -
+        MainWindow catches up the parameters it had to hold back. reset()
+        never fires it.
         The same state change also arises from reconciliation
         (on_link_status() after a CO query, on_verbose_cstatus(), e.g.
         after every Host Mode entry) - that is NOT a new connection and
@@ -114,6 +119,11 @@ class LinkTable:
             state=state, partner=partner, since=time.time(),
         )
         self._notify(channel)
+        if (state == STATE_FREE and current.state != STATE_FREE
+                and not self._silent
+                and all(link.state == STATE_FREE for link in self.channels)):
+            for callback in self._event_observers:
+                callback(channel, "closed", "")
 
     # -- Inputs (P67, Teil B.2) ------------------------------------------
 
@@ -246,7 +256,11 @@ class LinkTable:
         briefly could not confirm it. mode_name is NOT reset - the
         operator's last chosen operating mode is not invalidated by
         the TNC dropping out from under it."""
-        for channel in range(CHANNEL_COUNT):
-            self._set(channel, STATE_FREE)
+        self._silent = True
+        try:
+            for channel in range(CHANNEL_COUNT):
+                self._set(channel, STATE_FREE)
+        finally:
+            self._silent = False
         self.io_channel = 0
         self.converse = False
