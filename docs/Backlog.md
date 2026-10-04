@@ -109,6 +109,15 @@ from the real TNC value, `$09` is deferred like P81 (generic for every `HF_PACKE
 `MainWindow._apply_changed_params()` / `_apply_deferred_params()`); MYCALL in Host Mode stays
 deferred (see the `ML` set test entry).
 
+### P81d - link frames reach the LinkTable in every mode — done (2026-10-04)
+
+`ModeManager.on_frame()` gave every frame except CMD_RESP to the ACTIVE mode and dropped it
+while none was active (ECHO, RX_DATA, RX_MONITOR, LINK_STATUS, LINK_MSG, STATUS_ERR, UNKNOWN),
+and a non-Packet mode ignores link frames. Now `ModeManager.link_frame_sink` (set by
+`MainWindow._on_unrouted_link_frame()`) gets every `$4x`/`$5x` frame the active mode does not
+handle itself (`handles_link_frames`, set on `HFPacketMode`, so a Packet mode is not fed twice).
+Still dropped while no mode is active: data (`$3x`), monitor, echo, status errors.
+
 ### Packet RX as a data stream (P82) — ✅ T170 PASS (2026-10-04)
 
 T169 screenshot (TinyBox help, ALL): each `$3x` frame was a finished line plus a blank line

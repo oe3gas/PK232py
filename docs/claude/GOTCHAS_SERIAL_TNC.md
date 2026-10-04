@@ -175,6 +175,9 @@ Grows over time.
   query sent in the 300 ms between `set_mode()` and the activation is never answered to the app
   (the CO round of a restart waits for `mode_changed`). `ParamApplier` reads the TNC value before
   every set; `$09` / `?not while connected` sets `ApplyResult.busy` and the caller defers.
+  **P81d:** for `$4x`/`$5x` frames this no longer matters: `ModeManager.link_frame_sink` hands them to
+  the LinkTable whenever the active mode is not a Packet mode (`handles_link_frames`). Data, monitor,
+  echo and status-error frames are still dropped while no mode is active.
   The detection chain announces each stage through `SerialManager.init_stage` ("step 2b: ...");
   `MainWindow` shows "Waking up the TNC..." (blinking, seconds, stage) when the chain takes
   more than 0.8 s, and removes it on `verbose_mode_ready`, `init_failed` or a lost connection.
