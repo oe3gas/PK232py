@@ -34,7 +34,8 @@ ACK-wait state machine is planned for v0.2.
 from __future__ import annotations
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from collections import deque
+from typing import Callable, Optional, TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
@@ -47,6 +48,10 @@ logger = logging.getLogger(__name__)
 # Delay (ms) between sending activate frames and sending init frames.
 # Gives the TNC time to switch modes before parameter upload.
 _ACTIVATE_DELAY_MS = 300
+
+# P81e: frames held while the first mode is activated (see ModeManager.__init__).
+_EARLY_FRAMES_MAX = 200
+_HELD_KINDS = (FrameKind.RX_DATA, FrameKind.RX_MONITOR, FrameKind.STATUS_ERR)
 
 
 class ModeManager(QObject):
@@ -96,6 +101,12 @@ class ModeManager(QObject):
         # one without handles_link_frames) - MainWindow gives them to the
         # LinkTable, so a connect in the 300 ms before the activation is not lost.
         self.link_frame_sink: Optional[Callable[[HostFrame], None]] = None
+        # P81e: data ($3x), monitor ($3F) and status-error ($5F) frames that arrive
+        # while the FIRST mode is being activated are held (at most
+        # _EARLY_FRAMES_MAX, oldest dropped first) and handed to the new mode, in
+        # their original order, once it is active.
+        self._early_frames: deque = deque(maxlen=_EARLY_FRAMES_MAX)
+        self._buffer_early: bool = False
         self._init_timer   = QTimer(self)
         self._init_timer.setSingleShot(True)
         self._init_timer.timeout.connect(self._send_init_frames)
@@ -161,6 +172,11 @@ class ModeManager(QObject):
 
         cls = MODE_BY_NAME[name]
         new_mode = mode_instance if mode_instance is not None else cls()
+
+        # P81e: only the first activation holds frames back - when a mode is
+        # being left, what arrives in the window belongs to the old context.
+        self._buffer_early = self._active_mode is None
+        self._early_frames.clear()
 
         # Deactivate current mode
         if self._active_mode is not None:
@@ -247,6 +263,11 @@ class ModeManager(QObject):
                     "Mode %s raised in handle_frame: %s",
                     self._active_mode.name, exc
                 )
+        elif (self._buffer_early and self._pending_mode is not None
+                and frame.kind in _HELD_KINDS):
+            if len(self._early_frames) == self._early_frames.maxlen:
+                logger.warning("ModeManager: early-frame buffer full, oldest dropped")
+            self._early_frames.append(frame)
         else:
             logger.debug("ModeManager: no active mode, frame dropped: %r", frame)
 
@@ -275,6 +296,23 @@ class ModeManager(QObject):
         self.mode_changed.emit(mode.name)
         self.status_message.emit(f"Mode: {mode.name}")
         logger.info("Mode active: %s", mode.name)
+        # P81e: after mode_changed - MainWindow wires the mode's callbacks to the
+        # screen in that handler, so the held frames now reach a displaying mode.
+        self._deliver_early_frames(mode)
+
+    def _deliver_early_frames(self, mode: BaseMode) -> None:
+        """Hand the frames held during the activation to *mode*, oldest first."""
+        held = list(self._early_frames)
+        self._early_frames.clear()
+        self._buffer_early = False
+        if held:
+            logger.info("Delivering %d frame(s) held during the activation of %s",
+                        len(held), mode.name)
+        for frame in held:
+            try:
+                mode.handle_frame(frame)
+            except Exception as exc:
+                logger.error("Mode %s raised in handle_frame: %s", mode.name, exc)
 
     def _handle_cmd_resp(self, frame: HostFrame) -> None:
         """Handle CMD_RESP ($4F) frames.
