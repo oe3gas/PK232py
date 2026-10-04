@@ -562,6 +562,10 @@ class SerialManager(QObject):
     params_upload_required = pyqtSignal()
     status_message         = pyqtSignal(str)
     init_failed             = pyqtSignal()          # P45.2
+    # P81a: the detection chain announces each stage it starts ("step 2b: ..."),
+    # so the window can show what the wake-up is doing. Emitted from the init
+    # thread; the receiver gets it queued in the GUI thread.
+    init_stage              = pyqtSignal(str)
     recovery_finished       = pyqtSignal(bool, str)  # P45.1
 
     def __init__(self, parent=None) -> None:
@@ -1215,6 +1219,7 @@ class SerialManager(QObject):
             # ── STEP 1: Wakeup '*' — banner or cmd: means "already verbose,
             # freshly booted" (the common case right after power-on). ──
             self.status_message.emit("TNC: wakeup...")
+            self.init_stage.emit('step 1: wake-up character')
             logger.info("Init: step 1 - wakeup '*'")
             logger.debug("Init: step 1 TX: %s", _WAKEUP.hex(' '))
             port.write(_WAKEUP)
@@ -1229,6 +1234,7 @@ class SerialManager(QObject):
 
             # ── STEP 2: bare CR — the TNC may already be awake and simply
             # did not answer '*' the way step 1 expected. ──────────────
+            self.init_stage.emit('step 2: carriage return')
             logger.info("Init: step 2 - CR (already awake?)")
             logger.debug("Init: step 2 TX: %s", b"\r".hex(' '))
             port.write(b"\r")
@@ -1263,6 +1269,7 @@ class SerialManager(QObject):
             # attempts do NOT reach Transparent (P66a, B.2 — see
             # escape_converse()'s own corrected docstring); this step
             # only ever escapes Converse. ─────────────────────────────
+            self.init_stage.emit('step 2b: command character (leaving Converse?)')
             logger.info(
                 "Init: step 2b - COMMAND char (Ctrl-C, up to 3x) - "
                 "TNC may be in converse/transparent mode"
@@ -1307,6 +1314,7 @@ class SerialManager(QObject):
             # only fix (see P54.2's own dtr/rts correction, which alone
             # may already prevent this). Two bytes, harmless if the TNC
             # was never stopped. ─────────────────────────────────────
+            self.init_stage.emit('step 2c: XON (TNC flow-stopped?)')
             logger.info("Init: step 2c - XON, then CR (TNC may be flow-stopped)")
             port.write(bytes([_XON_BYTE]))
             port.flush()
@@ -1356,6 +1364,7 @@ class SerialManager(QObject):
             # value byte $00). is_hpoll_echo() below rejects a frame whose
             # payload is exactly the query's own 2-byte mnemonic with no
             # value byte - length and content both checked, not just one.
+            self.init_stage.emit('step 3: asking for Host Mode')
             logger.info("Init: step 3 - HPOLL query frame")
             hpoll_query = build_command(b'HP')
             hpoll_mnemonic_only = hpoll_query[2:-1]   # b'HP' - no value byte
@@ -1454,6 +1463,7 @@ class SerialManager(QObject):
                 # step 3 above writes FRAME_HOST_OFF directly rather than
                 # via exit_host_mode()). Harmless if no TNC is attached at
                 # all — a few bytes go out into nothing.
+                self.init_stage.emit('step 3b: recovery sequence')
                 logger.info("Init: step 3b - recovery sequence (double-SOH + GG)")
                 logger.debug("Init: step 3b TX: %s", FRAME_RECOVERY.hex(' '))
                 port.write(FRAME_RECOVERY)

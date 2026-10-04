@@ -1735,3 +1735,38 @@ class TestMakeHostFrameLinkStatusClassification:
     def test_0x4f_stays_cmd_resp(self):
         frame = _make_host_frame(0x4F, b"MYcall  OE3GAS")
         assert frame.kind == FrameKind.CMD_RESP
+
+
+class TestInitStageSignal:
+    """P81a - the detection chain announces every stage it starts, so the
+    window can say what the wake-up is doing ("Waking up the TNC...")."""
+
+    pytestmark = [pytest.mark.usefixtures("fast_serial_timing")]
+
+    def _stages(self, responder):
+        sm = SerialManager()
+        port = _FakePort(responder)
+        sm._serial = port
+        stages: list[str] = []
+        sm.init_stage.connect(stages.append)      # direct: same thread
+        try:
+            sm._init_tnc_thread()
+        finally:
+            if sm._reader:
+                sm._reader.stop()
+                sm._reader.join(timeout=1.0)
+        return stages
+
+    def test_a_tnc_that_answers_the_star_announces_only_step_1(self):
+        stages = self._stages(
+            lambda d: b"AEA PK-232MBX Ver. 7.1\r\ncmd:" if d == b"*" else b"")
+        assert stages == ["step 1: wake-up character"]
+
+    def test_a_tnc_that_needs_the_cr_announces_step_1_then_2(self):
+        stages = self._stages(lambda d: b"\r\ncmd:" if d == b"\r" else b"")
+        assert stages == ["step 1: wake-up character", "step 2: carriage return"]
+
+    def test_a_silent_tnc_walks_through_every_stage_in_order(self):
+        stages = self._stages(lambda d: b"")
+        numbers = [s.split(":")[0] for s in stages]
+        assert numbers == ["step 1", "step 2", "step 2b", "step 2c", "step 3", "step 3b"]
