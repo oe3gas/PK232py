@@ -1256,7 +1256,7 @@ class PacketBaseScreen(QWidget):
         # on every document AND on rx_display itself, consistently -
         # never a mismatch between the two, which is the one property
         # that actually matters here.
-        self._rx_scroll: dict[object, int] = {}
+        self._rx_scroll: dict[object, "int | None"] = {}   # None = at the bottom
         self._rx_current_key: object = self._ALL_DOC_KEY
         self._show_timestamps = False   # P50 Teil C - set via
                                          # apply_display_settings()
@@ -1618,7 +1618,15 @@ class PacketBaseScreen(QWidget):
         INCOMING one's (defaulting to the bottom for a document that has
         never been scrolled), so switching back and forth does not reset
         your reading position each time."""
-        self._rx_scroll[self._rx_current_key] = self.rx_display.verticalScrollBar().value()
+        # P81a: a view left AT ITS BOTTOM is remembered as None ("follow the
+        # end"), not as a pixel value - lines that arrive while another view
+        # is shown would otherwise sit below the restored position and the
+        # new prompt would be missing from the ALL view.
+        # ensureCursorVisible() leaves the bar a few pixels short of its
+        # maximum (985 of 989 measured), so "at the bottom" allows one line.
+        bar = self.rx_display.verticalScrollBar()
+        at_bottom = bar.maximum() - bar.value() <= max(bar.singleStep(), 10)
+        self._rx_scroll[self._rx_current_key] = None if at_bottom else bar.value()
         new_key = self._ALL_DOC_KEY if self._view_all else self.current_channel()
         new_doc = (
             self._rx_doc_all if new_key == self._ALL_DOC_KEY
@@ -1627,9 +1635,9 @@ class PacketBaseScreen(QWidget):
         self._rx_current_key = new_key
         if self.rx_display.document() is not new_doc:
             self.rx_display.setDocument(new_doc)
-        self.rx_display.verticalScrollBar().setValue(
-            self._rx_scroll.get(new_key, self.rx_display.verticalScrollBar().maximum())
-        )
+        saved = self._rx_scroll.get(new_key)
+        bar = self.rx_display.verticalScrollBar()
+        bar.setValue(bar.maximum() if saved is None else saved)
 
     def _on_rx_channel_switch(self, _new_ch: int) -> None:
         """ChannelBar.channel_changed - re-sync the visible RX document
