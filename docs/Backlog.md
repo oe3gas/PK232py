@@ -100,7 +100,7 @@ The init upload (`ParamsUploader`) sends commands the firmware does not know, e.
 ARQTOL on 01.AUG.91 (T151: `?What?`). Later: filter the upload per firmware, based on
 the mnemonic registry (`comm/mnemonic_registry.py`) and T151/T160/T161.
 
-### P81c / P82a (T169 round 3) — done, T169 recheck open (2026-10-04)
+### P81c / P82a (T169 round 3) — ✅ done, T169 PASS (2026-10-04)
 
 P81c: after a restart the links found by CSTATUS stay confirmed - the CO round of the Host Mode
 entry waits for the mode activation (frames sent before are dropped by `ModeManager.on_frame()`).
@@ -145,7 +145,7 @@ differing `MYCALL` deferred until the next initialisation (verbose). Add a set t
 `host_params_probe`, with the operator's go for a changed callsign; then `MYCALL` can be
 caught up in Host Mode like `AX25L2V2`.
 
-### Restart with live Packet links (P81) — A-D done, P81a done, T169 open (2026-10-04)
+### Restart with live Packet links (P81) — ✅ DONE, T169 PASS (2026-10-04)
 
 Operator wish: when PK232PY connects and the TNC did NOT print a banner, check for
 active Packet sessions (`CSTATUS`, `OPMODE`, `VHF`) before the parameter upload,
@@ -168,7 +168,7 @@ waits for the next init (Host Mode `ML` unmeasured, see the entry above). (3) Th
 "N parameters deferred" line goes to the monitor log and the verbose terminal when the
 upload ends, and again to MON and the status bar after the switch to Host Mode. (4)
 "Waking up the TNC..." blinking notice with seconds and stage during the detection chain.
-Open: T169 (hardware). Not done: automatic `CONVERSE` after the init (the table's
+T169 PASS (04.10.2026). Not done: automatic `CONVERSE` after the init (the table's
 `converse` is False after the chain; the operator resumes by hand).
 
 ### Mnemonic audit (P80) — Parts A-C, E, P80a and the Part D tool done; T166/T167 open (2026-10-03)

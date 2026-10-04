@@ -3461,7 +3461,7 @@ connect completes, "RX: n lines" follows the shown document. Result: ✅ PASS (d
 
 ---
 
-### T169 — App: live links found at start-up (P81, after T168)
+### T169 — App: live links found at start-up (P81, after T168)  ✅ PASS
 
 Device B. Needs P81 parts A-C (built 04.10.2026, `test_live_links_p81.py`). First run 04.10.2026
 aborted after step 3 with four findings, fixed as P81a (see Backlog): ALL view scroll position,
@@ -3493,7 +3493,8 @@ the last link ends (DI on both channels) `MYCALL` and `AX25L2V2` are set (monito
 | 1b | After step 1: disconnect both channels (chip menu) | deferred parameters applied, "TNC differs from parameters" gone, `MYCALL` reads back | ⬜ |
 | 3 | Control: TNC off/on, start PK232PY | no check (banner), no links | ⬜ |
 
-**Status:** ⬜ OPEN — software done, hardware run pending.
+**Status:** ✅ PASS (retest 04.10.2026, device B: chips confirmed after a restart; AX25L2V2 deferred while
+a link existed and caught up after the disconnect).
 
 ---
 
