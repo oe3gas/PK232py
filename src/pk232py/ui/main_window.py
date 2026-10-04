@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -46,7 +47,8 @@ from ..comm.params_uploader import DEFER_WITH_LINKS, ParamsUploader
 from .tnc_config_dialog import TncConfigDialog, TncConfig
 from pk232py.comm.param_applier import ParamApplier, SerialParamTransport, format_result
 from pk232py.comm.host_params import (
-    BAND_HF, BAND_VHF, band_of_mode, band_value, norm_value,
+    BAND_HF, BAND_VHF, band_of_mode, band_value, norm_value, param_by_name,
+    parse_host_answer,
 )
 from pk232py.comm.verbose_parse import HF_PACKET_FIELDS, VerboseSync
 from pk232py.colors import role_colors
@@ -170,6 +172,16 @@ class MainWindow(QMainWindow):
         # existed, applied when the last link ends.
         self._live_link_check_pending: bool = False
         self._deferred_params: set[str] = set()
+        # P81a: what the TNC held for the deferrable parameters when the init
+        # found links (verbose query; None = unreadable), the CO round that
+        # confirms "all channels free" before the catch-up, and the one-time
+        # MYCALL/Host Mode notice.
+        self._live_tnc_values: dict = {}
+        self._co_pending: set[int] = set()
+        self._mycall_host_notice_shown: bool = False
+        # P81a: "Waking up the TNC" notice during the detection chain.
+        self._wake_started: Optional[float] = None
+        self._wake_stage: str = ""
         # Application config (parameters for all modes)
         from pk232py.config import ConfigManager
         self._config_mgr = ConfigManager()
@@ -1175,6 +1187,7 @@ class MainWindow(QMainWindow):
         self._deferred_timer.timeout.connect(self._apply_deferred_params)
         self._live_links_found.connect(self._on_live_links_found)
         self._params_deferred.connect(self._on_params_deferred)
+        self._build_wake_overlay()
 
     # ------------------------------------------------------------------
     # Signal wiring
@@ -1193,6 +1206,7 @@ class MainWindow(QMainWindow):
         self._serial.params_upload_required.connect(self._on_params_upload_required)
         self._serial.raw_data_received.connect(self._on_raw_data_received)
         self._serial.init_failed.connect(self._on_init_failed)
+        self._serial.init_stage.connect(self._on_init_stage)
         self._serial.recovery_finished.connect(self._on_recovery_finished)
 
  # SerialManager ModeManager (frame dispatch)
@@ -1297,6 +1311,7 @@ class MainWindow(QMainWindow):
         not something that can be guaranteed by getting this one call
         site right.
         """
+        self._end_wake_overlay()
         self._log_monitor("[SYS] TNC in verbose mode")
         # P81 A: the next _run_param_upload() checks for live links once.
         self._live_link_check_pending = True
@@ -1483,7 +1498,7 @@ class MainWindow(QMainWindow):
         n = uploader.upload(defer=defer)
         self._params_uploaded_this_session = True
         if uploader.deferred_names:
-            self._params_deferred.emit(list(uploader.deferred_names))
+            self._params_deferred.emit(self._split_deferred(uploader.deferred_names))
         self._log_monitor(f"[SYS] {n} parameters uploaded")
         # P40.3: spot-check MYCALL/PACLEN/MAXFRAME against AppConfig,
         # still in verbose mode, before Host Mode entry - cheap
@@ -1525,13 +1540,73 @@ class MainWindow(QMainWindow):
             )
             self._vt_input.setFocus()
 
+    # ------------------------------------------------------------------
+    # P81a - "Waking up the TNC" notice
+    # ------------------------------------------------------------------
+
+    # Shown only when the chain takes longer than this (a TNC that answers the
+    # first wake-up character would otherwise flash the notice for a moment).
+    _WAKE_SHOW_AFTER_S = 0.8
+
+    def _build_wake_overlay(self) -> None:
+        """A big blinking label in the middle of the central widget. Parented
+        QTimer (rule 15); the label never takes mouse or keyboard input."""
+        label = QLabel(self.centralWidget())
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        label.hide()
+        self._wake_label = label
+        self._wake_timer = QTimer(self)
+        self._wake_timer.setInterval(250)
+        self._wake_timer.timeout.connect(self._tick_wake_overlay)
+
+    def _on_init_stage(self, stage: str) -> None:
+        """SerialManager.init_stage - the detection chain started a stage."""
+        if self._wake_started is None:
+            self._wake_started = time.monotonic()
+            self._wake_timer.start()
+        self._wake_stage = stage
+
+    def _tick_wake_overlay(self, elapsed: Optional[float] = None) -> None:
+        if self._wake_started is None:
+            return
+        if elapsed is None:
+            elapsed = time.monotonic() - self._wake_started
+        if elapsed < self._WAKE_SHOW_AFTER_S:
+            return
+        label = self._wake_label
+        label.setText(f"Waking up the TNC...  {int(elapsed)} s\n{self._wake_stage}")
+        bright = int(elapsed * 2) % 2 == 0          # 0.5 s on / 0.5 s off
+        label.setStyleSheet(
+            "QLabel { font-size: 22pt; font-weight: bold; padding: 24px 40px;"
+            " border: 3px solid #e8b23a; border-radius: 10px; color: #111111;"
+            f" background: {'#ffcf4d' if bright else '#b08a2a'}; }}")
+        label.adjustSize()
+        area = self.centralWidget().rect()
+        label.move((area.width() - label.width()) // 2,
+                   (area.height() - label.height()) // 2)
+        label.raise_()
+        label.show()
+
+    def _end_wake_overlay(self) -> None:
+        self._wake_started = None
+        self._wake_timer.stop()
+        self._wake_label.hide()
+
+    # ------------------------------------------------------------------
+    # P81 - links the TNC already held at start-up
+    # ------------------------------------------------------------------
+
     def _check_live_links(self) -> tuple:
         """P81 A - runs in the upload thread, right after the detection chain
         and before the upload. Asks verbose CSTATUS / OPMODE / VHF unless the
         TNC sent a banner (it has just woken up: no connections) and hands the
         result to the GUI thread (_live_links_found). Returns the parameter
         names the upload must hold back (P81 B): DEFER_WITH_LINKS while links
-        exist, else ()."""
+        exist, else (). P81a: what the TNC holds for those names is read first
+        (verbose), so only a real difference is deferred (_split_deferred)."""
         if not self._live_link_check_pending:
             return ()
         self._live_link_check_pending = False
@@ -1543,8 +1618,25 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.exception("live-link check failed - uploading as usual")
             return ()
+        if links.connections:
+            ask = getattr(self._serial, "query_verbose_value", None)
+            self._live_tnc_values = {
+                name: (ask(name) if ask else None) for name in DEFER_WITH_LINKS}
         self._live_links_found.emit(links)
         return DEFER_WITH_LINKS if links.connections else ()
+
+    def _split_deferred(self, held_back: list) -> dict:
+        """P81a: of the names the upload held back, those whose TNC value
+        really differs from the configuration ("pending") and those that are
+        already right ("same"). An unreadable value counts as different."""
+        pending, same = [], []
+        for name in held_back:
+            tnc = self._live_tnc_values.get(name)
+            if ParamsUploader.matches_config(self._app_config, name, tnc):
+                same.append(name)
+            else:
+                pending.append(name)
+        return {"pending": pending, "same": same}
 
     def _on_live_links_found(self, links) -> None:
         """GUI-thread half of the live-link check (P81 A + C): the links go
@@ -1566,36 +1658,144 @@ class MainWindow(QMainWindow):
             # unconfirmed and runs the CO round - the usual Host Mode entry.
             self._link_table.mode_name = links.mode_name
 
-    def _on_params_deferred(self, names) -> None:
-        """P81 B: the upload held these back because links exist."""
-        self._deferred_params.update(names)
-        self._tnc_unapplied.update(names)
+    def _on_params_deferred(self, payload) -> None:
+        """P81 B: the upload held these back because links exist. Only the
+        names whose TNC value really differs stay pending (P81a)."""
+        pending, same = payload["pending"], payload["same"]
+        for name in same:
+            line = (f"[SYS] {name} is already {self._live_tnc_values.get(name)} in "
+                    f"the TNC - nothing to defer")
+            self._log_monitor(line)
+            self._vt_append(f"{line}\n", color=self._sys_color())
+        if not pending:
+            return
+        self._deferred_params.update(pending)
+        self._tnc_unapplied.update(pending)
         self._refresh_params_differ_label()
-        line = (f"[SYS] {len(names)} parameters deferred until all connections "
-                f"are closed: {', '.join(names)}")
-        self._log_monitor(line)
-        self._vt_append(f"{line}\n", color=self._sys_color())
+        line = self._deferred_text()
+        # Written HERE: the monitor log and the verbose terminal. The verbose
+        # terminal is hidden once the view switches to Host Mode, so the same
+        # text is shown again in MON and the status bar after that switch
+        # (_show_deferred_notice, called from _update_host_mode_ui).
+        self._log_monitor(f"[SYS] {line}")
+        self._vt_append(f"[SYS] {line}\n", color=self._sys_color())
+        if self._serial.is_host_mode:
+            self._show_deferred_notice(self._modes.current_mode_name)
+
+    def _deferred_text(self) -> str:
+        names = sorted(self._deferred_params)
+        return (f"{len(names)} parameters deferred until all connections are "
+                f"closed: {', '.join(names)}")
+
+    def _show_deferred_notice(self, mode_name: Optional[str]) -> None:
+        """P81a: the deferred-parameters notice in MON (Packet screens only)
+        and the status bar - after the view has changed to Host Mode."""
+        if not self._deferred_params:
+            return
+        text = self._deferred_text()
+        self.statusBar().showMessage(text, 30000)
+        screen = self._opmode_screens.get(mode_name or "")
+        if mode_name in ("HF Packet", "VHF Packet") and hasattr(screen, "append_channel_data"):
+            screen.append_channel_data(MON_VIEW, f"*** {text} ***", color=self._sys_color())
+
+    def _begin_co_round(self) -> None:
+        """Host Mode: ask CO on all ten channels. The answers feed the
+        LinkTable (_on_mode_link_status); when the last one is in and every
+        channel is free, the deferred parameters are tried (P81a: the
+        confirmation is the CO answer, not the DISCONNECTED message)."""
+        self._co_pending = set(range(10))
+        for ch in range(10):
+            self._serial.send_channel_command(ch, b'CO')
+
+    def _param_transport(self) -> SerialParamTransport:
+        return SerialParamTransport(
+            self._serial,
+            in_converse=lambda: self._link_table.converse,
+            io_channel_connected=self._io_channel_connected,
+        )
+
+    def _verbose_links_free(self) -> bool:
+        """Verbose mode: CSTATUS confirms that no link is left (P81a). In
+        Converse CSTATUS cannot be asked - the table has to do."""
+        ask = getattr(self._serial, "query_live_links", None)
+        if ask is None or self._link_table.converse:
+            return True
+        links = ask()
+        if links.connections:
+            self._link_table.on_verbose_cstatus(links.cstatus)
+            return False
+        return True
+
+    def _read_tnc_value(self, transport, name: str) -> Optional[str]:
+        """The value the TNC holds for *name* now, or None (unreadable, or
+        unmeasured in Host Mode - MYCALL's `ML` has never been measured)."""
+        if self._serial.is_host_mode:
+            param = param_by_name(name)
+            release = transport.release()
+            if param is None or release not in param.verified_releases:
+                return None
+            return parse_host_answer(
+                param, transport.host_exchange(param.mnemonic, b""))
+        if self._link_table.converse:
+            return None
+        return transport.verbose_query(name)
 
     def _apply_deferred_params(self) -> None:
-        """P81 B: the last connection has ended - set what the init upload
-        held back. The configuration snapshot "before" differs from the
-        current one in exactly those parameters, so ParamApplier (Host Mode
-        or verbose, with read-back) sends only them."""
+        """P81 B/a - the last connection has ended (confirmed free): set what
+        the init upload held back. Each value is READ first; one that already
+        matches is done. The "before" snapshot carries the TNC's real value,
+        so the result lines (and the dialog) show it as the starting value.
+        MYCALL cannot be set in Host Mode (unmeasured): it waits for the next
+        initialisation, with a message. A refusal ($09) leaves the name
+        deferred; the next confirmed "all free" tries again."""
         if not self._deferred_params or not self._serial.is_connected:
             return
         if any(link.state != "free" for link in self._link_table.channels):
             return
-        before = copy.deepcopy(self._app_config)
-        if "MYCALL" in self._deferred_params:
-            before.hf_packet.mycall = "NOCALL"      # never uploaded -> differs
-        if "AX25L2V2" in self._deferred_params:
-            before.hf_packet.ax25l2v2 = not self._app_config.hf_packet.ax25l2v2
-        self._log_monitor(
-            f"[SYS] all connections closed - applying deferred parameters: "
-            f"{', '.join(sorted(self._deferred_params))}")
-        self._apply_changed_params(before, "Deferred")
-        # What the TNC took leaves; a refusal stays for the next "closed".
+        host = self._serial.is_host_mode
+        if host and self._co_pending:
+            return                       # the CO round re-triggers us
+        if not host and not self._verbose_links_free():
+            return
+        transport = self._param_transport()
+        cfg = self._app_config
+        before = copy.deepcopy(cfg)
+        names = []
+        for name in sorted(self._deferred_params):
+            if name == "MYCALL" and host:
+                if not self._mycall_host_notice_shown:
+                    self._mycall_host_notice_shown = True
+                    tnc = self._live_tnc_values.get("MYCALL")
+                    self._log_monitor(
+                        f"[SYS] MYCALL stays deferred: the TNC has {tnc!r}, the "
+                        f"configuration {cfg.hf_packet.mycall!r}. MYCALL cannot be "
+                        f"set in Host Mode (not measured) - it is set at the next "
+                        f"initialisation.")
+                    self.statusBar().showMessage(
+                        "MYCALL differs - it is set at the next initialisation "
+                        "(Host Mode cannot set it)", 30000)
+                continue
+            actual = self._read_tnc_value(transport, name)
+            if ParamsUploader.matches_config(cfg, name, actual):
+                self._tnc_unapplied.discard(name)
+                self._log_monitor(f"[SYS] {name} is already {actual} in the TNC - done")
+                continue
+            if name == "MYCALL":
+                before.hf_packet.mycall = actual or "NOCALL"
+            elif name == "AX25L2V2":
+                if actual is not None:
+                    before.hf_packet.ax25l2v2 = norm_value(actual, "bool") == "Y"
+                else:
+                    before.hf_packet.ax25l2v2 = not cfg.hf_packet.ax25l2v2
+            names.append(name)
+        if names:
+            self._log_monitor(
+                f"[SYS] all channels free - applying deferred parameters: "
+                f"{', '.join(names)}")
+            self._apply_changed_params(before, "Deferred", retry_on_busy=True)
+        # What the TNC took leaves; a refusal stays for the next "all free".
         self._deferred_params &= self._tnc_unapplied
+        self._refresh_params_differ_label()
 
     def _on_params_upload_required(self) -> None:
         """Called when TNC rebooted same as verbose_mode_ready but with log message."""
@@ -1619,6 +1819,7 @@ class MainWindow(QMainWindow):
         not call disconnect_port() on this path) - Recovery needs it, and
         both Recovery and Connect must stay usable as the way out.
         """
+        self._end_wake_overlay()
         self._set_mode_indicator("error")
         self._sb_mode.setText("Mode: ERROR")
         self._mode_combo.setEnabled(False)
@@ -2280,7 +2481,12 @@ class MainWindow(QMainWindow):
         via comm.link_status.decode_link_status() and feeds LinkTable.
         on_link_status() - the confirming half of a verbose<->Host Mode
         reconciliation round (paired with mark_unconfirmed(), C.2)."""
-        self._link_table.on_link_status(decode_link_status(ctl, data))
+        status = decode_link_status(ctl, data)
+        self._link_table.on_link_status(status)
+        if status.channel in self._co_pending:
+            self._co_pending.discard(status.channel)
+            if not self._co_pending and self._deferred_params:
+                self._deferred_timer.start(300)       # P81a: round complete
 
     def _wire_screen_buttons(self) -> None:
         """Connect SEND and RECEIVE buttons of the active screen
@@ -4876,15 +5082,11 @@ class MainWindow(QMainWindow):
         return (0 <= ch < len(self._link_table.channels)
                 and self._link_table.channels[ch].state == "connected")
 
-    def _apply_changed_params(self, before, label: str) -> None:
+    def _apply_changed_params(self, before, label: str, retry_on_busy: bool = False) -> None:
         """Set what changed between *before* and the config NOW in the TNC
         (ParamApplier: Host Mode directly per Host frame, verbose with
         read-back, nothing when not connected) and show the result."""
-        transport = SerialParamTransport(
-            self._serial,
-            in_converse=lambda: self._link_table.converse,
-            io_channel_connected=self._io_channel_connected,
-        )
+        transport = self._param_transport()
         pactor = bool(getattr(self._serial, "has_pactor", True))
         results = ParamApplier(transport).apply(
             before, self._app_config, has_pactor=pactor,
@@ -4908,6 +5110,10 @@ class MainWindow(QMainWindow):
                 self._tnc_unapplied.discard(r.name)
             else:
                 self._tnc_unapplied.add(r.name)
+                if retry_on_busy and ("$09" in r.reason or "not while connected" in r.reason.lower()):
+                    # P81a: "not while connected" - stays deferred, tried again
+                    # at the next confirmed "all channels free"; no dialog.
+                    continue
                 failed.append(format_result(r))
         self._refresh_params_differ_label()
         if failed:
@@ -5112,8 +5318,13 @@ class MainWindow(QMainWindow):
         """LinkTable event (P76): ring on a new connect if the bell is on."""
         if event == "connected" and self._app_config.appearance.connect_bell:
             self._ring_connect_bell()
-        elif event == "closed" and self._deferred_params:
-            self._deferred_timer.start(500)     # P81 B
+        elif event == "closed" and self._deferred_params and not self._co_pending:
+            # P81a: in Host Mode the DISCONNECTED message is not enough - ask CO
+            # on every channel; the catch-up starts when all answers say free.
+            if self._serial.is_host_mode:
+                self._begin_co_round()
+            else:
+                self._deferred_timer.start(500)
 
     def _ring_connect_bell(self) -> None:
         """The ONE place that makes the connect sound: the application's
@@ -5461,6 +5672,7 @@ class MainWindow(QMainWindow):
             # or init_failed (failure) decides which comes next.
             self._set_mode_indicator("connecting")
         else:
+            self._end_wake_overlay()
             self._sb_port.setText("Port: ---")
             self._sb_baud.setText("Baud: ---")
             self._sb_mode.setText("Mode: OFFLINE")
@@ -5539,9 +5751,12 @@ class MainWindow(QMainWindow):
             # Packet mode via table.mode_name.
             if target_mode_name in ("HF Packet", "VHF Packet"):
                 self._link_table.mark_unconfirmed()
-                for _ch in range(10):
-                    self._serial.send_channel_command(_ch, b'CO')
+                self._begin_co_round()
+            # P81a: the view is in Host Mode now - say again, in MON and the
+            # status bar, what the init had to defer.
+            self._show_deferred_notice(target_mode_name)
         else:
+            self._co_pending.clear()
             self._sb_mode.setText("Mode: VERBOSE")
             self._set_mode_indicator("verbose")
             self._unproto_path_sent = None   # P70: re-send UN after the next Host Mode entry
