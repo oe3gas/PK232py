@@ -3433,21 +3433,40 @@ aborted start on device A, `13.SEP.95`, nothing measured.)
   Fixed: the run sets USERS 10 (verbose) before the calls and restores it afterwards.
 - Rerun needed: B0, then B.
 
-**Status:** ⬜ OPEN — A and C measured (device B); B0 and B to be rerun with the fixed tool.
+**Final result 04.10.2026 (device B, all logs with banner):** A `20261003_220612`,
+B0 `20261004_121932`, B `20261004_124240`, C `20261004_122301`.
+
+| Variant | Links kept by init + upload | Init | MYCALL / AX25L2V2 |
+|---|---|---|---|
+| A (verbose, 2 links) | yes | - | `?not while connected` |
+| B0 (Host Mode, no links) | - | chain 11.3 s, ends verbose ready | accepted |
+| B (Host Mode, 2 links) | yes | chain 11.3 s, ends verbose ready | `?not while connected` |
+| C (Converse, ch0) | yes | - | `?not while connected` |
+
+In every variant with links the app's init (detection chain + upload) keeps the
+connections. Only `MYCALL` and `AX25L2V2` are refused, and only while a link exists
+(B0 without links: accepted). P81 B therefore holds back exactly these two.
+
+**Status:** ✅ PASS (device B, 04.10.2026).
 
 ---
 
 ### T169 — App: live links found at start-up (P81, after T168)
 
-Device B. Needs P81 parts A-C (not built yet - they wait for T168).
+Device B. Needs P81 parts A-C (built 04.10.2026, `test_live_links_p81.py`; hardware not run yet).
+Step 1 also checks part B: the `[SYS]` line "2 parameters deferred until all connections
+are closed: MYCALL, AX25L2V2" and the red status field "TNC differs from parameters"; after
+the last link ends (DI on both channels) `MYCALL` and `AX25L2V2` are set (monitor line
+"all connections closed - applying deferred parameters") and the field disappears.
 
 | # | Do | Expected | Result |
 |---|---|---|---|
 | 1 | Two links as in T168; end PK232PY in the Task Manager; start it again | both chips connected, `[SYS]` line "2 active connections found: …", NO bell | ⬜ |
 | 2 | Same, but end PK232PY normally | as 1 | ⬜ |
+| 1b | After step 1: disconnect both channels (chip menu) | deferred parameters applied, "TNC differs from parameters" gone, `MYCALL` reads back | ⬜ |
 | 3 | Control: TNC off/on, start PK232PY | no check (banner), no links | ⬜ |
 
-**Status:** ⬜ OPEN — blocked by T168 and P81 A-C.
+**Status:** ⬜ OPEN — software done, hardware run pending.
 
 ---
 

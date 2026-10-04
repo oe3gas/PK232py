@@ -96,15 +96,21 @@ The init upload (`ParamsUploader`) sends commands the firmware does not know, e.
 ARQTOL on 01.AUG.91 (T151: `?What?`). Later: filter the upload per firmware, based on
 the mnemonic registry (`comm/mnemonic_registry.py`) and T151/T160/T161.
 
-### Restart with live Packet links (P81) — Teil 0 built, A-C wait for T168 (2026-10-03)
+### Restart with live Packet links (P81) — A-D done, T169 open (2026-10-04)
 
 Operator wish: when PK232PY connects and the TNC did NOT print a banner, check for
 active Packet sessions (`CSTATUS`, `OPMODE`, `VHF`) before the parameter upload,
 show them (LinkTable, Packet mask, `[SYS]` line, no bell) and let the upload
 respect them. Unmeasured: what the full upload (~70 commands) does to a live link.
-Built: `hw_check.py restart_probe` (T168). Open: T168 (device B), then P81 A-C
-(`Init: check for live Packet links…`, `Init: parameter upload respects live
-links`, `MainWindow: show live links found at start-up`), tests, T169.
+Built: `hw_check.py restart_probe` (T168, PASS on device B 04.10.2026: the init keeps the
+links; only `MYCALL` and `AX25L2V2` are refused with `?not while connected`).
+Done: A `SerialManager.query_live_links()` (CSTATUS, OPMODE, VHF; skipped after a
+banner), B `ParamsUploader.upload(defer=DEFER_WITH_LINKS)` + `MainWindow` catch-up on the
+LinkTable event `closed` (status field "TNC differs from parameters" until then), C the
+links go into the LinkTable, the Packet mode follows VHF, the I/O channel is the visible
+one, then the usual Host Mode entry with the CO round; no bell. D `test_live_links_p81.py`.
+Open: T169 (hardware). Not done: automatic `CONVERSE` after the init (the table's
+`converse` is False after the chain; the operator resumes by hand).
 
 ### Mnemonic audit (P80) — Parts A-C, E, P80a and the Part D tool done; T166/T167 open (2026-10-03)
 

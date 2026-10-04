@@ -153,6 +153,19 @@ Grows over time.
   now retries up to 3 times, 1.5s apart, specifically to give a lagging
   interpreter time to catch up before reporting failure (P66b, Teil B).
 
+- **Live links at start-up (P81, 2026-10-04; T168 PASS on device B).** The app's init (detection
+  chain + upload) does NOT drop connections the TNC already holds - not from verbose, Host Mode
+  (chain 11.3 s, ends verbose ready) or Converse. Only `MYCALL` and `AX25L2V2` are refused
+  (`?not while connected`), and only while a link exists. So: after the chain and before the
+  upload, unless a banner was seen (`SerialManager.banner_seen_this_init`), the upload thread
+  calls `SerialManager.query_live_links()` (verbose `CSTATUS`, `OPMODE`, `VHF`; direct reads).
+  The result goes to the GUI thread by signal (`MainWindow._live_links_found`), never by touching
+  widgets from the thread. `ParamsUploader.upload(defer=DEFER_WITH_LINKS)` holds back exactly
+  those two; `LinkTable` fires the event `closed` when the last busy channel becomes free
+  (`reset()` is silent), and `MainWindow._apply_deferred_params()` then sets them through
+  `ParamApplier`. The found links are state, not an event: no connect bell (P76). The Packet
+  mode is chosen from `VHF` only; an unreadable `VHF` names no band.
+
 ### TNC / firmware v7.1
 
 - **A measurement finding is valid for the device it was measured on —
