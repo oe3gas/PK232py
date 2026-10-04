@@ -177,7 +177,9 @@ Grows over time.
   every set; `$09` / `?not while connected` sets `ApplyResult.busy` and the caller defers.
   **P81d:** for `$4x`/`$5x` frames this no longer matters: `ModeManager.link_frame_sink` hands them to
   the LinkTable whenever the active mode is not a Packet mode (`handles_link_frames`). Data, monitor,
-  echo and status-error frames are still dropped while no mode is active.
+  echo frames are still dropped while no mode is active. **P81e:** data, monitor and status-error
+  frames of the FIRST activation window are held (`ModeManager._early_frames`, 200 max) and delivered
+  after `mode_changed`; a mode switch from an active mode does not buffer.
   The detection chain announces each stage through `SerialManager.init_stage` ("step 2b: ...");
   `MainWindow` shows "Waking up the TNC..." (blinking, seconds, stage) when the chain takes
   more than 0.8 s, and removes it on `verbose_mode_ready`, `init_failed` or a lost connection.

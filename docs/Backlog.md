@@ -116,7 +116,11 @@ while none was active (ECHO, RX_DATA, RX_MONITOR, LINK_STATUS, LINK_MSG, STATUS_
 and a non-Packet mode ignores link frames. Now `ModeManager.link_frame_sink` (set by
 `MainWindow._on_unrouted_link_frame()`) gets every `$4x`/`$5x` frame the active mode does not
 handle itself (`handles_link_frames`, set on `HFPacketMode`, so a Packet mode is not fed twice).
-Still dropped while no mode is active: data (`$3x`), monitor, echo, status errors.
+P81e: data (`$3x`), monitor (`$3F`) and status-error (`$5F`) frames that arrive while the FIRST mode
+is being activated are held in `ModeManager._early_frames` (200 at most, oldest dropped) and handed to
+the new mode in their original order after `mode_changed` (callbacks are wired by then). A switch from
+an active mode does not buffer. Still dropped while no mode is active and none is being activated:
+everything; echo is never held.
 
 ### Packet RX as a data stream (P82) — ✅ T170 PASS (2026-10-04)
 
