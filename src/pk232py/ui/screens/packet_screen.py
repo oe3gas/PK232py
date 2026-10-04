@@ -65,6 +65,7 @@ v0.1 channel model (see CLAUDE.md "Channel model"):
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from PyQt6.QtCore import (
@@ -79,7 +80,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QFrame, QSizePolicy,
     QScrollArea, QSplitter, QButtonGroup,
     QDialog, QFormLayout, QDialogButtonBox,
-    QStackedLayout, QMenu, QCompleter,
+    QStackedLayout, QMenu, QCompleter, QStackedWidget,
 )
 
 from .opmode_rtty_base import (
@@ -91,6 +92,8 @@ from .opmode_rtty_base import (
 from .screen_focus_controller import is_keyboard_input_widget
 from .ui_theme import get_theme, recolor_document
 from ...maildrop.protocol import validate_callsign
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -1771,13 +1774,28 @@ class PacketBaseScreen(QWidget):
         merged ALL document (compact "n|" tag, P50 Teil B/C)."""
         if not ts:
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        bar = self.rx_display.verticalScrollBar()
+        before = (bar.value(), bar.maximum())
         self._rx_write_line(self._rx_docs[channel], None, text, is_html, color, ts)
         self._rx_write_line(
             self._rx_doc_all, self._all_view_tag(channel), text, is_html, color, ts
         )
-        if self.rx_display.document() in (self._rx_docs[channel], self._rx_doc_all):
+        scrolled = self.rx_display.document() in (self._rx_docs[channel], self._rx_doc_all)
+        if scrolled:
             self.rx_display.moveCursor(QTextCursor.MoveOperation.End)
             self.rx_display.ensureCursorVisible()
+        if logger.isEnabledFor(logging.DEBUG):
+            # P81b: T169 - a line that arrived but is not on screen. Says which
+            # document is shown, where the scroll bar was before/after, and
+            # whether this mask is the one the stack shows.
+            stack = self.parentWidget()
+            current = (stack.currentWidget() is self
+                       if isinstance(stack, QStackedWidget) else None)
+            logger.debug(
+                "RX append ch=%s shown=%r scrolled=%s bar before=%s after=%s "
+                "stack_current=%s visible=%s text=%r",
+                channel, self._rx_current_key, scrolled, before,
+                (bar.value(), bar.maximum()), current, self.isVisible(), text[:40])
 
     # ------------------------------------------------------------------
     # UI construction
