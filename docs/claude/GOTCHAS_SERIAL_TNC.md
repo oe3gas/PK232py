@@ -165,6 +165,15 @@ Grows over time.
   (`reset()` is silent), and `MainWindow._apply_deferred_params()` then sets them through
   `ParamApplier`. The found links are state, not an event: no connect bell (P76). The Packet
   mode is chosen from `VHF` only; an unreadable `VHF` names no band.
+  **P81a:** a name is only deferred if the TNC value (verbose query at the init) really differs
+  from the configuration; at the catch-up the value is read again (Host Mode `AV`, verbose) and
+  the starting value of the result lines is that real value. The catch-up in Host Mode starts
+  when a CO round (`MainWindow._begin_co_round()`) has all ten channels answered free - not on
+  the DISCONNECTED message. `$09` / `?not while connected` keeps the name deferred, no dialog.
+  `MYCALL` is never set in Host Mode (`ML` unmeasured): it waits for the next init.
+  The detection chain announces each stage through `SerialManager.init_stage` ("step 2b: ...");
+  `MainWindow` shows "Waking up the TNC..." (blinking, seconds, stage) when the chain takes
+  more than 0.8 s, and removes it on `verbose_mode_ready`, `init_failed` or a lost connection.
 
 ### TNC / firmware v7.1
 

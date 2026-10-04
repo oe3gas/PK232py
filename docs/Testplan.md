@@ -3453,7 +3453,12 @@ connections. Only `MYCALL` and `AX25L2V2` are refused, and only while a link exi
 
 ### T169 — App: live links found at start-up (P81, after T168)
 
-Device B. Needs P81 parts A-C (built 04.10.2026, `test_live_links_p81.py`; hardware not run yet).
+Device B. Needs P81 parts A-C (built 04.10.2026, `test_live_links_p81.py`). First run 04.10.2026
+aborted after step 3 with four findings, fixed as P81a (see Backlog): ALL view scroll position,
+deferral only for a real difference (real TNC value shown as the starting value), the deferred
+notice in MON and the status bar after the switch to Host Mode, the "Waking up the TNC..." notice.
+Rerun: also check the notice (blinking, seconds, stage) during a slow wake-up and that the
+prompt of the TinyBox appears in the ALL view after the connect on chip 1.
 Step 1 also checks part B: the `[SYS]` line "2 parameters deferred until all connections
 are closed: MYCALL, AX25L2V2" and the red status field "TNC differs from parameters"; after
 the last link ends (DI on both channels) `MYCALL` and `AX25L2V2` are set (monitor line

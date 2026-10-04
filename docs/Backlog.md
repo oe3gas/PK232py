@@ -100,7 +100,16 @@ The init upload (`ParamsUploader`) sends commands the firmware does not know, e.
 ARQTOL on 01.AUG.91 (T151: `?What?`). Later: filter the upload per firmware, based on
 the mnemonic registry (`comm/mnemonic_registry.py`) and T151/T160/T161.
 
-### Restart with live Packet links (P81) — A-D done, T169 open (2026-10-04)
+### Host Mode set test for `ML` (MYCALL) — open (2026-10-04)
+
+`MYCALL` in Host Mode (`ML`, kind `call`) has never been measured: `host_params_probe`
+only queries text parameters and never sets `call` rows. Until it is measured, P81a keeps a
+differing `MYCALL` deferred until the next initialisation (verbose). Add a set test for
+`ML` (query, set a test callsign, read back, verbose cross-check, restore) to
+`host_params_probe`, with the operator's go for a changed callsign; then `MYCALL` can be
+caught up in Host Mode like `AX25L2V2`.
+
+### Restart with live Packet links (P81) — A-D done, P81a done, T169 open (2026-10-04)
 
 Operator wish: when PK232PY connects and the TNC did NOT print a banner, check for
 active Packet sessions (`CSTATUS`, `OPMODE`, `VHF`) before the parameter upload,
@@ -113,6 +122,16 @@ banner), B `ParamsUploader.upload(defer=DEFER_WITH_LINKS)` + `MainWindow` catch-
 LinkTable event `closed` (status field "TNC differs from parameters" until then), C the
 links go into the LinkTable, the Packet mode follows VHF, the I/O channel is the visible
 one, then the usual Host Mode entry with the CO round; no bell. D `test_live_links_p81.py`.
+**P81a (T169 findings, 04.10.2026):** (1) ALL view: the prompt without CR was in both
+documents; the real fault was the restored scroll position (a view left at its bottom
+now stays at its bottom). (2) Deferral only for a real difference: the TNC value is read
+(verbose) before deferring and (Host Mode `AV` / verbose) before catching up; the
+starting value in the result lines is the TNC's real one; `$09` stays deferred without a
+dialog and is retried when a CO round reports all ten channels free; `MYCALL` differing
+waits for the next init (Host Mode `ML` unmeasured, see the entry above). (3) The
+"N parameters deferred" line goes to the monitor log and the verbose terminal when the
+upload ends, and again to MON and the status bar after the switch to Host Mode. (4)
+"Waking up the TNC..." blinking notice with seconds and stage during the detection chain.
 Open: T169 (hardware). Not done: automatic `CONVERSE` after the init (the table's
 `converse` is False after the chain; the operator resumes by hand).
 
