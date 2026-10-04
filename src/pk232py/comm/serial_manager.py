@@ -52,6 +52,7 @@ from .constants import (
     ctl_channel,
 )
 from .devices import SOURCE_BANNER, SOURCE_INFERRED, infer_release
+from .link_status import LiveLinks, build_live_links
 from .pk232_hostmode_sub import HostModeWorker as _HostModeWorker
 from .pk232_hostmode_sub import escape_converse as _escape_converse
 from .frame import (
@@ -728,6 +729,37 @@ class SerialManager(QObject):
         run — the only safe trigger for "the TNC was just powered on
         and its MailDrop is empty"."""
         return self._banner_this_init and self.tnc_defaults is True
+
+    @property
+    def banner_seen_this_init(self) -> bool:
+        """True if THIS init/recovery run captured a boot banner (P81 A).
+        A banner means the TNC has just woken up, so it holds no
+        connections and the live-link check is skipped. Unlike
+        fresh_boot_defaults it does not care what the banner said about
+        default values; unlike tnc_banner it is not sticky."""
+        return self._banner_this_init
+
+    def query_live_links(self, timeout: float = 3.0) -> LiveLinks:
+        """Ask verbose CSTATUS, OPMODE and VHF (P81 A) - the links the TNC
+        holds although this application has only just connected. Call it
+        in verbose mode, after the detection chain and before the
+        parameter upload (same discipline as detect_maildrop()).
+
+        Direct synchronous reads through _write_verbose_wait_text(), no
+        queue (CLAUDE.md rule 1). A query that gets no answer leaves its
+        part empty - LiveLinks never guesses a link or a band."""
+        def ask(command: str) -> str:
+            _found, raw = self._write_verbose_wait_text(
+                f"{command}\r\n".encode("ascii"), timeout=timeout)
+            return raw.decode("ascii", errors="replace")
+
+        cstatus = ask("CSTATUS")
+        opmode = ask("OPMODE")
+        vhf = ask("VHF")
+        links = build_live_links(cstatus, opmode, vhf)
+        logger.info("live links: %s; OPMODE %r, VHF %r",
+                    links.summary(), links.opmode, links.vhf)
+        return links
 
     def consume_fresh_boot_defaults(self) -> bool:
         """Return fresh_boot_defaults and clear it (P60). An event is

@@ -197,3 +197,68 @@ def extract_partner(text: str) -> str:
         return tail.split()[0] if tail else ""
     tokens = text.strip().split()
     return tokens[0] if tokens else ""
+
+
+# ---------------------------------------------------------------------------
+# P81 A - links the TNC already holds when the application connects
+# ---------------------------------------------------------------------------
+
+def _verbose_value(name: str, text: str) -> Optional[str]:
+    """First value token of the verbose answer line '<Name>  <value>' (the TNC
+    answers in its own mixed case, 'VHf  ON'; the echoed command line is all
+    upper case and is skipped). None for an error line or no matching line."""
+    for line in (text or "").splitlines():
+        tokens = line.strip().split()
+        if not tokens:
+            continue
+        if tokens[0].startswith("?"):
+            return None
+        if tokens[0].upper() == name.upper() and tokens[0] != name.upper():
+            return tokens[1] if len(tokens) > 1 else None
+    return None
+
+
+@dataclass
+class LiveLinks:
+    """What verbose CSTATUS / OPMODE / VHF said right after the detection
+    chain (P81 A). *cstatus* is parse_cstatus() of the answer; *vhf* is None
+    when VHF was not readable (the band is then not named, never guessed)."""
+    cstatus: dict
+    opmode: str = ""
+    vhf: Optional[bool] = None
+
+    @property
+    def connections(self) -> dict:
+        """{channel: partner} of every channel CSTATUS shows connected."""
+        return {ch: partner for ch, (_io, _text, partner) in sorted(self.cstatus.items())
+                if partner}
+
+    @property
+    def mode_name(self) -> Optional[str]:
+        """The Packet mode the links belong to; None without links or without
+        a readable VHF answer. Only Packet has channels that CSTATUS can show
+        connected, so the links themselves prove the Packet opmode."""
+        if not self.connections or self.vhf is None:
+            return None
+        return "VHF Packet" if self.vhf else "HF Packet"
+
+    def summary(self) -> str:
+        conns = self.connections
+        if not conns:
+            return "no active connections"
+        n = len(conns)
+        listing = ", ".join(f"ch{ch} {partner}" for ch, partner in conns.items())
+        band = f" ({self.mode_name})" if self.mode_name else ""
+        return f"{n} active connection{'s' if n != 1 else ''} found: {listing}{band}"
+
+
+def build_live_links(cstatus_text: str, opmode_text: str = "", vhf_text: str = "") -> LiveLinks:
+    """LiveLinks from the raw answers of the three verbose queries."""
+    value = _verbose_value("VHF", vhf_text)
+    vhf = None if value is None else value.upper() in ("ON", "Y", "YES", "1")
+    # The echoed command line is exactly 'OPMODE'; the answer is mixed case.
+    opmode = " ".join(
+        line.strip() for line in (opmode_text or "").splitlines()
+        if line.strip() and line.strip() != "OPMODE" and not line.strip().startswith("cmd:")
+    )
+    return LiveLinks(cstatus=parse_cstatus(cstatus_text), opmode=opmode, vhf=vhf)
