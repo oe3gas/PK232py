@@ -7,6 +7,9 @@ line, an extra blank line and a 9-character indent, and the TinyBox's fixed
 length packets broke words in the middle ("Download the b" / "rocast
 dictionary", "K n K" / "ill message", "TS = Ty" / "pe (P private"). Measured on
 the document content (toPlainText()).
+
+The bytes are the OBSERVED ones, verbatim: "brocast" is the TinyBox's own word
+(confirmed by the operator), not a typo to correct.
 """
 
 from __future__ import annotations
@@ -47,7 +50,7 @@ def ch_text(screen, channel) -> str:
 
 class TestPacketBoundariesFromTheScreenshot:
     @pytest.mark.parametrize("first, second, joined", [
-        (b"Download the b", b"roadcast dictionary", "Download the broadcast dictionary"),
+        (b"Download the b", b"rocast dictionary", "Download the brocast dictionary"),
         (b"K n K", b"ill message", "K n Kill message"),
         (b"TS = Ty", b"pe (P private", "TS = Type (P private"),
     ])
@@ -58,12 +61,12 @@ class TestPacketBoundariesFromTheScreenshot:
         assert all_text(screen) == f"1│{joined}"
 
     def test_the_whole_help_text_in_fixed_length_packets(self, screen):
-        text = ("Commands: Download the broadcast dictionary\r"
+        text = ("Commands: Download the brocast dictionary\r"
                 "K = Kill message\rTS = Type (P private)\r")
         for i in range(0, len(text), 14):                  # fixed length, mid-word
             rx(screen, 1, text[i:i + 14].encode("ascii"))
         lines = ch_text(screen, 1).split("\n")
-        assert lines[:3] == ["Commands: Download the broadcast dictionary",
+        assert lines[:3] == ["Commands: Download the brocast dictionary",
                              "K = Kill message", "TS = Type (P private)"]
         assert not any(line.startswith(" ") for line in lines)     # no indent
         assert "" not in lines[:3]                                 # no extra blank line
@@ -174,5 +177,5 @@ class TestStatusLine:
         screen = w._opmode_screens["HF Packet"]
         w._opmode_stack.setCurrentWidget(screen)
         w._on_packet_data_received(1, b"Download the b")
-        w._on_packet_data_received(1, b"roadcast dictionary\r\nnext\r")
-        assert screen._rx_docs[1].toPlainText() == "Download the broadcast dictionary\nnext\n"
+        w._on_packet_data_received(1, b"rocast dictionary\r\nnext\r")
+        assert screen._rx_docs[1].toPlainText() == "Download the brocast dictionary\nnext\n"
