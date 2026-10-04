@@ -3458,7 +3458,7 @@ aborted after step 3 with four findings, fixed as P81a (see Backlog): ALL view s
 deferral only for a real difference (real TNC value shown as the starting value), the deferred
 notice in MON and the status bar after the switch to Host Mode, the "Waking up the TNC..." notice.
 Rerun: also check the notice (blinking, seconds, stage) during a slow wake-up and that the
-prompt of the TinyBox appears in the ALL view after the connect on chip 1.
+prompt of the TinyBox appears in the ALL view after the connect on chip 1. Second report 04.10.2026: the prompt was still missing in ALL with ALL active the whole time (CH click shows it). `test_packet_all_view_prompt_p81b.py` replays that sequence (real show()/resize(), measured cursor rectangle) and is GREEN - not reproduced, nothing changed. Rerun with DEBUG logging: the `RX append ch=… shown=… bar before=… after=… stack_current=… visible=…` lines (`pk232py.ui.screens.packet_screen`) tell whether the line does not arrive or is only not scrolled into view.
 Step 1 also checks part B: the `[SYS]` line "2 parameters deferred until all connections
 are closed: MYCALL, AX25L2V2" and the red status field "TNC differs from parameters"; after
 the last link ends (DI on both channels) `MYCALL` and `AX25L2V2` are set (monitor line
