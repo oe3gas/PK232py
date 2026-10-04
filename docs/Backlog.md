@@ -20,6 +20,10 @@ tries to execute it, expecting it to describe current work.
 
 ## Priority 1 — Next implementation sprint
 
+### GUI access from the upload thread — open, HIGH (CLAUDE.md rule 3, 2026-10-04)
+
+`_run_param_upload` accesses widgets from the upload thread (`_vt_append` and others); move every GUI access to the GUI thread via signals. (P81 added its own parts through signals; the old calls remain.)
+
 ### Connect bell — implemented, T159 open (P76, 2026-10-02)
 
 A bell (`QApplication.beep()`, `MainWindow._ring_connect_bell()`) sounds when a

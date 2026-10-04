@@ -3441,7 +3441,7 @@ B0 `20261004_121932`, B `20261004_124240`, C `20261004_122301`.
 | A (verbose, 2 links) | yes | - | `?not while connected` |
 | B0 (Host Mode, no links) | - | chain 11.3 s, ends verbose ready | accepted |
 | B (Host Mode, 2 links) | yes | chain 11.3 s, ends verbose ready | `?not while connected` |
-| C (Converse, ch0) | yes | - | `?not while connected` |
+| C (Converse, ch0) | yes | 3.3 s (`20261003_230503`), 3.5 s (`20261004_122301`) | `?not while connected` |
 
 In every variant with links the app's init (detection chain + upload) keeps the
 connections. Only `MYCALL` and `AX25L2V2` are refused, and only while a link exists
