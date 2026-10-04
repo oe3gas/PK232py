@@ -109,6 +109,21 @@ from the real TNC value, `$09` is deferred like P81 (generic for every `HF_PACKE
 `MainWindow._apply_changed_params()` / `_apply_deferred_params()`); MYCALL in Host Mode stays
 deferred (see the `ML` set test entry).
 
+### Theme colours of the Packet side panel (P77c) — done (2026-10-05)
+
+MHEARD callsigns were fixed `#66ee66` / `#88ccff` (unreadable on Air). New roles per theme in
+`colors.RoleColors`: `heard_direct_color`, `heard_digi_color`, and `panel_ok/sys/err/dim_color`
+(CONNECTED / CALLING / DISCONNECTED / STBY and the parameter hint) - each >= 4.5 : 1 on BOTH the
+display background and the widget window colour (`#f0f0f0` / `#1e2830`; some of the old role colours
+fall below 4.5 there: Dark ok 4.38, Dark err 4.17, light sys 4.39, Retro dim 4.15 - they stay as they
+are for the RX documents). Connected MHEARD rows use `panel_ok_color` (Dark: `#45b045`, the chip
+fill `#3a9e3a` is 4.38 as text on the panel). Theme change repaints rows, status and hint
+(`PacketBaseScreen.refresh_theme_colors()`). The recolour map of already written text takes only
+the four document roles (sys/ok/err/dim). Stale "no CSTATUS in Host Mode" docstrings corrected.
+**Found, not changed:** white text on the CONNECTED chip fill is 3.42 : 1; `STATUS_STYLES` in
+`amtor_screen.py` / `pactor_screen.py` and the fax/signal screens still have fixed `#888888` /
+`#3a9e3a` text colours.
+
 ### P81d - link frames reach the LinkTable in every mode — done (2026-10-04)
 
 `ModeManager.on_frame()` gave every frame except CMD_RESP to the ACTIVE mode and dropped it
