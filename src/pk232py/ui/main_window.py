@@ -178,6 +178,9 @@ class MainWindow(QMainWindow):
         # MYCALL/Host Mode notice.
         self._live_tnc_values: dict = {}
         self._co_pending: set[int] = set()
+        # P81c: the CO round of a Host Mode entry that had to start a Packet
+        # mode waits for the activation (ModeManager drops frames before it).
+        self._co_round_after_activation: bool = False
         self._mycall_host_notice_shown: bool = False
         # P81a: "Waking up the TNC" notice during the detection chain.
         self._wake_started: Optional[float] = None
@@ -1749,6 +1752,32 @@ class MainWindow(QMainWindow):
             return None
         return transport.verbose_query(name)
 
+    def _set_before_value(self, before, name: str, actual: Optional[str],
+                          band: Optional[str]) -> bool:
+        """Put the TNC's real value (or, unreadable, a different one) into the
+        "before" snapshot so ParamApplier sees *name* as changed and shows the
+        real starting value. False if *name* has no configuration field here."""
+        entry = HF_PACKET_FIELDS.get(name)
+        if entry is None:
+            return False
+        field, kind = entry
+        if isinstance(field, dict):
+            if band is None:
+                return False
+            field = field[band]
+        current = getattr(self._app_config.hf_packet, field)
+        if kind == "bool":
+            value = (norm_value(actual, "bool") == "Y") if actual is not None else not current
+        elif kind == "int":
+            try:
+                value = int(actual)
+            except (TypeError, ValueError):
+                value = current + 1
+        else:
+            value = actual or ""
+        setattr(before.hf_packet, field, value)
+        return True
+
     def _apply_deferred_params(self) -> None:
         """P81 B/a - the last connection has ended (confirmed free): set what
         the init upload held back. Each value is READ first; one that already
@@ -1785,23 +1814,19 @@ class MainWindow(QMainWindow):
                         "(Host Mode cannot set it)", 30000)
                 continue
             actual = self._read_tnc_value(transport, name)
-            if ParamsUploader.matches_config(cfg, name, actual):
+            band = band_of_mode(self._modes.current_mode_name)
+            if ParamsUploader.matches_config(cfg, name, actual, band):
                 self._tnc_unapplied.discard(name)
                 self._log_monitor(f"[SYS] {name} is already {actual} in the TNC - done")
                 continue
-            if name == "MYCALL":
-                before.hf_packet.mycall = actual or "NOCALL"
-            elif name == "AX25L2V2":
-                if actual is not None:
-                    before.hf_packet.ax25l2v2 = norm_value(actual, "bool") == "Y"
-                else:
-                    before.hf_packet.ax25l2v2 = not cfg.hf_packet.ax25l2v2
+            if not self._set_before_value(before, name, actual, band):
+                continue
             names.append(name)
         if names:
             self._log_monitor(
                 f"[SYS] all channels free - applying deferred parameters: "
                 f"{', '.join(names)}")
-            self._apply_changed_params(before, "Deferred", retry_on_busy=True)
+            self._apply_changed_params(before, "Deferred")
         # What the TNC took leaves; a refusal stays for the next "all free".
         self._deferred_params &= self._tnc_unapplied
         self._refresh_params_differ_label()
@@ -2117,6 +2142,10 @@ class MainWindow(QMainWindow):
         if not self._serial.is_host_mode:
             self._vt_input.setFocus()
         self._update_maildrop_gate_ui()
+        if self._co_round_after_activation and name in ("HF Packet", "VHF Packet"):
+            self._co_round_after_activation = False
+            if self._serial.is_host_mode:
+                self._begin_co_round()
 
     def _wire_mode_callbacks(self) -> None:
         """Connect the active mode's data callbacks to the UI."""
@@ -5097,7 +5126,7 @@ class MainWindow(QMainWindow):
         return (0 <= ch < len(self._link_table.channels)
                 and self._link_table.channels[ch].state == "connected")
 
-    def _apply_changed_params(self, before, label: str, retry_on_busy: bool = False) -> None:
+    def _apply_changed_params(self, before, label: str) -> None:
         """Set what changed between *before* and the config NOW in the TNC
         (ParamApplier: Host Mode directly per Host frame, verbose with
         read-back, nothing when not connected) and show the result."""
@@ -5114,6 +5143,7 @@ class MainWindow(QMainWindow):
             self._log_monitor(f"[SYS] {label} parameters saved - nothing changed")
             return
         failed = []
+        newly_deferred = []
         for r in results:
             line = f"[SYS] {format_result(r)}"
             self._log_monitor(line)
@@ -5125,12 +5155,22 @@ class MainWindow(QMainWindow):
                 self._tnc_unapplied.discard(r.name)
             else:
                 self._tnc_unapplied.add(r.name)
-                if retry_on_busy and ("$09" in r.reason or "not while connected" in r.reason.lower()):
-                    # P81a: "not while connected" - stays deferred, tried again
-                    # at the next confirmed "all channels free"; no dialog.
+                if r.busy and r.name in HF_PACKET_FIELDS:
+                    # P82a: "not while connected" ($09) is no error - the value
+                    # is deferred like in P81 and caught up when a CO round
+                    # reports every channel free. No dialog.
+                    if r.name not in self._deferred_params:
+                        newly_deferred.append(r.name)
+                    self._deferred_params.add(r.name)
                     continue
                 failed.append(format_result(r))
         self._refresh_params_differ_label()
+        if newly_deferred:
+            notice = self._deferred_text()
+            self._log_monitor(f"[SYS] {notice}")
+            if not self._serial.is_host_mode:
+                self._vt_append(f"[SYS] {notice}\n", color=self._sys_color())
+            self._show_deferred_notice(self._modes.current_mode_name)
         if failed:
             self._show_params_not_taken(label, failed)
 
@@ -5766,12 +5806,20 @@ class MainWindow(QMainWindow):
             # Packet mode via table.mode_name.
             if target_mode_name in ("HF Packet", "VHF Packet"):
                 self._link_table.mark_unconfirmed()
-                self._begin_co_round()
+                if self._modes.current_mode_name == target_mode_name:
+                    self._begin_co_round()
+                else:
+                    # P81c (T169): set_mode() above activates ASYNCHRONOUSLY and
+                    # ModeManager.on_frame() drops every frame while no mode is
+                    # active - the CO answers came back in milliseconds and were
+                    # lost, so the links stayed unconfirmed. Ask after activation.
+                    self._co_round_after_activation = True
             # P81a: the view is in Host Mode now - say again, in MON and the
             # status bar, what the init had to defer.
             self._show_deferred_notice(target_mode_name)
         else:
             self._co_pending.clear()
+            self._co_round_after_activation = False
             self._sb_mode.setText("Mode: VERBOSE")
             self._set_mode_indicator("verbose")
             self._unproto_path_sent = None   # P70: re-send UN after the next Host Mode entry

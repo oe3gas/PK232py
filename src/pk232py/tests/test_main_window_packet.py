@@ -694,6 +694,11 @@ class TestLinkTableHostModeCarryOver:
         w._link_table.mode_name = "VHF Packet"
 
         w._update_host_mode_ui(True)
+        # P81c: no Packet mode is active yet, ModeManager drops frames until the
+        # activation - the CO round is asked when the mode has been activated.
+        assert [c for c in w._serial.calls if c[0] == "ch_cmd" and c[2] == b'CO'] == []
+
+        w._modes._send_init_frames()                 # the 300 ms activation, now
 
         ch_cmds = [c for c in w._serial.calls if c[0] == "ch_cmd" and c[2] == b'CO']
         assert sorted(c[1] for c in ch_cmds) == list(range(10))
