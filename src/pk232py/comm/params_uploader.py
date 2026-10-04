@@ -26,7 +26,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Iterable, Optional
 
-from pk232py.comm.host_params import BAND_HF, BAND_PARAMS, BAND_VHF, band_value
+from pk232py.comm.host_params import BAND_HF, BAND_PARAMS, BAND_VHF, band_value, norm_value
 
 if TYPE_CHECKING:
     from pk232py.comm.serial_manager import SerialManager
@@ -209,6 +209,19 @@ class ParamsUploader:
     # Three parameters confirmed (24.09.2026) to reliably answer a bare
     # verbose-mode query - see verify().
     _VERIFY_SAMPLE = ("MYCALL", "PACLEN", "MAXFRAME")
+
+    @staticmethod
+    def matches_config(config: "AppConfig", name: str, tnc_value: Optional[str]) -> bool:
+        """P81a: does what the TNC holds for *name* (a DEFER_WITH_LINKS name)
+        equal the configuration? An unreadable value (None) never matches."""
+        if tnc_value is None:
+            return False
+        hf = config.hf_packet
+        if name == "MYCALL":
+            return tnc_value.strip().upper() == hf.mycall.upper()
+        if name == "AX25L2V2":
+            return norm_value(tnc_value, "bool") == ("Y" if hf.ax25l2v2 else "N")
+        return False
 
     def verify(self) -> tuple[int, int]:
         """P40.3: spot-check a small sample of just-uploaded parameters
