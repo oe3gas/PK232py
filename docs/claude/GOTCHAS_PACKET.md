@@ -638,6 +638,12 @@
   Appearance at all** — named here because the spec explicitly asked
   to check, not because it was fixed; left alone deliberately (not
   asked for).
+- **Received channel data is a stream, not a line per frame (P82, 2026-10-04).** The TNC cuts data
+  into packets of ITS length anywhere (TinyBox: mid-word). `PacketBaseScreen.append_received_data()`
+  breaks lines only at CR/LF/CRLF; `_open_line[doc key]` remembers whose line is open at the end of
+  each document, `_cr_last[channel]` the CR/LF pair split over two frames. Anything that is a line of
+  its own (`_rx_append()`: system, link, TX echo, monitor) first ends the open lines
+  (`_close_open_lines()`). `MainWindow._on_packet_data_received()` must pass the text unstripped.
 - **A Packet screen owns its RX documents; `_switch_opmode()` must not replace them (P81b, 2026-10-04).** `MainWindow._shared_rx_doc` carries the RX document from one screen to the next (RTTY-style screens). For a Packet screen it replaced `_rx_doc_all` on the first activation, so new lines were written into documents the widget did not show (T169). The Packet screen now attaches its document only through `PacketBaseScreen._sync_rx_document()` (build and every activation); it is neither taken from nor given to the shared slot. Found by comparing `rx_display.document() is _rx_doc_all` (identity), not the remembered key.
 - **Connect event != state change (P76, 2026-10-02).** `LinkTable.subscribe()`
   reports STATES; the same `connected` state also arises from reconciliation

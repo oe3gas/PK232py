@@ -3451,6 +3451,16 @@ connections. Only `MYCALL` and `AX25L2V2` are refused, and only while a link exi
 
 ---
 
+### T170 — Packet RX as a data stream (P82)
+
+Device B, TinyBox help in the ALL and CH views. `test_packet_rx_stream_p82.py` replays the packet
+boundaries of the T169 screenshot. Expected on the device: words are not cut at packet
+boundaries, no blank line or indent between frames, the prompt without CR is visible at once, ALL
+shows timestamp (if on) and channel tag at the start of a line only, "Partner" changes when the
+connect completes, "RX: n lines" follows the shown document. Result: ⬜ OPEN.
+
+---
+
 ### T169 — App: live links found at start-up (P81, after T168)
 
 Device B. Needs P81 parts A-C (built 04.10.2026, `test_live_links_p81.py`). First run 04.10.2026

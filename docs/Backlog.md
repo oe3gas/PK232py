@@ -100,6 +100,20 @@ The init upload (`ParamsUploader`) sends commands the firmware does not know, e.
 ARQTOL on 01.AUG.91 (T151: `?What?`). Later: filter the upload per firmware, based on
 the mnemonic registry (`comm/mnemonic_registry.py`) and T151/T160/T161.
 
+### Packet RX as a data stream (P82) — done, T170 open (2026-10-04)
+
+T169 screenshot (TinyBox help, ALL): each `$3x` frame was a finished line plus a blank line
+plus a 9-character indent, and the TinyBox's fixed-length packets broke words. Now
+`PacketBaseScreen.append_received_data()`: a line ends only at CR, LF or CRLF (also when CR and
+LF arrive in two frames); an unfinished line is shown at once and continued by the next frame of
+the same channel; in ALL the timestamp and channel tag stand at the start of a line only, another
+channel's data ends the open line and starts its own. System, link, echo and monitor lines
+(`append_channel_data()`, `append_monitor_data()`) stay lines of their own (still with the blank
+line after them) and end an open line first. Status line: "Partner" is `ChannelBar.partner()`,
+which `MainWindow._apply_link_to_chips()` fills from the LinkTable (the only caller) - it used to be
+read only on a channel switch and is now refreshed after every table change; "RX: n lines" was a
+fixed label never updated, now counted in the shown document.
+
 ### Host Mode set test for `ML` (MYCALL) — open (2026-10-04)
 
 `MYCALL` in Host Mode (`ML`, kind `call`) has never been measured: `host_params_probe`
