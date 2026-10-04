@@ -103,13 +103,18 @@ def configure_display_colors(bg: str, rx: str, tx: str, roles=None) -> None:
 
 def get_theme() -> dict:
     """The widget palette for the current display background, plus the
-    configured ``rx_color`` / ``tx_color``, the display ``bg_color`` and the
-    role colours ``sys_color`` / ``ok_color`` / ``err_color`` / ``dim_color``."""
+    configured ``rx_color`` / ``tx_color``, the display ``bg_color``, the
+    role colours ``sys_color`` / ``ok_color`` / ``err_color`` / ``dim_color`` and
+    the side-panel colours ``heard_*_color`` / ``panel_*_color`` (P77c)."""
     palette = THEMES["light" if is_light_background(_display_bg) else "dark"]
     r = _display_roles
     return dict(palette, rx_color=_display_rx, tx_color=_display_tx,
                 bg_color=_display_bg, sys_color=r.sys_color, ok_color=r.ok_color,
-                err_color=r.err_color, dim_color=r.dim_color)
+                err_color=r.err_color, dim_color=r.dim_color,
+                heard_direct_color=r.heard_direct_color,
+                heard_digi_color=r.heard_digi_color,
+                panel_ok_color=r.panel_ok_color, panel_sys_color=r.panel_sys_color,
+                panel_err_color=r.panel_err_color, panel_dim_color=r.panel_dim_color)
 
 
 def set_theme(name: str) -> None:

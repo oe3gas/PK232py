@@ -102,20 +102,41 @@ class RoleColors:
     ok_color   success lines (green)
     err_color  error lines (red)
     dim_color  muted text: the MON view, timestamps, the [CR] echo, the [^T] marker
+
+    P77c - the Packet screen's side panel and status line sit on the WIDGET
+    window colour (#f0f0f0 / #1e2830), not on the display background, and some
+    role colours above fall below 4.5 : 1 there (dark ok 4.38, dark err 4.17,
+    light sys 4.39). These have their own values, each >= 4.5 : 1 on BOTH:
+    heard_direct_color  MHEARD callsign heard directly ("*")
+    heard_digi_color    MHEARD callsign heard via a digipeater
+    panel_ok_color      CONNECTED (status line, MHEARD rows of connected stations)
+    panel_sys_color     CALLING
+    panel_err_color     DISCONNECTED
+    panel_dim_color     STBY and the parameter hint
     """
     sys_color: str
     ok_color: str
     err_color: str
     dim_color: str
+    heard_direct_color: str
+    heard_digi_color: str
+    panel_ok_color: str
+    panel_sys_color: str
+    panel_err_color: str
+    panel_dim_color: str
 
 
 # Dark keeps the colours the application always used (nothing changes there);
 # the light themes get darker variants (>= 4.5 : 1 on white), Retro stays amber.
 THEME_ROLE_COLORS: dict[str, RoleColors] = {
-    "dark":  RoleColors("#ffaa00", "#3a9e3a", "#f44747", "#aaaaaa"),
-    "mono":  RoleColors("#a35f00", "#1e6b1e", "#a31515", "#595959"),
-    "retro": RoleColors("#ffaa00", "#7fd34a", "#ff5a3c", "#a8803a"),
-    "air":   RoleColors("#a35f00", "#1e6b1e", "#a31515", "#595959"),
+    "dark":  RoleColors("#ffaa00", "#3a9e3a", "#f44747", "#aaaaaa",
+                        "#66ee66", "#88ccff", "#45b045", "#ffaa00", "#ff6060", "#aaaaaa"),
+    "mono":  RoleColors("#a35f00", "#1e6b1e", "#a31515", "#595959",
+                        "#262626", "#595959", "#1e6b1e", "#8f5400", "#a31515", "#595959"),
+    "retro": RoleColors("#ffaa00", "#7fd34a", "#ff5a3c", "#a8803a",
+                        "#7fd34a", "#ffb000", "#7fd34a", "#ffaa00", "#ff5a3c", "#c09a50"),
+    "air":   RoleColors("#a35f00", "#1e6b1e", "#a31515", "#595959",
+                        "#0b6e4f", "#0b4f8a", "#1e6b1e", "#8f5400", "#a31515", "#595959"),
 }
 
 
