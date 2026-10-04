@@ -1263,6 +1263,13 @@ class PacketBaseScreen(QWidget):
         self._rx_current_key: object = self._ALL_DOC_KEY
         self._show_timestamps = False   # P50 Teil C - set via
                                          # apply_display_settings()
+        # P82: received channel data is a stream. _open_line[doc key] = the
+        # channel whose line is still open (not ended by CR/LF) at the end of
+        # that document, or None. Keys: a channel number (its own document)
+        # and _ALL_DOC_KEY. _cr_last[channel]: the last chunk ended with CR,
+        # so a following LF is the second half of one CRLF.
+        self._open_line: dict[object, object] = {}
+        self._cr_last: dict[int, bool] = {}
 
         # Per-channel TX draft buffer (P9). ch -> (text, cursor_pos).
         # _tx_channel is populated once self.channel_bar exists (see
@@ -1511,6 +1518,8 @@ class PacketBaseScreen(QWidget):
         for doc in self._rx_docs.values():
             doc.clear()
         self._rx_doc_all.clear()
+        self._open_line.clear()
+        self._cr_last.clear()
         self._rx_scroll.clear()
         self._sync_rx_document()
 
@@ -1641,6 +1650,7 @@ class PacketBaseScreen(QWidget):
         saved = self._rx_scroll.get(new_key)
         bar = self.rx_display.verticalScrollBar()
         bar.setValue(bar.maximum() if saved is None else saved)
+        self._update_rx_size()
 
     def _on_rx_channel_switch(self, _new_ch: int) -> None:
         """ChannelBar.channel_changed - re-sync the visible RX document
@@ -1767,36 +1777,135 @@ class PacketBaseScreen(QWidget):
                 cursor.insertText(f"         {line}\n")
             cursor.insertText("\n")
 
-    def _rx_append(self, channel: "int | str", text: str, is_html: bool, color: str,
-                    ts: str = "") -> None:
-        """Write one line into *channel*'s own document (no prefix - the
-        channel is already named by which chip/view is selected) and the
-        merged ALL document (compact "n|" tag, P50 Teil B/C)."""
-        if not ts:
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    def append_received_data(self, channel: int, text: str) -> None:
+        """Received connected-channel data as a STREAM (P82). A line ends only
+        at CR, LF or CRLF in the text; the TNC cuts the data into packets of
+        its own length anywhere, so a frame may start or end in the middle of a
+        word or line. An unfinished line is shown at once and continued by the
+        next frame of the same channel. In the ALL view the timestamp and the
+        channel tag stand only at the start of a line; another channel's data,
+        a system line or a monitor line ends an open line first."""
+        if self._cr_last.get(channel) and text.startswith("\n"):
+            text = text[1:]                      # second half of a CRLF split in two frames
+        self._cr_last[channel] = text.endswith("\r")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if not text:
+            return
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        color = get_theme()["rx_color"]
         bar = self.rx_display.verticalScrollBar()
         before = (bar.value(), bar.maximum())
-        self._rx_write_line(self._rx_docs[channel], None, text, is_html, color, ts)
-        self._rx_write_line(
-            self._rx_doc_all, self._all_view_tag(channel), text, is_html, color, ts
-        )
+        self._stream_into(self._rx_docs[channel], channel, None, channel, text, color, ts)
+        self._stream_into(self._rx_doc_all, self._ALL_DOC_KEY,
+                          self._all_view_tag(channel), channel, text, color, ts)
+        self._rx_after_write(channel, before, text)
+
+    def _stream_into(self, doc, key, tag: "str | None", owner, text: str,
+                     color: str, ts: str) -> None:
+        """Append *text* (breaks already normalised to LF) to *doc*. *key*
+        names the document in _open_line; *owner* is the channel the text
+        belongs to. A line that is open for ANOTHER owner is ended first."""
+        cursor = QTextCursor(doc)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        open_for = self._open_line.get(key)
+        if open_for is not None and open_for != owner:
+            cursor.insertText("\n")
+            open_for = None
+        muted = QTextCharFormat()
+        muted.setForeground(QColor(self._muted_rx_color()))
+        body = QTextCharFormat()
+        body.setForeground(QColor(color))
+        segments = text.split("\n")
+        for i, segment in enumerate(segments):
+            if segment:
+                if open_for is None:             # start of a line: timestamp and tag
+                    cursor.setCharFormat(muted)
+                    if self._show_timestamps:
+                        cursor.insertText(f"[{ts}] ")
+                    if tag is not None:
+                        cursor.insertText(f"{tag}│")
+                    open_for = owner
+                cursor.setCharFormat(body)
+                cursor.insertText(segment)
+            if i < len(segments) - 1:
+                cursor.insertText("\n")
+                open_for = None
+        self._open_line[key] = open_for
+
+    def _close_open_lines(self, channel: "int | str") -> None:
+        """End the open line of *channel*'s own document and of the ALL
+        document (a line-mode write follows)."""
+        self._cr_last[channel] = False
+        for key, doc in ((channel, self._rx_docs[channel]),
+                         (self._ALL_DOC_KEY, self._rx_doc_all)):
+            if self._open_line.get(key) is not None:
+                cursor = QTextCursor(doc)
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+                cursor.insertText("\n")
+                self._open_line[key] = None
+
+    def _rx_after_write(self, channel, before, text: str) -> None:
+        """Scroll the shown document to its end and log what happened (the
+        DEBUG line of P81b). Shared by the stream and the line-mode writers."""
+        bar = self.rx_display.verticalScrollBar()
         scrolled = self.rx_display.document() in (self._rx_docs[channel], self._rx_doc_all)
         if scrolled:
             self.rx_display.moveCursor(QTextCursor.MoveOperation.End)
             self.rx_display.ensureCursorVisible()
-        if logger.isEnabledFor(logging.DEBUG):
-            # P81b: T169 - a line that arrived but is not on screen. Says which
-            # document is shown, where the scroll bar was before/after, and
-            # whether this mask is the one the stack shows.
-            stack = self.parentWidget()
-            current = (stack.currentWidget() is self
-                       if isinstance(stack, QStackedWidget) else None)
-            logger.debug(
-                "RX append ch=%s shown=%r doc_is_all=%s scrolled=%s bar before=%s "
-                "after=%s stack_current=%s visible=%s text=%r",
-                channel, self._rx_current_key,
-                self.rx_display.document() is self._rx_doc_all, scrolled, before,
-                (bar.value(), bar.maximum()), current, self.isVisible(), text[:40])
+        self._log_rx_append(channel, before, scrolled, text)
+
+    def _rx_append(self, channel: "int | str", text: str, is_html: bool, color: str,
+                    ts: str = "") -> None:
+        """Write one LINE into *channel*'s own document (no prefix - the
+        channel is already named by which chip/view is selected) and the
+        merged ALL document (compact "n|" tag, P50 Teil B/C). System, link,
+        monitor and echo lines; an open stream line is ended first (P82)."""
+        if not ts:
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        bar = self.rx_display.verticalScrollBar()
+        before = (bar.value(), bar.maximum())
+        self._close_open_lines(channel)
+        self._rx_write_line(self._rx_docs[channel], None, text, is_html, color, ts)
+        self._rx_write_line(
+            self._rx_doc_all, self._all_view_tag(channel), text, is_html, color, ts
+        )
+        self._rx_after_write(channel, before, text)
+
+    def _log_rx_append(self, channel, before, scrolled: bool, text: str) -> None:
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        # P81b: T169 - a line that arrived but is not on screen. Says which
+        # document is shown, where the scroll bar was before/after, and
+        # whether this mask is the one the stack shows.
+        bar = self.rx_display.verticalScrollBar()
+        stack = self.parentWidget()
+        current = (stack.currentWidget() is self
+                   if isinstance(stack, QStackedWidget) else None)
+        logger.debug(
+            "RX append ch=%s shown=%r doc_is_all=%s scrolled=%s bar before=%s "
+            "after=%s stack_current=%s visible=%s text=%r",
+            channel, self._rx_current_key,
+            self.rx_display.document() is self._rx_doc_all, scrolled, before,
+            (bar.value(), bar.maximum()), current, self.isVisible(), text[:40])
+
+    def _update_rx_size(self) -> None:
+        """Status bar "RX: n lines" - counted in the document that is SHOWN
+        (P82); an open, unfinished last line counts, the empty block after a
+        final break does not."""
+        label = getattr(self, "lbl_sb_rxsize", None)
+        if label is None:
+            return
+        doc = self.rx_display.document()
+        lines = doc.blockCount()
+        if lines and doc.lastBlock().length() <= 1:
+            lines -= 1
+        label.setText(f"RX: {lines} lines")
+
+    def refresh_status_bar(self) -> None:
+        """Re-read channel name and partner of the visible channel (P82):
+        MainWindow calls it after every LinkTable change, not only after a
+        channel switch."""
+        self._update_status_bar(self.channel_bar.current())
 
     # ------------------------------------------------------------------
     # UI construction
@@ -2257,6 +2366,7 @@ class PacketBaseScreen(QWidget):
         self.lbl_sb_rxsize = QLabel("RX: 0 lines")
         self.lbl_sb_rxsize.setFont(small)
         lay.addWidget(self.lbl_sb_rxsize)
+        self.rx_display.textChanged.connect(self._update_rx_size)    # P82
 
         lay.addStretch()
 

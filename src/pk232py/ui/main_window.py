@@ -2436,6 +2436,8 @@ class MainWindow(QMainWindow):
             screen = self._opmode_screens.get(pkt_name)
             if screen is not None and hasattr(screen, "channel_bar"):
                 screen.channel_bar.set_channel_state(channel, link.state, link.partner)
+                # P82: "Partner" in the status line follows the table at once.
+                screen.refresh_status_bar()
 
     def _repaint_chips_from_link_table(self, screen) -> None:
         """Redraw every chip of *screen* from the LinkTable (P70, P67
@@ -4597,7 +4599,11 @@ class MainWindow(QMainWindow):
         self._packet_capture_write(f"[CH{channel}] {text.rstrip()}")
 
         screen = self._opmode_stack.currentWidget()
-        if hasattr(screen, "append_channel_data"):
+        if hasattr(screen, "append_received_data"):
+            # P82: a data stream - the screen decides where a line ends (CR/LF
+            # in the text), so the text goes in as received, not rstripped.
+            screen.append_received_data(channel, text)
+        elif hasattr(screen, "append_channel_data"):
             screen.append_channel_data(channel, text.rstrip())
         else:
             self._log_terminal(text)
