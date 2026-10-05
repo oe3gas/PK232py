@@ -715,3 +715,18 @@
   installed on this PC.
 - **Chrome deliberately untouched:** menu, status bar (OFFLINE badge `#888888`,
   "TNC differs" `#f44747`), buttons, the READY chip, MailDrop dialog colours.
+
+## Child labels, macros and uncaught exceptions (P84/P86, 2026-10-05)
+
+- **A stylesheet colour on a `QPushButton` does not reach the `QLabel`s inside it.** A type selector
+  matches only its own type; the labels fall back to the application palette's `WindowText`, which
+  `build_palette()` changes per theme. Text that must not follow the theme gets its own stylesheet on the
+  label itself (`_CHIP_TEXT_STYLE`). Measure the palette the widget is drawn with (`ensurePolished()`, then
+  `palette()`), not the stylesheet string.
+- **Input widgets differ in capability, not by mode name:** `TxInputWidget` has `char_typed`, the Packet
+  and PACTOR `tx_input` is a plain `QTextEdit`. Ask `hasattr(tx, "char_typed")` (one place:
+  `_on_macro_clicked`) instead of listing modes.
+- **An exception in a Qt slot aborts the application when only the default `sys.excepthook` is set** (PyQt6
+  calls `qFatal`). `log_setup.install_crash_hooks()` replaces it: the traceback goes to the log file and the
+  app goes on; the GUI-thread case also shows `MainWindow.show_internal_error()` (non-blocking `show()`,
+  never `exec()`; at most once per 10 s; never from another thread).

@@ -20,6 +20,37 @@ tries to execute it, expecting it to describe current work.
 
 ## Priority 1 — Next implementation sprint
 
+### Macros in Packet, crashes into the log file (P86) — ✅ done, T174 open (2026-10-05)
+
+`MainWindow._on_macro_clicked()` called `tx.char_typed.emit()` in every screen; the Packet screens'
+(and PACTOR's) `tx_input` is a plain `QTextEdit` without that signal -> `AttributeError` in the slot ->
+PyQt6 aborted the application. Every macro button in HF/VHF Packet was affected; the traceback was only
+on the console. Now ONE place decides by capability (`hasattr(tx, "char_typed")`, not by mode name):
+without it `_insert_macro_plain()` appends the text at the end of the input (the draft of the visible
+channel or MON, P9), in the TX colour, and does NOT send; `[^D]` / `[^T:n]` are removed with one note in
+the log and the monitor. The RTTY screens (Baudot/ASCII/Morse/AMTOR) are unchanged.
+`log_setup.install_crash_hooks()`: `sys.excepthook` and `threading.excepthook` write every uncaught
+exception with traceback to the log file (CRITICAL; the previous hooks still run, so the console keeps
+its traceback), `faulthandler` writes native crashes to `pk232py_crash.log` in the log folder. With a
+custom `sys.excepthook` PyQt6 no longer aborts the application on an exception in a slot - it logs and
+goes on. For an exception in the GUI thread the operator also gets a non-blocking box "Internal error -
+the last action may be incomplete. Details in the log file." with an "Open log folder" button
+(`MainWindow.show_internal_error()`, at most once per 10 s, never from another thread).
+Tests: `test_macros_packet_p86.py` (red first with the `AttributeError`), `test_crash_log_p86.py`.
+
+### Chip text always white, log file (P84) — ✅ done, T172 open (2026-10-05)
+
+The text of the channel chips (MON, 0-9) changed colour with the theme. Cause: the two labels in the
+chip (`_lbl_num`, `_lbl_call`) are children of the button; `_chip_style()`'s `QPushButton { color: white }`
+does not reach children, so they were drawn with the application palette's `WindowText`, which
+`build_palette()` changes per theme (Retro: `#1a1a1a`). Now `_CHIP_TEXT_STYLE` is set once on both labels
+in `ChannelChip.__init__`; nothing recolours them. Operator rule: chip text is white in every theme.
+`test_chip_text_p84.py` measures the palette the labels are drawn with, all four themes and back.
+Log file: `log_setup.setup_logging()` (called by `main()`): `%USERPROFILE%\.pk232py\logs\pk232py.log` next
+to the INI (follows `PK232PY_CONFIG_PATH`), rotating 5 files x 2 MB, DEBUG in the file, console as
+before; first line of each session: version, commit, Python, Qt, PyQt. The thread guard's messages land
+there. Help -> "Open log folder". `test_logging_p84.py`.
+
 ### GUI access from the upload thread (P83) — ✅ done, T171 open (2026-10-05)
 
 `_run_param_upload` used to call `_vt_append`, `_log_monitor`, `_update_maildrop_gate_ui`,
@@ -94,6 +125,16 @@ section (PACTOR, AMTOR, Baudot, Misc) are only reported, not taken.
 ### MHEARD via MH0-MH17: prove with a raw capture — open (2026-10-03)
 
 MHEARD over `MH0`-`MH17` is to be proven with a raw capture (so far only the screenshot of 26.09.2026).
+
+**Operator note (2026-10-05):** the TNC has no backup battery, so its MHEARD list is empty after every
+power-up; an `MH0`...`MH17` poll answered only with `MH $00` right after switching on is therefore the
+expected answer, not an error. Conversely, on 04.10. the list showed entries that were NOT connection
+partners - so heard stations did arrive somehow (screenshot/log of that day to be compared). The capture
+must be taken with the TNC running long enough to have heard stations (it must contain at least one real
+`MH n <line>` answer), after power-up and again later; bare `MH` answers only `MH$01` (B) / `MH$03` (A)
+and the index is sent as an ASCII digit - both unexplained until the capture exists. Until then the
+empty list after a Refresh straight after power-up needs no fix. (The app adds link partners to the
+list itself, `add_entry_if_new`, which is not an MHEARD source.)
 
 ### PACTOR in Host Mode: starting point per the P80b report — open (2026-10-03)
 

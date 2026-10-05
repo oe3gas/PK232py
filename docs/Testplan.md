@@ -3475,6 +3475,39 @@ Device B. Software: `test_upload_thread_p83.py`, `test_thread_guard_p83.py`.
 
 ---
 
+### T172 — Chip text white in every theme; log file (P84)
+
+Any device. Software: `test_chip_text_p84.py`, `test_logging_p84.py`.
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | HF Packet: switch Dark -> Mono -> Retro -> Air -> back, look at MON and 0-9 (free, calling, connected) | chip text white in every theme and after every switch back | ⬜ |
+| 2 | Start the app; Help -> Open log folder | the folder `%USERPROFILE%\.pk232py\logs` opens; `pk232py.log` exists | ⬜ |
+| 3 | Open `pk232py.log` | first line: `PK232PY v..., commit ..., Python ..., Qt ..., PyQt ...`; DEBUG lines follow | ⬜ |
+| 4 | Start the app twice | the file gets a second header line, no second file, nothing lost | ⬜ |
+
+**Status:** ⬜ OPEN — software done, run on the PC pending.
+
+---
+
+### T174 — Macros in Packet; crashes in the log file (P86)
+
+Any device (macros are only inserted, nothing is sent). Software: `test_macros_packet_p86.py`,
+`test_crash_log_p86.py`. (T173 is reserved for P85.)
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | HF Packet, MON chip: press each of the six macro buttons | text appears in the input field (end, TX colour), nothing is sent, no crash | ⬜ |
+| 2 | Same on a free and on a connected channel; switch channel and back | the text belongs to that channel's input only | ⬜ |
+| 3 | Same in VHF Packet; a macro containing `[^D]` or `[^T:5]` | markers removed, one `[SYS]` note in the monitor and one line in the log file | ⬜ |
+| 4 | Baudot / ASCII RTTY / Morse / AMTOR: macro buttons | unchanged (`[^D]` and `[^T:n]` still work) | ⬜ |
+| 5 | PACTOR: macro button | text inserted, no crash | ⬜ |
+| 6 | Provoke an exception (a development build with a deliberately failing slot) | box "Internal error - the last action may be incomplete. Details in the log file." with "Open log folder"; at most once per 10 s; traceback in `pk232py.log` (CRITICAL) and on the console; the app keeps running | ⬜ |
+
+**Status:** ⬜ OPEN — software done, run on the PC pending.
+
+---
+
 ### T169 — App: live links found at start-up (P81, after T168)  ✅ PASS
 
 Device B. Needs P81 parts A-C (built 04.10.2026, `test_live_links_p81.py`). First run 04.10.2026
