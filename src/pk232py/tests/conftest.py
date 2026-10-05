@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("PK232_THREAD_GUARD", "raise")      # P83: strict in the tests
 
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent, QSettings
@@ -65,6 +66,19 @@ def dispose_main_windows():
         app.removeEventFilter(w)
         w.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+
+@pytest.fixture(autouse=True)
+def no_widget_access_outside_the_gui_thread():
+    """P83 - fail any test during which a widget method guarded by
+    ui/thread_guard.assert_gui_thread() ran in a background thread. A test
+    that provokes a violation on purpose clears it itself."""
+    from pk232py.ui import thread_guard
+    thread_guard.clear_violations()
+    yield
+    found = thread_guard.violations()
+    thread_guard.clear_violations()
+    assert not found, "widget access outside the GUI thread:\n" + "\n".join(found)
 
 
 @pytest.fixture(autouse=True)

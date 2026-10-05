@@ -72,6 +72,7 @@ from .screens.fax_screen     import FaxScreen
 from .screens.pactor_screen  import PactorScreen
 from .screens.packet_screen  import HFPacketScreen, VHFPacketScreen, MON_VIEW
 from .screens.tx_controller import TxController
+from .thread_guard import assert_gui_thread
 from .screens.screen_focus_controller import is_keyboard_input_widget
 
 logger = logging.getLogger(__name__)
@@ -3815,6 +3816,7 @@ class MainWindow(QMainWindow):
         change — connect/disconnect, Host Mode enter/exit, mode switch,
         channel state, and once has_maildrop becomes known after upload.
         """
+        assert_gui_thread("MainWindow._update_maildrop_gate_ui")
         if not hasattr(self, '_act_maildrop'):
             return   # menu not built yet (called during early setup)
         can_open, reason = self._maildrop_gate()
@@ -5904,6 +5906,7 @@ class MainWindow(QMainWindow):
         \r is stripped -- only \n causes a real line break.
         """
         # Strip \r -- QTextEdit handles \n for line breaks
+        assert_gui_thread("MainWindow._log_terminal")
         text = text.replace('\r', '')
         if not text:
             return
@@ -5921,6 +5924,7 @@ class MainWindow(QMainWindow):
 
     def _log_monitor(self, text: str, raw: bytes = b"") -> None:
         """Append text to monitor. If raw bytes given, show per selected mode."""
+        assert_gui_thread("MainWindow._log_monitor")
         if raw and hasattr(self, '_mon_btn_raw'):
             if self._mon_btn_hex.isChecked():
                 # Hex dump: offset  hex  ascii
@@ -6175,6 +6179,7 @@ class MainWindow(QMainWindow):
         [SYS] lines); own commands pass the TX colour, status lines their
         fixed green/red.
         """
+        assert_gui_thread("MainWindow._vt_append")
         if color is None:
             color = self._app_config.appearance.rx_color
         from PyQt6.QtGui import QTextCursor, QColor
