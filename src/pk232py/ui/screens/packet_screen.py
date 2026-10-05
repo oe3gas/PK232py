@@ -244,6 +244,7 @@ _CHIP_FILL = {
     CH_DISCONNECTING: "#6a4a8a",
 }
 _CHIP_BORDER_CURRENT = "#ffb400"   # amber, 2px — marks the current channel
+_CHIP_TEXT_STYLE = "QLabel { color: #ffffff; }"   # P84: chip text, every theme
 
 # P44 — "calling" pulse animation (ONE QVariantAnimation for the whole
 # ChannelBar, not one per chip, so every calling chip pulses in sync —
@@ -352,6 +353,15 @@ class ChannelChip(QWidget):
         self._lbl_call = QLabel("")
         self._lbl_call.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         self._lbl_call.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # P84: chip text is white in EVERY theme (operator rule) - the chip
+        # fills are theme-independent. The two labels are children of the
+        # button, and _chip_style()'s "QPushButton { color: white }" does not
+        # reach child widgets (a type selector matches only its own type), so
+        # without this they drew with the application palette's WindowText,
+        # which build_palette() changes per theme. A widget's own stylesheet
+        # beats the application palette, and nothing recolours these labels.
+        for lbl in (self._lbl_num, self._lbl_call):
+            lbl.setStyleSheet(_CHIP_TEXT_STYLE)
         lay.addWidget(self._lbl_num)
         lay.addWidget(self._lbl_call)
         self.button.clicked.connect(lambda: self.clicked.emit(self._channel))
