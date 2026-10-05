@@ -144,6 +144,9 @@ class MainWindow(QMainWindow):
     # GUI thread.
     _live_links_found = pyqtSignal(object)     # LiveLinks, or None = not checked
     _params_deferred = pyqtSignal(object)      # list[str] of held-back names
+    # P83: everything else the parameter upload thread says to the window.
+    _upload_vt_line = pyqtSignal(str, str)     # text, colour ("" = the RX colour)
+    _upload_monitor_line = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -1203,6 +1206,8 @@ class MainWindow(QMainWindow):
         self._deferred_timer.timeout.connect(self._apply_deferred_params)
         self._live_links_found.connect(self._on_live_links_found)
         self._params_deferred.connect(self._on_params_deferred)
+        self._upload_vt_line.connect(self._on_upload_vt_line)
+        self._upload_monitor_line.connect(self._log_monitor)
         self._build_wake_overlay()
 
     # ------------------------------------------------------------------
@@ -1496,26 +1501,26 @@ class MainWindow(QMainWindow):
         defer = self._check_live_links()
 
         if fast_init:
-            self._vt_append("[SYS] Fast Init — parameter upload skipped\n")
-            self._log_monitor("[SYS] Fast Init active — no parameter upload")
+            self._upload_vt_line.emit("[SYS] Fast Init — parameter upload skipped\n", "")
+            self._upload_monitor_line.emit("[SYS] Fast Init active — no parameter upload")
             if connect_mode == "host":
-                self._vt_append("[SYS] Entering Host Mode...\n")
+                self._upload_vt_line.emit("[SYS] Entering Host Mode...\n", "")
                 self._serial.enter_host_mode()
             else:
-                self._vt_append("[SYS] Verbose terminal ready (fast init)\n")
+                self._upload_vt_line.emit("[SYS] Verbose terminal ready (fast init)\n", "")
                 self._vt_input.setFocus()
             return
-        self._vt_append("[SYS] Uploading parameters...\n")
+        self._upload_vt_line.emit("[SYS] Uploading parameters...\n", "")
         uploader = ParamsUploader(
             self._serial,
             self._app_config,
-            echo_callback=self._vt_append,
+            echo_callback=self._emit_upload_echo,
         )
         n = uploader.upload(defer=defer)
         self._params_uploaded_this_session = True
         if uploader.deferred_names:
             self._params_deferred.emit(self._split_deferred(uploader.deferred_names))
-        self._log_monitor(f"[SYS] {n} parameters uploaded")
+        self._upload_monitor_line.emit(f"[SYS] {n} parameters uploaded")
         # P40.3: spot-check MYCALL/PACLEN/MAXFRAME against AppConfig,
         # still in verbose mode, before Host Mode entry - cheap
         # (under a second) and would have caught the 24.09.2026
@@ -1525,36 +1530,45 @@ class MainWindow(QMainWindow):
             matched, applicable = uploader.verify()
             if applicable and matched == applicable:
                 msg = f"[SYS] parameter upload verified ({matched}/{applicable})"
-                self._log_monitor(msg)
+                self._upload_monitor_line.emit(msg)
                 # P52.3: verify()'s own per-parameter failures already
                 # reach the verbose terminal directly (echo_callback) -
                 # this summary line belongs there too, not just the
                 # Monitor panel, so the whole verification result is
                 # visible in one place regardless of outcome.
-                self._vt_append(f"{msg}\n", color=self._ok_color())
+                self._upload_vt_line.emit(f"{msg}\n", self._ok_color())
             elif applicable:
                 msg = (
                     f"[SYS] parameter upload verification: only "
                     f"{matched}/{applicable} matched - see above for details"
                 )
-                self._log_monitor(msg)
-                self._vt_append(f"{msg}\n", color=self._err_color())
+                self._upload_monitor_line.emit(msg)
+                self._upload_vt_line.emit(f"{msg}\n", self._err_color())
         self._update_maildrop_gate_ui()
         if getattr(self._serial, 'has_maildrop', None) is False:
-            self._log_monitor(
+            self._upload_monitor_line.emit(
                 "[SYS] TNC has no MailDrop — "
                 "MailDrop commands skipped, button stays disabled"
             )
         if connect_mode == "host":
-            self._vt_append(
-                f"[SYS] {n} parameters uploaded -- entering Host Mode...\n"
+            self._upload_vt_line.emit(
+                f"[SYS] {n} parameters uploaded -- entering Host Mode...\n", ""
             )
             self._serial.enter_host_mode()
         else:
-            self._vt_append(
-                f"[SYS] {n} parameters uploaded -- verbose terminal ready\n"
+            self._upload_vt_line.emit(
+                f"[SYS] {n} parameters uploaded -- verbose terminal ready\n", ""
             )
             self._vt_input.setFocus()
+
+    def _emit_upload_echo(self, text: str, color: Optional[str] = None) -> None:
+        """ParamsUploader's echo_callback - runs in the upload thread, so it
+        only emits a signal (P83); the GUI thread writes the terminal."""
+        self._upload_vt_line.emit(text, color or "")
+
+    def _on_upload_vt_line(self, text: str, color: str) -> None:
+        """GUI-thread end of _upload_vt_line."""
+        self._vt_append(text, color or None)
 
     # ------------------------------------------------------------------
     # P81a - "Waking up the TNC" notice
