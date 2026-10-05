@@ -88,11 +88,15 @@ class HFPacketMode(BaseMode):
         Called with (channel, state, partner) whenever a link message implies
         a channel state change. ``state`` is one of "free"/"calling"/
         "connected". This is a second, channel-scoped consumer of the same
-        $5x frames already handled by ``on_link_message`` above — it feeds
-        ChannelBar (packet_screen.py) rather than the screen-wide status
-        label. There is no CSTATUS poll in Host Mode (see CLAUDE.md
-        "Channel model"), so this is the only way the UI learns which
-        channel a partner callsign belongs to.
+        $5x frames already handled by ``on_link_message`` above.
+
+        Since P67 MainWindow does NOT wire it (it sets it to None): the
+        channel state lives in ONE place, comm/link_table.py's LinkTable. It
+        is fed by the $5x link messages (``on_link_message``), by the TRM
+        4.3.3 Link Status answers to a CO query (``on_link_status`` - the
+        state of every channel can be ASKED in Host Mode, measured T142) and
+        by verbose CSTATUS (at start-up, P81); ChannelBar draws what the table
+        says. The attribute remains for tests and stand-alone use.
     """
 
     handles_link_frames = True      # P81d: feeds the LinkTable itself (MainWindow wiring)
