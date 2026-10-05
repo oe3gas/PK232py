@@ -5,6 +5,19 @@
 
 ### UI / PyQt6
 
+- **Background threads talk to the window ONLY through signals (P83, 2026-10-05; CLAUDE.md rule 3).**
+  A widget touched from a `threading.Thread` does not fail at once - it corrupts the display or crashes
+  sporadically. The parameter upload thread (`PK232-ParamUpload`) used to call `_vt_append`,
+  `_log_monitor`, `_update_maildrop_gate_ui` and `_vt_input.setFocus()` directly, and through
+  `ParamsUploader`'s `echo_callback`. Pattern now: the thread `emit()`s (`_upload_vt_line`,
+  `_upload_monitor_line`, `_upload_finished(UploadResult)`), a slot in the GUI thread writes - signals of
+  one sender arrive in the order sent, so the output order is unchanged. Whatever happens AFTER the thread
+  (messages, focus, MailDrop gate, `enter_host_mode()`) is decided by the slot, not by the thread. A
+  callback that a background thread calls (`echo_callback`) must itself only emit. Check: every widget
+  method a thread could reach starts with `ui/thread_guard.assert_gui_thread("where")`; the test suite
+  sets `PK232_THREAD_GUARD=raise` and `conftest.py` fails any test during which it fired. A new thread
+  that reaches a widget method fails the suite instead of crashing on the operator's machine.
+
 - **"Connect" is ambiguous — TNC serial connection vs. station
   connection (P46, 2026-09-25).** The toolbar used to have its own
   `Connect`/`Disconnect` for the serial link to the TNC, sitting right

@@ -68,8 +68,8 @@ docs/claude/  Aus CLAUDE.md ausgelagerte Details (siehe unten)
 2. **Nach dem Host-Mode-Subprozess immer ein frisches `serial.Serial()`-Objekt** (sonst 20–35 s Verzögerung);
    Port-Konfiguration `xonxoff=False` (XON `$11` muss für `HOST 3` ungefiltert durchgehen), DTR/RTS asserted.
 3. **GUI-Thread-Sicherheit:** Widgets nur im GUI-Thread anfassen; aus Hintergrund-Threads ausschließlich über
-   Signals/Slots. *Bekannte offene Verletzung:* der Thread `PK232-ParamUpload` (`MainWindow._run_param_upload()`)
-   ruft `_vt_append()`, `_log_monitor()` und `_vt_input.setFocus()` direkt auf — potenzieller Segfault; nicht kopieren, bei Gelegenheit auf Signals umstellen.
+   Signals/Slots (P83: Upload-Thread umgestellt; `ui/thread_guard.assert_gui_thread()` in den Widget-Methoden,
+   Tests laufen mit `PK232_THREAD_GUARD=raise` — Muster in `docs/claude/GOTCHAS_UI_AND_TOOLING.md`).
 4. **Vor jedem eigenen synchronen Port-Read den Lesepfad exklusiv übernehmen** (`_take_over_read_path()`), sonst
    verschluckt der `ReaderThread` die Antworten.
 5. **Ein Echo ist keine Antwort.** Im Verbose-Modus echot der TNC alles, auch binäre Frames. Erfolgschecks müssen

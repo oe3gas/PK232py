@@ -20,9 +20,26 @@ tries to execute it, expecting it to describe current work.
 
 ## Priority 1 — Next implementation sprint
 
-### GUI access from the upload thread — open, HIGH (CLAUDE.md rule 3, 2026-10-04)
+### GUI access from the upload thread (P83) — ✅ done, T171 open (2026-10-05)
 
-`_run_param_upload` accesses widgets from the upload thread (`_vt_append` and others); move every GUI access to the GUI thread via signals. (P81 added its own parts through signals; the old calls remain.)
+`_run_param_upload` used to call `_vt_append`, `_log_monitor`, `_update_maildrop_gate_ui`,
+`_vt_input.setFocus()` and (through `echo_callback`) `_vt_append` from the `PK232-ParamUpload`
+thread. Now the thread only emits `_upload_vt_line(text, colour)`, `_upload_monitor_line(text)` and
+`_upload_finished(UploadResult)`; `_on_upload_finished()` (GUI thread) writes the closing messages,
+updates the MailDrop gate, sets the focus and enters Host Mode. `ui/thread_guard.assert_gui_thread()`
+(called in `_vt_append`, `_log_monitor`, `_log_terminal`, `_update_maildrop_gate_ui`) logs and records
+any widget access from another thread; the test suite runs it strict (`PK232_THREAD_GUARD=raise`)
+and fails every test during which it fired (`conftest.py`). Terminal and monitor output is compared
+with a list recorded from the old implementation (`tests/data/upload_baseline_p83.json`).
+**Report, other threads (part C):** `comm/` and `maildrop/` import neither `QtWidgets` nor `QtGui`.
+`SerialManager`'s threads (`PK232-Init`, `PK232-HostModeEnter`, `PK232-Recovery`, `PK232-Reader`) reach
+the application only by signals (`status_message`, `init_stage`, `init_failed`, `verbose_mode_ready`,
+`host_mode_changed`, `raw_data_received`, `frame_received`, `recovery_finished`) and their own
+lock-protected buffers; the frame and raw callbacks of `_ReaderThread` are `SerialManager` methods that
+only emit. `MailDropSession`'s worker (`session.py:164`) emits `state_changed`, `stored`, `killed`,
+`failed` ...; its `can_open` callable is called from `open()` (GUI thread, the dialog's button), not from
+the worker; the optional `trace` callback is not passed by the application (only by `tools/hw_check.py`).
+No violation found, no code change.
 
 ### Connect bell — implemented, T159 open (P76, 2026-10-02)
 

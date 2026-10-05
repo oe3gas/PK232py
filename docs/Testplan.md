@@ -3461,6 +3461,20 @@ connect completes, "RX: n lines" follows the shown document. Result: ✅ PASS (d
 
 ---
 
+### T171 — Parameter upload without widget access from the thread (P83)
+
+Device B. Software: `test_upload_thread_p83.py`, `test_thread_guard_p83.py`.
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Normal start with upload, connection type verbose, then once with Host Mode | terminal output complete and in order (`[SYS] Uploading parameters...`, every command, `[SYS] parameter upload verified (3/3)`, `[SYS] n parameters uploaded -- ...`), Host Mode entered after the upload | ⬜ |
+| 2 | Restart with two links (as T169) | output, deferral and Host Mode entry unchanged | ⬜ |
+| 3 | App log (`DEBUG`) after 1 and 2 | NO line "widget access outside the GUI thread" | ⬜ |
+
+**Status:** ⬜ OPEN — software done, hardware run pending.
+
+---
+
 ### T169 — App: live links found at start-up (P81, after T168)  ✅ PASS
 
 Device B. Needs P81 parts A-C (built 04.10.2026, `test_live_links_p81.py`). First run 04.10.2026
