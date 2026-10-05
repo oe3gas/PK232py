@@ -24,6 +24,7 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 from pk232py import __version__
+from pk232py.log_setup import install_crash_hooks, set_error_notifier, setup_logging
 from pk232py.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
@@ -54,10 +55,12 @@ def _close_nuitka_splash() -> None:
 
 def main() -> None:
     """Launch PK232PY."""
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-    )
+    # Console as before + rotating file next to the INI (P84); the first
+    # line of the file is the session header (version, commit, Python, Qt).
+    setup_logging()
+    # Uncaught exceptions (main thread, Qt slots, threads) and native crashes
+    # into the log folder - before QApplication, so startup errors count too.
+    install_crash_hooks()
     logger.info("PK232PY v%s starting", __version__)
 
     app = QApplication(sys.argv)
@@ -66,6 +69,7 @@ def main() -> None:
     app.setOrganizationName("OE3GAS")
 
     window = MainWindow()
+    set_error_notifier(window.show_internal_error)   # P86: tell the operator
     window.show()
 
     # show() only schedules the paint; dismissing the splash immediately

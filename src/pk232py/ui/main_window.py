@@ -19,12 +19,15 @@ from __future__ import annotations
 import copy
 import dataclasses
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QActionGroup, QFont, QKeySequence, QPalette, QShortcut
+from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import (
+    QAction, QActionGroup, QDesktopServices, QFont, QKeySequence, QPalette, QShortcut,
+)
 from PyQt6.QtWidgets import (
     QApplication, QDialog,
     QComboBox, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
@@ -76,6 +79,9 @@ from .thread_guard import assert_gui_thread
 from .screens.screen_focus_controller import is_keyboard_input_widget
 
 logger = logging.getLogger(__name__)
+
+# P86: RTTY-only macro markers - EOT [^D] and the timer [^T:n].
+_RTTY_MARKER_RE = re.compile(r"\[\^D\]|\[\^T:\d+\]")
 
 APP_TITLE = "PK232PY"
 
@@ -567,6 +573,13 @@ class MainWindow(QMainWindow):
 
         help_menu.addSeparator()
 
+        act_open_log = QAction("Open &log folder", self)
+        act_open_log.setStatusTip("Open the folder with the PK232PY log files")
+        act_open_log.triggered.connect(self._on_open_log_folder)
+        help_menu.addAction(act_open_log)
+
+        help_menu.addSeparator()
+
         # Reuse the existing About handler — same dialog as Configure → About.
         act_help_about = QAction("&About PK232PY...", self)
         act_help_about.triggered.connect(self._on_about)
@@ -605,6 +618,47 @@ class MainWindow(QMainWindow):
         """Open the help viewer at the top-level index page (Help → Contents)."""
         from pk232py.ui.screens.help_viewer import show_help
         show_help("index", parent=self)
+
+    def show_internal_error(self) -> None:
+        """Tell the operator that an uncaught exception was logged (P86).
+
+        Called by log_setup's excepthook in the GUI thread, at most once per
+        10 s. Lernmodus: NOT QMessageBox.exec() - that opens a nested event
+        loop inside the failed slot's stack, and under the offscreen test
+        platform it would wait forever. show() on a non-modal box returns at
+        once; WA_DeleteOnClose frees it, and an already visible box is reused
+        instead of stacking a second one.
+        """
+        assert_gui_thread("MainWindow.show_internal_error")
+        box = getattr(self, "_internal_error_box", None)
+        if box is not None:
+            try:
+                if box.isVisible():
+                    return
+            except RuntimeError:       # C++ object already deleted on close
+                pass
+        box = QMessageBox(QMessageBox.Icon.Warning, "PK232PY",
+                          "Internal error - the last action may be incomplete. "
+                          "Details in the log file.", parent=self)
+        btn_log = box.addButton("Open log folder", QMessageBox.ButtonRole.ActionRole)
+        btn_log.clicked.connect(self._on_open_log_folder)
+        btn_log.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.setModal(False)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._internal_error_box = box
+        box.show()
+
+    def _on_open_log_folder(self) -> None:
+        """Help → Open log folder: show the log files in the file manager.
+
+        The folder is created first - before the first log line was ever
+        written (or if it was deleted) there is nothing to open otherwise.
+        """
+        from pk232py.log_setup import log_dir
+        folder = log_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _on_f1(self) -> None:
         """F1 → context help for the active opmode screen.
@@ -2912,6 +2966,42 @@ class MainWindow(QMainWindow):
         if remaining:
             QTimer.singleShot(0, lambda: self._flush_tx_buffer(tx, remaining))
 
+    def _insert_macro_plain(self, tx, text: str) -> None:
+        """Macro into a plain QTextEdit (Packet, PACTOR): insert, never send.
+
+        Lernmodus: the text goes to the END of the widget, in the TX colour,
+        through one QTextCursor.insertText(text, format) - the format is
+        attached to the inserted characters only, so nothing else changes
+        colour. The Packet screen has ONE tx_input whose content is the
+        draft of the visible channel (P9: _on_tx_channel_switch() saves it
+        per channel), so inserting here lands in the visible channel's - or
+        MON's - draft without knowing which one that is. The RTTY markers
+        [^D] / [^T:n] mean something only to TxController; here they would
+        be sent as literal text, so they are removed (one note in the log).
+        """
+        from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
+        from .screens.ui_theme import get_theme
+
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+        removed = _RTTY_MARKER_RE.findall(text)
+        if removed:
+            text = _RTTY_MARKER_RE.sub('', text)
+            note = ("macro: RTTY marker(s) removed in this mode: "
+                    + " ".join(removed))
+            logger.info(note)
+            self._log_monitor(f"[SYS] {note}")
+        # Same filter as the keyed path: printable characters and newlines.
+        text = ''.join(ch for ch in text if ch == '\n' or ch.isprintable())
+        if not text:
+            return
+
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(get_theme()['tx_color']))
+        cur = tx.textCursor()
+        cur.movePosition(QTextCursor.MoveOperation.End)
+        cur.insertText(text, fmt)
+        tx.setTextCursor(cur)
+
     def _on_macro_clicked(self, idx: int, screen) -> None:
         """Insert macro text into TX window when a macro button is clicked.
 
@@ -2930,6 +3020,13 @@ class MainWindow(QMainWindow):
             return
         tx = getattr(screen, 'tx_input', None)
         if tx is None:
+            return
+
+        # P86: the ONE place that tells the two kinds of input apart - the
+        # capability, not a mode name. Only TxInputWidget has char_typed;
+        # the Packet screens (and PACTOR) use a plain QTextEdit.
+        if not hasattr(tx, "char_typed"):
+            self._insert_macro_plain(tx, text)
             return
 
         from PyQt6.QtGui import QTextCharFormat, QColor
