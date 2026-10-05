@@ -111,6 +111,18 @@ def _recolor_existing_text(widget: QTextEdit, color_map: dict) -> None:
 _ALLOWED_CONTROL_CHARS = ('\r', '\n', '\t')
 
 
+@dataclasses.dataclass
+class UploadResult:
+    """What the parameter upload thread hands to the GUI thread when it is done
+    (P83): the GUI thread writes the closing messages, updates the MailDrop gate,
+    sets the focus and enters Host Mode - the thread does none of it itself."""
+    connect_mode: str                       # "host" -> enter Host Mode afterwards
+    fast_init: bool = False                 # upload skipped (Fast Init)
+    uploaded: int = 0                       # commands sent
+    verify: Optional[tuple] = None          # (matched, applicable) or None
+    has_maildrop: Optional[bool] = None     # SerialManager.has_maildrop after the upload
+
+
 def _filter_control_chars(text: str) -> str:
     """Strip C0 control characters ($00-$1F) and DEL ($7F) before TNC
     text reaches the verbose terminal display (P49.B.2) - CR/LF/TAB are
@@ -147,6 +159,7 @@ class MainWindow(QMainWindow):
     # P83: everything else the parameter upload thread says to the window.
     _upload_vt_line = pyqtSignal(str, str)     # text, colour ("" = the RX colour)
     _upload_monitor_line = pyqtSignal(str)
+    _upload_finished = pyqtSignal(object)      # UploadResult
 
     def __init__(self) -> None:
         super().__init__()
@@ -1207,7 +1220,8 @@ class MainWindow(QMainWindow):
         self._live_links_found.connect(self._on_live_links_found)
         self._params_deferred.connect(self._on_params_deferred)
         self._upload_vt_line.connect(self._on_upload_vt_line)
-        self._upload_monitor_line.connect(self._log_monitor)
+        self._upload_monitor_line.connect(self._on_upload_monitor_line)
+        self._upload_finished.connect(self._on_upload_finished)
         self._build_wake_overlay()
 
     # ------------------------------------------------------------------
@@ -1503,12 +1517,7 @@ class MainWindow(QMainWindow):
         if fast_init:
             self._upload_vt_line.emit("[SYS] Fast Init — parameter upload skipped\n", "")
             self._upload_monitor_line.emit("[SYS] Fast Init active — no parameter upload")
-            if connect_mode == "host":
-                self._upload_vt_line.emit("[SYS] Entering Host Mode...\n", "")
-                self._serial.enter_host_mode()
-            else:
-                self._upload_vt_line.emit("[SYS] Verbose terminal ready (fast init)\n", "")
-                self._vt_input.setFocus()
+            self._upload_finished.emit(UploadResult(connect_mode, fast_init=True))
             return
         self._upload_vt_line.emit("[SYS] Uploading parameters...\n", "")
         uploader = ParamsUploader(
@@ -1526,38 +1535,59 @@ class MainWindow(QMainWindow):
         # (under a second) and would have caught the 24.09.2026
         # Host Mode upload failure immediately instead of on the
         # next QSO attempt. Purely informational: never aborts.
-        if n > 0:
-            matched, applicable = uploader.verify()
+        verify = uploader.verify() if n > 0 else None
+        # Everything that follows touches widgets or starts the Host Mode entry:
+        # the GUI thread does it (_on_upload_finished). The signals above are
+        # delivered first - signals of one sender arrive in the order sent.
+        self._upload_finished.emit(UploadResult(
+            connect_mode, uploaded=n, verify=verify,
+            has_maildrop=getattr(self._serial, 'has_maildrop', None)))
+
+    def _on_upload_finished(self, result: "UploadResult") -> None:
+        """GUI-thread end of the parameter upload (P83): closing messages, the
+        MailDrop gate, the focus and - for a Host Mode connect - the Host Mode
+        entry. Same texts and the same order as the thread used to write."""
+        if result.fast_init:
+            if result.connect_mode == "host":
+                self._vt_append("[SYS] Entering Host Mode...\n")
+                self._serial.enter_host_mode()
+            else:
+                self._vt_append("[SYS] Verbose terminal ready (fast init)\n")
+                self._vt_input.setFocus()
+            return
+        n = result.uploaded
+        if result.verify is not None:
+            matched, applicable = result.verify
             if applicable and matched == applicable:
                 msg = f"[SYS] parameter upload verified ({matched}/{applicable})"
-                self._upload_monitor_line.emit(msg)
+                self._log_monitor(msg)
                 # P52.3: verify()'s own per-parameter failures already
                 # reach the verbose terminal directly (echo_callback) -
                 # this summary line belongs there too, not just the
                 # Monitor panel, so the whole verification result is
                 # visible in one place regardless of outcome.
-                self._upload_vt_line.emit(f"{msg}\n", self._ok_color())
+                self._vt_append(f"{msg}\n", color=self._ok_color())
             elif applicable:
                 msg = (
                     f"[SYS] parameter upload verification: only "
                     f"{matched}/{applicable} matched - see above for details"
                 )
-                self._upload_monitor_line.emit(msg)
-                self._upload_vt_line.emit(f"{msg}\n", self._err_color())
+                self._log_monitor(msg)
+                self._vt_append(f"{msg}\n", color=self._err_color())
         self._update_maildrop_gate_ui()
-        if getattr(self._serial, 'has_maildrop', None) is False:
-            self._upload_monitor_line.emit(
+        if result.has_maildrop is False:
+            self._log_monitor(
                 "[SYS] TNC has no MailDrop — "
                 "MailDrop commands skipped, button stays disabled"
             )
-        if connect_mode == "host":
-            self._upload_vt_line.emit(
-                f"[SYS] {n} parameters uploaded -- entering Host Mode...\n", ""
+        if result.connect_mode == "host":
+            self._vt_append(
+                f"[SYS] {n} parameters uploaded -- entering Host Mode...\n"
             )
             self._serial.enter_host_mode()
         else:
-            self._upload_vt_line.emit(
-                f"[SYS] {n} parameters uploaded -- verbose terminal ready\n", ""
+            self._vt_append(
+                f"[SYS] {n} parameters uploaded -- verbose terminal ready\n"
             )
             self._vt_input.setFocus()
 
@@ -1569,6 +1599,10 @@ class MainWindow(QMainWindow):
     def _on_upload_vt_line(self, text: str, color: str) -> None:
         """GUI-thread end of _upload_vt_line."""
         self._vt_append(text, color or None)
+
+    def _on_upload_monitor_line(self, text: str) -> None:
+        """GUI-thread end of _upload_monitor_line."""
+        self._log_monitor(text)
 
     # ------------------------------------------------------------------
     # P81a - "Waking up the TNC" notice
