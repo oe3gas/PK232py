@@ -1,0 +1,43 @@
+{
+ "verbose": {
+  "vt": "[SYS] Uploading parameters...\nEXPERT ON\nMYCALL OE3GAS\nPACLEN 128\nTXDELAY 30\nMAXFRAME 1\nFRACK 7\nRETRY 10\nPERSIST 63\nSLOTTIME 30\nDWAIT 16\nCHECK 30\nMONITOR 4\nRESPTIME 0\nUSERS 10\nAX25L2V2 ON\nHEADERLN ON\nCONSTAMP ON\nDAYSTAMP ON\nILFPACK ON\nACRPACK ON\nALFPACK ON\nMRPT ON\nPPERSIST ON\nXMITOK ON\nUNPROTO CQ\nCTEXT %\nCFROM ALL\nDFROM ALL\nMFROM ALL\nMTO NONE\n8BITCONV OFF\nHID OFF\nMBELL OFF\nMDIGI OFF\nMPROTO OFF\nMSTAMP OFF\nPASSALL OFF\nBBSMSGS OFF\nUBIT 0 OFF\nARQTMO 60\nADELAY 2\nTDBAUD 96\nTDCHAN 0\nRFEC ON\nRXREV OFF\nTXREV OFF\nXMITOK ON\nMSPEED 20\nMWEIGHT 10\nCODE 0\nALFRTTY ON\nDIDDLE ON\nRXREV OFF\nTXREV OFF\nCANLINE 24\nCANPAC 25\nCOMMAND $03\nSENDPAC $0D\nMAILDROP OFF\nMDMON OFF\nMMSG ON\nTMAIL OFF\n3RDPARTY OFF\nKILONFWD ON\nMTEXT Welcome To My Personal Mail Box.\nDAYTIME 261005111305\n[SYS] parameter upload verified (3/3)\n[SYS] 66 parameters uploaded -- verbose terminal ready\n",
+  "mon": [
+   "[SYS] 66 parameters uploaded",
+   "[SYS] parameter upload verified (3/3)"
+  ]
+ },
+ "host": {
+  "vt": "[SYS] Uploading parameters...\nEXPERT ON\nMYCALL OE3GAS\nPACLEN 128\nTXDELAY 30\nMAXFRAME 1\nFRACK 7\nRETRY 10\nPERSIST 63\nSLOTTIME 30\nDWAIT 16\nCHECK 30\nMONITOR 4\nRESPTIME 0\nUSERS 10\nAX25L2V2 ON\nHEADERLN ON\nCONSTAMP ON\nDAYSTAMP ON\nILFPACK ON\nACRPACK ON\nALFPACK ON\nMRPT ON\nPPERSIST ON\nXMITOK ON\nUNPROTO CQ\nCTEXT %\nCFROM ALL\nDFROM ALL\nMFROM ALL\nMTO NONE\n8BITCONV OFF\nHID OFF\nMBELL OFF\nMDIGI OFF\nMPROTO OFF\nMSTAMP OFF\nPASSALL OFF\nBBSMSGS OFF\nUBIT 0 OFF\nARQTMO 60\nADELAY 2\nTDBAUD 96\nTDCHAN 0\nRFEC ON\nRXREV OFF\nTXREV OFF\nXMITOK ON\nMSPEED 20\nMWEIGHT 10\nCODE 0\nALFRTTY ON\nDIDDLE ON\nRXREV OFF\nTXREV OFF\nCANLINE 24\nCANPAC 25\nCOMMAND $03\nSENDPAC $0D\nMAILDROP OFF\nMDMON OFF\nMMSG ON\nTMAIL OFF\n3RDPARTY OFF\nKILONFWD ON\nMTEXT Welcome To My Personal Mail Box.\nDAYTIME 261005111305\n[SYS] parameter upload verified (3/3)\n[SYS] 66 parameters uploaded -- entering Host Mode...\n",
+  "mon": [
+   "[SYS] 66 parameters uploaded",
+   "[SYS] parameter upload verified (3/3)"
+  ]
+ },
+ "fast_verbose": {
+  "vt": "[SYS] Fast Init — parameter upload skipped\n[SYS] Verbose terminal ready (fast init)\n",
+  "mon": [
+   "[SYS] Fast Init active — no parameter upload"
+  ]
+ },
+ "fast_host": {
+  "vt": "[SYS] Fast Init — parameter upload skipped\n[SYS] Entering Host Mode...\n",
+  "mon": [
+   "[SYS] Fast Init active — no parameter upload"
+  ]
+ },
+ "verify_bad": {
+  "vt": "[SYS] Uploading parameters...\nEXPERT ON\nMYCALL OE3GAS\nPACLEN 128\nTXDELAY 30\nMAXFRAME 1\nFRACK 7\nRETRY 10\nPERSIST 63\nSLOTTIME 30\nDWAIT 16\nCHECK 30\nMONITOR 4\nRESPTIME 0\nUSERS 10\nAX25L2V2 ON\nHEADERLN ON\nCONSTAMP ON\nDAYSTAMP ON\nILFPACK ON\nACRPACK ON\nALFPACK ON\nMRPT ON\nPPERSIST ON\nXMITOK ON\nUNPROTO CQ\nCTEXT %\nCFROM ALL\nDFROM ALL\nMFROM ALL\nMTO NONE\n8BITCONV OFF\nHID OFF\nMBELL OFF\nMDIGI OFF\nMPROTO OFF\nMSTAMP OFF\nPASSALL OFF\nBBSMSGS OFF\nUBIT 0 OFF\nARQTMO 60\nADELAY 2\nTDBAUD 96\nTDCHAN 0\nRFEC ON\nRXREV OFF\nTXREV OFF\nXMITOK ON\nMSPEED 20\nMWEIGHT 10\nCODE 0\nALFRTTY ON\nDIDDLE ON\nRXREV OFF\nTXREV OFF\nCANLINE 24\nCANPAC 25\nCOMMAND $03\nSENDPAC $0D\nMAILDROP OFF\nMDMON OFF\nMMSG ON\nTMAIL OFF\n3RDPARTY OFF\nKILONFWD ON\nMTEXT Welcome To My Personal Mail Box.\nDAYTIME 261005111308\n[SYS] MYCALL mismatch after upload - expected 'OE3GAS', TNC says 'WRONG'\n[SYS] PACLEN mismatch after upload - expected '128', TNC says 'WRONG'\n[SYS] MAXFRAME mismatch after upload - expected '1', TNC says 'WRONG'\n[SYS] parameter upload verification: only 0/3 matched - see above for details\n[SYS] 66 parameters uploaded -- verbose terminal ready\n",
+  "mon": [
+   "[SYS] 66 parameters uploaded",
+   "[SYS] parameter upload verification: only 0/3 matched - see above for details"
+  ]
+ },
+ "nomaildrop": {
+  "vt": "[SYS] Uploading parameters...\nEXPERT ON\nMYCALL OE3GAS\nPACLEN 128\nTXDELAY 30\nMAXFRAME 1\nFRACK 7\nRETRY 10\nPERSIST 63\nSLOTTIME 30\nDWAIT 16\nCHECK 30\nMONITOR 4\nRESPTIME 0\nUSERS 10\nAX25L2V2 ON\nHEADERLN ON\nCONSTAMP ON\nDAYSTAMP ON\nILFPACK ON\nACRPACK ON\nALFPACK ON\nMRPT ON\nPPERSIST ON\nXMITOK ON\nUNPROTO CQ\nCTEXT %\nCFROM ALL\nDFROM ALL\nMFROM ALL\nMTO NONE\n8BITCONV OFF\nHID OFF\nMBELL OFF\nMDIGI OFF\nMPROTO OFF\nMSTAMP OFF\nPASSALL OFF\nBBSMSGS OFF\nUBIT 0 OFF\nARQTMO 60\nADELAY 2\nTDBAUD 96\nTDCHAN 0\nRFEC ON\nRXREV OFF\nTXREV OFF\nXMITOK ON\nMSPEED 20\nMWEIGHT 10\nCODE 0\nALFRTTY ON\nDIDDLE ON\nRXREV OFF\nTXREV OFF\nCANLINE 24\nCANPAC 25\nCOMMAND $03\nSENDPAC $0D\nDAYTIME 261005111310\n[SYS] parameter upload verified (3/3)\n[SYS] 59 parameters uploaded -- verbose terminal ready\n",
+  "mon": [
+   "[SYS] 59 parameters uploaded",
+   "[SYS] parameter upload verified (3/3)",
+   "[SYS] TNC has no MailDrop — MailDrop commands skipped, button stays disabled"
+  ]
+ }
+}
