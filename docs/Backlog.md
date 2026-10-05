@@ -109,6 +109,27 @@ from the real TNC value, `$09` is deferred like P81 (generic for every `HF_PACKE
 `MainWindow._apply_changed_params()` / `_apply_deferred_params()`); MYCALL in Host Mode stays
 deferred (see the `ML` set test entry).
 
+### Fixed text colours outside the Packet panel (found with P77c) — open (2026-10-05)
+
+Contrast = WCAG ratio of the colour as TEXT on white / on the light widget window `#f0f0f0` /
+on the dark widget window `#1e2830` (limit 4.5 : 1; `contrast_ratio()` in `colors.py`).
+
+1. **White text on the CONNECTED chip** (`packet_screen._CHIP_FILL[CH_CONNECTED]` = `#3a9e3a`,
+   chip label `color: white`): **3.42 : 1**. The other chip fills are fine with white text
+   (free `#5a5a5a` 6.90, calling `#8a6a1e` 5.05, failed `#b03a3a` 5.98, disconnecting `#6a4a8a` 7.10,
+   MON `#2a6496` 6.25). Needs a darker green fill or a dark chip text; keep the green family
+   (MHEARD uses `panel_ok_color` since P77c).
+2. **Fixed status colours in AMTOR and PACTOR** (`STATUS_STYLES` in `amtor_screen.py` /
+   `pactor_screen.py`, plus the `lbl_status` start colour `#888888`): `#888888` (STBY, ALIST)
+   3.54 / 3.11 / 4.23; `#cc8800` (CALLING, TX HOLD) 2.96 / 2.60 / 5.06; `#3a9e3a` (CONNECTED)
+   3.42 / 3.01 / 4.38; `#2266cc` (FEC TX, SELFEC TX, LISTENING) 5.47 / 4.80 / **2.74**;
+   `#cc4444` (DISCONNECTED, PACTOR) 4.69 / 4.12 / **3.20**. Same fix as the Packet screen: theme
+   roles `panel_*_color` / `rx_color` through `get_theme()`, repainted on a theme change.
+3. **Fixed green in FAX and Signal**: `#3a9e3a` as text (`fax_screen._set_status("DONE", ...)`,
+   `signal_screen` line ~74 and the analysis status ~515): **3.42 / 3.01 / 4.38**. Use
+   `panel_ok_color`. (Not measured yet, same screens: FAX `#888888` / `#8aaccc`, Signal `#8aaccc`,
+   `#7090a8`, `#ffcc66`, `#607080`, `#cc8800`.)
+
 ### Theme colours of the Packet side panel (P77c) — done (2026-10-05)
 
 MHEARD callsigns were fixed `#66ee66` / `#88ccff` (unreadable on Air). New roles per theme in
@@ -120,9 +141,8 @@ are for the RX documents). Connected MHEARD rows use `panel_ok_color` (Dark: `#4
 fill `#3a9e3a` is 4.38 as text on the panel). Theme change repaints rows, status and hint
 (`PacketBaseScreen.refresh_theme_colors()`). The recolour map of already written text takes only
 the four document roles (sys/ok/err/dim). Stale "no CSTATUS in Host Mode" docstrings corrected.
-**Found, not changed:** white text on the CONNECTED chip fill is 3.42 : 1; `STATUS_STYLES` in
-`amtor_screen.py` / `pactor_screen.py` and the fax/signal screens still have fixed `#888888` /
-`#3a9e3a` text colours.
+**Found, not changed:** see "Fixed text colours outside the Packet panel" above (chip text 3.42 : 1,
+AMTOR/PACTOR status colours, FAX/Signal greens).
 
 ### P81d - link frames reach the LinkTable in every mode — done (2026-10-04)
 
