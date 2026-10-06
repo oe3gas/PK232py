@@ -165,6 +165,14 @@ a `?What?` for a command outside the table stays a visible finding. The AMTOR/Ba
 dialogs grey the matching fields (`apply_firmware_limits()`, value kept). Not covered: the P72
 apply-now path (`changed_with_old`) still builds from `has_pactor` only.
 
+### Verbose commands end with CR only, ILFPACK normal again (P75) — Teil 0 tool done, T175 open (2026-10-06)
+
+Spec: `docs/P75_Verbose_CR_Only_Spec.md`. With `ILFPACK OFF` the app's `
+` command ends break every verbose command
+after the first (T155: the LF becomes the first character of the next command). Teil 0 is `hw_check.py eol_probe`
+(T175, devices B and A, needs the operator). Teil A (one `verbose_line()`), B (ILFPACK live again, `IL` released with
+the T175 proof), C (tests) and D (T176) follow only after T175 step 4 is measured. Not started.
+
 ### Upload sends PACTOR commands although the banner says pactor=no — ✅ closed, explained (2026-10-06)
 
 Explanation: WITH a banner `SerialManager.has_pactor` is correct (`b"PACTOR" in banner`; T173: device B with banner

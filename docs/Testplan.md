@@ -3507,6 +3507,41 @@ Refused on 01.AUG.91: EXPERT, MYPTCALL, PTHUFF, PT200, PTOVER, ARQTOL, MOPT (8 c
 
 ---
 
+### T175 — CR-only verbose commands with ILFPACK ON and OFF (P75 Teil 0)
+
+PC 1, device B and device A, verbose command mode, ILFPACK ON, no connection. Nothing is sent on the air.
+Run: `.venv\Scripts\python.exe tools\hw_check.py eol_probe` (`--dry-run` shows the plan). Software: `test_hw_check_eol_probe.py`.
+Teil A-C of P75 wait for this result (step 4 is the question).
+
+| # | Step | Expected | Result B | Result A |
+|---|---|---|---|---|
+| 1 | ILFPACK ON, five queries with CR only | all right | ⬜ | ⬜ |
+| 2 | ILFPACK ON, same with CR LF | all right | ⬜ | ⬜ |
+| 3 | Host Mode: `IL N`, query; leave; verbose `ILFPACK` | OFF (does `IL` set what verbose shows?) | ⬜ | ⬜ |
+| 4 | ILFPACK OFF, five queries with CR only | **all five right** (the question) | ⬜ | ⬜ |
+| 5 | ILFPACK OFF, same with CR LF | as T155: first right, then `?What?` | ⬜ | ⬜ |
+| 6 | MailDrop query `MAILDROP` with CR only | answered | ⬜ | ⬜ |
+| 7 | `CONVERSE` with CR only, then COMMAND char | `cmd:` again | ⬜ | ⬜ |
+| 8 | Restore: Host Mode `IL Y`, verbose `ILFPACK` | ON | ⬜ | ⬜ |
+
+**Status:** ⬜ OPEN — tool done, run pending.
+
+---
+
+### T176 — ILFPACK applied live, CR-only commands in the app (P75 Teil D, device B)
+
+Only after T175 step 4 PASS and P75 Teil A-C.
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Packet mask: ILFPACK off -> OK; leave Host Mode; terminal `PACLEN`, `USERS`, `HELP` | applied at once (`ok`); all three answered right | ⬜ |
+| 2 | Restart PK232PY (TNC still ILFPACK OFF): init, upload, Host Mode entry | no `?What?` | ⬜ |
+| 3 | ILFPACK on again | ON | ⬜ |
+
+**Status:** ⬜ OPEN — waits for T175 and the P75 software.
+
+---
+
 ### T174 — Macros in Packet; crashes in the log file (P86)
 
 Any device (macros are only inserted, nothing is sent). Software: `test_macros_packet_p86.py`,
