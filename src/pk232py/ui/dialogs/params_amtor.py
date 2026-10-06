@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
     QLineEdit, QSpinBox, QVBoxLayout, QWidget,
 )
 
+from pk232py.ui.dialogs.firmware_limits import apply_firmware_limits
+
 logger = logging.getLogger(__name__)
 
 
@@ -128,6 +130,10 @@ class AMTORParamsDialog(QDialog):
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
+
+    def apply_firmware_limits(self, release) -> None:
+        """P85 C: grey out what firmware *release* does not know (ARQTOL)."""
+        apply_firmware_limits(release, {"ARQTOL": self._sb_arqtol})
 
     def set_values(self, **kw) -> None:
         if "myselcal"  in kw: self._le_myselcal.setText(str(kw["myselcal"]).upper())

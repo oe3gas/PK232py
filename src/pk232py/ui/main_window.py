@@ -5204,6 +5204,7 @@ class MainWindow(QMainWindow):
         """Open PACTOR Parameters dialog."""
         before = copy.deepcopy(self._app_config)
         dlg = PACTORParamsDialog(self._app_config.pactor, parent=self)
+        dlg.apply_firmware_limits(getattr(self._serial, 'tnc_release', None))
         if dlg.exec() == PACTORParamsDialog.DialogCode.Accepted:
             self._config_mgr.save()
             self._apply_changed_params(before, "PACTOR")
@@ -5212,6 +5213,7 @@ class MainWindow(QMainWindow):
         """Open AMTOR / NAVTEX / TDM Parameters dialog."""
         before = copy.deepcopy(self._app_config)
         dlg = AMTORParamsDialog(parent=self)
+        dlg.apply_firmware_limits(getattr(self._serial, 'tnc_release', None))
         am = self._app_config.amtor
         dlg.set_values(
             myselcal=am.myselcal, myaltcal=am.myaltcal, myident=am.myident,
@@ -5237,6 +5239,7 @@ class MainWindow(QMainWindow):
         """Open BAUDOT / ASCII / CW Parameters dialog."""
         before = copy.deepcopy(self._app_config)
         dlg = BaudotParamsDialog(parent=self)
+        dlg.apply_firmware_limits(getattr(self._serial, 'tnc_release', None))
         ba = self._app_config.baudot
         dlg.set_values(
             mspeed=ba.mspeed, mweight=ba.mweight, code=ba.code,

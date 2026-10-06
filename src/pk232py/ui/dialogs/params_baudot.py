@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget,
 )
 
+from pk232py.ui.dialogs.firmware_limits import apply_firmware_limits
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +113,10 @@ class BaudotParamsDialog(QDialog):
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
+
+    def apply_firmware_limits(self, release) -> None:
+        """P85 C: grey out what firmware *release* does not know (MOPT)."""
+        apply_firmware_limits(release, {"MOPT": self._chk_mopt})
 
     def set_values(self, **kw) -> None:
         if "acrtty"  in kw: self._sb_acrtty.setValue(int(kw["acrtty"]))

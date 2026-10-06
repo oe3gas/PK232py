@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
 )
 from pk232py.config import PACTORConfig
 
+from pk232py.ui.dialogs.firmware_limits import apply_firmware_limits
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,6 +103,15 @@ class PACTORParamsDialog(QDialog):
         bb.accepted.connect(self._on_accept)
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
+
+    def apply_firmware_limits(self, release) -> None:
+        """P85 C: grey out what firmware *release* does not know. The dialog
+        itself is only reachable with PACTOR (the menu entry is disabled
+        without it), so nothing is locked twice here."""
+        apply_firmware_limits(release, {
+            "MYPTCALL": self._le_myptcall, "PTHUFF": self._sb_pthuff,
+            "PT200": self._chk_pt200, "PTOVER": self._hx_ptover,
+        })
 
     def _populate(self) -> None:
         c = self._config
