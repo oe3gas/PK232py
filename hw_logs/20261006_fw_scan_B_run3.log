@@ -1,0 +1,888 @@
+# PK-232 scan debug log -- 2026-10-06T18:41:02
+# [t+sec] TAG: data   (TX=gesendet | RX=empfangen mit Wartezeit | --=Notiz)
+
+[  0.135] TX: '\x03'
+[  0.550] RX (0.415s): ''
+[  0.550] TX: 'RESTART\r'
+[  1.151] TX: '*'
+[  2.381] RX (1.230s): '\x00\x00\x00\x00\x00\r\n\r\n\r\nPK-232M is using default values.\r\n  \r\n\r\n\r\n\x11AEA PK-232M Data Controller\r\nCopyright (C) 1986-1991 by\r\nAdvanced Electronic Applications, Inc.\r\nRelease 01.AUG.91\r\n\r\ncmd:'
+[  2.381] TX: '\x03'
+[  3.201] RX (0.820s): 'cmd:'
+[  3.202] -- BANNER geparst: release=01.AUG.91
+[  3.202] -- Phase: EXPERT entsperren
+[  3.202] TX: 'EXPERT\r'
+[  4.020] RX (0.817s): 'EXPERT\r\n?What?\r\ncmd:'
+[  4.021] -- MODE ENTER PACKET
+[  4.021] TX: 'PACKET\r'
+[  4.322] TX: '\x03'
+[  5.140] RX (0.819s): 'PACKET\r\nOpmode   was PAcket    \r\nOpmode   now PAcket    \r\ncmd:cmd:'
+[  5.141] -- === [1/209] ACKPRIOR  (kind=param) ===
+[  5.141] TX: 'ACKPRIOR\r'
+[  5.961] RX (0.820s): 'ACKPRIOR\r\nACKprior  OFF\r\ncmd:'
+[  5.961] -- DECIDE ACKPRIOR (param) = SUPPORTED
+[  5.991] -- === [2/209] ACRPACK  (kind=param) ===
+[  5.991] TX: 'ACRPACK\r'
+[  6.811] RX (0.820s): 'ACRPACK\r\nACRPack   ON\r\ncmd:'
+[  6.812] -- DECIDE ACRPACK (param) = SUPPORTED
+[  6.842] -- === [3/209] ALFPACK  (kind=param) ===
+[  6.842] TX: 'ALFPACK\r'
+[  7.654] RX (0.812s): 'ALFPACK\r\nALFPack   OFF\r\ncmd:'
+[  7.654] -- DECIDE ALFPACK (param) = SUPPORTED
+[  7.685] -- === [4/209] AX25L2V2  (kind=param) ===
+[  7.685] TX: 'AX25L2V2\r'
+[  8.496] RX (0.810s): 'AX25L2V2\r\nAx25l2v2  ON\r\ncmd:'
+[  8.496] -- DECIDE AX25L2V2 (param) = SUPPORTED
+[  8.526] -- === [5/209] AXDELAY  (kind=param) ===
+[  8.526] TX: 'AXDELAY\r'
+[  9.344] RX (0.817s): 'AXDELAY\r\nAXDelay   0 (00 msec.)\r\ncmd:'
+[  9.344] -- DECIDE AXDELAY (param) = SUPPORTED
+[  9.375] -- === [6/209] AXHANG  (kind=param) ===
+[  9.375] TX: 'AXHANG\r'
+[ 10.195] RX (0.820s): 'AXHANG\r\nAXHang    0 (000 msec.)\r\ncmd:'
+[ 10.196] -- DECIDE AXHANG (param) = SUPPORTED
+[ 10.226] -- === [7/209] BEACON  (kind=param) ===
+[ 10.226] TX: 'BEACON\r'
+[ 11.048] RX (0.821s): 'BEACON\r\nBeacon    EVERY 0 (00 sec.)\r\ncmd:'
+[ 11.048] -- DECIDE BEACON (param) = SUPPORTED
+[ 11.078] -- === [8/209] BTEXT  (kind=param) ===
+[ 11.078] TX: 'BTEXT\r'
+[ 11.901] RX (0.822s): 'BTEXT\r\nBText     \r\ncmd:'
+[ 11.901] -- DECIDE BTEXT (param) = SUPPORTED
+[ 11.931] -- === [9/209] CANPAC  (kind=param) ===
+[ 11.931] TX: 'CANPAC\r'
+[ 12.755] RX (0.824s): 'CANPAC\r\nCANPac    $19 (CTRL-Y)\r\ncmd:'
+[ 12.755] -- DECIDE CANPAC (param) = SUPPORTED
+[ 12.786] -- === [10/209] CASEDISP  (kind=param) ===
+[ 12.786] TX: 'CASEDISP\r'
+[ 13.607] RX (0.820s): 'CASEDISP\r\nCASedisp  0 (as is)\r\ncmd:'
+[ 13.607] -- DECIDE CASEDISP (param) = SUPPORTED
+[ 13.637] -- === [11/209] CFROM  (kind=param) ===
+[ 13.637] TX: 'CFROM\r'
+[ 14.457] RX (0.819s): 'CFROM\r\nCFrom     all\r\ncmd:'
+[ 14.457] -- DECIDE CFROM (param) = SUPPORTED
+[ 14.487] -- === [12/209] CHCALL  (kind=param) ===
+[ 14.487] TX: 'CHCALL\r'
+[ 15.298] RX (0.811s): 'CHCALL\r\nCHCall    OFF\r\ncmd:'
+[ 15.298] -- DECIDE CHCALL (param) = SUPPORTED
+[ 15.329] -- === [13/209] CHDOUBLE  (kind=param) ===
+[ 15.329] TX: 'CHDOUBLE\r'
+[ 16.148] RX (0.819s): 'CHDOUBLE\r\nCHDouble  OFF\r\ncmd:'
+[ 16.148] -- DECIDE CHDOUBLE (param) = SUPPORTED
+[ 16.179] -- === [14/209] CHECK  (kind=param) ===
+[ 16.179] TX: 'CHECK\r'
+[ 17.002] RX (0.823s): 'CHECK\r\nCHeck     30 (300 sec.)\r\ncmd:'
+[ 17.002] -- DECIDE CHECK (param) = SUPPORTED
+[ 17.033] -- === [15/209] CHSWITCH  (kind=param) ===
+[ 17.033] TX: 'CHSWITCH\r'
+[ 17.855] RX (0.822s): 'CHSWITCH\r\nCHSwitch  $00\r\ncmd:'
+[ 17.855] -- DECIDE CHSWITCH (param) = SUPPORTED
+[ 17.885] -- === [16/209] CONMODE  (kind=param) ===
+[ 17.885] TX: 'CONMODE\r'
+[ 18.707] RX (0.821s): 'CONMODE\r\nCONMode   CONVERSE\r\ncmd:'
+[ 18.707] -- DECIDE CONMODE (param) = SUPPORTED
+[ 18.737] -- === [17/209] CONOK  (kind=param) ===
+[ 18.737] TX: 'CONOK\r'
+[ 19.559] RX (0.821s): 'CONOK\r\nCONOk     ON\r\ncmd:'
+[ 19.559] -- DECIDE CONOK (param) = SUPPORTED
+[ 19.590] -- === [18/209] CONPERM  (kind=param) ===
+[ 19.590] TX: 'CONPERM\r'
+[ 20.413] RX (0.823s): 'CONPERM\r\nCONPerm   OFF\r\ncmd:'
+[ 20.414] -- DECIDE CONPERM (param) = SUPPORTED
+[ 20.444] -- === [19/209] CONSTAMP  (kind=param) ===
+[ 20.444] TX: 'CONSTAMP\r'
+[ 21.265] RX (0.821s): 'CONSTAMP\r\nCONStamp  OFF\r\ncmd:'
+[ 21.265] -- DECIDE CONSTAMP (param) = SUPPORTED
+[ 21.296] -- === [20/209] CPACTIME  (kind=param) ===
+[ 21.296] TX: 'CPACTIME\r'
+[ 22.108] RX (0.812s): 'CPACTIME\r\nCPactime  OFF\r\ncmd:'
+[ 22.108] -- DECIDE CPACTIME (param) = SUPPORTED
+[ 22.139] -- === [21/209] DFROM  (kind=param) ===
+[ 22.139] TX: 'DFROM\r'
+[ 22.949] RX (0.810s): 'DFROM\r\nDFrom     all\r\ncmd:'
+[ 22.949] -- DECIDE DFROM (param) = SUPPORTED
+[ 22.980] -- === [22/209] DIGIPEAT  (kind=param) ===
+[ 22.980] TX: 'DIGIPEAT\r'
+[ 23.793] RX (0.813s): 'DIGIPEAT\r\nDIGipeat  ON\r\ncmd:'
+[ 23.793] -- DECIDE DIGIPEAT (param) = SUPPORTED
+[ 23.823] -- === [23/209] DWAIT  (kind=param) ===
+[ 23.824] TX: 'DWAIT\r'
+[ 24.647] RX (0.823s): 'DWAIT\r\nDWait     16 (160 msec.)\r\ncmd:'
+[ 24.647] -- DECIDE DWAIT (param) = SUPPORTED
+[ 24.678] -- === [24/209] FRACK  (kind=param) ===
+[ 24.678] TX: 'FRACK\r'
+[ 25.499] RX (0.821s): 'FRACK\r\nFRack     5 (5 sec.)\r\ncmd:'
+[ 25.499] -- DECIDE FRACK (param) = SUPPORTED
+[ 25.530] -- === [25/209] FULLDUP  (kind=param) ===
+[ 25.530] TX: 'FULLDUP\r'
+[ 26.352] RX (0.822s): 'FULLDUP\r\nFUlldup   OFF\r\ncmd:'
+[ 26.352] -- DECIDE FULLDUP (param) = SUPPORTED
+[ 26.382] -- === [26/209] HBAUD  (kind=param) ===
+[ 26.382] TX: 'HBAUD\r'
+[ 27.205] RX (0.822s): 'HBAUD\r\nHBaud     1200\r\ncmd:'
+[ 27.205] -- DECIDE HBAUD (param) = SUPPORTED
+[ 27.236] -- === [27/209] HEADERLN  (kind=param) ===
+[ 27.236] TX: 'HEADERLN\r'
+[ 28.058] RX (0.821s): 'HEADERLN\r\nHEAderln  ON\r\ncmd:'
+[ 28.058] -- DECIDE HEADERLN (param) = SUPPORTED
+[ 28.088] -- === [28/209] HID  (kind=param) ===
+[ 28.089] TX: 'HID\r'
+[ 28.904] RX (0.815s): 'HID\r\nHId       OFF\r\ncmd:'
+[ 28.904] -- DECIDE HID (param) = SUPPORTED
+[ 28.935] -- === [29/209] HPOLL  (kind=param) ===
+[ 28.935] TX: 'HPOLL\r'
+[ 29.747] RX (0.812s): 'HPOLL\r\nHPoll     ON\r\ncmd:'
+[ 29.747] -- DECIDE HPOLL (param) = SUPPORTED
+[ 29.778] -- === [30/209] ILFPACK  (kind=param) ===
+[ 29.778] TX: 'ILFPACK\r'
+[ 30.592] RX (0.814s): 'ILFPACK\r\nILfpack   ON\r\ncmd:'
+[ 30.593] -- DECIDE ILFPACK (param) = SUPPORTED
+[ 30.623] -- === [31/209] KISS  (kind=param) ===
+[ 30.623] TX: 'KISS\r'
+[ 31.441] RX (0.818s): 'KISS\r\nKIss      $00\r\ncmd:'
+[ 31.441] -- DECIDE KISS (param) = SUPPORTED
+[ 31.471] -- === [32/209] KISSADDR  (kind=param) ===
+[ 31.472] TX: 'KISSADDR\r'
+[ 32.281] RX (0.810s): 'KISSADDR\r\nKISSAddr  0\r\ncmd:'
+[ 32.282] -- DECIDE KISSADDR (param) = SUPPORTED
+[ 32.312] -- === [33/209] MAXFRAME  (kind=param) ===
+[ 32.313] TX: 'MAXFRAME\r'
+[ 33.126] RX (0.814s): 'MAXFRAME\r\nMAXframe  4\r\ncmd:'
+[ 33.127] -- DECIDE MAXFRAME (param) = SUPPORTED
+[ 33.157] -- === [34/209] MCON  (kind=param) ===
+[ 33.157] TX: 'MCON\r'
+[ 33.977] RX (0.820s): 'MCON\r\nMCon      0 (none)\r\ncmd:'
+[ 33.977] -- DECIDE MCON (param) = SUPPORTED
+[ 34.008] -- === [35/209] MFROM  (kind=param) ===
+[ 34.008] TX: 'MFROM\r'
+[ 34.818] RX (0.810s): 'MFROM\r\nMFrom     all\r\ncmd:'
+[ 34.819] -- DECIDE MFROM (param) = SUPPORTED
+[ 34.849] -- === [36/209] MONITOR  (kind=param) ===
+[ 34.849] TX: 'MONITOR\r'
+[ 35.655] RX (0.805s): 'MONITOR\r\nMonitor   4 (UA DM C D I UI)\r\ncmd:'
+[ 35.655] -- DECIDE MONITOR (param) = SUPPORTED
+[ 35.686] -- === [37/209] MRPT  (kind=param) ===
+[ 35.686] TX: 'MRPT\r'
+[ 36.495] RX (0.809s): 'MRPT\r\nMRpt      ON\r\ncmd:'
+[ 36.495] -- DECIDE MRPT (param) = SUPPORTED
+[ 36.526] -- === [38/209] MTO  (kind=param) ===
+[ 36.526] TX: 'MTO\r'
+[ 37.341] RX (0.815s): 'MTO\r\nMTo       none\r\ncmd:'
+[ 37.342] -- DECIDE MTO (param) = SUPPORTED
+[ 37.372] -- === [39/209] MYCALL  (kind=param) ===
+[ 37.372] TX: 'MYCALL\r'
+[ 38.193] RX (0.821s): 'MYCALL\r\nMYcall    PK232\r\ncmd:'
+[ 38.193] -- DECIDE MYCALL (param) = SUPPORTED
+[ 38.224] -- === [40/209] PACLEN  (kind=param) ===
+[ 38.224] TX: 'PACLEN\r'
+[ 39.039] RX (0.815s): 'PACLEN\r\nPACLen    128\r\ncmd:'
+[ 39.039] -- DECIDE PACLEN (param) = SUPPORTED
+[ 39.070] -- === [41/209] PACTIME  (kind=param) ===
+[ 39.070] TX: 'PACTIME\r'
+[ 39.877] RX (0.806s): 'PACTIME\r\nPACTime   AFTER 10 (1000 msec.)\r\ncmd:'
+[ 39.877] -- DECIDE PACTIME (param) = SUPPORTED
+[ 39.908] -- === [42/209] PASSALL  (kind=param) ===
+[ 39.908] TX: 'PASSALL\r'
+[ 40.724] RX (0.816s): 'PASSALL\r\nPASSAll   OFF\r\ncmd:'
+[ 40.725] -- DECIDE PASSALL (param) = SUPPORTED
+[ 40.756] -- === [43/209] PERSIST  (kind=param) ===
+[ 40.756] TX: 'PERSIST\r'
+[ 41.559] RX (0.803s): 'PERSIST\r\nPErsist   63\r\ncmd:'
+[ 41.560] -- DECIDE PERSIST (param) = SUPPORTED
+[ 41.590] -- === [44/209] PPERSIST  (kind=param) ===
+[ 41.590] TX: 'PPERSIST\r'
+[ 42.404] RX (0.814s): 'PPERSIST\r\nPPersist  ON\r\ncmd:'
+[ 42.405] -- DECIDE PPERSIST (param) = SUPPORTED
+[ 42.435] -- === [45/209] RAWHDLC  (kind=param) ===
+[ 42.435] TX: 'RAWHDLC\r'
+[ 43.253] RX (0.817s): 'RAWHDLC\r\nRAWhdlc   OFF\r\ncmd:'
+[ 43.253] -- DECIDE RAWHDLC (param) = SUPPORTED
+[ 43.284] -- === [46/209] RELINK  (kind=param) ===
+[ 43.284] TX: 'RELINK\r'
+[ 44.103] RX (0.818s): 'RELINK\r\nRELink    OFF\r\ncmd:'
+[ 44.103] -- DECIDE RELINK (param) = SUPPORTED
+[ 44.134] -- === [47/209] RESPTIME  (kind=param) ===
+[ 44.134] TX: 'RESPTIME\r'
+[ 44.943] RX (0.809s): 'RESPTIME\r\nRESptime  0 (000 msec.)\r\ncmd:'
+[ 44.943] -- DECIDE RESPTIME (param) = SUPPORTED
+[ 44.974] -- === [48/209] RETRY  (kind=param) ===
+[ 44.974] TX: 'RETRY\r'
+[ 45.777] RX (0.803s): 'RETRY\r\nREtry     10\r\ncmd:'
+[ 45.777] -- DECIDE RETRY (param) = SUPPORTED
+[ 45.807] -- === [49/209] RFRAME  (kind=param) ===
+[ 45.807] TX: 'RFRAME\r'
+[ 46.619] RX (0.811s): 'RFRAME\r\n?What?\r\ncmd:'
+[ 46.619] -- DECIDE RFRAME (param) = UNSUPPORTED
+[ 46.650] -- === [50/209] SENDPAC  (kind=param) ===
+[ 46.650] TX: 'SENDPAC\r'
+[ 47.461] RX (0.811s): 'SENDPAC\r\nSEndpac   $0D (CTRL-M)\r\ncmd:'
+[ 47.461] -- DECIDE SENDPAC (param) = SUPPORTED
+[ 47.492] -- === [51/209] SLOTTIME  (kind=param) ===
+[ 47.492] TX: 'SLOTTIME\r'
+[ 48.319] RX (0.827s): 'SLOTTIME\r\nSLottime  30 (300 msec.)\r\ncmd:'
+[ 48.319] -- DECIDE SLOTTIME (param) = SUPPORTED
+[ 48.349] -- === [52/209] SQUELCH  (kind=param) ===
+[ 48.349] TX: 'SQUELCH\r'
+[ 49.161] RX (0.812s): 'SQUELCH\r\nSQuelch   OFF\r\ncmd:'
+[ 49.161] -- DECIDE SQUELCH (param) = SUPPORTED
+[ 49.192] -- === [53/209] TRIES  (kind=param) ===
+[ 49.192] TX: 'TRIES\r'
+[ 50.009] RX (0.817s): 'TRIES\r\nTRIes     0\r\ncmd:'
+[ 50.009] -- DECIDE TRIES (param) = SUPPORTED
+[ 50.040] -- === [54/209] TXFLOW  (kind=param) ===
+[ 50.040] TX: 'TXFLOW\r'
+[ 50.848] RX (0.808s): 'TXFLOW\r\nTXFlow    OFF\r\ncmd:'
+[ 50.849] -- DECIDE TXFLOW (param) = SUPPORTED
+[ 50.879] -- === [55/209] UNPROTO  (kind=param) ===
+[ 50.879] TX: 'UNPROTO\r'
+[ 51.693] RX (0.814s): 'UNPROTO\r\nUnproto   CQ\r\ncmd:'
+[ 51.693] -- DECIDE UNPROTO (param) = SUPPORTED
+[ 51.724] -- === [56/209] VHF  (kind=param) ===
+[ 51.724] TX: 'VHF\r'
+[ 52.539] RX (0.815s): 'VHF\r\nVhf       ON\r\ncmd:'
+[ 52.539] -- DECIDE VHF (param) = SUPPORTED
+[ 52.575] -- === [57/209] WHYNOT  (kind=param) ===
+[ 52.575] TX: 'WHYNOT\r'
+[ 53.391] RX (0.816s): 'WHYNOT\r\nWHYnot    OFF\r\ncmd:'
+[ 53.392] -- DECIDE WHYNOT (param) = SUPPORTED
+[ 53.422] -- MODE ENTER BAUDOT
+[ 53.422] TX: 'BAUDOT\r'
+[ 53.723] TX: '\x03'
+[ 54.541] RX (0.818s): 'BAUDOT\r\nOpmode   was PAcket    \r\nOpmode   now BAudot    \r\ncmd:cmd:'
+[ 54.541] -- === [58/209] 8BITCONV  (kind=param) ===
+[ 54.541] TX: '8BITCONV\r'
+[ 55.347] RX (0.806s): '8BITCONV\r\n8Bitconv  OFF\r\ncmd:'
+[ 55.347] -- DECIDE 8BITCONV (param) = SUPPORTED
+[ 55.378] -- === [59/209] ABAUD  (kind=param) ===
+[ 55.378] TX: 'ABAUD\r'
+[ 56.180] RX (0.802s): 'ABAUD\r\nABaud     110\r\ncmd:'
+[ 56.180] -- DECIDE ABAUD (param) = SUPPORTED
+[ 56.211] -- === [60/209] ACRRTTY  (kind=param) ===
+[ 56.211] TX: 'ACRRTTY\r'
+[ 57.013] RX (0.801s): 'ACRRTTY\r\nACRRtty   71\r\ncmd:'
+[ 57.013] -- DECIDE ACRRTTY (param) = SUPPORTED
+[ 57.043] -- === [61/209] ALFRTTY  (kind=param) ===
+[ 57.043] TX: 'ALFRTTY\r'
+[ 57.856] RX (0.812s): 'ALFRTTY\r\nALFRtty   ON\r\ncmd:'
+[ 57.856] -- DECIDE ALFRTTY (param) = SUPPORTED
+[ 57.887] -- === [62/209] BITINV  (kind=param) ===
+[ 57.887] TX: 'BITINV\r'
+[ 58.702] RX (0.815s): 'BITINV\r\nBItinv    $00\r\ncmd:'
+[ 58.702] -- DECIDE BITINV (param) = SUPPORTED
+[ 58.733] -- === [63/209] CCITT  (kind=param) ===
+[ 58.733] TX: 'CCITT\r'
+[ 59.533] RX (0.800s): 'CCITT\r\nCCitt     ON\r\ncmd:'
+[ 59.533] -- DECIDE CCITT (param) = SUPPORTED
+[ 59.564] -- === [64/209] CRADD  (kind=param) ===
+[ 59.564] TX: 'CRADD\r'
+[ 60.380] RX (0.815s): 'CRADD\r\nCRAdd     OFF\r\ncmd:'
+[ 60.380] -- DECIDE CRADD (param) = SUPPORTED
+[ 60.410] -- === [65/209] DIDDLE  (kind=param) ===
+[ 60.411] TX: 'DIDDLE\r'
+[ 61.213] RX (0.803s): 'DIDDLE\r\nDIDdle    OFF\r\ncmd:'
+[ 61.214] -- DECIDE DIDDLE (param) = SUPPORTED
+[ 61.245] -- === [66/209] PASS  (kind=param) ===
+[ 61.245] TX: 'PASS\r'
+[ 62.064] RX (0.819s): 'PASS\r\nPASs      $16 (CTRL-V)\r\ncmd:'
+[ 62.064] -- DECIDE PASS (param) = SUPPORTED
+[ 62.094] -- === [67/209] RBAUD  (kind=param) ===
+[ 62.094] TX: 'RBAUD\r'
+[ 62.899] RX (0.804s): 'RBAUD\r\nRBaud     45\r\ncmd:'
+[ 62.899] -- DECIDE RBAUD (param) = SUPPORTED
+[ 62.932] -- === [68/209] TXDELAY  (kind=param) ===
+[ 62.933] TX: 'TXDELAY\r'
+[ 63.747] RX (0.814s): 'TXDELAY\r\nTXdelay   30 (300 msec.)\r\ncmd:'
+[ 63.747] -- DECIDE TXDELAY (param) = SUPPORTED
+[ 63.778] -- === [69/209] USOS  (kind=param) ===
+[ 63.778] TX: 'USOS\r'
+[ 64.583] RX (0.805s): 'USOS\r\nUSOs      OFF\r\ncmd:'
+[ 64.583] -- DECIDE USOS (param) = SUPPORTED
+[ 64.614] -- === [70/209] WIDESHFT  (kind=param) ===
+[ 64.614] TX: 'WIDESHFT\r'
+[ 65.423] RX (0.809s): 'WIDESHFT\r\nWIdeshft  OFF\r\ncmd:'
+[ 65.423] -- DECIDE WIDESHFT (param) = SUPPORTED
+[ 65.454] -- === [71/209] WRU  (kind=param) ===
+[ 65.454] TX: 'WRU\r'
+[ 66.266] RX (0.812s): 'WRU\r\nWRu       OFF\r\ncmd:'
+[ 66.266] -- DECIDE WRU (param) = SUPPORTED
+[ 66.297] -- === [72/209] XBAUD  (kind=param) ===
+[ 66.297] TX: 'XBAUD\r'
+[ 67.113] RX (0.816s): 'XBAUD\r\nXBaud     0\r\ncmd:'
+[ 67.113] -- DECIDE XBAUD (param) = SUPPORTED
+[ 67.143] -- MODE ENTER AMTOR
+[ 67.144] TX: 'AMTOR\r'
+[ 67.444] TX: '\x03'
+[ 68.261] RX (0.817s): 'AMTOR\r\nOpmode   was BAudot    \r\nOpmode   now AMtor     \r\ncmd:cmd:'
+[ 68.262] -- === [73/209] AAB  (kind=param) ===
+[ 68.262] TX: 'AAB\r'
+[ 69.076] RX (0.814s): 'AAB\r\nAAb       \r\ncmd:'
+[ 69.076] -- DECIDE AAB (param) = SUPPORTED
+[ 69.107] -- === [74/209] ADELAY  (kind=param) ===
+[ 69.107] TX: 'ADELAY\r'
+[ 69.915] RX (0.808s): 'ADELAY\r\nADelay    4 (40 msec.)\r\ncmd:'
+[ 69.915] -- DECIDE ADELAY (param) = SUPPORTED
+[ 69.947] -- === [75/209] ARQTMO  (kind=param) ===
+[ 69.947] TX: 'ARQTMO\r'
+[ 70.749] RX (0.802s): 'ARQTMO\r\nARQTmo    60 (60 sec.)\r\ncmd:'
+[ 70.749] -- DECIDE ARQTMO (param) = SUPPORTED
+[ 70.780] -- === [76/209] ARQTOL  (kind=param) ===
+[ 70.780] TX: 'ARQTOL\r'
+[ 71.583] RX (0.803s): 'ARQTOL\r\n?What?\r\ncmd:'
+[ 71.583] -- DECIDE ARQTOL (param) = UNSUPPORTED
+[ 71.614] -- === [77/209] ARXTOR  (kind=param) ===
+[ 71.614] TX: 'ARXTOR\r'
+[ 72.416] RX (0.801s): 'ARXTOR\r\n?What?\r\ncmd:'
+[ 72.416] -- DECIDE ARXTOR (param) = UNSUPPORTED
+[ 72.447] -- === [78/209] ATXRTTY  (kind=param) ===
+[ 72.447] TX: 'ATXRTTY\r'
+[ 73.249] RX (0.802s): 'ATXRTTY\r\n?What?\r\ncmd:'
+[ 73.249] -- DECIDE ATXRTTY (param) = UNSUPPORTED
+[ 73.280] -- === [79/209] CBELL  (kind=param) ===
+[ 73.280] TX: 'CBELL\r'
+[ 74.083] RX (0.803s): 'CBELL\r\nCBell     OFF\r\ncmd:'
+[ 74.083] -- DECIDE CBELL (param) = SUPPORTED
+[ 74.113] -- === [80/209] DCDCONN  (kind=param) ===
+[ 74.113] TX: 'DCDCONN\r'
+[ 74.916] RX (0.803s): 'DCDCONN\r\nDCdconn   OFF\r\ncmd:'
+[ 74.916] -- DECIDE DCDCONN (param) = SUPPORTED
+[ 74.947] -- === [81/209] EAS  (kind=param) ===
+[ 74.947] TX: 'EAS\r'
+[ 75.760] RX (0.813s): 'EAS\r\nEAS       OFF\r\ncmd:'
+[ 75.760] -- DECIDE EAS (param) = SUPPORTED
+[ 75.791] -- === [82/209] MARSDISP  (kind=param) ===
+[ 75.791] TX: 'MARSDISP\r'
+[ 76.597] RX (0.806s): 'MARSDISP\r\nMARsdisp  OFF\r\ncmd:'
+[ 76.597] -- DECIDE MARSDISP (param) = SUPPORTED
+[ 76.628] -- === [83/209] MYALTCAL  (kind=param) ===
+[ 76.628] TX: 'MYALTCAL\r'
+[ 77.446] RX (0.818s): 'MYALTCAL\r\nMYALTcal  none\r\ncmd:'
+[ 77.446] -- DECIDE MYALTCAL (param) = SUPPORTED
+[ 77.476] -- === [84/209] MYSELCAL  (kind=param) ===
+[ 77.476] TX: 'MYSELCAL\r'
+[ 78.283] RX (0.807s): 'MYSELCAL\r\nMYSelcal  none\r\ncmd:'
+[ 78.283] -- DECIDE MYSELCAL (param) = SUPPORTED
+[ 78.314] -- === [85/209] RFEC  (kind=param) ===
+[ 78.314] TX: 'RFEC\r'
+[ 79.116] RX (0.802s): 'RFEC\r\nRFec      ON\r\ncmd:'
+[ 79.116] -- DECIDE RFEC (param) = SUPPORTED
+[ 79.146] -- === [86/209] RXREV  (kind=param) ===
+[ 79.146] TX: 'RXREV\r'
+[ 79.949] RX (0.802s): 'RXREV\r\nRXRev     OFF\r\ncmd:'
+[ 79.949] -- DECIDE RXREV (param) = SUPPORTED
+[ 79.979] -- === [87/209] SRXALL  (kind=param) ===
+[ 79.980] TX: 'SRXALL\r'
+[ 80.795] RX (0.816s): 'SRXALL\r\nSRXall    OFF\r\ncmd:'
+[ 80.796] -- DECIDE SRXALL (param) = SUPPORTED
+[ 80.826] -- === [88/209] TXREV  (kind=param) ===
+[ 80.826] TX: 'TXREV\r'
+[ 81.633] RX (0.807s): 'TXREV\r\nTXRev     OFF\r\ncmd:'
+[ 81.633] -- DECIDE TXREV (param) = SUPPORTED
+[ 81.663] -- === [89/209] WORDOUT  (kind=param) ===
+[ 81.663] TX: 'WORDOUT\r'
+[ 82.464] RX (0.800s): 'WORDOUT\r\nWOrdout   OFF\r\ncmd:'
+[ 82.464] -- DECIDE WORDOUT (param) = SUPPORTED
+[ 82.495] -- MODE ENTER MORSE
+[ 82.495] TX: 'MORSE\r'
+[ 82.795] TX: '\x03'
+[ 83.614] RX (0.818s): 'MORSE\r\nOpmode   was AMtor     \r\nOpmode   now MOrse     \r\ncmd:cmd:'
+[ 83.614] -- === [90/209] MSPEED  (kind=param) ===
+[ 83.614] TX: 'MSPEED\r'
+[ 84.429] RX (0.815s): 'MSPEED\r\nMSPeed    20\r\ncmd:'
+[ 84.429] -- DECIDE MSPEED (param) = SUPPORTED
+[ 84.460] -- === [91/209] MWEIGHT  (kind=param) ===
+[ 84.460] TX: 'MWEIGHT\r'
+[ 85.264] RX (0.804s): 'MWEIGHT\r\nMWeight   10\r\ncmd:'
+[ 85.264] -- DECIDE MWEIGHT (param) = SUPPORTED
+[ 85.295] -- MODE ENTER FAX
+[ 85.295] TX: 'FAX\r'
+[ 85.595] TX: '\x03'
+[ 86.397] RX (0.802s): 'FAX\r\nOpmode   was MOrse     \r\nOpmode   now FAx       \r\ncmd:cmd:'
+[ 86.397] -- === [92/209] ASPECT  (kind=param) ===
+[ 86.398] TX: 'ASPECT\r'
+[ 87.209] RX (0.811s): 'ASPECT\r\nASPect    2 (576)\r\ncmd:'
+[ 87.209] -- DECIDE ASPECT (param) = SUPPORTED
+[ 87.239] -- === [93/209] AUDELAY  (kind=param) ===
+[ 87.239] TX: 'AUDELAY\r'
+[ 88.047] RX (0.808s): 'AUDELAY\r\nAUdelay   2 (20 msec.)\r\ncmd:'
+[ 88.047] -- DECIDE AUDELAY (param) = SUPPORTED
+[ 88.078] -- === [94/209] CWID  (kind=param) ===
+[ 88.078] TX: 'CWID\r'
+[ 88.881] RX (0.803s): 'CWID\r\nCWid      $06 (CTRL-F)\r\ncmd:'
+[ 88.882] -- DECIDE CWID (param) = SUPPORTED
+[ 88.912] -- === [95/209] FAXNEG  (kind=param) ===
+[ 88.912] TX: 'FAXNEG\r'
+[ 89.717] RX (0.804s): 'FAXNEG\r\nFAXNeg    OFF\r\ncmd:'
+[ 89.717] -- DECIDE FAXNEG (param) = SUPPORTED
+[ 89.747] -- === [96/209] FSPEED  (kind=param) ===
+[ 89.747] TX: 'FSPEED\r'
+[ 90.563] RX (0.816s): 'FSPEED\r\nFSpeed    2 (120)\r\ncmd:'
+[ 90.563] -- DECIDE FSPEED (param) = SUPPORTED
+[ 90.594] -- === [97/209] GRAPHICS  (kind=param) ===
+[ 90.594] TX: 'GRAPHICS\r'
+[ 91.400] RX (0.806s): 'GRAPHICS\r\nGRaphics  1 (960 dots)\r\ncmd:'
+[ 91.400] -- DECIDE GRAPHICS (param) = SUPPORTED
+[ 91.431] -- === [98/209] LEFTRITE  (kind=param) ===
+[ 91.431] TX: 'LEFTRITE\r'
+[ 92.248] RX (0.818s): 'LEFTRITE\r\nLEftrite  ON\r\ncmd:'
+[ 92.249] -- DECIDE LEFTRITE (param) = SUPPORTED
+[ 92.279] -- === [99/209] PRFAX  (kind=param) ===
+[ 92.279] TX: 'PRFAX\r'
+[ 93.082] RX (0.802s): 'PRFAX\r\nPRFax     ON\r\ncmd:'
+[ 93.082] -- DECIDE PRFAX (param) = SUPPORTED
+[ 93.112] -- === [100/209] PRTYPE  (kind=param) ===
+[ 93.112] TX: 'PRTYPE\r'
+[ 93.914] RX (0.801s): 'PRTYPE\r\nPRType    2\r\ncmd:'
+[ 93.914] -- DECIDE PRTYPE (param) = SUPPORTED
+[ 93.944] -- === [101/209] TRACE  (kind=param) ===
+[ 93.945] TX: 'TRACE\r'
+[ 94.748] RX (0.803s): 'TRACE\r\nTRACe     OFF\r\ncmd:'
+[ 94.748] -- DECIDE TRACE (param) = SUPPORTED
+[ 94.778] -- MODE ENTER NAVTEX
+[ 94.778] TX: 'NAVTEX\r'
+[ 95.079] TX: '\x03'
+[ 95.896] RX (0.817s): 'NAVTEX\r\nOpmode   was FAx       \r\nOpmode   now NAvtex    \r\ncmd:cmd:'
+[ 95.896] -- === [102/209] ERRCHAR  (kind=param) ===
+[ 95.897] TX: 'ERRCHAR\r'
+[ 96.699] RX (0.803s): 'ERRCHAR\r\nERrchar   $5F (_)\r\ncmd:'
+[ 96.700] -- DECIDE ERRCHAR (param) = SUPPORTED
+[ 96.730] -- === [103/209] NAVMSG  (kind=param) ===
+[ 96.730] TX: 'NAVMSG\r'
+[ 97.546] RX (0.816s): 'NAVMSG\r\nNAVMsg    all\r\ncmd:'
+[ 97.546] -- DECIDE NAVMSG (param) = SUPPORTED
+[ 97.577] -- === [104/209] NAVSTN  (kind=param) ===
+[ 97.577] TX: 'NAVSTN\r'
+[ 98.380] RX (0.803s): 'NAVSTN\r\nNAVStn    all\r\ncmd:'
+[ 98.380] -- DECIDE NAVSTN (param) = SUPPORTED
+[ 98.411] -- MODE ENTER SIGNAL
+[ 98.411] TX: 'SIGNAL\r'
+[ 98.711] TX: '\x03'
+[ 99.514] RX (0.802s): 'SIGNAL\r\nOpmode   was NAvtex    \r\nOpmode   now SIgnal    \r\ncmd:cmd:'
+[ 99.514] -- === [105/209] ALTMODEM  (kind=param) ===
+[ 99.514] TX: 'ALTMODEM\r'
+[100.326] RX (0.811s): 'ALTMODEM\r\nALTModem  0\r\ncmd:'
+[100.326] -- DECIDE ALTMODEM (param) = SUPPORTED
+[100.357] -- === [106/209] CODE  (kind=param) ===
+[100.357] TX: 'CODE\r'
+[101.165] RX (0.808s): 'CODE\r\nCODe      0 (International)\r\ncmd:'
+[101.165] -- DECIDE CODE (param) = SUPPORTED
+[101.195] -- === [107/209] CUSTOM  (kind=param) ===
+[101.195] TX: 'CUSTOM\r'
+[102.000] RX (0.804s): 'CUSTOM\r\nCUstom    $0A15\r\ncmd:'
+[102.000] -- DECIDE CUSTOM (param) = SUPPORTED
+[102.031] -- === [108/209] TDBAUD  (kind=param) ===
+[102.031] TX: 'TDBAUD\r'
+[102.834] RX (0.802s): 'TDBAUD\r\nTDBaud    96\r\ncmd:'
+[102.834] -- DECIDE TDBAUD (param) = SUPPORTED
+[102.864] -- === [109/209] TDCHAN  (kind=param) ===
+[102.864] TX: 'TDCHAN\r'
+[103.671] RX (0.806s): 'TDCHAN\r\nTDChan    0\r\ncmd:'
+[103.671] -- DECIDE TDCHAN (param) = SUPPORTED
+[103.701] -- MODE ENTER PACKET
+[103.701] TX: 'PACKET\r'
+[104.003] TX: '\x03'
+[104.828] RX (0.825s): 'PACKET\r\nOpmode   was SIgnal    \r\nOpmode   now PAcket    \r\ncmd:cmd:'
+[104.828] -- === [110/209] ACRDISP  (kind=param) ===
+[104.828] TX: 'ACRDISP\r'
+[105.630] RX (0.802s): 'ACRDISP\r\nACRDisp   0\r\ncmd:'
+[105.630] -- DECIDE ACRDISP (param) = SUPPORTED
+[105.661] -- === [111/209] ADDRESS  (kind=param) ===
+[105.661] TX: 'ADDRESS\r'
+[106.478] RX (0.817s): 'ADDRESS\r\nADDress   $0000\r\ncmd:'
+[106.478] -- DECIDE ADDRESS (param) = SUPPORTED
+[106.509] -- === [112/209] AFILTER  (kind=param) ===
+[106.509] TX: 'AFILTER\r'
+[107.326] RX (0.817s): 'AFILTER\r\nAFilter   OFF\r\ncmd:'
+[107.326] -- DECIDE AFILTER (param) = SUPPORTED
+[107.357] -- === [113/209] ALFDISP  (kind=param) ===
+[107.357] TX: 'ALFDISP\r'
+[108.175] RX (0.818s): 'ALFDISP\r\nALFDisp   ON\r\ncmd:'
+[108.175] -- DECIDE ALFDISP (param) = SUPPORTED
+[108.205] -- === [114/209] AUTOBAUD  (kind=param) ===
+[108.205] TX: 'AUTOBAUD\r'
+[109.017] RX (0.812s): 'AUTOBAUD\r\nAUTOBaud  OFF\r\ncmd:'
+[109.017] -- DECIDE AUTOBAUD (param) = SUPPORTED
+[109.048] -- === [115/209] AWLEN  (kind=param) ===
+[109.048] TX: 'AWLEN\r'
+[109.853] RX (0.805s): 'AWLEN\r\nAWlen     8\r\ncmd:'
+[109.853] -- DECIDE AWLEN (param) = SUPPORTED
+[109.884] -- === [116/209] BKONDEL  (kind=param) ===
+[109.884] TX: 'BKONDEL\r'
+[110.698] RX (0.813s): 'BKONDEL\r\nBKondel   ON\r\ncmd:'
+[110.698] -- DECIDE BKONDEL (param) = SUPPORTED
+[110.728] -- === [117/209] CANLINE  (kind=param) ===
+[110.728] TX: 'CANLINE\r'
+[111.534] RX (0.805s): 'CANLINE\r\nCANline   $18 (CTRL-X)\r\ncmd:'
+[111.534] -- DECIDE CANLINE (param) = SUPPORTED
+[111.564] -- === [118/209] CMDTIME  (kind=param) ===
+[111.564] TX: 'CMDTIME\r'
+[112.368] RX (0.804s): 'CMDTIME\r\nCMdtime   10 (1000 msec.)\r\ncmd:'
+[112.368] -- DECIDE CMDTIME (param) = SUPPORTED
+[112.399] -- === [119/209] COMMAND  (kind=param) ===
+[112.399] TX: 'COMMAND\r'
+[113.199] RX (0.800s): 'COMMAND\r\nCOMmand   $03 (CTRL-C)\r\ncmd:'
+[113.199] -- DECIDE COMMAND (param) = SUPPORTED
+[113.229] -- === [120/209] DAYSTAMP  (kind=param) ===
+[113.229] TX: 'DAYSTAMP\r'
+[114.036] RX (0.806s): 'DAYSTAMP\r\nDAYStamp  OFF\r\ncmd:'
+[114.036] -- DECIDE DAYSTAMP (param) = SUPPORTED
+[114.067] -- === [121/209] DAYTIME  (kind=param) ===
+[114.067] TX: 'DAYTIME\r'
+[114.883] RX (0.816s): 'DAYTIME\r\n?clock not set\r\ncmd:'
+[114.883] -- DECIDE DAYTIME (param) = SUPPORTED
+[114.914] -- === [122/209] ECHO  (kind=param) ===
+[114.914] TX: 'ECHO\r'
+[115.718] RX (0.804s): 'ECHO\r\nEcho      ON\r\ncmd:'
+[115.718] -- DECIDE ECHO (param) = SUPPORTED
+[115.749] -- === [123/209] ESCAPE  (kind=param) ===
+[115.749] TX: 'ESCAPE\r'
+[116.552] RX (0.802s): 'ESCAPE\r\nEScape    OFF\r\ncmd:'
+[116.552] -- DECIDE ESCAPE (param) = SUPPORTED
+[116.582] -- === [124/209] EXPERT  (kind=param) ===
+[116.582] TX: 'EXPERT\r'
+[117.382] RX (0.799s): 'EXPERT\r\n?What?\r\ncmd:'
+[117.382] -- DECIDE EXPERT (param) = UNSUPPORTED
+[117.413] -- === [125/209] FLOW  (kind=param) ===
+[117.413] TX: 'FLOW\r'
+[118.216] RX (0.803s): 'FLOW\r\nFlow      ON\r\ncmd:'
+[118.216] -- DECIDE FLOW (param) = SUPPORTED
+[118.246] -- === [126/209] FRICK  (kind=param) ===
+[118.246] TX: 'FRICK\r'
+[119.051] RX (0.805s): 'FRICK\r\n?What?\r\ncmd:'
+[119.052] -- DECIDE FRICK (param) = UNSUPPORTED
+[119.082] -- === [127/209] HOST  (kind=param) ===
+[119.082] TX: 'HOST\r'
+[119.885] RX (0.803s): 'HOST\r\nHOST      $00\r\ncmd:'
+[119.885] -- DECIDE HOST (param) = SUPPORTED
+[119.916] -- === [128/209] HOSTKEY  (kind=param) ===
+[119.916] TX: 'HOSTKEY\r'
+[120.721] RX (0.805s): 'HOSTKEY\r\n?What?\r\ncmd:'
+[120.721] -- DECIDE HOSTKEY (param) = UNSUPPORTED
+[120.752] -- === [129/209] IO  (kind=param) ===
+[120.752] TX: 'IO\r'
+[121.566] RX (0.814s): 'IO\r\nIO        $68\r\ncmd:'
+[121.566] -- DECIDE IO (param) = SUPPORTED
+[121.602] -- === [130/209] LITE  (kind=param) ===
+[121.602] TX: 'LITE\r'
+[122.418] RX (0.816s): 'LITE\r\nLIte      OFF\r\ncmd:'
+[122.418] -- DECIDE LITE (param) = SUPPORTED
+[122.449] -- === [131/209] MOPTT  (kind=param) ===
+[122.449] TX: 'MOPTT\r'
+[123.254] RX (0.805s): 'MOPTT\r\n?What?\r\ncmd:'
+[123.254] -- DECIDE MOPTT (param) = UNSUPPORTED
+[123.284] -- === [132/209] NUCR  (kind=param) ===
+[123.284] TX: 'NUCR\r'
+[124.098] RX (0.813s): 'NUCR\r\nNUCr      OFF\r\ncmd:'
+[124.098] -- DECIDE NUCR (param) = SUPPORTED
+[124.128] -- === [133/209] NULF  (kind=param) ===
+[124.128] TX: 'NULF\r'
+[124.948] RX (0.819s): 'NULF\r\nNULf      OFF\r\ncmd:'
+[124.948] -- DECIDE NULF (param) = SUPPORTED
+[124.978] -- === [134/209] NULLS  (kind=param) ===
+[124.978] TX: 'NULLS\r'
+[125.782] RX (0.803s): 'NULLS\r\nNULLs     0\r\ncmd:'
+[125.782] -- DECIDE NULLS (param) = SUPPORTED
+[125.812] -- === [135/209] PARITY  (kind=param) ===
+[125.813] TX: 'PARITY\r'
+[126.616] RX (0.803s): 'PARITY\r\nPARity    0 (none)\r\ncmd:'
+[126.616] -- DECIDE PARITY (param) = SUPPORTED
+[126.646] -- === [136/209] PRCON  (kind=param) ===
+[126.646] TX: 'PRCON\r'
+[127.452] RX (0.805s): 'PRCON\r\nPRCon     OFF\r\ncmd:'
+[127.452] -- DECIDE PRCON (param) = SUPPORTED
+[127.483] -- === [137/209] PROUT  (kind=param) ===
+[127.483] TX: 'PROUT\r'
+[128.283] RX (0.800s): 'PROUT\r\nPROut     OFF\r\ncmd:'
+[128.283] -- DECIDE PROUT (param) = SUPPORTED
+[128.314] -- === [138/209] REDISPLAY  (kind=param) ===
+[128.314] TX: 'REDISPLAY\r'
+[129.116] RX (0.803s): 'REDISPLAY\r\nREDispla  $12 (CTRL-R)\r\ncmd:'
+[129.117] -- DECIDE REDISPLAY (param) = SUPPORTED
+[129.147] -- === [139/209] START  (kind=param) ===
+[129.147] TX: 'START\r'
+[129.964] RX (0.817s): 'START\r\nSTArt     $11 (CTRL-Q)\r\ncmd:'
+[129.964] -- DECIDE START (param) = SUPPORTED
+[129.995] -- === [140/209] STOP  (kind=param) ===
+[129.995] TX: 'STOP\r'
+[130.813] RX (0.818s): 'STOP\r\nSTOp      $13 (CTRL-S)\r\ncmd:'
+[130.814] -- DECIDE STOP (param) = SUPPORTED
+[130.844] -- === [141/209] TBAUD  (kind=param) ===
+[130.844] TX: 'TBAUD\r'
+[131.652] RX (0.808s): 'TBAUD\r\nTBaud     9600\r\ncmd:'
+[131.652] -- DECIDE TBAUD (param) = SUPPORTED
+[131.683] -- === [142/209] TIME  (kind=param) ===
+[131.683] TX: 'TIME\r'
+[132.500] RX (0.817s): 'TIME\r\nTIme      $14 (CTRL-T)\r\ncmd:'
+[132.500] -- DECIDE TIME (param) = SUPPORTED
+[132.530] -- === [143/209] TRFLOW  (kind=param) ===
+[132.530] TX: 'TRFLOW\r'
+[133.333] RX (0.803s): 'TRFLOW\r\nTRFlow    OFF\r\ncmd:'
+[133.333] -- DECIDE TRFLOW (param) = SUPPORTED
+[133.364] -- === [144/209] XFLOW  (kind=param) ===
+[133.364] TX: 'XFLOW\r'
+[134.168] RX (0.804s): 'XFLOW\r\nXFlow     ON\r\ncmd:'
+[134.168] -- DECIDE XFLOW (param) = SUPPORTED
+[134.199] -- === [145/209] XMITOK  (kind=param) ===
+[134.199] TX: 'XMITOK\r'
+[135.003] RX (0.803s): 'XMITOK\r\nXMITOk    ON\r\ncmd:'
+[135.003] -- DECIDE XMITOK (param) = SUPPORTED
+[135.033] -- === [146/209] XOFF  (kind=param) ===
+[135.033] TX: 'XOFF\r'
+[135.836] RX (0.802s): 'XOFF\r\nXOff      $13 (CTRL-S)\r\ncmd:'
+[135.836] -- DECIDE XOFF (param) = SUPPORTED
+[135.867] -- === [147/209] XON  (kind=param) ===
+[135.867] TX: 'XON\r'
+[136.684] RX (0.817s): 'XON\r\nXON       $11 (CTRL-Q)\r\ncmd:'
+[136.684] -- DECIDE XON (param) = SUPPORTED
+[136.715] -- === [148/209] 3RDPARTY  (kind=param) ===
+[136.715] TX: '3RDPARTY\r'
+[137.519] RX (0.804s): '3RDPARTY\r\n3Rdparty  OFF\r\ncmd:'
+[137.519] -- DECIDE 3RDPARTY (param) = SUPPORTED
+[137.550] -- === [149/209] BBSMSGS  (kind=param) ===
+[137.550] TX: 'BBSMSGS\r'
+[138.367] RX (0.816s): 'BBSMSGS\r\nBBSmsgs   OFF\r\ncmd:'
+[138.367] -- DECIDE BBSMSGS (param) = SUPPORTED
+[138.397] -- === [150/209] CMSG  (kind=param) ===
+[138.397] TX: 'CMSG\r'
+[139.203] RX (0.805s): 'CMSG\r\nCMSg      OFF\r\ncmd:'
+[139.203] -- DECIDE CMSG (param) = SUPPORTED
+[139.234] -- === [151/209] CTEXT  (kind=param) ===
+[139.234] TX: 'CTEXT\r'
+[140.049] RX (0.815s): 'CTEXT\r\nCText     \r\ncmd:'
+[140.049] -- DECIDE CTEXT (param) = SUPPORTED
+[140.080] -- === [152/209] DELETE  (kind=param) ===
+[140.080] TX: 'DELETE\r'
+[140.884] RX (0.804s): 'DELETE\r\nDELete    OFF\r\ncmd:'
+[140.885] -- DECIDE DELETE (param) = SUPPORTED
+[140.915] -- === [153/209] HEREIS  (kind=param) ===
+[140.915] TX: 'HEREIS\r'
+[141.737] RX (0.821s): 'HEREIS\r\nHEReis    $02 (CTRL-B)\r\ncmd:'
+[141.737] -- DECIDE HEREIS (param) = SUPPORTED
+[141.767] -- === [154/209] HOMEBBS  (kind=param) ===
+[141.767] TX: 'HOMEBBS\r'
+[142.581] RX (0.813s): 'HOMEBBS\r\nHOMebbs   none\r\ncmd:'
+[142.581] -- DECIDE HOMEBBS (param) = SUPPORTED
+[142.611] -- === [155/209] KILONFWD  (kind=param) ===
+[142.611] TX: 'KILONFWD\r'
+[143.417] RX (0.805s): 'KILONFWD\r\nKILONFWD  ON\r\ncmd:'
+[143.417] -- DECIDE KILONFWD (param) = SUPPORTED
+[143.448] -- === [156/209] MAILDROP  (kind=param) ===
+[143.448] TX: 'MAILDROP\r'
+[144.260] RX (0.812s): 'MAILDROP\r\nMAildrop  OFF\r\ncmd:'
+[144.260] -- DECIDE MAILDROP (param) = SUPPORTED
+[144.290] -- === [157/209] MBELL  (kind=param) ===
+[144.290] TX: 'MBELL\r'
+[145.106] RX (0.815s): 'MBELL\r\nMBEll     OFF\r\ncmd:'
+[145.106] -- DECIDE MBELL (param) = SUPPORTED
+[145.136] -- === [158/209] MBX  (kind=param) ===
+[145.136] TX: 'MBX\r'
+[145.951] RX (0.815s): 'MBX\r\nMBx       none\r\ncmd:'
+[145.951] -- DECIDE MBX (param) = SUPPORTED
+[145.982] -- === [159/209] MDIGI  (kind=param) ===
+[145.982] TX: 'MDIGI\r'
+[146.798] RX (0.816s): 'MDIGI\r\nMDigi     OFF\r\ncmd:'
+[146.798] -- DECIDE MDIGI (param) = SUPPORTED
+[146.829] -- === [160/209] MDMON  (kind=param) ===
+[146.829] TX: 'MDMON\r'
+[147.653] RX (0.824s): 'MDMON\r\nMDMon     OFF\r\ncmd:'
+[147.653] -- DECIDE MDMON (param) = SUPPORTED
+[147.683] -- === [161/209] MDPROMPT  (kind=param) ===
+[147.683] TX: 'MDPROMPT\r'
+[148.499] RX (0.816s): 'MDPROMPT\r\nMDPrompt  Subject:/Enter message, ^Z (CTRL-Z) or /EX to end\r\ncmd:'
+[148.499] -- DECIDE MDPROMPT (param) = SUPPORTED
+[148.530] -- === [162/209] MID  (kind=param) ===
+[148.530] TX: 'MID\r'
+[149.351] RX (0.821s): 'MID\r\nMId       0 (00 sec.)\r\ncmd:'
+[149.352] -- DECIDE MID (param) = SUPPORTED
+[149.382] -- === [163/209] MMSG  (kind=param) ===
+[149.382] TX: 'MMSG\r'
+[150.213] RX (0.831s): 'MMSG\r\nMMsg      OFF\r\ncmd:'
+[150.213] -- DECIDE MMSG (param) = SUPPORTED
+[150.244] -- === [164/209] MPROTO  (kind=param) ===
+[150.244] TX: 'MPROTO\r'
+[151.059] RX (0.815s): 'MPROTO\r\nMProto    OFF\r\ncmd:'
+[151.060] -- DECIDE MPROTO (param) = SUPPORTED
+[151.090] -- === [165/209] MSTAMP  (kind=param) ===
+[151.091] TX: 'MSTAMP\r'
+[151.902] RX (0.811s): 'MSTAMP\r\nMStamp    OFF\r\ncmd:'
+[151.902] -- DECIDE MSTAMP (param) = SUPPORTED
+[151.932] -- === [166/209] MTEXT  (kind=param) ===
+[151.932] TX: 'MTEXT\r'
+[152.737] RX (0.804s): 'MTEXT\r\nMTExt     Welcome to my AEA PK-232M maildrop.\r\nType H for help.\r\ncmd:'
+[152.737] -- DECIDE MTEXT (param) = SUPPORTED
+[152.767] -- === [167/209] MXMIT  (kind=param) ===
+[152.767] TX: 'MXMIT\r'
+[153.577] RX (0.810s): 'MXMIT\r\nMXmit     OFF\r\ncmd:'
+[153.578] -- DECIDE MXMIT (param) = SUPPORTED
+[153.608] -- === [168/209] MYALIAS  (kind=param) ===
+[153.608] TX: 'MYALIAS\r'
+[154.415] RX (0.807s): 'MYALIAS\r\nMYAlias   none\r\ncmd:'
+[154.415] -- DECIDE MYALIAS (param) = SUPPORTED
+[154.445] -- === [169/209] MYGATE  (kind=param) ===
+[154.446] TX: 'MYGATE\r'
+[155.251] RX (0.805s): 'MYGATE\r\n?What?\r\ncmd:'
+[155.251] -- DECIDE MYGATE (param) = UNSUPPORTED
+[155.282] -- === [170/209] MYIDENT  (kind=param) ===
+[155.282] TX: 'MYIDENT\r'
+[156.084] RX (0.802s): 'MYIDENT\r\nMYIdent   none\r\ncmd:'
+[156.084] -- DECIDE MYIDENT (param) = SUPPORTED
+[156.115] -- === [171/209] MYMAIL  (kind=param) ===
+[156.115] TX: 'MYMAIL\r'
+[156.940] RX (0.825s): 'MYMAIL\r\nMYMail    none\r\ncmd:'
+[156.941] -- DECIDE MYMAIL (param) = SUPPORTED
+[156.971] -- === [172/209] NOMODE  (kind=param) ===
+[156.971] TX: 'NOMODE\r'
+[157.788] RX (0.816s): 'NOMODE\r\nNOmode    OFF\r\ncmd:'
+[157.788] -- DECIDE NOMODE (param) = SUPPORTED
+[157.818] -- === [173/209] TMAIL  (kind=param) ===
+[157.818] TX: 'TMAIL\r'
+[158.639] RX (0.820s): 'TMAIL\r\nTMail     OFF\r\ncmd:'
+[158.639] -- DECIDE TMAIL (param) = SUPPORTED
+[158.670] -- === [174/209] TMPROMPT  (kind=param) ===
+[158.670] TX: 'TMPROMPT\r'
+[159.487] RX (0.817s): "TMPROMPT\r\nTMPrompt  GA subj/GA msg, '/EX' to end.\r\ncmd:"
+[159.487] -- DECIDE TMPROMPT (param) = SUPPORTED
+[159.518] -- === [175/209] UBIT  (kind=param) ===
+[159.518] TX: 'UBIT\r'
+[160.331] RX (0.813s): 'UBIT\r\nUBit   0  ON\r\ncmd:'
+[160.331] -- DECIDE UBIT (param) = SUPPORTED
+[160.362] -- === [176/209] USERS  (kind=param) ===
+[160.362] TX: 'USERS\r'
+[161.171] RX (0.808s): 'USERS\r\nUSers     1\r\ncmd:'
+[161.171] -- DECIDE USERS (param) = SUPPORTED
+[161.202] -- === [177/209] MFILTER  (kind=param) ===
+[161.202] TX: 'MFILTER\r'
+[162.018] RX (0.816s): 'MFILTER\r\nMFIlter   $80\r\ncmd:'
+[162.018] -- DECIDE MFILTER (param) = SUPPORTED
+[162.049] -- === [178/209] MYPTCALL  (kind=param) ===
+[162.049] TX: 'MYPTCALL\r'
+[162.870] RX (0.821s): 'MYPTCALL\r\n?What?\r\ncmd:'
+[162.870] -- DECIDE MYPTCALL (param) = UNSUPPORTED
+[162.900] -- === [179/209] NEWMODE  (kind=param) ===
+[162.900] TX: 'NEWMODE\r'
+[163.704] RX (0.803s): 'NEWMODE\r\nNEwmode   ON\r\ncmd:'
+[163.704] -- DECIDE NEWMODE (param) = SUPPORTED
+[163.735] -- === [180/209] PT200  (kind=param) ===
+[163.736] TX: 'PT200\r'
+[164.550] RX (0.814s): 'PT200\r\n?What?\r\ncmd:'
+[164.550] -- DECIDE PT200 (param) = UNSUPPORTED
+[164.581] -- === [181/209] PTDOWN  (kind=param) ===
+[164.581] TX: 'PTDOWN\r'
+[165.385] RX (0.804s): 'PTDOWN\r\n?What?\r\ncmd:'
+[165.385] -- DECIDE PTDOWN (param) = UNSUPPORTED
+[165.415] -- === [182/209] PTHUFF  (kind=param) ===
+[165.415] TX: 'PTHUFF\r'
+[166.220] RX (0.804s): 'PTHUFF\r\n?What?\r\ncmd:'
+[166.220] -- DECIDE PTHUFF (param) = UNSUPPORTED
+[166.250] -- === [183/209] PTOVER  (kind=param) ===
+[166.250] TX: 'PTOVER\r'
+[167.066] RX (0.816s): 'PTOVER\r\n?What?\r\ncmd:'
+[167.066] -- DECIDE PTOVER (param) = UNSUPPORTED
+[167.097] -- === [184/209] PTROUND  (kind=param) ===
+[167.097] TX: 'PTROUND\r'
+[167.903] RX (0.806s): 'PTROUND\r\n?What?\r\ncmd:'
+[167.903] -- DECIDE PTROUND (param) = UNSUPPORTED
+[167.934] -- === [185/209] PTUP  (kind=param) ===
+[167.934] TX: 'PTUP\r'
+[168.735] RX (0.802s): 'PTUP\r\n?What?\r\ncmd:'
+[168.736] -- DECIDE PTUP (param) = UNSUPPORTED
+[168.766] -- === [186/209] UCMD  (kind=param) ===
+[168.766] TX: 'UCMD\r'
+[169.570] RX (0.804s): 'UCMD\r\n?What?\r\ncmd:'
+[169.571] -- DECIDE UCMD (param) = UNSUPPORTED
+[169.601] -- === [187/209] GUSERS  (kind=param) ===
+[169.601] TX: 'GUSERS\r'
+[170.403] RX (0.802s): 'GUSERS\r\n?What?\r\ncmd:'
+[170.403] -- DECIDE GUSERS (param) = UNSUPPORTED
+[170.434] -- === [188/209] RECEIVE  (kind=param) ===
+[170.434] TX: 'RECEIVE\r'
+[171.237] RX (0.803s): 'RECEIVE\r\nRECeive   $04 (CTRL-D)\r\ncmd:'
+[171.237] -- DECIDE RECEIVE (param) = SUPPORTED
+[171.267] -- === [189/209] BARGRAPH  (kind=param) ===
+[171.267] TX: 'BARGRAPH\r'
+[172.071] RX (0.803s): 'BARGRAPH\r\n?What?\r\ncmd:'
+[172.071] -- DECIDE BARGRAPH (param) = UNSUPPORTED
+[172.101] -- === [190/209] BRIGHT  (kind=param) ===
+[172.101] TX: 'BRIGHT\r'
+[172.904] RX (0.802s): 'BRIGHT\r\n?What?\r\ncmd:'
+[172.904] -- DECIDE BRIGHT (param) = UNSUPPORTED
+[172.934] -- === [191/209] MARK  (kind=param) ===
+[172.934] TX: 'MARK\r'
+[173.736] RX (0.801s): 'MARK\r\n?What?\r\ncmd:'
+[173.736] -- DECIDE MARK (param) = UNSUPPORTED
+[173.766] -- === [192/209] MODEM  (kind=param) ===
+[173.767] TX: 'MODEM\r'
+[174.569] RX (0.802s): 'MODEM\r\n?What?\r\ncmd:'
+[174.569] -- DECIDE MODEM (param) = UNSUPPORTED
+[174.600] -- === [193/209] PK  (kind=param) ===
+[174.600] TX: 'PK\r'
+[175.403] RX (0.803s): 'PK\r\nPK        $00\r\ncmd:'
+[175.403] -- DECIDE PK (param) = SUPPORTED
+[175.433] -- === [194/209] PTSUM  (kind=param) ===
+[175.433] TX: 'PTSUM\r'
+[176.251] RX (0.817s): 'PTSUM\r\n?What?\r\ncmd:'
+[176.251] -- DECIDE PTSUM (param) = UNSUPPORTED
+[176.282] -- === [195/209] PTTRIES  (kind=param) ===
+[176.282] TX: 'PTTRIES\r'
+[177.085] RX (0.803s): 'PTTRIES\r\n?What?\r\ncmd:'
+[177.085] -- DECIDE PTTRIES (param) = UNSUPPORTED
+[177.116] -- === [196/209] QHPACKET  (kind=param) ===
+[177.116] TX: 'QHPACKET\r'
+[177.919] RX (0.802s): 'QHPACKET\r\n?What?\r\ncmd:'
+[177.919] -- DECIDE QHPACKET (param) = UNSUPPORTED
+[177.949] -- === [197/209] QMORSE  (kind=param) ===
+[177.949] TX: 'QMORSE\r'
+[178.752] RX (0.802s): 'QMORSE\r\n?What?\r\ncmd:'
+[178.752] -- DECIDE QMORSE (param) = UNSUPPORTED
+[178.783] -- === [198/209] QPTOR  (kind=param) ===
+[178.783] TX: 'QPTOR\r'
+[179.587] RX (0.804s): 'QPTOR\r\n?What?\r\ncmd:'
+[179.588] -- DECIDE QPTOR (param) = UNSUPPORTED
+[179.618] -- === [199/209] QRTTY  (kind=param) ===
+[179.618] TX: 'QRTTY\r'
+[180.421] RX (0.803s): 'QRTTY\r\n?What?\r\ncmd:'
+[180.421] -- DECIDE QRTTY (param) = UNSUPPORTED
+[180.452] -- === [200/209] QTDM  (kind=param) ===
+[180.452] TX: 'QTDM\r'
+[181.254] RX (0.802s): 'QTDM\r\n?What?\r\ncmd:'
+[181.254] -- DECIDE QTDM (param) = UNSUPPORTED
+[181.285] -- === [201/209] QTOR  (kind=param) ===
+[181.285] TX: 'QTOR\r'
+[182.088] RX (0.803s): 'QTOR\r\n?What?\r\ncmd:'
+[182.088] -- DECIDE QTOR (param) = UNSUPPORTED
+[182.119] -- === [202/209] QVPACKET  (kind=param) ===
+[182.119] TX: 'QVPACKET\r'
+[182.923] RX (0.804s): 'QVPACKET\r\n?What?\r\ncmd:'
+[182.923] -- DECIDE QVPACKET (param) = UNSUPPORTED
+[182.953] -- === [203/209] QWIDE  (kind=param) ===
+[182.954] TX: 'QWIDE\r'
+[183.770] RX (0.816s): 'QWIDE\r\n?What?\r\ncmd:'
+[183.770] -- DECIDE QWIDE (param) = UNSUPPORTED
+[183.802] -- === [204/209] RADIO  (kind=param) ===
+[183.802] TX: 'RADIO\r'
+[184.612] RX (0.810s): 'RADIO\r\nRAdio     1\r\ncmd:'
+[184.612] -- DECIDE RADIO (param) = SUPPORTED
+[184.643] -- === [205/209] SPACE  (kind=param) ===
+[184.643] TX: 'SPACE\r'
+[185.454] RX (0.811s): 'SPACE\r\n?What?\r\ncmd:'
+[185.454] -- DECIDE SPACE (param) = UNSUPPORTED
+[185.485] -- === [206/209] THRESHOLD  (kind=param) ===
+[185.485] TX: 'THRESHOLD\r'
+[186.298] RX (0.813s): 'THRESHOLD\r\n?What?\r\ncmd:'
+[186.299] -- DECIDE THRESHOLD (param) = UNSUPPORTED
+[186.329] -- === [207/209] TXSMT  (kind=param) ===
+[186.329] TX: 'TXSMT\r'
+[187.142] RX (0.813s): 'TXSMT\r\n?What?\r\ncmd:'
+[187.142] -- DECIDE TXSMT (param) = UNSUPPORTED
+[187.173] -- === [208/209] XGATEWAY  (kind=param) ===
+[187.173] TX: 'XGATEWAY\r'
+[187.998] RX (0.825s): 'XGATEWAY\r\n?What?\r\ncmd:'
+[187.998] -- DECIDE XGATEWAY (param) = UNSUPPORTED
+[188.029] -- === [209/209] XLENGTH  (kind=param) ===
+[188.029] TX: 'XLENGTH\r'
+[188.847] RX (0.818s): 'XLENGTH\r\n?What?\r\ncmd:'
+[188.847] -- DECIDE XLENGTH (param) = UNSUPPORTED
+[188.878] -- MODE ENTER PACKET
+[188.878] TX: 'PACKET\r'
+[189.178] TX: '\x03'
+[189.985] RX (0.806s): 'PACKET\r\nOpmode   was PAcket    \r\nOpmode   now PAcket    \r\ncmd:cmd:'
+
+# end of log -- 2026-10-06T18:44:12
