@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
 
 from pk232py.ui.dialogs.firmware_limits import apply_firmware_limits
 
+from pk232py.ui.dialogs.param_order import add_flags, add_form_rows
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,25 +62,33 @@ class BaudotParamsDialog(QDialog):
         def spin(lo, hi, val):
             w = QSpinBox(); w.setRange(lo, hi); w.setValue(val); return w
 
-        self._sb_acrtty  = spin(0, 250, 0);  form.addRow("ACRTTY:",  self._sb_acrtty)
-        self._sb_atxrtty = spin(0, 250, 0);  form.addRow("ATXRTTY:", self._sb_atxrtty)
-        self._sb_audelay = spin(0, 250, 2);  form.addRow("AUDELAY:", self._sb_audelay)
-        self._sb_code    = spin(0, 8,   0);  form.addRow("CODE:",    self._sb_code)
+        # P87: placed by add_form_rows() (alphabetical, param_order.py); the
+        # read-only values form a block of their own below the inputs.
+        self._sb_acrtty  = spin(0, 250, 0)
+        self._sb_atxrtty = spin(0, 250, 0)
+        self._sb_audelay = spin(0, 250, 2)
+        self._sb_code    = spin(0, 8,   0)
         self._hx_errchar = HexSpinBox(); self._hx_errchar.setValue(0x5F)
-        form.addRow("ERRCHAR:", self._hx_errchar)
-        self._sb_mspeed  = spin(5, 99,  20); form.addRow("MSPEED:",  self._sb_mspeed)
-        self._sb_mweight = spin(10,90,  10); form.addRow("MWEIGHT:", self._sb_mweight)
-        self._sb_xbaud   = spin(0, 300, 0);  form.addRow("XBAUD:",   self._sb_xbaud)
-        self._sb_xlength = spin(0, 255, 64); form.addRow("XLENGTH:", self._sb_xlength)
-        self._le_aab     = QLineEdit(); form.addRow("AAB:",  self._le_aab)
+        self._sb_mspeed  = spin(5, 99,  20)
+        self._sb_mweight = spin(10,90,  10)
+        self._sb_xbaud   = spin(0, 300, 0)
+        self._sb_xlength = spin(0, 255, 64)
+        self._le_aab     = QLineEdit()
+        add_form_rows(form, [
+            ("ACRTTY:", self._sb_acrtty), ("ATXRTTY:", self._sb_atxrtty),
+            ("AUDELAY:", self._sb_audelay), ("CODE:", self._sb_code),
+            ("ERRCHAR:", self._hx_errchar), ("MSPEED:", self._sb_mspeed),
+            ("MWEIGHT:", self._sb_mweight), ("XBAUD:", self._sb_xbaud),
+            ("XLENGTH:", self._sb_xlength), ("AAB:", self._le_aab),
+        ])
 
         # Read-only
         self._sb_qmorse = spin(0,99,40); self._sb_qmorse.setEnabled(False)
-        form.addRow("QMORSE (r/o):", self._sb_qmorse)
         self._sb_qrtty  = spin(0,99,31); self._sb_qrtty.setEnabled(False)
-        form.addRow("QRTTY (r/o):",  self._sb_qrtty)
         self._sb_qwide  = spin(0,99,7);  self._sb_qwide.setEnabled(False)
-        form.addRow("QWIDE (r/o):",  self._sb_qwide)
+        add_form_rows(form, [("QMORSE (r/o):", self._sb_qmorse),
+                             ("QRTTY (r/o):", self._sb_qrtty),
+                             ("QWIDE (r/o):", self._sb_qwide)])
 
         row.addWidget(left)
 
@@ -98,11 +108,11 @@ class BaudotParamsDialog(QDialog):
         self._chk_usos     = QCheckBox("USOS");     self._chk_usos.setChecked(False)
         self._chk_wideshft = QCheckBox("WIDESHFT"); self._chk_wideshft.setChecked(False)
         self._chk_wru      = QCheckBox("WRU");      self._chk_wru.setChecked(False)
-        for w in [self._chk_alfrtty, self._chk_diddle, self._chk_mopt,
-                  self._chk_xmitok, self._chk_afilter, self._chk_cradd,
-                  self._chk_marsdisp, self._chk_rframe, self._chk_rxrev,
-                  self._chk_txrev, self._chk_usos, self._chk_wideshft, self._chk_wru]:
-            fl.addWidget(w)
+        add_flags(fl, [self._chk_alfrtty, self._chk_diddle, self._chk_mopt,
+                       self._chk_xmitok, self._chk_afilter, self._chk_cradd,
+                       self._chk_marsdisp, self._chk_rframe, self._chk_rxrev,
+                       self._chk_txrev, self._chk_usos, self._chk_wideshft,
+                       self._chk_wru])
         fl.addStretch()
         row.addWidget(right)
         root.addLayout(row)
