@@ -6992,6 +6992,157 @@ def test_ubit_probe(session: "Session", log: RunLog) -> None:
 
 
 # ===========================================================================
+# P75 Teil 0 -- eol_probe (T175): do verbose commands that end with CR ONLY
+# work with ILFPACK ON and OFF? MEASURES ONLY - nothing is sent on the air.
+# T155 (device B): with ILFPACK OFF the app's "CR LF" ends leave the LF
+# standing, it becomes the first character of the NEXT command and the TNC
+# answers "?What?" from the second command on. The probe sends every command
+# twice, once with CR only and once with CR LF, before and after IL N.
+# It never touches CALIBRATE or TRANS; CONVERSE (step 7) is left again with
+# the COMMAND character.
+# ===========================================================================
+
+EOL_QUERIES = ("PACLEN", "USERS", "MAXFRAME", "MYCALL", "HELP")
+EOL_IL_MNEMONIC = b"IL"
+
+
+def eol_answer_ok(response: str) -> bool:
+    """One verbose answer is right: something came back and it is not the
+    '?What?' a stray LF in front of the command name produces."""
+    return bool(response.strip()) and "?what?" not in response.lower()
+
+
+def eol_sequence_verdict(answers: list) -> tuple:
+    """(all_ok, names_that_failed) for [(command, response), ...]."""
+    failed = [name for name, resp in answers if not eol_answer_ok(resp)]
+    return (not failed, failed)
+
+
+def eol_matches_t155(answers: list) -> bool:
+    """The T155 picture: the FIRST answer right, every later one '?What?'."""
+    if not answers:
+        return False
+    flags = [eol_answer_ok(resp) for _name, resp in answers]
+    return flags[0] and not any(flags[1:])
+
+
+def _eol_sequence(session: "Session", log: RunLog, terminator: bytes, label: str) -> list:
+    log.line(f"--- {label}: {terminator!r} after each command ---")
+    answers = []
+    for name in EOL_QUERIES:
+        answers.append((name, session.verbose_bytes(name.encode("ascii") + terminator, timeout=3.0)))
+    return answers
+
+
+def _eol_il_host(session: "Session", log: RunLog, value: bytes) -> Optional[str]:
+    """Host Mode: set IL to *value* (b"Y"/b"N"), query it raw, return the
+    answer text. The caller leaves Host Mode."""
+    session.drain_pending_frames()
+    log.line(f">> HOST set IL {value!r}")
+    session.sm.send_command(EOL_IL_MNEMONIC, value)
+    session._pump(0.4)
+    return host_query_value(session.query_host(EOL_IL_MNEMONIC), EOL_IL_MNEMONIC)
+
+
+def test_eol_probe(session: "Session", log: RunLog) -> None:
+    log.line("--- eol_probe (T175): CR-only verbose commands, ILFPACK ON and OFF ---")
+    steps = [
+        ProbeStep(
+            "T175  prepare the TNC", WHERE_PC1, 2,
+            ["Device B or A, verbose command mode, ILFPACK ON (factory default).",
+             "No connection, no other program on the port."],
+            "press ENTER; the run changes ILFPACK in Host Mode and puts it back at the end."),
+        ProbeStep(
+            "T175  finished", WHERE_PC1, 1,
+            ["Read the SUMMARY; check by hand that ILFPACK is ON again "
+             "(verbose ILFPACK)."],
+            "copy the SUMMARY into Testplan.md (T175)."),
+    ]
+    run = StepRun(steps, log)
+    if session.dry_run:
+        operator_step(run, steps[0].title, steps[0].where, steps[0].do, steps[0].then)
+        for n, term in ((1, "CR"), (2, "CR LF")):
+            log.line(f"[dry-run] step {n}: {', '.join(EOL_QUERIES)} with {term}")
+        log.line("[dry-run] step 3: Host Mode, IL N, IL query, leave Host Mode")
+        log.line("[dry-run] step 4 (CR) and 5 (CR LF): the same five queries, ILFPACK OFF")
+        log.line("[dry-run] step 6: MAILDROP query with CR; step 7: CONVERSE with CR, COMMAND char")
+        log.line("[dry-run] step 8: Host Mode, IL Y, verbose ILFPACK check")
+        operator_step(run, steps[1].title, steps[1].where, steps[1].do, steps[1].then)
+        log.result("T175", "INFO", "dry-run, nothing sent")
+        return
+
+    session.normalize()
+    operator_step(run, steps[0].title, steps[0].where, steps[0].do, steps[0].then)
+    wait_for_enter(session._pump, 300.0)
+    start = session.verbose_bytes(b"ILFPACK\r")
+    log.line(f"start state: {start!r}")
+    if "off" in start.lower():
+        log.result("T175", "FAIL", "ILFPACK is already OFF - set it ON first, nothing was changed")
+        return
+
+    changed = False
+    try:
+        a = _eol_sequence(session, log, b"\r", "step 1, ILFPACK ON")
+        ok, bad = eol_sequence_verdict(a)
+        log.result("T175 step 1 (ON, CR only)", "PASS" if ok else "FAIL",
+                   "all five right" if ok else f"wrong: {bad}; raw={a!r}")
+        a = _eol_sequence(session, log, b"\r\n", "step 2, ILFPACK ON")
+        ok, bad = eol_sequence_verdict(a)
+        log.result("T175 step 2 (ON, CR LF)", "PASS" if ok else "FAIL",
+                   "all five right" if ok else f"wrong: {bad}; raw={a!r}")
+
+        session.enter_host_mode()
+        changed = True
+        try:
+            il_host = _eol_il_host(session, log, b"N")
+        finally:
+            session.exit_host_mode()
+        log.line(f"IL after set N (Host): {il_host!r}")
+        shown = session.verbose_bytes(b"ILFPACK\r")
+        log.result("T175 IL sets ILFPACK", "PASS" if "off" in shown.lower() else "FAIL",
+                   f"host IL={il_host!r}, verbose ILFPACK={shown!r}")
+
+        a = _eol_sequence(session, log, b"\r", "step 4, ILFPACK OFF")
+        ok, bad = eol_sequence_verdict(a)
+        log.result("T175 step 4 (OFF, CR only) - THE QUESTION", "PASS" if ok else "FAIL",
+                   "all five right" if ok else f"wrong: {bad}; raw={a!r}")
+        a = _eol_sequence(session, log, b"\r\n", "step 5, ILFPACK OFF")
+        log.result("T175 step 5 (OFF, CR LF)", "PASS" if eol_matches_t155(a) else "FAIL",
+                   "reproduces T155 (first right, then ?What?)" if eol_matches_t155(a)
+                   else f"does NOT look like T155; raw={a!r}")
+        session.verbose_bytes(b"\r")        # flush the LF the last CR LF left standing
+
+        md = session.verbose_bytes(b"MAILDROP\r")
+        log.result("T175 step 6 (MailDrop query, CR only)",
+                   "PASS" if eol_answer_ok(md) else "FAIL", f"raw={md!r}")
+
+        conv = session.verbose_bytes(b"CONVERSE\r", timeout=1.5)
+        back = session.verbose_bytes(bytes([session.sm.command_char]), timeout=3.0)
+        if "need" in conv.lower():
+            log.result("T175 step 7 (CONVERSE, CR only)", "INCONCLUSIVE",
+                       f"TNC wants MYCALL first: {conv!r}")
+        else:
+            log.result("T175 step 7 (CONVERSE, CR only)",
+                       "PASS" if "cmd:" in back else "FAIL",
+                       f"CONVERSE -> {conv!r}; COMMAND char -> {back!r}")
+    finally:
+        if changed:
+            try:
+                session.enter_host_mode()
+                try:
+                    _eol_il_host(session, log, b"Y")
+                finally:
+                    session.exit_host_mode()
+                final = session.verbose_bytes(b"ILFPACK\r\n")
+                log.result("T175 step 8 (restore)", "PASS" if "on" in final.lower() else "FAIL",
+                           f"verbose ILFPACK={final!r} - if not ON: set it by hand")
+            except Exception as exc:      # noqa: BLE001 - restore must report, not hide
+                log.result("T175 step 8 (restore)", "FAIL",
+                           f"restore failed ({exc}) - set ILFPACK ON by hand")
+    operator_step(run, steps[1].title, steps[1].where, steps[1].do, steps[1].then)
+
+
+# ===========================================================================
 # CLI
 # ===========================================================================
 
@@ -7756,7 +7907,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "mi", "maildrop", "maildrop_host", "mdcheck_scan",
             "maildrop_session", "aprs_query", "aprs_tx", "aprs_reject",
             "link_carry", "link_carry_host", "channel_probe", "host_params_probe",
-            "ubit_probe", "restart_probe", "mnemonic_probe", "all",
+            "ubit_probe", "restart_probe", "mnemonic_probe", "eol_probe", "all",
         ],
     )
     p.add_argument(
@@ -7771,7 +7922,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "B0 = left in Host Mode without connections, B = left in Host Mode "
              "with connections, C = left in Converse, all = A, B0, B and C. "
              "mnemonic_probe (P80 D, T166/T167): A = mode switches + OP, "
-             "B = unproven parameters + MID scan, C = queries MH/PN, all = A, B, C"
+             "B = unproven parameters + MID scan, C = queries MH/PN, all = A, B, C. "
+             "eol_probe (P75, T175): no --part; CR-only verbose commands with "
+             "ILFPACK ON and OFF"
     )
     p.add_argument(
         "--expert-off", action="store_true",
@@ -7921,6 +8074,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "ubit_probe": [lambda s, l: test_ubit_probe(s, l)],
         "restart_probe": [lambda s, l: test_restart_probe(s, l, args.part, app_config)],
         "mnemonic_probe": [lambda s, l: test_mnemonic_probe(s, l, args.part)],
+        "eol_probe": [lambda s, l: test_eol_probe(s, l)],
         "all":    [
             lambda s, l: test_t17(s, l),
             lambda s, l: test_t103(s, l, app_config),
