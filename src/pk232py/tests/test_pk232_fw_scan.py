@@ -111,6 +111,16 @@ class TestMockRun:
         assert scan.classify("") == "ERROR"
 
 
+def _unknown(entries, release, *names):
+    """entries with these cells set back to ? (the shipped matrix fills up as devices are scanned)."""
+    out = dict(entries)
+    for name in names:
+        e = out[name]
+        out[name] = dataclasses.replace(
+            e, fw={**e.fw, release: "?"}, ev={**e.ev, release: ""})
+    return out
+
+
 class TestUpdateMatrix:
 
     @staticmethod
@@ -118,8 +128,7 @@ class TestUpdateMatrix:
         return [{"name": n, "result": r} for n, r in results.items()]
 
     def test_only_unknown_cells_are_filled_and_evidence_is_written(self):
-        entries = cm.all_entries()
-        assert entries["XLENGTH"].fw[C] == "?"
+        entries = _unknown(cm.all_entries(), C, "XLENGTH")
         new, filled, conflicts = scan.apply_to_matrix(
             entries, self._rows(XLENGTH="SUPPORTED", MAILDROP="UNSUPPORTED"), C, "2026-10-08", "C", "x.csv")
         assert not conflicts and filled == 1                  # MAILDROP on C is already no
@@ -135,7 +144,7 @@ class TestUpdateMatrix:
         assert new["ARQTOL"] == before
 
     def test_a_contradiction_aborts_with_a_list_and_changes_nothing(self):
-        entries = cm.all_entries()
+        entries = _unknown(cm.all_entries(), B, "XLENGTH")
         new, filled, conflicts = scan.apply_to_matrix(
             entries, self._rows(ARQTOL="SUPPORTED", XLENGTH="SUPPORTED"), B, "2026-10-08", "B", "x.csv")
         assert filled == 0 and len(conflicts) == 1 and "ARQTOL" in conflicts[0]
@@ -151,7 +160,7 @@ class TestUpdateMatrix:
 
     def test_error_and_not_probed_are_ignored(self):
         _new, filled, conflicts = scan.apply_to_matrix(
-            cm.all_entries(), self._rows(XLENGTH="ERROR", MARK="NOT_PROBED"), C, "2026-10-08", "C", "x.csv")
+            _unknown(cm.all_entries(), C, "XLENGTH", "MARK"), self._rows(XLENGTH="ERROR", MARK="NOT_PROBED"), C, "2026-10-08", "C", "x.csv")
         assert filled == 0 and not conflicts
 
     def test_a_release_that_is_no_column_is_refused(self):
@@ -173,3 +182,95 @@ class TestCommandLine:
     def test_selftest_runs(self, capsys):
         assert scan.main(["--selftest", "1991"]) == 0
         assert "01.AUG.91" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# T179 (device B, 06.10.2026, hw_logs/20261006_fw_scan_B*.log): from the moment the scan
+# switched to SIGNAL, 24 probes per run ended as ERROR and the late reply landed in the NEXT
+# command's read. RESTART does not leave SIGNAL (the opmode survives it), so the resync did not
+# help, and a '?What?' of a neighbour could be taken for the answer of a command that exists.
+# ---------------------------------------------------------------------------
+
+def _expected(release, name):
+    cell = cm.exists(name, release)
+    return "UNSUPPORTED" if cell == "no" else "SUPPORTED"      # EXPERT is unlocked by the scan
+
+
+class TestSignalMode:
+
+    def test_the_modeless_groups_are_not_probed_in_signal(self):
+        t = scan.MockTransport(B, slow_in_signal=True)
+        scan.run_scan(t, "MOCK", progress=False)
+        opmode = None
+        for data in t.sent:
+            name = data.decode("latin-1").strip().upper()
+            if name in scan.MODE_ENTRY.values():
+                opmode = name
+            elif opmode is not None and name in {
+                    c.name for c in scan.plan() if c.group in ("global", "maildrop", "pactor", "other")}:
+                assert opmode == "PACKET", f"{name} was probed in {opmode}"
+
+    def test_no_error_and_every_answer_right_with_a_slow_signal_mode(self):
+        t = scan.MockTransport(B, slow_in_signal=True)
+        rep = scan.run_scan(t, "MOCK", progress=False)
+        assert [r["name"] for r in rep.rows if r["result"] == "ERROR"] == []
+        wrong = [(r["name"], r["result"]) for r in rep.rows if r["result"] != _expected(B, r["name"])]
+        assert wrong == []
+
+    def test_the_scan_goes_back_to_packet_at_the_end(self):
+        t = scan.MockTransport(B, slow_in_signal=True)
+        scan.run_scan(t, "MOCK", progress=False)
+        assert t.opmode == "PACKET"
+
+
+class TestAnswerBelongsToTheCommand:
+
+    def test_a_late_reply_is_waited_for(self):
+        t = scan.MockTransport(A, late={"ECHO", "USERS"})
+        rep = scan.run_scan(t, "MOCK", progress=False)
+        by = {r["name"]: r["result"] for r in rep.rows}
+        assert by["ECHO"] == by["USERS"] == "SUPPORTED"
+
+    def test_a_reply_that_never_comes_is_error_never_unsupported(self):
+        t = scan.MockTransport(A, silent={"ECHO"})
+        rep = scan.run_scan(t, "MOCK", progress=False)
+        assert {r["name"]: r["result"] for r in rep.rows}["ECHO"] == "ERROR"
+
+    def test_a_neighbours_what_is_not_taken_for_the_answer(self):
+        # PTOVER does not exist on B; its late '?What?' must never make PTUP... or the next
+        # command that does exist look unsupported.
+        t = scan.MockTransport(B, late={"PTOVER"}, silent={"XLENGTH"})
+        rep = scan.run_scan(t, "MOCK", progress=False)
+        for r in rep.rows:
+            assert r["result"] in (_expected(B, r["name"]), "ERROR"), (r["name"], r["result"])
+
+    def test_answer_to_needs_the_own_echo_first(self):
+        assert scan.answer_to("USERS", "USERS\r\nUSers     1\r\ncmd:") == ("\r\nUSers     1\r\n", True)
+        assert scan.answer_to("PTUP", "PTOVER\r\nPTROUND\r\nPTUP\r\n?What?\r\ncmd:?What?\r\ncmd:?What?\r\ncmd:") is None
+        assert scan.answer_to("USERS", "") is None
+        # stale prompts and SIAM output in front of the echo belong to nobody
+        assert scan.answer_to("CODE", "cmd:noise\r\n0.42: 193 baud, \r\nCODE\r\nCODe 0\r\ncmd:")[1] is True
+
+    def test_an_answer_without_the_prompt_is_not_complete(self):
+        assert scan.answer_to("USERS", "USERS\r\nUSers     1\r\n") == ("\r\nUSers     1\r\n", False)
+
+
+class TestDebugLogIsComplete:
+
+    def test_main_closes_the_log_with_an_end_marker(self, tmp_path):
+        log = tmp_path / "scan.log"
+        assert scan.main(["--selftest", "1991", "--debug", str(log)]) == 0
+        lines = log.read_text(encoding="utf-8").splitlines()
+        assert lines[-1].startswith("# end of log")
+        assert sum("DECIDE" in ln for ln in lines) == len(scan.plan())
+
+    def test_a_failure_still_closes_the_log(self, tmp_path, monkeypatch):
+        log = tmp_path / "scan.log"
+
+        def boom(*a, **k):
+            raise OSError("port busy")
+
+        monkeypatch.setattr(scan, "SerialTransport", boom)
+        with pytest.raises(OSError):
+            scan.main(["--port", "COM99", "--debug", str(log)])
+        assert log.read_text(encoding="utf-8").splitlines()[-1].startswith("# end of log")
