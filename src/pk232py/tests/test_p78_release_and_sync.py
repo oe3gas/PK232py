@@ -66,12 +66,17 @@ class TestVerboseFingerprint:
         return sm, sent
 
     def test_what_answer_gives_01_aug_91_inferred(self, monkeypatch):
+        # T180: ?What? to EXPERT fits B and C; MAILDROP (T179, device B) decides - TWO queries
         sm, sent = self._manager(monkeypatch, b"EXPERT\r\n?What?\r\ncmd:")
+        replies = {b"EXPERT\r": b"EXPERT\r\n?What?\r\ncmd:",
+                   b"MAILDROP\r": b"MAILDROP\r\nMAildrop  OFF\r\ncmd:"}
+        monkeypatch.setattr(sm, "_write_verbose_wait_text",
+                            lambda data, timeout=5.0: (sent.append(data) or (True, replies[data])))
         assert sm.tnc_release is None
         sm.probe_release_verbose()
         assert sm.tnc_release == "01.AUG.91"
         assert sm.tnc_release_source == "inferred"
-        assert sent == [b"EXPERT\r"]                 # exactly ONE query
+        assert sent == [b"EXPERT\r", b"MAILDROP\r"]
 
     def test_a_value_gives_13_sep_95(self, monkeypatch):
         sm, _ = self._manager(monkeypatch, b"EXPERT\r\nEXPert    OFF\r\ncmd:")
@@ -80,9 +85,9 @@ class TestVerboseFingerprint:
 
     def test_the_banner_wins_and_nothing_is_sent(self, monkeypatch):
         sm, sent = self._manager(monkeypatch, b"?What?")
-        sm._tnc_banner = b"AEA PK-232MBX  Release 30.12.1988  Ver. 7.1"
+        sm._tnc_banner = b"AEA PK-232MBX  Release 30.DEC.88  Ver. 7.1"
         sm.probe_release_verbose()
-        assert (sm.tnc_release, sm.tnc_release_source) == ("30.12.1988", "banner")
+        assert (sm.tnc_release, sm.tnc_release_source) == ("30.DEC.88", "banner")
         assert sent == []
 
     def test_unknown_answer_stays_unknown_and_is_asked_only_once(self, monkeypatch):
@@ -94,7 +99,8 @@ class TestVerboseFingerprint:
 
 class TestHostModeParametersWithoutBanner:
     def test_monitor_6_is_sent_in_host_mode_although_no_banner_was_seen(self, win):
-        win._serial = _AwakeSerial({(b"MN", b"6"): b"MN\x00", (b"MN", b""): [b"MN4", b"MN6"]})
+        win._serial = _AwakeSerial({(b"MN", b"6"): b"MN\x00", (b"MN", b""): [b"MN4", b"MN6"],
+                                    (b"MV", b""): b"MVN"})        # MAILDROP: B has it, C does not (T180)
         win._app_config.hf_packet.monitor = 4
 
         def fake_exec(dlg):

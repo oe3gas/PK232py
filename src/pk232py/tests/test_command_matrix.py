@@ -27,15 +27,15 @@ class TestParse:
     def test_a_valid_file(self):
         entries = cm.parse(_csv(_row()))
         e = entries["ILFPACK"]
-        assert e.fw == {"01.AUG.91": "yes", "13.SEP.95": "yes", "30.12.1988": "?"}
-        assert e.ev["13.SEP.95"] == "T175 log" and e.ev["30.12.1988"] == ""
+        assert e.fw == {"01.AUG.91": "yes", "13.SEP.95": "yes", "30.DEC.88": "?"}
+        assert e.ev["13.SEP.95"] == "T175 log" and e.ev["30.DEC.88"] == ""
 
     def test_a_cell_that_is_not_unknown_needs_evidence(self):
         with pytest.raises(cm.MatrixError, match="no evidence"):
             cm.parse(_csv(_row(ev_a="")))
 
     def test_unknown_needs_none(self):
-        assert cm.parse(_csv(_row(c="?", ev_c="")))["ILFPACK"].fw["30.12.1988"] == "?"
+        assert cm.parse(_csv(_row(c="?", ev_c="")))["ILFPACK"].fw["30.DEC.88"] == "?"
 
     def test_a_value_outside_the_four_is_refused(self):
         with pytest.raises(cm.MatrixError, match="fw_13.SEP.95"):
@@ -80,7 +80,7 @@ class TestReader:
     def test_exists(self):
         assert cm.exists("ARQTOL", "13.SEP.95") == "yes"
         assert cm.exists("arqtol", "01.AUG.91") == "no"
-        assert cm.exists("ARQTOL", "30.12.1988") == "?"
+        assert cm.exists("ARQTOL", "30.DEC.88") == "?"
 
     def test_unknown_name_or_release_is_unknown(self):
         assert cm.exists("NOSUCH", "13.SEP.95") == "?"
@@ -89,7 +89,7 @@ class TestReader:
 
     def test_evidence_kind_host_entry(self):
         assert cm.evidence("ARQTOL", "01.AUG.91") == "T155 / T168"
-        assert cm.evidence("ARQTOL", "30.12.1988") == ""
+        assert cm.evidence("ARQTOL", "30.DEC.88") == ""
         assert cm.kind("TRANS") == "danger" and cm.kind("NOSUCH") is None
         assert cm.host("ARQTOL") is None
         assert cm.entry("ARQTOL").abbrev == "ARQTO" and cm.entry("NOSUCH") is None

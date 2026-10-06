@@ -4,7 +4,7 @@
 
 Measured (docs/P85_Upload_Firmware_Filter_Spec.md): firmware 01.AUG.91
 (device B) answers ``?What?`` to EXPERT, MYPTCALL, PTHUFF, PT200, PTOVER,
-ARQTOL and MOPT; 13.SEP.95 (device A) knows all of them; 30.12.1988
+ARQTOL and MOPT; 13.SEP.95 (device A) knows all of them; 30.DEC.88
 (device C) is unmeasured, so it gets everything.
 
 Needs a QApplication for the dialog tests (offscreen, see conftest).
@@ -25,7 +25,7 @@ _app = QApplication.instance() or QApplication([])
 
 RELEASE_B = "01.AUG.91"
 RELEASE_A = "13.SEP.95"
-RELEASE_C = "30.12.1988"
+RELEASE_C = "30.DEC.88"
 
 # The seven names device B refuses (T155, T160, T168).
 B_UNKNOWN = {"EXPERT", "MYPTCALL", "PTHUFF", "PT200", "PTOVER", "ARQTOL", "MOPT"}

@@ -22,7 +22,7 @@ if str(_TOOLS) not in sys.path:
 
 import pk232_fw_scan as scan  # noqa: E402
 
-B, A, C = "01.AUG.91", "13.SEP.95", "30.12.1988"
+B, A, C = "01.AUG.91", "13.SEP.95", "30.DEC.88"
 NOT_PROBED_KINDS = ("danger", "action_tx", "mode")
 
 
@@ -133,7 +133,7 @@ class TestUpdateMatrix:
             entries, self._rows(XLENGTH="SUPPORTED", MAILDROP="UNSUPPORTED"), C, "2026-10-08", "C", "x.csv")
         assert not conflicts and filled == 1                  # MAILDROP on C is already no
         assert new["XLENGTH"].fw[C] == "yes"
-        assert "fw_scan 20261008" in new["XLENGTH"].ev[C] and "Release 30.12.1988" in new["XLENGTH"].ev[C]
+        assert "fw_scan 20261008" in new["XLENGTH"].ev[C] and "Release 30.DEC.88" in new["XLENGTH"].ev[C]
 
     def test_an_existing_cell_and_its_evidence_are_never_overwritten(self):
         entries = cm.all_entries()
@@ -296,7 +296,7 @@ class TestFilledCounter:
 
 
 # ---------------------------------------------------------------------------
-# T180, first try on device C (30.12.1988), 06.10.2026: no sync. The scanner's first byte was
+# T180, first try on device C (30.DEC.88), 06.10.2026: no sync. The scanner's first byte was
 # Ctrl-C; device C waits after power-on for '*' (autobaud measurement) and stays deaf when
 # anything else comes first (operator: PuTTY, a lone '*' wakes it). The app does it right: step 1
 # of the detection chain is '*' without CR. The scanner now uses the same order.

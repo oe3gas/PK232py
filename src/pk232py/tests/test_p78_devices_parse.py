@@ -15,13 +15,21 @@ from pk232py.config import AppConfig
 
 
 class TestInferRelease:
-    def test_what_means_the_mbx_generation(self):
-        assert infer_release("EXPERT\r\n?What?\r\ncmd:") == ("01.AUG.91", "inferred")
-        assert infer_release("?What?") == ("01.AUG.91", "inferred")
+    # T180: device C answers EXPERT with ?What? / $07 too, so the answer alone is ambiguous; the
+    # second question (MAILDROP, derived from the command matrix) decides between B and C.
+    def test_what_alone_is_ambiguous_between_b_and_c(self):
+        assert infer_release("EXPERT\r\n?What?\r\ncmd:") is None
+        assert infer_release("?What?") is None
 
-    def test_host_error_07_means_the_mbx_generation(self):
-        assert infer_release(b"EX\x07") == ("01.AUG.91", "inferred")
-        assert infer_release(b"\x07") == ("01.AUG.91", "inferred")
+    def test_what_and_a_maildrop_value_means_the_mbx_generation(self):
+        second = lambda name: "MAILDROP\r\nMAildrop  OFF\r\ncmd:"       # noqa: E731 (T179, device B)
+        assert infer_release("EXPERT\r\n?What?\r\ncmd:", second=second) == ("01.AUG.91", "inferred")
+        assert infer_release("?What?", second=second) == ("01.AUG.91", "inferred")
+
+    def test_host_error_07_and_a_maildrop_value_means_the_mbx_generation(self):
+        assert infer_release(b"EX\x07") is None
+        assert infer_release(b"EX\x07", second=lambda n: b"MVN") == ("01.AUG.91", "inferred")
+        assert infer_release(b"\x07", second=lambda n: b"MVN") == ("01.AUG.91", "inferred")
 
     def test_a_value_means_the_pactor_generation(self):
         assert infer_release(b"EXN") == ("13.SEP.95", "inferred")
@@ -37,9 +45,10 @@ class TestInferRelease:
         assert infer_release(b"EX\x10") is None         # another error code
         assert infer_release(b"ZZ") is None
 
-    def test_device_c_is_deliberately_unmeasured(self):
+    def test_device_c_answers_expert_like_b_only_that_is_measured(self):
         c = [d for d in KNOWN_DEVICES if d.label == "C"][0]
-        assert c.release == "30.12.1988" and c.expert is None
+        assert c.release == "30.DEC.88" and c.expert == "absent"     # T180; the rest stays unmeasured
+        assert c.unknown_verbose is None
 
     def test_a_second_device_of_a_generation_makes_it_ambiguous(self, monkeypatch):
         from pk232py.comm import devices
