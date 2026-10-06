@@ -1309,11 +1309,27 @@ never retyped; everything else names the Testplan entry, or stays `{}`
   - **While connected (B.4):** none of the seven T152 parameters was refused with
     "not while connected" (device A). Unmeasured for the rest - therefore P72
     ALWAYS reads back and quotes a rejection word for word.
-  - **ILFPACK OFF breaks the app's verbose commands (T155, P72 B.3):** the app
-    ends commands with CR LF; with `ILFPACK OFF` the LF counts as the first
-    character of the next command and every further verbose command gives
-    `?What?`. Setting it in Host Mode works, so ParamApplier never sets it live
-    (message "applied at the next initialisation", P75 fixes the line endings).
+  - **Verbose commands end with CR only (P75, T155 + T175, 06.10.2026).** With
+    `ILFPACK OFF` the TNC keeps the LF of a CR LF as the first character of the
+    NEXT command (`<LF>USERS` -> `?What?`, T155; reproduced on device B, T175 step
+    5). CR alone works with ILFPACK ON and OFF on both devices (T175 steps 1, 4,
+    6, 7: 5 queries, MAILDROP, CONVERSE then COMMAND char). ONE place builds a
+    command line: `comm/constants.py::verbose_line(text)` = text + `\r`; every
+    verbose command (uploader, ParamApplier, SerialManager queries and init
+    constants, mode activation, `CONVERSE`, lines typed in the verbose terminal)
+    goes through it. The TNC's ANSWERS still end with CR LF - parsers and
+    `read_until()` keep that; data lines on the air (RTTY TX) stay CR LF.
+    `tests/test_verbose_cr_only_p75.py` scans `comm/`, `modes/`, `maildrop/` and
+    `main_window.py` for CR LF literals; every exception is on a named allow list
+    (file, function). `IL` is verified on 01.AUG.91 only (T175: Host `IL N`, verbose
+    `ILFPACK` OFF, back with `IL Y`); ParamApplier sets ILFPACK live again.
+  - **`?EXPERT command` on 13.SEP.95 (T175, device A):** with EXPERT OFF (the state
+    after power-on) verbose `ILFPACK` answers exactly `?EXPERT command` - the
+    parameter is an expert command there, which is also why T175 has no verbose
+    cross-check for `IL` on A (the Host read-back `ILN` / `ILY` worked). ParamApplier
+    reacts to exactly that line, once: EXPERT ON, repeat the command, read it back
+    (still ON), EXPERT OFF; the result says "needed EXPERT ON, set back to OFF".
+    Never as a precaution, never for another answer.
   - **EXPERT OFF does not hinder setting the released parameters in Host Mode on
     13.SEP.95 (T158, 02.10.2026, `hw_logs/20261002_192301_host_params_probe.log`):**
     with `EXPERT OFF` all 39 are accepted, only DAYTIME answers `$10` - as with

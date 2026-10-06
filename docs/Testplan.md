@@ -3531,15 +3531,17 @@ the verbose cross-check is missing (`?EXPERT command`) - redo it with EXPERT ON 
 
 ### T176 — ILFPACK applied live, CR-only commands in the app (P75 Teil D, device B)
 
-Only after T175 step 4 PASS and P75 Teil A-C.
+Software: `test_verbose_cr_only_p75.py` (done). PC 1, device B (01.AUG.91), verbose command mode.
+The terminal lines and every upload command now end with CR only.
 
 | # | Do | Expected | Result |
 |---|---|---|---|
-| 1 | Packet mask: ILFPACK off -> OK; leave Host Mode; terminal `PACLEN`, `USERS`, `HELP` | applied at once (`ok`); all three answered right | ⬜ |
-| 2 | Restart PK232PY (TNC still ILFPACK OFF): init, upload, Host Mode entry | no `?What?` | ⬜ |
-| 3 | ILFPACK on again | ON | ⬜ |
+| 1 | Packet mask: ILFPACK off -> OK; leave Host Mode; terminal `PACLEN`, `USERS`, `HELP` | applied at once (`ILFPACK  ON -> OFF  ok`); all three answered right (no `?What?`) | ⬜ |
+| 2 | Restart PK232PY (TNC still ILFPACK OFF): init, upload, Host Mode entry | no `?What?` in `pk232py.log` | ⬜ |
+| 3 | ILFPACK on again (mask -> OK) | ON; terminal `ILFPACK` shows ON | ⬜ |
+| 4 | Device A, verbose command mode (EXPERT OFF): mask ILFPACK off -> OK | message `ILFPACK  ON -> OFF  ok (needed EXPERT ON, set back to OFF)`; verbose `EXPERT` shows OFF afterwards | ⬜ |
 
-**Status:** ⬜ OPEN — waits for T175 and the P75 software.
+**Status:** ⬜ OPEN — software done, hardware run pending (step 4 is the `?EXPERT command` path on device A).
 
 ---
 

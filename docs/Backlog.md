@@ -165,12 +165,21 @@ a `?What?` for a command outside the table stays a visible finding. The AMTOR/Ba
 dialogs grey the matching fields (`apply_firmware_limits()`, value kept). Not covered: the P72
 apply-now path (`changed_with_old`) still builds from `has_pactor` only.
 
-### Verbose commands end with CR only, ILFPACK normal again (P75) — Teil 0 tool done, T175 open (2026-10-06)
+### Verbose commands end with CR only, ILFPACK normal again (P75) — ✅ done, T175 PASS (B), T176 open (2026-10-06)
 
-Spec: `docs/P75_Verbose_CR_Only_Spec.md`. With `ILFPACK OFF` the app's `\r\n` command ends break every verbose command
-after the first (T155: the LF becomes the first character of the next command). Teil 0 is `hw_check.py eol_probe`
-(T175, devices B and A, needs the operator). Teil A (one `verbose_line()`), B (ILFPACK live again, `IL` released with
-the T175 proof), C (tests) and D (T176) follow only after T175 step 4 is measured. Not started.
+Spec: `docs/P75_Verbose_CR_Only_Spec.md`. T175: CR alone works with ILFPACK ON and OFF on devices B and A.
+`comm/constants.py::verbose_line()` is the one place (uploader, ParamApplier, SerialManager, modes, `CONVERSE`,
+lines typed in the verbose terminal); static test with an allow list. `_NEVER_LIVE` is gone: `IL` is released for
+01.AUG.91 with T175 (`host_params._VERIFIED_B_T175`). `?EXPERT command` (exactly that line) in the verbose path of
+`ParamApplier` -> EXPERT ON, repeat, read back, EXPERT OFF, reported in the result. Not changed: `tools/hw_check.py`
+`Session.verbose()` still ends with CR LF (the tool is not part of the app); the ILFPACK tooltip is worded from the
+T155/T175 measurements - the TRM text is not in the repo, compare it with the manual.
+
+### ILFPACK on 13.SEP.95: verbose cross-check with EXPERT ON — open (2026-10-06)
+
+T175 (device A): Host `IL` set and read back (`ILN`, `ILY`), but verbose `ILFPACK` answers `?EXPERT command`
+with EXPERT OFF, so there is no verbose confirmation and `IL` is NOT released for 13.SEP.95. Repeat the check with
+EXPERT ON (`eol_probe` sends verbose `ILFPACK` without it); then add `13.SEP.95` to `host_params._VERIFIED_*`.
 
 ### Upload sends PACTOR commands although the banner says pactor=no — ✅ closed, explained (2026-10-06)
 
