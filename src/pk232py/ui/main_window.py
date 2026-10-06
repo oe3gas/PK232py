@@ -6292,7 +6292,12 @@ class MainWindow(QMainWindow):
             self._vt_send_raw(b"\r", echo="[CR]\n", color=self._dim_color())
             return
         self._vt_input.clear()
-        self._vt_append(f"cmd:{text}\n", color=self._app_config.appearance.tx_color)
+        # The TNC's own prompt is normally already on screen (_on_vt_rx_data shows
+        # it): the typed line continues it. Only without a prompt on the last
+        # line (a cleared display, a [SYS] line) the line carries its own "cmd:".
+        shown = ("" if self._vt_display.document().lastBlock().text().endswith("cmd:")
+                 else "cmd:")
+        self._vt_append(f"{shown}{text}\n", color=self._app_config.appearance.tx_color)
         if self._serial.is_connected:
             # P75: a typed line is a command (or Converse data) - CR only, so
             # ILFPACK OFF cannot make its LF the first character of the next one.
