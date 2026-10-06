@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
 
 from pk232py.ui.dialogs.firmware_limits import apply_firmware_limits
 
+from pk232py.ui.dialogs.param_order import add_flags, add_form_rows
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,41 +68,44 @@ class AMTORParamsDialog(QDialog):
         def spin(lo, hi, val):
             w = QSpinBox(); w.setRange(lo, hi); w.setValue(val); return w
 
+        # P87: the rows are listed here in any order and placed by add_form_rows()
+        # (alphabetical, param_order.py). Only the read-only values form a block of
+        # their own, after the inputs.
         self._le_myselcal = QLineEdit(); self._le_myselcal.setMaximumWidth(80)
-        form.addRow("MYSELCAL:", self._le_myselcal)
         self._le_myaltcal = QLineEdit(); self._le_myaltcal.setMaximumWidth(80)
-        form.addRow("MYALTCAL:", self._le_myaltcal)
         self._le_myident  = QLineEdit(); self._le_myident.setMaximumWidth(100)
-        form.addRow("MYIDENT:",  self._le_myident)
         self._le_aab      = QLineEdit()
-        form.addRow("AAB:",      self._le_aab)
-
-        self._sb_adelay  = spin(0, 250, 2);  form.addRow("ADELAY:",  self._sb_adelay)
-        self._sb_arqtmo  = spin(0, 250, 60); form.addRow("ARQTMO:",  self._sb_arqtmo)
-        self._sb_arqtol  = spin(1, 5,   3);  form.addRow("ARQTOL:",  self._sb_arqtol)
-        self._sb_code    = spin(0, 8,   0);  form.addRow("CODE:",    self._sb_code)
+        self._sb_adelay  = spin(0, 250, 2)
+        self._sb_arqtmo  = spin(0, 250, 60)
+        self._sb_arqtol  = spin(1, 5,   3)
+        self._sb_code    = spin(0, 8,   0)
         self._hx_errchar = HexSpinBox(); self._hx_errchar.setValue(0x5F)
-        form.addRow("ERRCHAR:", self._hx_errchar)
-        self._sb_gusers  = spin(0, 99,  0);  form.addRow("GUSERS:",  self._sb_gusers)
-        self._sb_mid     = spin(0, 99,  0);  form.addRow("MID:",     self._sb_mid)
-        self._sb_mweight = spin(10, 90, 10); form.addRow("MWEIGHT:", self._sb_mweight)
-        self._sb_xlength = spin(0, 255, 64); form.addRow("XLENGTH:", self._sb_xlength)
-
+        self._sb_gusers  = spin(0, 99,  0)
+        self._sb_mid     = spin(0, 99,  0)
+        self._sb_mweight = spin(10, 90, 10)
+        self._sb_xlength = spin(0, 255, 64)
         # NAVTEX filter
         self._le_navmsg = QLineEdit(); self._le_navmsg.setText("ALL")
-        form.addRow("NAVMSG:", self._le_navmsg)
         self._le_navstn = QLineEdit(); self._le_navstn.setText("ALL")
-        form.addRow("NAVSTN:", self._le_navstn)
-
         # TDM
-        self._sb_tdbaud = spin(0, 200, 96); form.addRow("TDBAUD:", self._sb_tdbaud)
-        self._sb_tdchan = spin(0, 3,   0);  form.addRow("TDCHAN:", self._sb_tdchan)
+        self._sb_tdbaud = spin(0, 200, 96)
+        self._sb_tdchan = spin(0, 3,   0)
+        add_form_rows(form, [
+            ("MYSELCAL:", self._le_myselcal), ("MYALTCAL:", self._le_myaltcal),
+            ("MYIDENT:", self._le_myident), ("AAB:", self._le_aab),
+            ("ADELAY:", self._sb_adelay), ("ARQTMO:", self._sb_arqtmo),
+            ("ARQTOL:", self._sb_arqtol), ("CODE:", self._sb_code),
+            ("ERRCHAR:", self._hx_errchar), ("GUSERS:", self._sb_gusers),
+            ("MID:", self._sb_mid), ("MWEIGHT:", self._sb_mweight),
+            ("XLENGTH:", self._sb_xlength), ("NAVMSG:", self._le_navmsg),
+            ("NAVSTN:", self._le_navstn), ("TDBAUD:", self._sb_tdbaud),
+            ("TDCHAN:", self._sb_tdchan),
+        ])
 
-        # Read-only
+        # Read-only (a block of its own, below the inputs)
         self._sb_qtdm = spin(0,99,3); self._sb_qtdm.setEnabled(False)
-        form.addRow("QTDM (r/o):", self._sb_qtdm)
         self._sb_qtor = spin(0,99,31); self._sb_qtor.setEnabled(False)
-        form.addRow("QTOR (r/o):", self._sb_qtor)
+        add_form_rows(form, [("QTDM (r/o):", self._sb_qtdm), ("QTOR (r/o):", self._sb_qtor)])
 
         row.addWidget(left)
 
@@ -116,10 +121,9 @@ class AMTORParamsDialog(QDialog):
         self._chk_xmitok   = QCheckBox("XMITOK");  self._chk_xmitok.setChecked(True)
         self._chk_afilter  = QCheckBox("AFILTER");  self._chk_afilter.setChecked(False)
         self._chk_marsdisp = QCheckBox("MARSDISP"); self._chk_marsdisp.setChecked(False)
-        for w in [self._chk_rfec, self._chk_rxrev, self._chk_srxall,
-                  self._chk_txrev, self._chk_usos, self._chk_wideshft,
-                  self._chk_xmitok, self._chk_afilter, self._chk_marsdisp]:
-            fl.addWidget(w)
+        add_flags(fl, [self._chk_rfec, self._chk_rxrev, self._chk_srxall,
+                       self._chk_txrev, self._chk_usos, self._chk_wideshft,
+                       self._chk_xmitok, self._chk_afilter, self._chk_marsdisp])
         fl.addStretch()
         row.addWidget(right)
         root.addLayout(row)
