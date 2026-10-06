@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -32,18 +33,28 @@ from typing import Optional
 
 DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "command_matrix.csv"
 
-# The firmware releases exactly as the boot banner prints them (docs/DEVICES.md).
+# The firmware releases exactly as the boot banner prints them (docs/DEVICES.md). The list is the HEADER of
+# the data file (P90: an external operator's firmware adds columns), updated whenever the file is read; this
+# is only the fallback for a missing file. COLUMNS follows it.
 RELEASES = ("01.AUG.91", "13.SEP.95", "30.DEC.88")
 CELL_VALUES = ("yes", "no", "expert", "?")
 KINDS = ("param", "immediate", "mode", "action_tx", "danger")
+BANNER_RELEASE = re.compile(
+    r"^\d{2}\.(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\.\d{2}$")
 
-COLUMNS = (
-    "name", "abbrev", "host", "kind", "default", "function", "src_desc",
-    *(f"fw_{r}" for r in RELEASES),
-    *(f"ev_{r}" for r in RELEASES),
-    *(f"fx_{r}" for r in RELEASES),       # P89: effect and way back, in short form
-    "note",
-)
+
+def columns(releases) -> tuple:
+    """The columns of a data file with these releases: fw_ for all, then ev_, then fx_, then note."""
+    return (
+        "name", "abbrev", "host", "kind", "default", "function", "src_desc",
+        *(f"fw_{r}" for r in releases),
+        *(f"ev_{r}" for r in releases),
+        *(f"fx_{r}" for r in releases),       # P89: effect and way back, in short form
+        "note",
+    )
+
+
+COLUMNS = columns(RELEASES)
 
 
 @dataclass(frozen=True)
@@ -65,7 +76,7 @@ class MatrixError(ValueError):
     """The data file breaks one of the rules above."""
 
 
-def _entry_from_row(row: dict, line: int) -> MatrixEntry:
+def _entry_from_row(row: dict, line: int, releases) -> MatrixEntry:
     name = (row.get("name") or "").strip()
     where = f"line {line} ({name or '?'})"
     if not name or name != name.upper():
@@ -74,7 +85,7 @@ def _entry_from_row(row: dict, line: int) -> MatrixEntry:
     if kind not in KINDS:
         raise MatrixError(f"{where}: kind {kind!r} is not one of {KINDS}")
     fw, ev, fx = {}, {}, {}
-    for release in RELEASES:
+    for release in releases:
         cell = (row.get(f"fw_{release}") or "").strip()
         evidence = (row.get(f"ev_{release}") or "").strip()
         effect = (row.get(f"fx_{release}") or "").strip()
@@ -99,12 +110,17 @@ def parse(text: str) -> dict:
     """{NAME: MatrixEntry} from CSV text. Checks the rules (columns, one row per name,
     sorted by name, evidence for every cell that is not ?)."""
     reader = csv.DictReader(io.StringIO(text))
-    if tuple(reader.fieldnames or ()) != COLUMNS:
-        raise MatrixError(f"columns {tuple(reader.fieldnames or ())} differ from {COLUMNS}")
+    header = tuple(reader.fieldnames or ())
+    releases = tuple(c[3:] for c in header if c.startswith("fw_"))
+    for release in releases:
+        if not BANNER_RELEASE.match(release):
+            raise MatrixError(f"release {release!r} is not the banner format DD.MMM.YY")
+    if header != columns(releases):
+        raise MatrixError(f"columns {header} differ from {columns(releases)}")
     entries: dict = {}
     previous = ""
     for row in reader:
-        entry = _entry_from_row(row, reader.line_num)
+        entry = _entry_from_row(row, reader.line_num, releases)
         if entry.name in entries:
             raise MatrixError(f"{entry.name}: listed twice")
         if entry.name < previous:
@@ -118,14 +134,57 @@ def load(path: Optional[Path] = None) -> dict:
     return parse(Path(path or DATA_FILE).read_text(encoding="utf-8"))
 
 
+def _adopt(releases) -> None:
+    global RELEASES, COLUMNS
+    RELEASES = tuple(releases)
+    COLUMNS = columns(RELEASES)
+
+
+def _adopt_from_file() -> None:
+    """RELEASES / COLUMNS follow the header of the data file (if there is one)."""
+    try:
+        with open(DATA_FILE, encoding="utf-8", newline="") as fh:
+            header = next(csv.reader(fh), [])
+    except OSError:
+        return
+    releases = tuple(c[3:] for c in header if c.startswith("fw_"))
+    if releases:
+        _adopt(releases)
+
+
 @lru_cache(maxsize=1)
 def _matrix() -> dict:
+    _adopt_from_file()
     return load()
 
 
 def reload() -> None:
-    """Forget the cached file (tests that point DATA_FILE elsewhere)."""
+    """Forget the cached file (tests that point DATA_FILE elsewhere) and re-read its releases."""
     _matrix.cache_clear()
+    _adopt_from_file()
+
+
+def releases_of(entries: dict) -> tuple:
+    """The releases (columns) of a matrix dict, in column order."""
+    first = next(iter(entries.values()), None)
+    return tuple(first.fw) if first is not None else RELEASES
+
+
+def add_release(entries: dict, release: str) -> dict:
+    """*entries* with one more release: new fw_ / ev_ / fx_ columns, every cell ? (P90). The release is
+    the banner's own text, DD.MMM.YY; a release that is already a column is refused."""
+    if not BANNER_RELEASE.match(release or ""):
+        raise MatrixError(f"release {release!r} is not the banner format DD.MMM.YY")
+    if release in releases_of(entries):
+        raise MatrixError(f"release {release} is already a column of the matrix")
+    out = {}
+    for name, e in entries.items():
+        out[name] = MatrixEntry(
+            name=e.name, abbrev=e.abbrev, host=e.host, kind=e.kind, default=e.default,
+            function=e.function, src_desc=e.src_desc,
+            fw={**e.fw, release: "?"}, ev={**e.ev, release: ""}, fx={**e.fx, release: ""},
+            note=e.note)
+    return out
 
 
 def all_entries() -> dict:
@@ -162,16 +221,18 @@ def kind(name: str) -> Optional[str]:
 
 
 def to_csv(entries: dict) -> str:
-    """The data file for *entries*: sorted by name, UTF-8, LF, the fixed columns."""
+    """The data file for *entries*: sorted by name, UTF-8, LF; one fw_ / ev_ / fx_ column per release
+    of the entries."""
+    releases = releases_of(entries)
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
-    writer.writerow(COLUMNS)
+    writer.writerow(columns(releases))
     for name in sorted(entries):
         e = entries[name]
         writer.writerow([
             e.name, e.abbrev, e.host, e.kind, e.default, e.function, e.src_desc,
-            *(e.fw[r] for r in RELEASES), *(e.ev[r] for r in RELEASES),
-            *(e.fx.get(r, "") for r in RELEASES), e.note,
+            *(e.fw[r] for r in releases), *(e.ev[r] for r in releases),
+            *(e.fx.get(r, "") for r in releases), e.note,
         ])
     return out.getvalue()
 
@@ -179,3 +240,6 @@ def to_csv(entries: dict) -> str:
 def save(entries: dict, path: Optional[Path] = None) -> None:
     Path(path or DATA_FILE).write_text(to_csv(entries), encoding="utf-8", newline="")
     reload()
+
+
+_adopt_from_file()
