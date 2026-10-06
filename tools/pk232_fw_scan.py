@@ -35,7 +35,12 @@ den Betriebsmodus einer Gruppe (siehe MODE_ENTRY). Kein Funkgeraet anschliessen.
 
 ABLAUF
 ======
-  1. RESTART -> Banner -> Release (genau wie gedruckt, z.B. 13.SEP.95)
+  0. Aufwecken wie die App (Erkennungskette, SerialManager._init_tnc_thread): das ERSTE Byte ist
+     immer ein '*' ohne CR (Geraet C wartet nach dem Einschalten auf '*' fuer die Autobaud-Messung
+     und bleibt bei jedem anderen ersten Zeichen stumm - T180), dann auf Banner oder 'cmd:'
+     warten; erst danach CR, COMMAND-Zeichen (Ctrl-C), XON
+  1. RESTART -> auf das Banner WARTEN (kein fester Wert), nur wenn es nicht kommt ein '*'
+     -> Release (genau wie gedruckt, z.B. 13.SEP.95)
   2. EXPERT entsperren (merken, am Ende zuruecksetzen); '?EXPERT command' -> EXPERT_GATED
   3. nach Betriebsart gruppiert abfragen (MODE_ENTRY); die Gruppen ohne eigene Betriebsart
      (global, maildrop, pactor, ...) in PACKET, NIE im Kontext der letzten Gruppe (SIGNAL gibt
@@ -77,6 +82,9 @@ if str(_SRC) not in sys.path:
 from pk232py.comm import command_matrix as cm  # noqa: E402
 from pk232py.comm.constants import verbose_line  # noqa: E402
 from pk232py.comm.devices import KNOWN_DEVICES  # noqa: E402
+from pk232py.comm.pk232_hostmode_sub import escape_converse  # noqa: E402
+# the SAME wake-up byte and banner markers as the app's detection chain (SerialManager)
+from pk232py.comm.serial_manager import _BANNER_MARKERS, _WAKEUP, _XON_BYTE  # noqa: E402
 
 
 # ----------------------------------------------------------------------------
@@ -339,13 +347,21 @@ class MockTransport:
         und hinter dem Prompt steht Analysetext ("noise"); der Opmode ueberlebt RESTART.
       * ``late``   -- diese Befehle werden erst im naechsten Lesefenster beantwortet
       * ``silent`` -- diese Befehle werden nie beantwortet
+      * ``needs_star_first`` -- Geraet C (T180): nach dem Einschalten wartet der TNC auf ein
+        '*' (Autobaud); jedes andere erste Zeichen macht ihn dauerhaft stumm
+      * ``restart_needs_star`` -- dasselbe nach jedem RESTART
+      * ``banner_late_reads`` -- das Banner kommt erst im n-ten Lesefenster
+      * ``ignores_star`` / ``in_converse`` / ``deaf`` -- die Schritte der Erkennungskette
     """
 
     _MODES = ("PACKET", "BAUDOT", "AMTOR", "MORSE", "FAX", "NAVTEX", "SIGNAL")
 
     def __init__(self, release: str, entries: Optional[dict] = None,
                  debug: Optional["DebugLog"] = None, slow_in_signal: bool = False,
-                 late: Optional[set] = None, silent: Optional[set] = None):
+                 late: Optional[set] = None, silent: Optional[set] = None,
+                 needs_star_first: bool = False, restart_needs_star: bool = False,
+                 banner_late_reads: int = 0, ignores_star: bool = False,
+                 in_converse: bool = False, deaf: bool = False):
         self.release = release
         self.entries = cm.all_entries() if entries is None else entries
         self.debug = debug
@@ -357,6 +373,12 @@ class MockTransport:
         self.slow_in_signal = slow_in_signal
         self.late = set(late or ())
         self.silent = set(silent or ())
+        self.restart_needs_star = restart_needs_star
+        self.banner_late_reads = banner_late_reads
+        self.ignores_star = ignores_star
+        self.in_converse = in_converse
+        self.deaf = deaf
+        self._autobaud = needs_star_first     # waiting for the '*' that measures the baud rate
         expert = self.entries.get("EXPERT")
         self.has_expert = expert is None or expert.fw.get(release) != "no"
 
@@ -374,26 +396,48 @@ class MockTransport:
         self._pending += text
         self._late_reads = 1 if (slow or name in self.late) else 0
 
+    def _banner(self) -> str:
+        day, mon, yy = self.release.split(".")
+        return ("\r\nPK-232M is using default values.\r\n"
+                "AEA PK-232M Data Controller\r\n"
+                f"Release {day}.{mon}.{yy}\r\ncmd:")
+
     def write(self, data: bytes) -> None:
         self.sent.append(bytes(data))
         if self.debug:
             self.debug.tx(data)
-        if data == CTRL_C:
+        if self.deaf:
+            return
+        if self._autobaud:
+            # the first byte after power-on / RESTART measures the baud rate: only '*' does it,
+            # anything else leaves the TNC deaf for good (T180, device C)
+            if data == STAR:
+                self._autobaud = False
+                self._pending, self._late_reads = self._banner(), self.banner_late_reads
+            else:
+                self.deaf = True
+            return
+        if data == CTRL_C or data == CTRL_C + b"\r":
             self._pending = ""                      # Ctrl-C clears whatever was still on its way
             self._late_reads = 0
+            self.in_converse = False
             self._reply("cmd:")
             return
         if data == STAR:
+            if not self.ignores_star and not self.in_converse:
+                self._reply("*\\\r\ncmd:")           # a TNC at the prompt answers '*' with a prompt
+            return
+        if self.in_converse:                        # Converse echoes everything, shows no prompt
+            self._pending += data.decode("latin-1")
             return
         name = data.decode("latin-1").strip().upper()
         if name == "RESTART":
-            day, mon, yy = self.release.split(".")
             self._pending = ""
             self._late_reads = 0
-            self._reply(
-                "\r\nPK-232M is using default values.\r\n"
-                "AEA PK-232M Data Controller\r\n"
-                f"Release {day}.{mon}.{yy}\r\ncmd:")      # the opmode survives (bbRAM)
+            if self.restart_needs_star:
+                self._autobaud = True               # autobaud again, the banner comes after '*'
+                return
+            self._pending, self._late_reads = self._banner(), self.banner_late_reads  # opmode survives
             return
         if name in self._MODES:
             old, self.opmode = self.opmode, name
@@ -496,20 +540,107 @@ def enter_command_mode(t) -> None:
     t.read_idle()
 
 
-def capture_banner(t) -> str:
-    """RESTART absetzen und den Sign-on-Banner einsammeln.
+class ScanError(RuntimeError):
+    """Das Geraet ist nicht erreichbar (kein PK-232 am Port / falsche Baudrate / haengt)."""
 
-    RESTART ist NICHT-DESTRUKTIV (im Gegensatz zu RESET): es initialisiert nur frisch und
-    behaelt alle bbRAM-Einstellungen, trennt aber Verbindungen. Danach ggf. '*' fuer die
-    Autobaud-Routine (falls ABAUD=ON), dann den Banner lesen.
-    """
-    _status("[*] Lese Sign-on-Banner (RESTART, ~1 s) ...")
-    enter_command_mode(t)
+
+# Wie die App: pro Schritt hoechstens ~1,5 s (_TNC_STATE_STEP_TIMEOUT). Hier in Leseaufrufen
+# gezaehlt: ein read_idle() wartet am Port bis ~0,4 s, im Mock kommt er sofort zurueck.
+_STEP_READS = 4
+_BANNER_STR = tuple(m.decode("ascii") for m in _BANNER_MARKERS)
+_WAKE_MARKERS = ("cmd:",) + _BANNER_STR
+
+
+def read_until(t, markers, reads: int = _STEP_READS) -> str:
+    """Liest, bis einer der *markers* auftaucht (danach noch ein kurzes Idle, P52.1) oder die
+    Lesefenster aufgebraucht sind. Nicht bis zur ersten Pause: Banner und Prompt kommen bei
+    9600 Bd in Stuecken."""
+    buf = ""
+    for _ in range(reads):
+        buf += t.read_idle(0.15, 0.5)
+        if any(m in buf for m in markers):
+            return buf + t.read_idle(0.12, 0.3)
+    return buf
+
+
+def wake(t) -> str:
+    """Den TNC aufwecken und seinen Zustand bestaetigen - in der Reihenfolge der Erkennungskette
+    der App (SerialManager._init_tnc_thread, Schritte 1, 2, 2b, 2c):
+
+      1.  '*' OHNE CR            -> Banner oder 'cmd:'  (frisch eingeschaltet / wartet auf Autobaud)
+      2.  CR                     -> 'cmd:'              (schon wach)
+      2b. COMMAND-Zeichen + CR   -> 'cmd:'              (Converse), bis zu 3x, gemeinsame escape_converse()
+      2c. XON, CR, CR            -> 'cmd:'              (vom Flow-Control gestoppt)
+
+    Das ERSTE Byte ist immer das '*': Geraet C (30.12.1988) wartet nach dem Einschalten darauf
+    und bleibt bei jedem anderen ersten Zeichen stumm (T180, 06.10.2026: der alte Scanner begann
+    mit Ctrl-C und bekam nie einen Sync). Der Host-Mode-Schritt 3 der App entfaellt: der Scanner
+    arbeitet nur im Verbose-Modus. Rueckgabe: der empfangene Text; ScanError, wenn nichts antwortet."""
+    _dbg_note(t, "wake step 1: '*' without CR")
+    t.write(_WAKEUP)
+    resp = read_until(t, _WAKE_MARKERS)
+    if any(m in resp for m in _WAKE_MARKERS):
+        return resp
+
+    _dbg_note(t, "wake step 2: CR")
+    t.write(b"\r")
+    resp = read_until(t, ("cmd:",))
+    if "cmd:" in resp:
+        return resp
+
+    _dbg_note(t, "wake step 2b: COMMAND character + CR (Converse?)")
+
+    def send_and_wait(data: bytes, timeout: float) -> bytes:
+        t.write(data)
+        return read_until(t, ("cmd:",)).encode("latin-1")
+
+    found, raw = escape_converse(send_and_wait, CTRL_C)
+    if found:
+        return raw.decode("latin-1")
+
+    _dbg_note(t, "wake step 2c: XON, CR, CR (flow-stopped?)")
+    t.write(bytes([_XON_BYTE]))
+    time.sleep(0.1)
+    for _ in range(2):
+        t.write(b"\r")
+        resp = read_until(t, ("cmd:",))
+        if "cmd:" in resp:
+            return resp
+    raise ScanError("no PK-232 reachable: no banner and no cmd: after '*', CR, the COMMAND "
+                    "character and XON - wrong port or baud rate, or the TNC is hung "
+                    "(power-cycle it and try again)")
+
+
+def _dbg_note(t, msg: str) -> None:
+    if _dbg(t):
+        _dbg(t).note(msg)
+
+
+def restart_for_banner(t) -> str:
+    """RESTART absetzen und auf das Banner WARTEN (nicht eine feste Pause). Nur wenn es nicht von
+    allein kommt, ein '*' (nach einem RESTART macht Geraet C wieder Autobaud und wartet darauf),
+    dann bis zum Prompt weiterlesen. Rueckgabe: der Banner-Text."""
     t.write(verbose_line("RESTART"))
-    time.sleep(0.6)               # dem Prozessor Zeit zum Neustart geben
-    t.write(STAR)                 # Autobaud befriedigen (schadet sonst nicht)
-    banner = t.read_idle(0.4, 4.0)
-    enter_command_mode(t)         # sicher wieder am Prompt
+    banner = read_until(t, _BANNER_STR)
+    if not any(m in banner for m in _BANNER_STR):
+        _dbg_note(t, "no banner after RESTART: '*' for the autobaud")
+        t.write(_WAKEUP)
+        banner += read_until(t, _WAKE_MARKERS, reads=3 * _STEP_READS)
+    if "cmd:" not in banner:
+        banner += read_until(t, ("cmd:",), reads=2 * _STEP_READS)
+    return banner
+
+
+def capture_banner(t) -> str:
+    """Aufwecken wie die App, dann RESTART und das Sign-on-Banner einsammeln.
+
+    RESTART ist NICHT-DESTRUKTIV (im Gegensatz zu RESET): es initialisiert nur frisch und behaelt
+    alle bbRAM-Einstellungen (auch den Opmode, siehe SIGNAL!), trennt aber Verbindungen."""
+    _status("[*] Wecke den TNC ('*' zuerst, wie die App) ...")
+    wake(t)
+    _status("[*] Lese Sign-on-Banner (RESTART) ...")
+    banner = restart_for_banner(t)
+    enter_command_mode(t)         # erst jetzt Ctrl-C: sicher wieder am Prompt
     return banner
 
 
@@ -660,10 +791,7 @@ def hard_resync(t) -> bool:
     for _ in range(2):
         t.write(CTRL_C)
         t.read_idle(0.2, 1.0)
-    t.write(verbose_line("RESTART"))
-    time.sleep(0.6)
-    t.write(STAR)
-    resp = t.read_idle(0.4, 4.0)
+    resp = restart_for_banner(t)
     t.write(CTRL_C)
     resp += t.read_idle(0.2, 1.2)
     return "cmd:" in resp.lower()
@@ -929,6 +1057,9 @@ def _run(args, ap, dbg) -> int:
 
     try:
         rep = run_scan(t, port, only_group=args.group, immediate=args.immediate)
+    except ScanError as exc:
+        print(f"[!] {exc}", file=sys.stderr)
+        return 4
     finally:
         t.close()
 
