@@ -83,3 +83,51 @@ class TestVerboseTerminalBareEnter:
         w._on_vt_send()
 
         assert serial.writes == [b"MYCALL\r"]
+
+
+class TestInputFollowsTheTncPrompt:
+    """The TNC's own prompt is already on screen when the operator types
+    (Device A screenshot, 06.10.2026: from the second input on the display
+    read 'cmd:cmd:ilfpack'). The typed line must continue that prompt."""
+
+    @staticmethod
+    def _text(w) -> str:
+        return w._vt_display.toPlainText()
+
+    @staticmethod
+    def _type(w, text: str) -> None:
+        w._vt_input.setPlainText(text)
+        w._on_vt_send()
+
+    def test_input_continues_the_prompt_the_tnc_showed(self, wired_window):
+        w, _serial = wired_window
+        w._on_vt_rx_data(b"\r\nILfpack   ON\r\ncmd:")
+        self._type(w, "ilfpack")
+        assert w._vt_display.document().lastBlock().previous().text() == "cmd:ilfpack"
+        assert "cmd:cmd:" not in self._text(w)
+
+    def test_second_and_third_input_never_double_the_prompt(self, wired_window):
+        w, _serial = wired_window
+        w._on_vt_rx_data(b"cmd:")
+        self._type(w, "ilfpack")
+        w._on_vt_rx_data(b"ilfpack\r\nILfpack   ON\r\ncmd:")
+        self._type(w, "users")
+        w._on_vt_rx_data(b"users\r\nUSers     1\r\ncmd:")
+        self._type(w, "paclen")
+        assert "cmd:cmd:" not in self._text(w)
+        lines = self._text(w).splitlines()
+        assert [ln for ln in lines if ln.startswith("cmd:") and len(ln) > 4] == [
+            "cmd:ilfpack", "cmd:users", "cmd:paclen"]
+
+    def test_without_a_prompt_on_screen_the_line_still_shows_one(self, wired_window):
+        # first input of a cleared display: nothing from the TNC yet
+        w, _serial = wired_window
+        w._vt_display.clear()
+        self._type(w, "ilfpack")
+        assert self._text(w).splitlines()[0] == "cmd:ilfpack"
+
+    def test_what_is_sent_is_unchanged(self, wired_window):
+        w, serial = wired_window
+        w._on_vt_rx_data(b"cmd:")
+        self._type(w, "ilfpack")
+        assert serial.writes == [b"ilfpack\r"]
