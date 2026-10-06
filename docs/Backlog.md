@@ -197,6 +197,14 @@ Settled by the evidence, not by the spec text (see the P88 report):
 the parameter masks (show a field only where the command is `yes`/`expert`) from the matrix. Until then
 `test_command_matrix_agreement.py` fails if they contradict it.
 
+### SIGNAL survives RESTART: does the app's detection chain find the command mode after a crash in SIGNAL? — open (2026-10-06)
+
+T179 (device B, `hw_logs/20261006_fw_scan_B.log`): in SIGNAL the opmode stays across `RESTART` (analysis lines keep coming, the TNC answers
+late and writes `noise` / `0.42: 193 baud, ` between echo and answer). Check whether the app's detection chain (`SerialManager._init_tnc_thread()`,
+steps 1 to 4 incl. Ctrl-C / recovery) reliably reaches the verbose command mode when the app was killed while the TNC was in SIGNAL
+(analogous to T168 variant B, restart_probe). Open: the late replies and the interleaved analysis text against the 1.5 s step timeout
+and the `cmd:` search; a variant C-like `hw_check.py restart_probe` run with SIGNAL as the left-over mode.
+
 ### fw_scan: third run on device B for the remaining ? cells — open (2026-10-06)
 
 After T179 (runs 1 and 2, see Testplan): 21 parameters and 14 immediate commands of 01.AUG.91 are still `?` (list in the Testplan);
