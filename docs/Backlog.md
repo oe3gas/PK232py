@@ -167,8 +167,7 @@ apply-now path (`changed_with_old`) still builds from `has_pactor` only.
 
 ### Verbose commands end with CR only, ILFPACK normal again (P75) — Teil 0 tool done, T175 open (2026-10-06)
 
-Spec: `docs/P75_Verbose_CR_Only_Spec.md`. With `ILFPACK OFF` the app's `
-` command ends break every verbose command
+Spec: `docs/P75_Verbose_CR_Only_Spec.md`. With `ILFPACK OFF` the app's `\r\n` command ends break every verbose command
 after the first (T155: the LF becomes the first character of the next command). Teil 0 is `hw_check.py eol_probe`
 (T175, devices B and A, needs the operator). Teil A (one `verbose_line()`), B (ILFPACK live again, `IL` released with
 the T175 proof), C (tests) and D (T176) follow only after T175 step 4 is measured. Not started.
@@ -365,13 +364,6 @@ Device A has the 39 `verified` of the 22:07 T151 run released (T158: EXPERT OFF
 does not hinder them), UBIT 0 is released on A and B. Everything else is
 reported as `not verified for Host Mode on <release>` (saved, TNC unchanged until
 the next init) until a probe releases it.
-
-### Verbose commands end with CR only (P75) - open (2026-10-02)
-
-Terminate verbose commands with `\r` only, so `ILFPACK OFF` does not break
-them (the LF of CR LF becomes the first character of the next command,
-T155). Measure first: CR-only with ILFPACK ON and OFF. Then ILFPACK can be
-applied live (ParamApplier currently never does).
 
 ### Disconnect: the PK-232 does not hear Direwolf's UA and repeats DISC - open (2026-10-02)
 
