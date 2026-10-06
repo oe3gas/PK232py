@@ -197,6 +197,12 @@ class PacketParamsDialog(QDialog):
         self._chk_constamp.setToolTip(_stamp_tip.format("CONSTAMP"))
         self._chk_dagstamp.setToolTip(_stamp_tip.format("DAYSTAMP"))
         self._chk_ilfpack   = chk("ILFPACK",    True)
+        self._chk_ilfpack.setToolTip(
+            "ILFPACK - ignore line feeds in Packet. ON (default): the TNC ignores "
+            "the LF of a CR LF it receives from the computer. OFF: the LF is kept "
+            "as a character (T155/T175). Applied at once; in Host Mode on "
+            "13.SEP.95 it waits for the next initialisation (not verified there)."
+        )
         self._chk_acrpack   = chk("ACRPACK",    True)
         self._chk_alfpack   = chk("ALFPACK",    True)
         self._chk_mrpt      = chk("MRPT",       True)
