@@ -12,9 +12,9 @@ HEADER = ",".join(cm.COLUMNS)
 
 
 def _row(name="ILFPACK", abbrev="IL", host="IL", kind="param", a="yes", b="yes", c="?",
-         ev_a="T175 log", ev_b="T155", ev_c="", note=""):
+         ev_a="T175 log", ev_b="T155", ev_c="", note="", fx_a="", fx_b="", fx_c=""):
     cells = [name, abbrev, host, kind, "ON", "Ignores line feeds", "timewave",
-             b, a, c, ev_b, ev_a, ev_c, note]
+             b, a, c, ev_b, ev_a, ev_c, fx_b, fx_a, fx_c, note]
     return ",".join(cells)
 
 
@@ -52,6 +52,20 @@ class TestParse:
             cm.parse(_csv(_row(), _row()))
         with pytest.raises(cm.MatrixError, match="not sorted"):
             cm.parse(_csv(_row(name="USERS"), _row(name="PACLEN")))
+
+    def test_an_effect_column_per_release_follows_the_evidence_columns(self):
+        assert cm.COLUMNS[-4:] == ("fx_01.AUG.91", "fx_13.SEP.95", "fx_30.DEC.88", "note")
+
+    def test_an_effect_is_kept_and_round_trips(self):
+        text = _csv(_row(name="TRANS", kind="danger", fx_a="enters transparent mode; exit 3xCtrl-C/CMDTIME"))
+        e = cm.parse(text)["TRANS"]
+        assert e.fx == {"01.AUG.91": "", "13.SEP.95": "enters transparent mode; exit 3xCtrl-C/CMDTIME",
+                        "30.DEC.88": ""}
+        assert cm.to_csv(cm.parse(text)) == text
+
+    def test_an_effect_needs_a_measured_cell(self):
+        with pytest.raises(cm.MatrixError, match="fx_30.DEC.88"):
+            cm.parse(_csv(_row(c="?", fx_c="prints banner")))
 
     def test_the_columns_are_fixed(self):
         with pytest.raises(cm.MatrixError, match="columns"):
