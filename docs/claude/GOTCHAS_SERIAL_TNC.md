@@ -1323,7 +1323,12 @@ never retyped; everything else names the Testplan entry, or stays `{}`
     `main_window.py` for CR LF literals; every exception is on a named allow list
     (file, function). `IL` is verified on 01.AUG.91 only (T175: Host `IL N`, verbose
     `ILFPACK` OFF, back with `IL Y`); ParamApplier sets ILFPACK live again.
-  - **Device C (30.12.1988) wakes only on a lone `*` as the FIRST byte after power-on / RESTART (T180, first try
+  - **Release keys are the banner text, `DD.MMM.YY` (T180).** Device C prints `Release 30.DEC.88` (not the transcription
+    `30.12.1988`, which stays in older entries). A key that is not the banner's own text silently matches no device
+    (`devices.has_pactor()` / `unknown_commands()` answer "unknown", the scanner says "device ?"); a test checks every key.
+    **EXPERT does not tell B from C** (both answer `?What?`): the app asks one more bare query, chosen from the command matrix
+    (`devices.discriminating_command()`, today MAILDROP; Host Mode: its matrix mnemonic `MV`), never a fixed command.
+  - **Device C (30.DEC.88) wakes only on a lone `*` as the FIRST byte after power-on / RESTART (T180, first try
     06.10.2026; operator: PuTTY).** After power-on the TNC measures the baud rate from the first character (autobaud):
     a `*` wakes it, any other first byte (Ctrl-C, CR) leaves it silent. The app's detection chain does it right (step 1 is `*`
     without CR, then CR, the COMMAND character, XON); `tools/pk232_fw_scan.py` started with Ctrl-C and never got a sync. Rule for

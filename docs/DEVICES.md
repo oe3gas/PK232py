@@ -22,7 +22,9 @@ before assuming the code changed or the earlier run was wrong.
 |---|---|---|---|---|---|---|---|
 | **A** | 13.SEP.95 | PACTOR | ja | ja | rund | 02.10.2026 (T152, T156) | Quelle aller `CLAUDE.md` "Known Gotchas"-Befunde bis 22.09.2026 (Mnemonics, MailDrop-Ablauf, Packet-/Channel-Verhalten). `MI` = MFILTER (T115). |
 | **B** | 01.AUG.91 | MBX | nein | ja | eckig | 24.09.2026 (T119, P37) | MDCHECK hat kein Host-Mode-Kürzel (T118, wie Gerät A). Volles MailDrop-Protokoll (`L`/`S`/`SB`/`R`/`K`/`B`/`<`-Fremdabsender) 10/10 PASS, identisch zu Gerät A. |
-| **C** | 30.12.1988 | BASE | nein | **nein** | unbekannt | 23.09.2026 (Betreiberangabe, PuTTY) | Nie über die App/`hw_check.py` angeschlossen — MailDrop-Abwesenheit direkt mit einem Terminalprogramm geprüft, nicht gemessen über das hier dokumentierte Werkzeug. Ab P37 (24.09.2026) erkennt die App das automatisch über `SerialManager.detect_maildrop()` (`MAILDROP`-Abfrage, verbose, vor dem Upload — niemals `MDCHECK`); noch nicht an diesem Gerät verifiziert. |
+| **C** | 30.DEC.88 | BASE | nein | **nein** | unbekannt | 23.09.2026 (Betreiberangabe, PuTTY) | Nie über die App/`hw_check.py` angeschlossen — MailDrop-Abwesenheit direkt mit einem Terminalprogramm geprüft, nicht gemessen über das hier dokumentierte Werkzeug. Ab P37 (24.09.2026) erkennt die App das automatisch über `SerialManager.detect_maildrop()` (`MAILDROP`-Abfrage, verbose, vor dem Upload — niemals `MDCHECK`); noch nicht an diesem Gerät verifiziert. |
+
+**Gerät C, Release (T180, 06.10.2026):** Das Banner druckt `Release 30.DEC.88` (`hw_logs/20261006_fw_scan_C.log`, `AEA PK-232 Data Controller`, `Checksum $80`) - nicht die frühere Abschrift `30.12.1988`. Wie bei Gerät A (11.09.1995 -> 13.SEP.95) gilt ab jetzt überall der Bannerwert (Matrix-Spalten, `comm/devices.py`, Register, Tests; ein Test prüft, dass jeder Release-Schlüssel das Bannerformat `DD.MMM.YY` hat). Ältere Einträge (`PK232_firmware_matrix.md`, P37/P78/P80/P85/P88-Specs, historische Testplan-/Backlog-/Gotcha-Einträge) nennen weiterhin `30.12.1988` und sind bewusst nicht umgeschrieben.
 
 **Release-Spalte, Genauigkeit:** Gerät B ist die einzige Zeile mit einer
 byte-genauen Banner-Erfassung (P30/P37, `hw_logs/20260924_181446_maildrop_session.log`)
@@ -66,14 +68,16 @@ Generation am Befehl `EXPERT` (`comm/devices.py`, `KNOWN_DEVICES`):
 |---|---|---|
 | B (01.AUG.91) | `?What?` | Fehlercode `$07` |
 | A (13.SEP.95) | `ON`/`OFF` | `EXY`/`EXN` |
-| C (30.12.1988) | ungemessen | ungemessen |
+| C (30.DEC.88) | `?What?` (T180) | ungemessen (erwartet `$07`) |
 
-**Der Fingerabdruck gilt nur, solange diese Tabelle je Generation genau ein Gerät
-führt.** Kommt ein weiteres Gerät derselben Generation hinzu (oder wird Gerät C
-gemessen und verhält sich wie A oder B), ist er mehrdeutig: `KNOWN_DEVICES` in
-`comm/devices.py` und diese Tabelle gemeinsam ergänzen - `infer_release()` liefert
-bei Mehrdeutigkeit `None`, nie eine Vermutung. Gerät C bleibt bewusst ungemessen
-(also nie "inferred").
+**`EXPERT` allein trennt nur A von B/C:** Gerät C antwortet wie B mit `?What?` (T180) - die Antwort ist
+mehrdeutig. Dann folgt EINE zweite Abfrage, und welche, wird aus der Befehls-Matrix abgeleitet
+(`devices.discriminating_command()`: ein Parameter, dessen Zelle auf allen Kandidaten gemessen ist und sich
+unterscheidet - heute `MAILDROP`: auf 01.AUG.91 vorhanden, auf 30.DEC.88 `?What?`; im Host Mode über das
+gemessene Kürzel `MV` aus der Matrix). Nichts davon ist in `devices.py` fest codiert. Kein
+unterscheidender Befehl, unbrauchbare Antwort oder weiter mehrdeutig: `infer_release()` liefert `None`,
+nie eine Vermutung. **Der Fingerabdruck gilt nur, solange die Matrix die Kandidaten unterscheiden kann** - ein
+weiteres Gerät derselben Generation braucht `KNOWN_DEVICES` und die Matrix gemeinsam.
 
 ## Offene Punkte
 

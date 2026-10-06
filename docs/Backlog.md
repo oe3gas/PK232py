@@ -178,7 +178,7 @@ lines typed in the verbose terminal); static test with an allow list. `_NEVER_LI
 ### Command / firmware matrix (P88) — ✅ done, T179-T181 open (2026-10-06)
 
 `src/pk232py/data/command_matrix.csv` is the ONE truth about which command exists on which firmware 260 commands;
-01.AUG.91: 193 yes, 39 no; 13.SEP.95: 193 yes, 8 no, 3 expert; 30.12.1988: 1 no; the rest `?` - after T179 (runs 1-3 and --immediate), Q values. Reader `comm/command_matrix.py`
+01.AUG.91: 193 yes, 39 no; 13.SEP.95: 193 yes, 8 no, 3 expert; 30.DEC.88: 1 no; the rest `?` - after T179 (runs 1-3 and --immediate), Q values. Reader `comm/command_matrix.py`
 (validates while loading: evidence for every cell that is not `?`), view `docs/COMMAND_MATRIX.md` (generated, a test fails when
 stale), raw data in `docs/reference/` (Timewave list, fw_scan of 28.07.2026 with its known defects). Seeded only from
 evidence: Timewave list (names, abbreviations, defaults, functions), fw_scan 20260728 (device A), and the code that already
@@ -196,6 +196,13 @@ Settled by the evidence, not by the spec text (see the P88 report):
 **Follow-up (Teil E, after T179):** derive `devices.unknown_verbose`, `host_params.verified_releases`, the mnemonic registry and
 the parameter masks (show a field only where the command is `yes`/`expert`) from the matrix. Until then
 `test_command_matrix_agreement.py` fails if they contradict it.
+
+### Device C: release key and the EXPERT fingerprint (T180) — ✅ done, matrix update for 30.DEC.88 open (2026-10-06)
+
+The banner of device C prints `Release 30.DEC.88`; every release key is now the banner text (a test checks `DD.MMM.YY`). `infer_release()` asks a
+second question when EXPERT answers `?What?` (B and C alike): the command comes from the matrix (`discriminating_command()`, today MAILDROP), verbose and
+in Host Mode (mnemonic from the matrix). Still to do: repeat the T180 scan with `--update-matrix` so the matrix gets its 30.DEC.88 cells; then the
+EXPERT cell of C (`no`, T180 run 1) agrees with `KnownDevice.expert` by test, and the packet-mask / PACTOR gating for device C can follow the matrix.
 
 ### SIGNAL survives RESTART: does the app's detection chain find the command mode after a crash in SIGNAL? — open (2026-10-06)
 
