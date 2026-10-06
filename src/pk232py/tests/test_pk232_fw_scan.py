@@ -274,3 +274,22 @@ class TestDebugLogIsComplete:
         with pytest.raises(OSError):
             scan.main(["--port", "COM99", "--debug", str(log)])
         assert log.read_text(encoding="utf-8").splitlines()[-1].startswith("# end of log")
+
+
+class TestFilledCounter:
+    """T179 run 3: the report said '0 cells filled' although the matrix cells were set - the
+    cells had been filled by an earlier call with the same CSV (its MATRIX column already showed
+    them). The counter counts what THIS call changed; a repeated call counts 0."""
+
+    @staticmethod
+    def _rows(**results):
+        return [{"name": n, "result": r} for n, r in results.items()]
+
+    def test_the_first_call_counts_what_it_filled_and_a_repeat_counts_zero(self):
+        entries = _unknown(cm.all_entries(), B, "AUTOBAUD", "AWLEN", "TRFLOW")
+        rows = self._rows(AUTOBAUD="SUPPORTED", AWLEN="SUPPORTED", TRFLOW="UNSUPPORTED")
+        once, filled, conflicts = scan.apply_to_matrix(entries, rows, B, "2026-10-06", "B", "run3.csv")
+        assert (filled, conflicts) == (3, [])
+        twice, filled_again, conflicts = scan.apply_to_matrix(once, rows, B, "2026-10-06", "B", "run3.csv")
+        assert (filled_again, conflicts) == (0, [])
+        assert twice == once                                   # evidence untouched, nothing written twice
