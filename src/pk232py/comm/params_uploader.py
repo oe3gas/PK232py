@@ -131,12 +131,6 @@ class ParamsUploader:
                 "was never confirmed in this session"
             )
             return 0
-        has_pactor = getattr(self._serial, 'has_pactor', True)
-        if not has_pactor:
-            logger.info(
-                "ParamsUploader: TNC has no PACTOR - "
-                "skipping PACTOR-specific commands"
-            )
         # MailDrop capability has no boot-banner marker (unlike PACTOR),
         # so it is queried here, in verbose mode, right before the
         # upload (P37) - detect_maildrop() never sends MDCHECK. A
@@ -149,6 +143,13 @@ class ParamsUploader:
         probe_release = getattr(self._serial, 'probe_release_verbose', None)
         if probe_release:
             probe_release()
+        # P85a: read AFTER the probe - an inferred release decides has_pactor.
+        has_pactor = getattr(self._serial, 'has_pactor', True)
+        if not has_pactor:
+            logger.info(
+                "ParamsUploader: TNC has no PACTOR - "
+                "skipping PACTOR-specific commands"
+            )
         detect_maildrop = getattr(self._serial, 'detect_maildrop', None)
         has_maildrop = detect_maildrop() if detect_maildrop else True
         if has_maildrop is False:
@@ -228,7 +229,8 @@ class ParamsUploader:
                 kept.append(cmd)
         if skipped:
             names = ", ".join(dict.fromkeys(skipped))
-            text = (f"{len(skipped)} commands skipped - not supported by "
+            noun = "command" if len(skipped) == 1 else "commands"
+            text = (f"{len(skipped)} {noun} skipped - not supported by "
                     f"{release} ({names})")
             logger.info("ParamsUploader: %s", text)
             if self._echo:
