@@ -41,6 +41,7 @@ COLUMNS = (
     "name", "abbrev", "host", "kind", "default", "function", "src_desc",
     *(f"fw_{r}" for r in RELEASES),
     *(f"ev_{r}" for r in RELEASES),
+    *(f"fx_{r}" for r in RELEASES),       # P89: effect and way back, in short form
     "note",
 )
 
@@ -56,6 +57,7 @@ class MatrixEntry:
     src_desc: str
     fw: dict = field(default_factory=dict)     # release -> yes/no/expert/?
     ev: dict = field(default_factory=dict)     # release -> evidence text
+    fx: dict = field(default_factory=dict)     # release -> effect + recovery of a risky command (P89)
     note: str = ""
 
 
@@ -71,22 +73,25 @@ def _entry_from_row(row: dict, line: int) -> MatrixEntry:
     kind = (row.get("kind") or "").strip()
     if kind not in KINDS:
         raise MatrixError(f"{where}: kind {kind!r} is not one of {KINDS}")
-    fw, ev = {}, {}
+    fw, ev, fx = {}, {}, {}
     for release in RELEASES:
         cell = (row.get(f"fw_{release}") or "").strip()
         evidence = (row.get(f"ev_{release}") or "").strip()
+        effect = (row.get(f"fx_{release}") or "").strip()
         if cell not in CELL_VALUES:
             raise MatrixError(f"{where}: fw_{release} {cell!r} is not one of {CELL_VALUES}")
         if cell != "?" and not evidence:
             raise MatrixError(f"{where}: fw_{release} = {cell} has no evidence")
-        fw[release], ev[release] = cell, evidence
+        if effect and cell == "?":
+            raise MatrixError(f"{where}: fx_{release} has an effect but fw_{release} is still ?")
+        fw[release], ev[release], fx[release] = cell, evidence, effect
     return MatrixEntry(
         name=name, abbrev=(row.get("abbrev") or "").strip(),
         host=(row.get("host") or "").strip(), kind=kind,
         default=(row.get("default") or "").strip(),
         function=(row.get("function") or "").strip(),
         src_desc=(row.get("src_desc") or "").strip(),
-        fw=fw, ev=ev, note=(row.get("note") or "").strip(),
+        fw=fw, ev=ev, fx=fx, note=(row.get("note") or "").strip(),
     )
 
 
@@ -165,7 +170,8 @@ def to_csv(entries: dict) -> str:
         e = entries[name]
         writer.writerow([
             e.name, e.abbrev, e.host, e.kind, e.default, e.function, e.src_desc,
-            *(e.fw[r] for r in RELEASES), *(e.ev[r] for r in RELEASES), e.note,
+            *(e.fw[r] for r in RELEASES), *(e.ev[r] for r in RELEASES),
+            *(e.fx.get(r, "") for r in RELEASES), e.note,
         ])
     return out.getvalue()
 
