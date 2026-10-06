@@ -11,7 +11,7 @@
 | Release | Device | yes | no | expert | ? |
 |---|---|---|---|---|---|
 | 01.AUG.91 | B | 69 | 7 | 0 | 184 |
-| 13.SEP.95 | A | 194 | 0 | 2 | 64 |
+| 13.SEP.95 | A | 193 | 0 | 3 | 64 |
 | 30.12.1988 | C | 0 | 0 | 0 | 260 |
 
 260 commands.
@@ -125,7 +125,7 @@
 | HOSTKEY | HY |  | param | ? | yes | ? |  |  (not in the Timewave list; named by the fw_scan hypothesis table ("host-mode key")) | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
 | HPOLL | HP | HP | param | ? | yes | ? | ON | Sets Host polling be used in Host interface | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) \| T86 (late response frame after Host Mode entry) (Host Mode, mnemonic HP) |
 | ID | I |  | action_tx | ? | yes | ? | Immediate command | Sends an ID in Baudot, ASCII AMTOR and Packet | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
-| ILFPACK | IL | IL | param | yes | yes | ? | ON | Ignores line feeds from terminal in Packet | B: T175 (Host Mode, mnemonic IL) [hw_logs/20261006_144428_eol_probe.log]; A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
+| ILFPACK | IL | IL | param | yes | expert | ? | ON | Ignores line feeds from terminal in Packet | B: T175 (Host Mode, mnemonic IL) [hw_logs/20261006_144428_eol_probe.log]; A: T175 hw_logs/20261006_145938_eol_probe.log: verbose ILFPACK with EXPERT OFF answers "?EXPERT command" \| earlier: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
 | IO | IO |  | param | ? | yes | ? | none | A hex value used to access the PK-232s memory | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
 | JUSTIFY | J |  | immediate | ? | yes | ? | Immediate command | Moves received FAX left a number × 0.5" | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
 | K | K |  | mode | ? | ? | ? | Immediate command | Enters the Converse mode (same as CONVerse) (same as CONVERSE) |  |
