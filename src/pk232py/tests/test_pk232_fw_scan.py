@@ -293,3 +293,78 @@ class TestFilledCounter:
         twice, filled_again, conflicts = scan.apply_to_matrix(once, rows, B, "2026-10-06", "B", "run3.csv")
         assert (filled_again, conflicts) == (0, [])
         assert twice == once                                   # evidence untouched, nothing written twice
+
+
+# ---------------------------------------------------------------------------
+# T180, first try on device C (30.12.1988), 06.10.2026: no sync. The scanner's first byte was
+# Ctrl-C; device C waits after power-on for '*' (autobaud measurement) and stays deaf when
+# anything else comes first (operator: PuTTY, a lone '*' wakes it). The app does it right: step 1
+# of the detection chain is '*' without CR. The scanner now uses the same order.
+# ---------------------------------------------------------------------------
+
+class TestWakeLikeTheApp:
+
+    def test_the_first_byte_is_a_lone_star_and_ctrl_c_comes_later(self):
+        t = scan.MockTransport(C, needs_star_first=True)
+        scan.capture_banner(t)
+        assert t.sent[0] == b"*"
+        assert b"\r" not in t.sent[0]                       # '*' without CR, as in the app
+
+    def test_a_tnc_that_only_hears_a_first_star_is_scanned(self):
+        t = scan.MockTransport(C, needs_star_first=True)
+        rep = scan.run_scan(t, "MOCK", progress=False)
+        assert rep.release == C
+        assert [r["name"] for r in rep.rows if r["result"] == "ERROR"] == []
+        assert {r["result"] for r in rep.rows} <= {"SUPPORTED", "UNSUPPORTED"}
+
+    def test_the_old_order_would_have_failed_on_such_a_tnc(self):
+        # the mock IS the T180 device: anything but '*' first makes it deaf for good
+        t = scan.MockTransport(C, needs_star_first=True)
+        t.write(scan.CTRL_C)
+        t.write(scan.verbose_line("RESTART"))
+        assert t.read_idle() == ""
+        t.write(scan.STAR)
+        assert t.read_idle() == ""
+
+    def test_an_awake_tnc_at_the_prompt_is_found_with_the_star_too(self):
+        t = scan.MockTransport(B)
+        assert "cmd:" in scan.wake(t)
+        assert t.sent[0] == b"*"
+
+    def test_the_fallback_steps_follow_the_app_after_the_star(self):
+        # a TNC that does not answer '*' but answers a CR: step 2 of the chain
+        t = scan.MockTransport(B, ignores_star=True)
+        assert "cmd:" in scan.wake(t)
+        assert t.sent[:2] == [b"*", b"\r"]
+
+    def test_converse_is_left_with_the_command_character_only_after_star_and_cr(self):
+        t = scan.MockTransport(B, in_converse=True)
+        assert "cmd:" in scan.wake(t)
+        assert t.sent[:2] == [b"*", b"\r"]
+        assert t.sent[2] == scan.CTRL_C + b"\r"             # step 2b: COMMAND char + CR
+
+    def test_no_tnc_at_all_is_a_clear_error(self):
+        with pytest.raises(scan.ScanError, match="PK-232"):
+            scan.wake(scan.MockTransport(B, deaf=True))
+
+
+class TestRestartWaitsForTheBanner:
+
+    def test_a_slow_banner_is_waited_for_not_cut_at_a_fixed_pause(self):
+        t = scan.MockTransport(B, banner_late_reads=2)
+        assert scan.banner_release(scan.restart_for_banner(t)) == B
+
+    def test_the_star_after_restart_is_sent_only_when_the_banner_does_not_come(self):
+        quick = scan.MockTransport(B)
+        scan.restart_for_banner(quick)
+        assert scan.STAR not in quick.sent                  # banner came by itself
+
+        needs = scan.MockTransport(C, restart_needs_star=True)
+        banner = scan.restart_for_banner(needs)
+        assert scan.banner_release(banner) == C
+        assert needs.sent == [scan.verbose_line("RESTART"), scan.STAR]
+
+    def test_the_whole_scan_survives_a_tnc_that_wants_a_star_after_restart(self):
+        t = scan.MockTransport(C, needs_star_first=True, restart_needs_star=True)
+        rep = scan.run_scan(t, "MOCK", progress=False)
+        assert rep.release == C and not [r for r in rep.rows if r["result"] == "ERROR"]
