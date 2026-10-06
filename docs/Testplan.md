@@ -3510,21 +3510,22 @@ Refused on 01.AUG.91: EXPERT, MYPTCALL, PTHUFF, PT200, PTOVER, ARQTOL, MOPT (8 c
 ### T175 — CR-only verbose commands with ILFPACK ON and OFF (P75 Teil 0)
 
 PC 1, device B and device A, verbose command mode, ILFPACK ON, no connection. Nothing is sent on the air.
-Run: `.venv\Scripts\python.exe tools\hw_check.py eol_probe` (`--dry-run` shows the plan). Software: `test_hw_check_eol_probe.py`.
-Teil A-C of P75 wait for this result (step 4 is the question).
+Run: `tools\hw_check.py eol_probe` (`--dry-run` shows the plan). Software: `test_hw_check_eol_probe.py`.
+Logs: B `20261006_144428_eol_probe.log`, A `20261006_145938_eol_probe.log`.
 
-| # | Step | Expected | Result B | Result A |
+| # | Step | Expected | Result B (01.AUG.91) | Result A (13.SEP.95) |
 |---|---|---|---|---|
-| 1 | ILFPACK ON, five queries with CR only | all right | ⬜ | ⬜ |
-| 2 | ILFPACK ON, same with CR LF | all right | ⬜ | ⬜ |
-| 3 | Host Mode: `IL N`, query; leave; verbose `ILFPACK` | OFF (does `IL` set what verbose shows?) | ⬜ | ⬜ |
-| 4 | ILFPACK OFF, five queries with CR only | **all five right** (the question) | ⬜ | ⬜ |
-| 5 | ILFPACK OFF, same with CR LF | as T155: first right, then `?What?` | ⬜ | ⬜ |
-| 6 | MailDrop query `MAILDROP` with CR only | answered | ⬜ | ⬜ |
-| 7 | `CONVERSE` with CR only, then COMMAND char | `cmd:` again | ⬜ | ⬜ |
-| 8 | Restore: Host Mode `IL Y`, verbose `ILFPACK` | ON | ⬜ | ⬜ |
+| 1 | ILFPACK ON, five queries with CR only | all right | ✅ | ✅ |
+| 2 | ILFPACK ON, same with CR LF | all right | ✅ | ✅ |
+| 3 | Host Mode: `IL N`, query; leave; verbose `ILFPACK` | OFF | ✅ verbose `ILfpack   OFF` | ⚠️ host `IL` read back `N`; verbose `ILFPACK` answers `?EXPERT command` (EXPERT is OFF after power-on on 13.SEP.95) - no verbose cross-check |
+| 4 | ILFPACK OFF, five queries with CR only | **all five right** (the question) | ✅ | ✅ |
+| 5 | ILFPACK OFF, same with CR LF | as T155: first right, then `?What?` | ✅ reproduces T155 | ⚠️ no `?What?` with CR LF either (cannot be compared: the verbose value was not readable) |
+| 6 | `MAILDROP` query with CR only | answered | ✅ | ✅ |
+| 7 | `CONVERSE` with CR only, then COMMAND char | `cmd:` again | ✅ | ✅ |
+| 8 | Restore: Host Mode `IL Y`, verbose `ILFPACK` | ON | ✅ `ILfpack   ON` | ⚠️ host `IL` read back `Y`; verbose check again `?EXPERT command` |
 
-**Status:** ⬜ OPEN — tool done, run pending.
+**Status:** ✅ PASS device B (all steps). Device A: CR-only works in every step; `IL` set and read back via Host Mode, but
+the verbose cross-check is missing (`?EXPERT command`) - redo it with EXPERT ON (Backlog). Operator observation 06.10.2026.
 
 ---
 
