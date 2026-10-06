@@ -114,9 +114,16 @@ Serial: {serial}
 # Zeit und Eingabe als Haken: die Tests ersetzen sie durch eine simulierte Uhr (kein echtes Warten
 # von 65 s) und vorgegebene Antworten.
 _clock = time.monotonic
-_sleep = time.sleep
+
+
+def _real_sleep(seconds: float) -> None:
+    time.sleep(seconds)                 # looked up at call time, so a patched time.sleep still works
+
+
+_sleep = _real_sleep
 _ask = input
 
+# >>> pk232py imports (tools/build_scan_kit.py replaces this block by copies made at build time)
 _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
@@ -128,6 +135,7 @@ from pk232py.comm.devices import KNOWN_DEVICES  # noqa: E402
 from pk232py.comm.pk232_hostmode_sub import escape_converse  # noqa: E402
 # the SAME wake-up byte and banner markers as the app's detection chain (SerialManager)
 from pk232py.comm.serial_manager import _BANNER_MARKERS, _WAKEUP, _XON_BYTE  # noqa: E402
+# <<< pk232py imports
 
 
 # ----------------------------------------------------------------------------
@@ -820,7 +828,7 @@ def wake(t) -> str:
 
     _dbg_note(t, "wake step 2c: XON, CR, CR (flow-stopped?)")
     t.write(bytes([_XON_BYTE]))
-    time.sleep(0.1)
+    _sleep(0.1)
     for _ in range(2):
         t.write(b"\r")
         resp = read_until(t, ("cmd:",))
@@ -981,7 +989,7 @@ def enter_mode(t, mode_cmd: Optional[str]) -> None:
     if _dbg(t):
         _dbg(t).note(f"MODE ENTER {mode_cmd}")
     t.write(verbose_line(mode_cmd))
-    time.sleep(0.3)
+    _sleep(0.3)
     resync_cmd_mode(t)
 
 
@@ -1143,7 +1151,7 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
             if _dbg(t):
                 _dbg(t).note(f"=== [{i}/{len(todo)}] {cmd.name}  (kind={cmd.kind}) ===")
             result = probe(t, cmd)
-            time.sleep(0.03)      # dem TNC Luft lassen
+            _sleep(0.03)      # dem TNC Luft lassen
 
             stall_count = stall_count + 1 if result is Result.ERROR else 0
             if stall_count >= STALL_THRESHOLD:
@@ -1486,8 +1494,9 @@ def apply_to_matrix(entries: dict, rows: list, release: str, date: str, device: 
     gefuellt, wenn sie leer ist und die fw-Zelle gemessen ist; ein anderer Text ist ein Widerspruch.
     Gezaehlt werden Zellen (fw und fx).
     """
-    if release not in cm.RELEASES:
-        raise ValueError(f"release {release!r} is not a column of the matrix {cm.RELEASES}")
+    columns = cm.releases_of(entries)
+    if release not in columns:
+        raise ValueError(f"release {release!r} is not a column of the matrix {columns}")
     evidence = evidence or (f"fw_scan {date.replace('-', '')} (device {device}, banner Release {release}; "
                             f"{source})")
     new = dict(entries)
@@ -1752,8 +1761,8 @@ def main(argv: Optional[list] = None) -> int:
 def _config_mycall() -> Optional[str]:
     """MYCALL of the configuration (what the app uploads), None if there is none."""
     try:
-        from pk232py.config import ConfigManager
-        mgr = ConfigManager()
+        import importlib
+        mgr = importlib.import_module("pk232py.config").ConfigManager()    # not there in the scan kit
         mgr.load()
         return mgr.app.hf_packet.mycall
     except Exception:
