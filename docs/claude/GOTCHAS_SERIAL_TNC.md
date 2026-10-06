@@ -1323,6 +1323,12 @@ never retyped; everything else names the Testplan entry, or stays `{}`
     `main_window.py` for CR LF literals; every exception is on a named allow list
     (file, function). `IL` is verified on 01.AUG.91 only (T175: Host `IL N`, verbose
     `ILFPACK` OFF, back with `IL Y`); ParamApplier sets ILFPACK live again.
+  - **Device C (30.12.1988) wakes only on a lone `*` as the FIRST byte after power-on / RESTART (T180, first try
+    06.10.2026; operator: PuTTY).** After power-on the TNC measures the baud rate from the first character (autobaud):
+    a `*` wakes it, any other first byte (Ctrl-C, CR) leaves it silent. The app's detection chain does it right (step 1 is `*`
+    without CR, then CR, the COMMAND character, XON); `tools/pk232_fw_scan.py` started with Ctrl-C and never got a sync. Rule for
+    any tool that talks to a TNC it did not just see answer: the first byte is `*` (no CR), then wait for banner or `cmd:`, only then
+    anything else; after `RESTART` wait for the banner (not a fixed pause) and send `*` only if it does not come.
   - **SIGNAL survives RESTART, answers late and interleaves analysis text (T179, device B, 06.10.2026,
     `hw_logs/20261006_fw_scan_B.log`).** In SIGNAL the opmode stays across `RESTART` (analysis lines `noise`,
     `0.42: 193 baud, ` keep coming after it; a later `PACKET` answers `Opmode was SIgnal`), the TNC often answers

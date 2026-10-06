@@ -3590,7 +3590,7 @@ Per device:
 | # | Device | Expected | Result |
 |---|---|---|---|
 | T179 | B (01.AUG.91) | no contradiction; the `?` cells of 01.AUG.91 filled | ✅ PASS (runs 1, 2, 3 and the `--immediate` run, see below) |
-| T180 | C (30.12.1988) | first contact of device C with this software - **ask the operator first**; the matrix has one cell for C (MAILDROP no) | ⬜ |
+| T180 | C (30.12.1988) | first contact of device C with this software - **ask the operator first**; the matrix has one cell for C (MAILDROP no). **First try 06.10.2026: no sync** - cause: the wake-up order in the scanner (first byte Ctrl-C; device C waits after power-on for a lone `*` for the autobaud measurement and stays deaf for anything else; the app does it right, step 1 of the detection chain). The scanner now wakes like the app (`*` without CR first, then wait for banner or `cmd:`, only then CR / Ctrl-C / XON) and waits for the banner after RESTART instead of a fixed 0.6 s; the second try is pending | ⬜ |
 | T181 | A (13.SEP.95), optional | confirms the 176 yes of the 28.07.2026 run; fills the Q values etc. | ⬜ |
 
 **T179 result (device B, 06.10.2026, `hw_logs/20261006_fw_scan_B.*` without and `..._B_update.*` with `--update-matrix`):**
