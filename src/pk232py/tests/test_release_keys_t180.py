@@ -53,7 +53,7 @@ class TestReleaseKeysAreTheBannerFormat:
         assert keys and all(BANNER_FORMAT.match(k) for k in keys), keys
 
     def test_the_three_keys_are_the_ones_the_banners_print(self):
-        assert set(cm.RELEASES) == {B, A, C}
+        assert {B, A, C} <= set(cm.RELEASES)               # external releases add columns (P90)
         assert {d.release for d in KNOWN_DEVICES} == {B, A, C}
 
     def test_the_scanner_selftest_uses_banner_keys(self):

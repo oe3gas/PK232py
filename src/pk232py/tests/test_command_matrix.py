@@ -142,3 +142,86 @@ class TestGeneratedView:
         text = tool.render(entries)
         assert "2 commands." in text
         assert "| 13.SEP.95 | A | 1 | 1 | 0 | 0 |" in text
+
+
+class TestReleasesComeFromTheFile:
+    """P90 Teil D: an external operator's firmware adds columns (fw_/ev_/fx_<release>), so the list of
+    releases is the header of the data file, not a constant."""
+
+    EXT = "12.MAR.93"
+
+    @staticmethod
+    def _header(releases):
+        return ",".join(cm.columns(releases))
+
+    def _text(self, releases, *rows):
+        return "\n".join([self._header(releases), *rows]) + "\n"
+
+    def test_the_columns_follow_the_releases(self):
+        cols = cm.columns(("01.AUG.91", "12.MAR.93"))
+        assert cols[7:9] == ("fw_01.AUG.91", "fw_12.MAR.93")
+        assert cols[-3:] == ("fx_01.AUG.91", "fx_12.MAR.93", "note")
+        assert cm.columns(cm.RELEASES) == cm.COLUMNS
+
+    def test_a_file_with_four_releases_is_read_and_written_back(self):
+        rels = cm.RELEASES + (self.EXT,)
+        row = ",".join(["ILFPACK", "IL", "IL", "param", "ON", "x", "timewave",
+                        "yes", "yes", "?", "?", "T1", "T2", "", "", "", "", "", "", ""])
+        text = self._text(rels, row)
+        entries = cm.parse(text)
+        assert tuple(entries["ILFPACK"].fw) == rels
+        assert entries["ILFPACK"].fw[self.EXT] == "?"
+        assert cm.to_csv(entries) == text
+
+    def test_a_release_that_is_not_the_banner_format_is_refused(self):
+        with pytest.raises(cm.MatrixError, match="DD.MMM.YY"):
+            cm.parse(self._text(("01.AUG.91", "12.03.1993")))
+
+    def test_the_three_column_groups_must_agree(self):
+        header = self._header(cm.RELEASES).replace("ev_13.SEP.95", "ev_13.SEP.96")
+        with pytest.raises(cm.MatrixError, match="columns"):
+            cm.parse(header + "\n")
+
+    def test_add_release_appends_empty_columns_to_every_row(self):
+        entries = cm.parse(_csv(_row()))
+        new = cm.add_release(entries, self.EXT)
+        e = new["ILFPACK"]
+        assert (e.fw[self.EXT], e.ev[self.EXT], e.fx[self.EXT]) == ("?", "", "")
+        assert e.fw["01.AUG.91"] == "yes" and tuple(e.fw)[-1] == self.EXT
+
+    def test_add_release_refuses_a_known_or_malformed_release(self):
+        entries = cm.parse(_csv(_row()))
+        with pytest.raises(cm.MatrixError, match="already"):
+            cm.add_release(entries, "01.AUG.91")
+        with pytest.raises(cm.MatrixError, match="DD.MMM.YY"):
+            cm.add_release(entries, "1993-03-12")
+
+    def test_the_module_follows_the_data_file(self, tmp_path, monkeypatch):
+        rels = cm.RELEASES + (self.EXT,)
+        row = ",".join(["ILFPACK", "IL", "IL", "param", "ON", "x", "timewave",
+                        "yes", "yes", "?", "yes", "T1", "T2", "", "T3", "", "", "", "", "", ""])
+        path = tmp_path / "matrix.csv"
+        path.write_text(self._text(rels, row), encoding="utf-8")
+        monkeypatch.setattr(cm, "DATA_FILE", path)
+        cm.reload()
+        try:
+            assert cm.RELEASES == rels and cm.COLUMNS == cm.columns(rels)
+            assert cm.exists("ILFPACK", self.EXT) == "yes"
+            assert cm.evidence("ILFPACK", self.EXT) == "T3"
+        finally:
+            monkeypatch.undo()
+            cm.reload()
+        assert self.EXT not in cm.RELEASES
+
+    def test_save_writes_the_new_columns_and_reload_sees_them(self, tmp_path, monkeypatch):
+        path = tmp_path / "matrix.csv"
+        path.write_text(_csv(_row()), encoding="utf-8")
+        monkeypatch.setattr(cm, "DATA_FILE", path)
+        cm.reload()
+        try:
+            cm.save(cm.add_release(cm.load(), self.EXT))
+            assert self.EXT in cm.RELEASES
+            assert f"fw_{self.EXT}" in path.read_text(encoding="utf-8").splitlines()[0]
+        finally:
+            monkeypatch.undo()
+            cm.reload()
