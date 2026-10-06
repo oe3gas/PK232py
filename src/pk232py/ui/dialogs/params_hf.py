@@ -21,6 +21,9 @@ from PyQt6.QtWidgets import (
 )
 
 from pk232py.config import HFPacketConfig
+from pk232py.ui.dialogs.param_order import (
+    add_form_rows, sort_key, sorted_flags, split_columns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,25 +101,33 @@ class PacketParamsDialog(QDialog):
         form = QFormLayout(left)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self._sb_paclen   = spin(1, 255, 64);    form.addRow("PACLEN:",   self._sb_paclen)
-        self._sb_txdelay  = spin(0, 255, 30);    form.addRow("TXDELAY:",  self._sb_txdelay)
-        self._sb_frack    = spin(0, 250, 7);     form.addRow("FRACK:",    self._sb_frack)
-        self._sb_retry    = spin(0, 15,  10);    form.addRow("RETRY:",    self._sb_retry)
-        self._sb_persist  = spin(0, 255, 63);    form.addRow("PERSIST:",  self._sb_persist)
-        self._sb_dwait    = spin(0, 250, 16);    form.addRow("DWAIT:",    self._sb_dwait)
-        self._sb_check    = spin(0, 250, 30);    form.addRow("CHECK:",    self._sb_check)
-        self._sb_resptime = spin(0, 250, 0);     form.addRow("RESPTIME:", self._sb_resptime)
-        self._sb_monitor  = spin(0, 6,   4);     form.addRow("MONITOR:",  self._sb_monitor)
+        # P87: placed by add_form_rows() (alphabetical, param_order.py)
+        self._sb_paclen   = spin(1, 255, 64)
+        self._sb_txdelay  = spin(0, 255, 30)
+        self._sb_frack    = spin(0, 250, 7)
+        self._sb_retry    = spin(0, 15,  10)
+        self._sb_persist  = spin(0, 255, 63)
+        self._sb_dwait    = spin(0, 250, 16)
+        self._sb_check    = spin(0, 250, 30)
+        self._sb_resptime = spin(0, 250, 0)
+        self._sb_monitor  = spin(0, 6,   4)
         self._sb_monitor.setToolTip(
             "Sent to the TNC as MONITOR <n> at every Packet mode switch "
             "(P73: it used to be MONITOR ON, which the TNC turns into 4)."
         )
-        self._sb_users    = spin(1, 10, 10);     form.addRow("USERS:",    self._sb_users)
+        self._sb_users    = spin(1, 10, 10)
         self._sb_users.setToolTip(
             "Incoming connects are accepted only on channels 0 to n-1; "
             "USERS 0 = any free channel (STABO manual; consistent with "
             "T147, device B)."
         )
+        add_form_rows(form, [
+            ("PACLEN:", self._sb_paclen), ("TXDELAY:", self._sb_txdelay),
+            ("FRACK:", self._sb_frack), ("RETRY:", self._sb_retry),
+            ("PERSIST:", self._sb_persist), ("DWAIT:", self._sb_dwait),
+            ("CHECK:", self._sb_check), ("RESPTIME:", self._sb_resptime),
+            ("MONITOR:", self._sb_monitor), ("USERS:", self._sb_users),
+        ])
         layout.addWidget(left)
 
         # -- Column 2: Band & Status ----------------------------------------
@@ -154,7 +165,7 @@ class PacketParamsDialog(QDialog):
 
         status = QFormLayout()
         status.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self._sb_txsmt    = spin(0, 250, 50);    status.addRow("TXSMT:",    self._sb_txsmt)
+        self._sb_txsmt    = spin(0, 250, 50)
         # TXSMT does not appear anywhere in the PK-232 TRM Host Mode command
         # list (P13) - likely a command from a different AEA product (PK-900,
         # DSP-2232). Disabled rather than removed: the field and its INI
@@ -164,9 +175,12 @@ class PacketParamsDialog(QDialog):
         self._sb_txsmt.setToolTip("Not a PK-232 command — has no effect")
         # Read-only fields
         self._sb_qhpacket = spin(0, 99, 33); self._sb_qhpacket.setEnabled(False)
-        status.addRow("QHPACKET (r/o):", self._sb_qhpacket)
         self._sb_qvpacket = spin(0, 99, 35); self._sb_qvpacket.setEnabled(False)
-        status.addRow("QVPACKET (r/o):", self._sb_qvpacket)
+        add_form_rows(status, [
+            ("TXSMT:", self._sb_txsmt),
+            ("QHPACKET (r/o):", self._sb_qhpacket),
+            ("QVPACKET (r/o):", self._sb_qvpacket),
+        ])
         mid_layout.addLayout(status)
         mid_layout.addStretch()
         layout.addWidget(mid)
@@ -245,9 +259,12 @@ class PacketParamsDialog(QDialog):
             self._chk_passall, self._chk_hid, self._chk_bbsmsgs,
             self._chk_ubit0,
         ]
-        per_col = (len(flags) + 1) // 2
-        for i, c in enumerate(flags):
-            flags_grid.addWidget(c, i % per_col, i // per_col)
+        # P87: sorted by param_order.sorted_flags(), two columns top to bottom
+        columns = split_columns(sorted_flags(flags), 2)
+        for col, boxes in enumerate(columns):
+            for row, c in enumerate(boxes):
+                flags_grid.addWidget(c, row, col)
+        per_col = len(columns[0])
         flags_grid.setRowStretch(per_col, 1)
         layout.addWidget(right)
 
@@ -259,10 +276,20 @@ class PacketParamsDialog(QDialog):
         form = QFormLayout(w)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self._le_mycall  = QLineEdit(); form.addRow("MYCALL:",  self._le_mycall)
-        self._le_btext   = QLineEdit(); form.addRow("BTEXT:",   self._le_btext)
-        self._le_ctext   = QLineEdit(); form.addRow("CTEXT:",   self._le_ctext)
-        self._le_unproto = QLineEdit(); form.addRow("UNPROTO:", self._le_unproto)
+        # P87: the plain fields are placed by add_form_rows() (alphabetical,
+        # param_order.py). The four access filters below belong together by
+        # meaning and stay ONE block (sorted inside), after a spacer.
+        self._le_mycall  = QLineEdit()
+        self._le_btext   = QLineEdit()
+        self._le_ctext   = QLineEdit()
+        self._le_unproto = QLineEdit()
+        self._le_mbx = QLineEdit()
+        self._le_mbx.setPlaceholderText("None")
+        add_form_rows(form, [
+            ("MYCALL:", self._le_mycall), ("BTEXT:", self._le_btext),
+            ("CTEXT:", self._le_ctext), ("UNPROTO:", self._le_unproto),
+            ("MBX:", self._le_mbx),
+        ])
 
         form.addRow(QLabel(""))  # spacer
 
@@ -270,12 +297,12 @@ class PacketParamsDialog(QDialog):
         # CF/DF/MF/MT). Mode is ALL/NONE/YES/NO; YES/NO additionally use the
         # comma-separated callsign list in the adjacent field (max 8 - see
         # _on_accept()). Defaults per PCPackRatt/TRM factory settings.
-        for attr, label, default in [
+        for attr, label, default in sorted([
             ("_cb_cfrom", "CFROM:", "ALL"),
             ("_cb_dfrom", "DFROM:", "ALL"),
             ("_cb_mfrom", "MFROM:", "ALL"),
             ("_cb_mto",   "MTO:",   "NONE"),
-        ]:
+        ], key=lambda t: sort_key(t[1])):
             cb = QComboBox()
             cb.addItems(["ALL", "NONE", "YES", "NO"])
             cb.setCurrentText(default)
@@ -298,10 +325,6 @@ class PacketParamsDialog(QDialog):
             "NO = reject the listed callsigns, accept everyone else."
         )
 
-        self._le_mbx = QLineEdit()
-        self._le_mbx.setPlaceholderText("None")
-        form.addRow("MBX:", self._le_mbx)
-
         return w
 
     def _build_display_tab(self) -> QWidget:
@@ -322,7 +345,6 @@ class PacketParamsDialog(QDialog):
             "useful when the MON view is the one you keep watching.\n"
             "This is a display setting only; it is never sent to the TNC."
         )
-        form.addRow(self._chk_show_link_ui)
 
         # P50 Teil C - optional timestamps in the RX view.
         self._chk_show_timestamps = QCheckBox("Show timestamps in the RX view")
@@ -342,7 +364,6 @@ class PacketParamsDialog(QDialog):
             "(link messages included) - two independent sources of a "
             "timestamp in the same view, not one setting for both."
         )
-        form.addRow(self._chk_show_timestamps)
 
         # P50 Teil B - per-channel RX document size cap.
         self._sb_rx_max_lines = QSpinBox()
@@ -355,7 +376,12 @@ class PacketParamsDialog(QDialog):
             "memory without bound.\n"
             "This is a display setting only; it is never sent to the TNC."
         )
-        form.addRow("Max. RX lines per channel:", self._sb_rx_max_lines)
+        # P87: the three options placed by add_form_rows() (alphabetical by text)
+        add_form_rows(form, [
+            (None, self._chk_show_link_ui),
+            (None, self._chk_show_timestamps),
+            ("Max. RX lines per channel:", self._sb_rx_max_lines),
+        ])
 
         return w
 
