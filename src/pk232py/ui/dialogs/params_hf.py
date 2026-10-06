@@ -198,10 +198,10 @@ class PacketParamsDialog(QDialog):
         self._chk_dagstamp.setToolTip(_stamp_tip.format("DAYSTAMP"))
         self._chk_ilfpack   = chk("ILFPACK",    True)
         self._chk_ilfpack.setToolTip(
-            "ILFPACK - ignore line feeds in Packet. ON (default): the TNC ignores "
-            "the LF of a CR LF it receives from the computer. OFF: the LF is kept "
-            "as a character (T155/T175). Applied at once; in Host Mode on "
-            "13.SEP.95 it waits for the next initialisation (not verified there)."
+            "ON (default): the PK-232 ignores line feeds coming from the computer. "
+            "OFF: line feeds are passed into packets as received. Packet mode only. "
+            "On 01.AUG.91, OFF also breaks command lines ending in CR LF (T155, T175); "
+            "PK232PY sends CR only, so it is safe."
         )
         self._chk_acrpack   = chk("ACRPACK",    True)
         self._chk_alfpack   = chk("ALFPACK",    True)
