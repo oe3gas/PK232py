@@ -39,13 +39,25 @@ class KnownDevice:
     generation: str             # PACTOR / MBX / BASE
     release: str                # exactly as the banner prints it
     expert: Optional[str]       # "present" / "absent" / None = not measured
+    # P85: verbose command names the firmware answers with ?What? (the upload
+    # leaves them out). frozenset() = measured, none; None = not measured.
+    unknown_verbose: Optional[frozenset] = None
+    unknown_evidence: str = ""  # testplan numbers behind unknown_verbose
 
 
 # docs/DEVICES.md - keep the two in step.
 KNOWN_DEVICES: tuple = (
-    KnownDevice("A", "PACTOR", "13.SEP.95", "present"),
-    KnownDevice("B", "MBX", "01.AUG.91", "absent"),
-    KnownDevice("C", "BASE", "30.12.1988", None),
+    # A: no ?What? at the upload (T161, 20261003_145006; FULLDP removed in P73).
+    KnownDevice("A", "PACTOR", "13.SEP.95", "present", frozenset(), "T161"),
+    # B: ?What? with banner for EXPERT (ON and OFF), MYPTCALL, PTHUFF, PT200,
+    # PTOVER, ARQTOL, MOPT - T168 A/B/C (20261003_220612, 20261004_124240,
+    # 20261004_122301), T155, T160.
+    KnownDevice("B", "MBX", "01.AUG.91", "absent",
+                frozenset({"EXPERT", "MYPTCALL", "PTHUFF", "PT200", "PTOVER",
+                           "ARQTOL", "MOPT"}),
+                "T155, T160, T168"),
+    # C: never connected through the app - unmeasured (None), so everything is sent.
+    KnownDevice("C", "BASE", "30.12.1988", None, None, ""),
 )
 
 _VALUE_RE = re.compile(r"\b(ON|OFF)\b", re.IGNORECASE)
@@ -82,3 +94,21 @@ def infer_release(expert_answer: Union[str, bytes, None]) -> Optional[tuple]:
     if len(matches) != 1:
         return None
     return matches[0].release, SOURCE_INFERRED
+
+
+def _device_for(release: Optional[str]) -> Optional[KnownDevice]:
+    return next((d for d in KNOWN_DEVICES if d.release == release), None)
+
+
+def unknown_commands(release: Optional[str]) -> Optional[frozenset]:
+    """P85: verbose command names *release* does not know, or None when the
+    release is unknown or unmeasured (the caller then sends everything)."""
+    device = _device_for(release)
+    return device.unknown_verbose if device else None
+
+
+def unsupported_note(release: Optional[str]) -> str:
+    """Tooltip text for a setting *release* does not support (P85 C)."""
+    device = _device_for(release)
+    evidence = f" ({device.unknown_evidence})" if device and device.unknown_evidence else ""
+    return f"Not supported by firmware {release}{evidence}"
