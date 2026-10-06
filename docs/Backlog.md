@@ -165,6 +165,13 @@ a `?What?` for a command outside the table stays a visible finding. The AMTOR/Ba
 dialogs grey the matching fields (`apply_firmware_limits()`, value kept). Not covered: the P72
 apply-now path (`changed_with_old`) still builds from `has_pactor` only.
 
+### Upload sends PACTOR commands although the banner says pactor=no — open (2026-10-06)
+
+Upload sends PACTOR commands even when the banner reports `pactor=no` (T168, device B). Establish where
+`has_pactor` comes from for the upload (`SerialManager.has_pactor` is `b"PACTOR" in banner`, permissive
+True without a banner - check which of the two cases T168 was, and what the banner of device B really
+contains). P85 only covers this for devices in the `comm/devices.py` table.
+
 ### P81c / P82a (T169 round 3) — ✅ done, T169 PASS (2026-10-04)
 
 P81c: after a restart the links found by CSTATUS stay confirmed - the CO round of the Host Mode
