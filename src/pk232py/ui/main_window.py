@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pk232py import __version__
+from ..comm.constants import verbose_line
 from ..comm.serial_manager import SerialManager, _parse_release
 from ..comm.frame import HostFrame, FrameKind
 from ..comm.link_table import LinkTable
@@ -2092,7 +2093,7 @@ class MainWindow(QMainWindow):
             # instead (P66b, B.5). Otherwise stay at the command prompt
             # exit_host_mode() already confirmed.
             if was_converse and visible_channel is not None:
-                self._serial.write_verbose(b"CONVERSE\r\n")
+                self._serial.write_verbose(verbose_line("CONVERSE"))
 
     def _on_recovery(self) -> None:
         """Emergency Reconnect (P45.1 / P46.B) - kick off the async
@@ -6293,7 +6294,9 @@ class MainWindow(QMainWindow):
         self._vt_input.clear()
         self._vt_append(f"cmd:{text}\n", color=self._app_config.appearance.tx_color)
         if self._serial.is_connected:
-            raw_tx = f"{text}\r\n".encode('ascii', errors='replace')
+            # P75: a typed line is a command (or Converse data) - CR only, so
+            # ILFPACK OFF cannot make its LF the first character of the next one.
+            raw_tx = verbose_line(text)
             self._serial.write_verbose(raw_tx)
             if self._monitor_container.isVisible():
                 if not self._mon_btn_decoded.isChecked():
