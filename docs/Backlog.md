@@ -175,6 +175,21 @@ lines typed in the verbose terminal); static test with an allow list. `_NEVER_LI
 `Session.verbose()` still ends with CR LF (the tool is not part of the app); the ILFPACK tooltip follows the manual
 (STABO ch. 12, operator's wording) and the measurements T155/T175 - comparison with the TRM done.
 
+### Parameter masks alphabetical (P87) — ✅ done, T177 open (2026-10-06)
+
+`ui/dialogs/param_order.py` is the ONE place: `sort_key()` (digits before letters, case and a trailing colon ignored),
+`add_form_rows()`, `add_flags()`, `split_columns()`. Every mask lists its rows there and the helper places them; widget
+attribute names are unchanged. Blocks that stay in their own order: the HF | VHF table (Packet, alphabetical anyway),
+the read-only values (`QTDM`, `QPTOR`, ... at the end of their group), the four access filters CFROM/DFROM/MFROM/MTO
+(Packet, Message Params, sorted inside, after the plain fields) and the local archive (MailDrop, ordered by meaning).
+Test: `test_param_order_p87.py`.
+
+### Terminal: typed line doubled the prompt (`cmd:cmd:ilfpack`) — ✅ done, T178 open (2026-10-06)
+
+`MainWindow._on_vt_send()` always put its own `cmd:` before the typed line although the TNC's prompt was already on
+screen. The line now continues the prompt on screen; without a prompt on the last line it still shows its own `cmd:`.
+Not changed: the TNC's echo of the command is shown again below the typed line.
+
 ### hw_check Session.verbose() still ends commands with CR LF — open (2026-10-06)
 
 `tools/hw_check.py` (`Session.verbose()`) ends verbose commands with `\r\n`; with ILFPACK OFF a measurement run fails from

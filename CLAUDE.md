@@ -97,6 +97,9 @@ docs/claude/  Aus CLAUDE.md ausgelagerte Details (siehe unten)
 
 - Alle UI-Texte **Englisch**; Identity-Felder (`lbl_mycall` …) sind `QLabel`, nicht `QLineEdit`.
 - `Qt.FocusPolicy.NoFocus` auf **allen** `QPushButton`s (Tastatur bleibt im TX-Fenster).
+- Parametermasken: Felder und Schalter je Gruppe/Spalte **alphabetisch** (Ziffern vor Buchstaben), spaltenweise von oben nach
+  unten — die Reihenfolge kommt aus `ui/dialogs/param_order.py`, nie von Hand; Blöcke nach Bedeutung (HF/VHF-Tabelle,
+  Nur-Lese-Werte, Zugriffsfilter, Archiv) bleiben beisammen.
 - TX-Fokus initial per `QTimer.singleShot(0)`; Blockcursor über `style_tx_widget()`;
   `insertPlainText()` statt `append()` fürs Streaming; `\r` vor Anzeige filtern.
 - Modus-Namen im Screen-Dict müssen exakt `ModeManager.ALL_MODES` entsprechen.

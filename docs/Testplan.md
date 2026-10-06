@@ -3545,6 +3545,33 @@ The terminal lines and every upload command now end with CR only.
 
 ---
 
+### T177 — Parameter masks alphabetical (P87)
+
+Any device, no connection needed (Parameters menu). Software: `test_param_order_p87.py` (the order is read from the real
+geometry of the shown dialogs).
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Packet (all three tabs), AMTOR, Baudot/ASCII/CW, PACTOR, Misc, MailDrop | every group / column alphabetical, top to bottom, digits first (`8BITCONV` before `ACRPACK`, `UBIT 0` under U); exceptions as listed in the report: HF/VHF table, read-only values at the end, access filters (Message Params), local archive (MailDrop) | ⬜ |
+| 2 | Change a value in each mask, OK, reopen | value kept (the widgets are the same, only their place changed) | ⬜ |
+
+**Status:** ⬜ OPEN — software done, visual check pending.
+
+---
+
+### T178 — Terminal input continues the TNC prompt (device A, 06.10.2026 screenshot)
+
+Software: `TestInputFollowsTheTncPrompt` in `test_main_window_verbose.py`.
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Verbose terminal: type `ilfpack` + Enter, then `users`, then `paclen` | each line reads `cmd:ilfpack`, never `cmd:cmd:ilfpack` | ⬜ |
+| 2 | Clear the display (new connect), type a first line | the line shows one `cmd:` of its own | ⬜ |
+
+**Status:** ⬜ OPEN — software done, hardware run pending.
+
+---
+
 ### T174 — Macros in Packet; crashes in the log file (P86)
 
 Any device (macros are only inserted, nothing is sent). Software: `test_macros_packet_p86.py`,
