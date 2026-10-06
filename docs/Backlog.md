@@ -189,12 +189,18 @@ Settled by the evidence, not by the spec text (see the P88 report):
 - **FULLDP** is not a row: it is the app's misspelling of FULLDUP (T161: `?What?` on both devices). FULLDUP is `yes` on A (fw_scan).
 - **MOPT**: the app sends the abbreviation `MOPT`; the command is **MOPTT** (cell `no` on 01.AUG.91, T155/T160/T168).
 - **XL, EE** (T166/T167, Host `$07`) are mnemonics without a command name - not in the matrix.
-- **Q values** (QHPACKET, QVPACKET, QMORSE, QRTTY, QWIDE, QTOR, QPTOR, QTDM): no evidence in the repository, all `?` until the
-  operator names the devices ("operator 2026-10-06 terminal") or T179-T181 measure them.
+- **Q values** (QHPACKET, QVPACKET, QMORSE, QRTTY, QWIDE, QTOR, QPTOR, QTDM): `no` on 01.AUG.91 and 13.SEP.95, evidence
+  "operator 2026-10-06 terminal (?What?)"; device C stays `?` until T180. The read-only fields of the masks therefore
+  show nothing the TNC has (Teil E: hide them).
 
 **Follow-up (Teil E, after T179):** derive `devices.unknown_verbose`, `host_params.verified_releases`, the mnemonic registry and
 the parameter masks (show a field only where the command is `yes`/`expert`) from the matrix. Until then
 `test_command_matrix_agreement.py` fails if they contradict it.
+
+### FULLDUP back into the Packet mask? — open (2026-10-06)
+
+FULLDUP (not FULLDP) after T179, if it fits: P73 removed the switch because of the misspelling (T161: `?What?` for FULLDP on both
+devices). The command itself exists: FULLDUP is `yes` on 13.SEP.95 (fw_scan 20260728); 01.AUG.91 is measured by T179.
 
 ### Parameter masks alphabetical (P87) — ✅ done, T177 open (2026-10-06)
 
