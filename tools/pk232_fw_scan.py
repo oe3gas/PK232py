@@ -16,8 +16,17 @@ ab, ob die eingebaute Firmware ihn kennt. Die Befehlsliste ist die COMMAND MATRI
 (P88): eine Datendatei, die einzige Wahrheit ueber "welcher Befehl existiert auf welcher
 Firmware". Der Scan fuellt nur ihre ?-Zellen (--update-matrix), nie ein vorhandenes Ergebnis.
 
-SICHERHEIT ZUERST
-=================
+ALLE BEFEHLE (P89, --all)
+=========================
+Der Scanner laeuft IMMER an einem TNC ohne Funkgeraet (der Betreiber bestaetigt das, siehe
+operator_checks()). Mit --all werden deshalb auch die Befehle abgesetzt, die sonst nie gesendet
+werden (kind mode / action_tx / danger, CALIBRATE, TRANS): nach den normalen Abfragen, jeder einzeln,
+vom harmlosen zum heikelsten, danach der Rueckweg in den Befehlsmodus aus der Tabelle RECOVERY
+(Messgegenstand: welcher Rueckweg wirkte), dann OPMODE und MYCALL. Klappt kein Rueckweg, bittet der
+Scanner den Betreiber um ein Aus-/Einschalten (needs_power_cycle) und weckt den TNC danach wie die App.
+
+SICHERHEIT ZUERST (ohne --all)
+==============================
 Die Matrix kennt je Befehl eine ``kind``:
   param       Parameter. Nacktes Absetzen zeigt nur den Wert -> wird abgefragt.
   immediate   Sofortbefehl ohne Folgen fuer Sender/Speicher (CSTATUS, LOCK, NUMS ...) -> nur mit
@@ -52,7 +61,9 @@ BEDIENUNG
   python tools/pk232_fw_scan.py --port COM16 --csv out.csv        # echter Scan
   python tools/pk232_fw_scan.py --port COM16 --update-matrix      # + ?-Zellen der Matrix fuellen
   python tools/pk232_fw_scan.py --port COM16 --immediate          # auch Sofortbefehle abfragen
+  python tools/pk232_fw_scan.py --port COM16 --all --update-matrix   # ALLE Befehle (P89), kein Funkgeraet!
   python tools/pk232_fw_scan.py --plan                            # was wuerde gesendet / nie gesendet
+  python tools/pk232_fw_scan.py --plan --all                      # dasselbe fuer --all
   python tools/pk232_fw_scan.py --selftest 1991                   # Trockenlauf gegen einen Mock
 Der Mock ist nur ein Selbsttest: --update-matrix mit --selftest wird abgelehnt.
 
@@ -75,12 +86,19 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+# Zeit und Eingabe als Haken: die Tests ersetzen sie durch eine simulierte Uhr (kein echtes Warten
+# von 65 s) und vorgegebene Antworten.
+_clock = time.monotonic
+_sleep = time.sleep
+_ask = input
+
 _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from pk232py.comm import command_matrix as cm  # noqa: E402
 from pk232py.comm.constants import verbose_line  # noqa: E402
+from pk232py.comm.constants import FRAME_HOST_OFF  # noqa: E402
 from pk232py.comm.devices import KNOWN_DEVICES  # noqa: E402
 from pk232py.comm.pk232_hostmode_sub import escape_converse  # noqa: E402
 # the SAME wake-up byte and banner markers as the app's detection chain (SerialManager)
@@ -333,6 +351,20 @@ class SerialTransport:
 _MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
 
+class SimulatedClock:
+    """Eine Uhr, die nur vorgeht, wenn gelesen oder gewartet wird: --selftest --all wartet so keine
+    65 s (CALIBRATE) und die Tests koennen das Timing des Mocks (CMDTIME, 60 s) pruefen."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
 class MockTransport:
     """Simuliert einen PK-232 einer bekannten Release -- nur fuer --selftest und die Tests.
 
@@ -352,16 +384,28 @@ class MockTransport:
       * ``restart_needs_star`` -- dasselbe nach jedem RESTART
       * ``banner_late_reads`` -- das Banner kommt erst im n-ten Lesefenster
       * ``ignores_star`` / ``in_converse`` / ``deaf`` -- die Schritte der Erkennungskette
+
+    Riskante Befehle (P89, ``risky=True``, Zeit aus ``clock`` bzw. scan._clock):
+      * TRANS -> Transparentmodus: nur drei Ctrl-C innerhalb von CMDTIME (1 s) nach mindestens 1 s
+        Ruhe verlassen ihn (STABO Kap. 4); hastiges Ctrl-C bewirkt nichts (der Juli-Lauf)
+      * CALIBRATE -> kehrt bei ``Q`` zurueck (``calibrate_ignores_q``: erst nach 60 s von allein)
+      * ``stuck={"XMIT": "RCVE"}`` -- nach XMIT hilft nur dieser eine Befehl, kein Ctrl-C
+      * ``dead_after={"XMIT"}`` -- danach bleibt der TNC stumm bis ``power_cycle()``
+      * RESTART setzt MYCALL auf den Werkszustand (PK232) zurueck; ``power_cycle()`` ebenso
     """
 
     _MODES = ("PACKET", "BAUDOT", "AMTOR", "MORSE", "FAX", "NAVTEX", "SIGNAL")
+    FACTORY_MYCALL = "PK232"
+    CMDTIME = 1.0
 
     def __init__(self, release: str, entries: Optional[dict] = None,
                  debug: Optional["DebugLog"] = None, slow_in_signal: bool = False,
                  late: Optional[set] = None, silent: Optional[set] = None,
                  needs_star_first: bool = False, restart_needs_star: bool = False,
                  banner_late_reads: int = 0, ignores_star: bool = False,
-                 in_converse: bool = False, deaf: bool = False):
+                 in_converse: bool = False, deaf: bool = False,
+                 clock=None, risky: bool = False, calibrate_ignores_q: bool = False,
+                 stuck: Optional[dict] = None, dead_after: Optional[set] = None):
         self.release = release
         self.entries = cm.all_entries() if entries is None else entries
         self.debug = debug
@@ -370,6 +414,7 @@ class MockTransport:
         self._late_reads = 0          # so many read_idle() calls return '' before the reply
         self.expert_on = False
         self.opmode = "PACKET"
+        self.mycall = self.FACTORY_MYCALL
         self.slow_in_signal = slow_in_signal
         self.late = set(late or ())
         self.silent = set(silent or ())
@@ -378,9 +423,46 @@ class MockTransport:
         self.ignores_star = ignores_star
         self.in_converse = in_converse
         self.deaf = deaf
+        self.clock = clock
+        self.risky = risky
+        self.calibrate_ignores_q = calibrate_ignores_q
+        self.stuck = dict(stuck or {})
+        self.dead_after = set(dead_after or ())
+        self._needs_star_first = needs_star_first
         self._autobaud = needs_star_first     # waiting for the '*' that measures the baud rate
+        self.transparent = False
+        self.calibrating = False
+        self._calibrate_since = 0.0
+        self._stuck_until = None              # the one command that releases a stuck TNC
+        self._ctrl_times: list = []
+        self._last_other = 0.0
+        self.since_power_cycle: list = []
         expert = self.entries.get("EXPERT")
         self.has_expert = expert is None or expert.fw.get(release) != "no"
+
+    # -- time ----------------------------------------------------------------
+    def _now(self) -> float:
+        return (self.clock or _clock)()
+
+    def _tick(self, seconds: float) -> None:
+        c = self.clock or _clock
+        if hasattr(c, "advance"):
+            c.advance(seconds)
+
+    def power_cycle(self) -> None:
+        """The operator switches the TNC off and on: factory state, awake only for a first '*' when
+        the device needs it (device C)."""
+        self.deaf = False
+        self._autobaud = self._needs_star_first
+        self.mycall = self.FACTORY_MYCALL
+        self.opmode = "PACKET"
+        self.expert_on = False
+        self.transparent = self.calibrating = self.in_converse = False
+        self._stuck_until = None
+        self.dead_after = set()
+        self._pending = ""
+        self._late_reads = 0
+        self.since_power_cycle = []
 
     def _cell(self, name: str) -> str:
         e = self.entries.get(name)
@@ -402,12 +484,47 @@ class MockTransport:
                 "AEA PK-232M Data Controller\r\n"
                 f"Release {day}.{mon}.{yy}\r\ncmd:")
 
+    def _risky_state(self, data: bytes, now: float) -> bool:
+        """The states of the risky commands; True if *data* was consumed by one of them."""
+        if self.calibrating and now - self._calibrate_since >= 60.0:
+            self.calibrating = False                  # CALIBRATE ends by itself after 60 s
+            self._reply("cmd:")
+        if self.transparent:
+            if data == CTRL_C:
+                self._ctrl_times.append(now)
+                last3 = self._ctrl_times[-3:]
+                if (len(last3) == 3 and last3[2] - last3[0] <= self.CMDTIME
+                        and last3[0] - self._last_other >= self.CMDTIME):
+                    self.transparent = False          # three COMMAND characters within CMDTIME
+                    self._ctrl_times = []
+                    self._reply("cmd:")
+            else:
+                self._last_other = now
+                self._ctrl_times = []
+            return True
+        if self.calibrating:
+            if data == b"Q" and not self.calibrate_ignores_q:
+                self.calibrating = False
+                self._reply("cmd:")
+            return True
+        if self._stuck_until is not None:
+            text = data.decode("latin-1").strip().upper()
+            if text == self._stuck_until:
+                self._stuck_until = None
+                if text in self._MODES:
+                    self.opmode = text
+                self._reply("cmd:")
+            return True
+        return False
+
     def write(self, data: bytes) -> None:
         self.sent.append(bytes(data))
+        self.since_power_cycle.append(bytes(data))
         if self.debug:
             self.debug.tx(data)
         if self.deaf:
             return
+        now = self._now()
         if self._autobaud:
             # the first byte after power-on / RESTART measures the baud rate: only '*' does it,
             # anything else leaves the TNC deaf for good (T180, device C)
@@ -416,6 +533,8 @@ class MockTransport:
                 self._pending, self._late_reads = self._banner(), self.banner_late_reads
             else:
                 self.deaf = True
+            return
+        if self.risky and self._risky_state(data, now):
             return
         if data == CTRL_C or data == CTRL_C + b"\r":
             self._pending = ""                      # Ctrl-C clears whatever was still on its way
@@ -430,14 +549,27 @@ class MockTransport:
         if self.in_converse:                        # Converse echoes everything, shows no prompt
             self._pending += data.decode("latin-1")
             return
-        name = data.decode("latin-1").strip().upper()
+        line = data.decode("latin-1").strip()
+        name = line.upper()
         if name == "RESTART":
             self._pending = ""
             self._late_reads = 0
+            self.mycall = self.FACTORY_MYCALL
             if self.restart_needs_star:
                 self._autobaud = True               # autobaud again, the banner comes after '*'
                 return
-            self._pending, self._late_reads = self._banner(), self.banner_late_reads  # opmode survives
+            self._pending, self._late_reads = "RESTART\r\n" + self._banner(), self.banner_late_reads
+            return                                  # (the opmode survives)
+        if name == "OPMODE":
+            self._reply(f"OPMODE\r\nOPMODE   {self.opmode}\r\ncmd:", name)
+            return
+        if name.startswith("MYCALL"):
+            arg = line[6:].strip()
+            if arg:
+                old, self.mycall = self.mycall, arg.upper()
+                self._reply(f"MYCALL {arg}\r\nMYcall    was {old}\r\nMYcall    now {self.mycall}\r\ncmd:", name)
+            else:
+                self._reply(f"MYCALL\r\nMYcall    {self.mycall}\r\ncmd:", name)
             return
         if name in self._MODES:
             old, self.opmode = self.opmode, name
@@ -460,12 +592,38 @@ class MockTransport:
         cell = self._cell(name)
         if cell == "no":
             self._reply(f"{name}\r\n?What?\r\ncmd:", name)
-        elif cell == "expert" and not self.expert_on:
+            return
+        if self.risky and name == "TRANS":
+            self.transparent, self._last_other, self._ctrl_times = True, now, []
+            self._reply("TRANS\r\n", name)
+            return
+        if self.risky and name == "CALIBRATE":
+            self.calibrating, self._calibrate_since = True, now
+            self._reply("CALIBRATE\r\n", name)
+            return
+        if self.risky and name in self.stuck:
+            self._stuck_until = self.stuck[name].upper()
+            self._reply(f"{name}\r\n", name)
+            return
+        if self.risky and name in self.dead_after:
+            self._reply(f"{name}\r\n", name)
+            self.deaf = True                        # silent until the operator power-cycles it
+            return
+        if self.risky and name in ("CONVERSE", "K"):
+            self.in_converse = True
+            self._reply(f"{name}\r\n", name)
+            return
+        if cell == "expert" and not self.expert_on:
             self._reply(f"{name}\r\n?EXPERT command\r\ncmd:", name)
         else:
             self._reply(f"{name}\r\n{name} 0\r\ncmd:", name)
 
     def read_idle(self, idle_s: float = 0.25, max_s: float = 3.0) -> str:
+        self._tick(0.2)                             # a quiet read takes time (the real port: ~0.4 s)
+        if self.risky and not self.deaf and self.calibrating and \
+                self._now() - self._calibrate_since >= 60.0:
+            self.calibrating = False
+            self._pending += "cmd:"
         if self._late_reads > 0:
             self._late_reads -= 1
             out = ""
@@ -798,7 +956,8 @@ def hard_resync(t) -> bool:
 
 
 def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = True,
-             immediate: bool = False, entries: Optional[dict] = None) -> Report:
+             immediate: bool = False, entries: Optional[dict] = None, risky: bool = False,
+             mycall: Optional[str] = None, confirm_power_cycle=None) -> Report:
     entries = cm.all_entries() if entries is None else entries
     banner = capture_banner(t)
     release = banner_release(banner)
@@ -873,6 +1032,14 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
                 "matrix": e.fw.get(release, "?") if (e and release) else "?",
                 "note": "",
             })
+        if risky:
+            # P89: every command that is otherwise never sent, one by one, after all normal queries
+            risky_rows = run_risky(t, entries, mycall=mycall, confirm_power_cycle=confirm_power_cycle,
+                                   progress=progress)
+            for row in risky_rows:
+                e = entries.get(row["name"])
+                row["matrix"] = e.fw.get(release, "?") if (e and release) else "?"
+            rep.rows.extend(risky_rows)
     finally:
         if progress:
             _status("")                       # Zeilenumbruch nach der \r-Laufzeile
@@ -882,6 +1049,284 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
     if progress:
         _status("[*] Scan abgeschlossen.\n")
     return rep
+
+
+# ----------------------------------------------------------------------------
+# 4b. Riskante Befehle (P89, --all)
+# ----------------------------------------------------------------------------
+OPERATOR_CHECKS = (
+    "No radio is connected to the TNC (or only a dummy load).",
+    "I am at the TNC and can power-cycle it when asked.",
+)
+
+
+def operator_step(title: str, do: list, then: str) -> None:
+    """Eine Schrittanweisung fuer den Betreiber (dieselbe Form wie hw_check.operator_step)."""
+    print()
+    print("=" * 62)
+    print(title)
+    print("DO:")
+    for i, action in enumerate(do, 1):
+        print(f"  {i}. {action}")
+    print(f"THEN: {then}")
+    print("=" * 62)
+
+
+def operator_checks(ask=None) -> bool:
+    """Vorbedingung von --all, nicht abschaltbar: der Betreiber bestaetigt EINZELN, dass kein Funkgeraet
+    angeschlossen ist und dass er am TNC ist und ihn aus- und einschalten kann. Nur das Wort ``yes``
+    zaehlt; bei der ersten Absage wird nicht weiter gefragt."""
+    ask = ask or _ask
+    operator_step("--all: every command is sent, also those that key the transmitter, switch the "
+                  "mode or break the session", list(OPERATOR_CHECKS),
+                  "answer both questions with the word yes; anything else stops the run")
+    for text in OPERATOR_CHECKS:
+        if ask(f"{text}  Type yes to confirm: ").strip().lower() != "yes":
+            return False
+    return True
+
+
+@dataclass(frozen=True)
+class Step:
+    """Ein Rueckweg: eine Folge von Aktionen, danach wird auf 'cmd:' gewartet.
+    Aktionen: ("tx", Bytes) | ("sleep", Sekunden) | ("wait", Sekunden) | ("banner",)."""
+    label: str
+    actions: tuple
+
+
+def _tx(label: str, data: bytes) -> Step:
+    return Step(label, (("tx", data),))
+
+
+# EINE Tabelle Art -> Rueckwege in der Reihenfolge, in der sie probiert werden. Sie ist Messgegenstand:
+# welcher Rueckweg je Befehl und Firmware wirkte, steht danach in der Matrix (fx_). Zwischen den
+# Aktionen eines Rueckwegs wird NICHT gelesen: TRANS verlangt drei COMMAND-Zeichen innerhalb CMDTIME.
+RECOVERY: dict = {
+    "mode": (_tx("PACKET", verbose_line("PACKET")), _tx("Ctrl-C", CTRL_C)),
+    "action_tx": (_tx("Ctrl-C", CTRL_C), _tx("RCVE", verbose_line("RCVE")),
+                  _tx("DISCONNE", verbose_line("DISCONNE")), _tx("PACKET", verbose_line("PACKET"))),
+    # STABO Kap. 4: Pause, dreimal das COMMAND-Zeichen innerhalb CMDTIME (Default 1 s), Pause; der
+    # Juli-Lauf sandte Ctrl-C ohne Pause davor - das genuegte nicht
+    "TRANS": (Step("3xCtrl-C/CMDTIME", (
+        ("sleep", 1.5), ("tx", CTRL_C), ("sleep", 0.2), ("tx", CTRL_C), ("sleep", 0.2),
+        ("tx", CTRL_C), ("sleep", 1.5), ("tx", CTRL_C))),),
+    # STABO Kap. 3: K tastet, Leertaste wechselt Mark/Space, nach 60 s automatisch zurueck auf Empfang
+    "CALIBRATE": (_tx("Q", b"Q"), _tx("Ctrl-C", CTRL_C), Step("wait 65s", (("wait", 65.0), ("tx", CTRL_C)))),
+    "CONVERSE": (_tx("Ctrl-C", CTRL_C),),                      # wie escape_converse() der App
+    "RESTART": (Step("banner/*", (("banner",),)),),            # RESTART, RESET, REINIT
+    "HOST": (_tx("HOST OFF", FRAME_HOST_OFF),),                # wie die App (HOST OFF-Frame)
+    "danger": (_tx("Ctrl-C", CTRL_C), _tx("CR", b"\r")),
+}
+
+
+def recovery_kind(name: str, kind: str) -> str:
+    """Welche Zeile der Tabelle RECOVERY fuer diesen Befehl gilt."""
+    if name in ("TRANS", "CALIBRATE", "HOST"):
+        return name
+    if name in ("CONVERSE", "K"):
+        return "CONVERSE"
+    if name in ("RESTART", "RESET", "REINIT"):
+        return "RESTART"
+    return kind if kind in ("mode", "action_tx") else "danger"
+
+
+# Vom harmlosen zum heikelsten: erst die Moduswechsel, dann die tastenden Befehle, dann der Rest; ganz
+# am Ende die, die die Sitzung brechen oder den TNC neu starten.
+_RISK_TAIL = ["MEMORY", "TRANS", "CALIBRATE", "RESTART", "RESET", "REINIT"]
+_KIND_RANK = {"mode": 0, "action_tx": 1, "danger": 2}
+
+
+def risky_plan(entries: Optional[dict] = None) -> list:
+    """Alle Befehle, die ohne --all nie gesendet werden, vom harmlosen zum heikelsten."""
+    entries = cm.all_entries() if entries is None else entries
+    out = []
+    for name, _why in never_probed(entries):
+        e = entries[name]
+        out.append(Cmd(name, GROUP_OF.get(name, "other"), e.kind, e.abbrev))
+
+    def rank(c):
+        if c.name in _RISK_TAIL:
+            return (3 + _RISK_TAIL.index(c.name), c.name)
+        return (_KIND_RANK.get(c.kind, 2), c.name)
+
+    return sorted(out, key=rank)
+
+
+@dataclass
+class Behaviour:
+    """Was ein riskanter Befehl bewirkt hat (P89): ob er existiert, was er tat, welcher Rueckweg wirkte."""
+    name: str
+    kind: str
+    exists: Optional[str] = None          # "yes" / "no" / None = keine eigene Antwort
+    effect: str = ""
+    recovery: str = ""                    # Label des wirkenden Rueckwegs, "none needed" oder "needs_power_cycle"
+    steps: list = field(default_factory=list)      # [(Label, hat geklappt)]
+    raw: list = field(default_factory=list)        # [(Sekunden seit dem Senden, Text)]
+    recorded_s: float = 0.0
+    opmode: str = ""
+    mycall: str = ""
+
+
+_EFFECT_NO_PROMPT = {
+    "TRANS": "enters transparent mode",
+    "CALIBRATE": "starts the AFSK calibration (keys the tones)",
+    "XMIT": "starts the transmission",
+    "FEC": "starts an AMTOR FEC transmission",
+    "ARQ": "starts an AMTOR ARQ call",
+    "SELFEC": "starts a selective FEC call",
+    "CONVERSE": "enters converse mode",
+    "K": "enters converse mode",
+}
+_OPMODE_NOW = re.compile(r"Opmode\s+now\s+(\w+)", re.IGNORECASE)
+
+
+def describe_effect(name: str, text: str) -> str:
+    """Was der Befehl laut seiner Antwort bewirkt hat - in einem kurzen, zeitfreien Satz."""
+    if WHAT_RE.search(text):
+        return "unknown command"
+    if any(m in text for m in _BANNER_STR):
+        return "prints banner (restart)"
+    m = _OPMODE_NOW.search(text)
+    if m:
+        return f"changes OPMODE to {m.group(1).upper()}"
+    refused = next((ln.strip() for ln in text.splitlines() if ln.strip().startswith(("?", "***"))), "")
+    if refused:
+        return f"refused: {refused}"
+    if "cmd:" not in text:
+        return _EFFECT_NO_PROMPT.get(name, "no prompt returned")
+    answer = answer_to(name, text)
+    return "no output" if answer is None or not answer[0].strip() else "prints a value"
+
+
+def fx_text(effect: str, recovery: str) -> str:
+    """Wirkung und Rueckweg in Kurzform fuer die Matrix (fx_<release>)."""
+    if recovery == "needs_power_cycle":
+        return f"{effect}; power-cycle needed"
+    return f"{effect}; exit {recovery}" if recovery else effect
+
+
+def ensure_prompt(t) -> None:
+    """Ausgangszustand: 'cmd:' erreichbar - sonst aufwecken wie die App."""
+    t.write(b"\r")
+    if "cmd:" not in read_until(t, ("cmd:",)):
+        wake(t)
+
+
+def record(t, seconds: float, t0: float) -> list:
+    """Alles mitschreiben, was der TNC in *seconds* sendet: [(Sekunden seit t0, Text)]."""
+    out = []
+    while _clock() - t0 < seconds:
+        chunk = t.read_idle(0.2, 0.5)
+        if chunk:
+            out.append((round(_clock() - t0, 3), chunk))
+    return out
+
+
+def _run_step(t, step: Step, recorded_text: str) -> tuple:
+    """Eine Rueckweg-Stufe ausfuehren; (hat 'cmd:' erreicht, was dabei empfangen wurde)."""
+    seen = ""
+    for action in step.actions:
+        op = action[0]
+        if op == "tx":
+            t.write(action[1])
+        elif op == "sleep":
+            _sleep(action[1])
+        elif op == "wait":
+            start = _clock()
+            while _clock() - start < action[1] and "cmd:" not in seen:
+                seen += t.read_idle(0.2, 0.5)
+        elif op == "banner":
+            seen += recorded_text
+            if not any(m in seen for m in _BANNER_STR):
+                t.write(_WAKEUP)                  # kein Banner gekommen: '*' (Autobaud)
+            seen += read_until(t, _WAKE_MARKERS, reads=3 * _STEP_READS)
+    seen += read_until(t, ("cmd:",))
+    return "cmd:" in seen, seen
+
+
+def _value(t, name: str) -> str:
+    """Eine Abfrage (OPMODE / MYCALL): die Antwort nach dem Echo, einzeilig."""
+    t.write(verbose_line(name))
+    resp = read_until(t, ("cmd:",))
+    got = answer_to(name, resp)
+    return " ".join(got[0].split()) if got else ""
+
+
+def probe_risky(t, cmd: Cmd, *, mycall: Optional[str], confirm_power_cycle, record_s: float = 3.0) -> Behaviour:
+    """Einen riskanten Befehl einzeln absetzen (P89 Teil B): Ausgangszustand pruefen, senden, 3 s
+    alles mitschreiben, zurueck in den Befehlsmodus nach der Tabelle RECOVERY (jeder Schritt mit
+    Ergebnis im Log), bei Misserfolg Aus-/Einschalten durch den Betreiber, danach OPMODE und MYCALL."""
+    b = Behaviour(cmd.name, cmd.kind)
+    _dbg_note(t, f"RISKY {cmd.name} (kind={cmd.kind}): baseline, send, record {record_s:.0f} s")
+    ensure_prompt(t)
+    t0 = _clock()
+    t.write(verbose_line(cmd.name))
+    b.raw = record(t, record_s, t0)
+    b.recorded_s = round(_clock() - t0, 3)
+    text = "".join(chunk for _ts, chunk in b.raw)
+    got = answer_to(cmd.name, text)
+    b.exists = None if got is None else ("no" if WHAT_RE.search(got[0]) else "yes")
+    b.effect = describe_effect(cmd.name, text)
+
+    reset = recovery_kind(cmd.name, cmd.kind) == "RESTART"
+    if b.exists == "no":
+        b.recovery = "none needed"
+    else:
+        for step in RECOVERY[recovery_kind(cmd.name, cmd.kind)]:
+            ok, seen = _run_step(t, step, text)
+            if reset and b.exists is None and any(m in text + seen for m in _BANNER_STR):
+                b.exists = "yes"                    # a restart that waited for '*': the banner is its answer
+                b.effect = "prints banner (restart)"
+            b.steps.append((step.label, ok))
+            _dbg_note(t, f"recovery step {step.label}: {'cmd: reached' if ok else 'no prompt'}")
+            if ok:
+                b.recovery = step.label
+                break
+        else:
+            b.recovery = "needs_power_cycle"
+            _dbg_note(t, f"no way back for {cmd.name}: the operator power-cycles the TNC")
+            operator_step(f"{cmd.name}: the TNC does not come back", ["Power-cycle the TNC now"],
+                          "press ENTER here when it is on again")
+            confirm_power_cycle()
+            wake(t)
+            reset = True
+    if reset and mycall and mycall.upper() != "NOCALL":
+        t.write(verbose_line(f"MYCALL {mycall}"))       # the factory MYCALL came back: set it again
+        read_until(t, ("cmd:",))
+    b.opmode = _value(t, "OPMODE")
+    b.mycall = _value(t, "MYCALL")
+    _dbg_note(t, f"RISKY {cmd.name}: exists={b.exists} effect={b.effect!r} recovery={b.recovery} "
+                 f"opmode={b.opmode!r} mycall={b.mycall!r}")
+    return b
+
+
+def _operator_power_cycle() -> None:
+    _ask("")                                              # ENTER
+
+
+def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=None,
+              progress: bool = True) -> list:
+    """Alle riskanten Befehle einzeln, vom harmlosen zum heikelsten. Rueckgabe: Report-Zeilen."""
+    confirm = confirm_power_cycle or _operator_power_cycle
+    rows = []
+    todo = risky_plan(entries)
+    for i, cmd in enumerate(todo, 1):
+        if progress:
+            _status(f"\n[*] riskant [{i}/{len(todo)}] {cmd.name} ({cmd.kind}) ...")
+        b = probe_risky(t, cmd, mycall=mycall, confirm_power_cycle=confirm)
+        result = {"yes": Result.SUPPORTED, "no": Result.UNSUPPORTED}.get(b.exists, Result.ERROR).value
+        if progress:
+            _status(f"    -> {result}; {b.effect}; way back: {b.recovery}")
+        e = entries.get(cmd.name)
+        rows.append({
+            "name": cmd.name, "group": cmd.group, "kind": cmd.kind, "result": result,
+            "matrix": "?", "note": "",
+            "effect": b.effect, "recovery": b.recovery,
+            "fx": fx_text(b.effect, b.recovery) if result == Result.SUPPORTED.value else "",
+            "raw": repr("".join(chunk for _ts, chunk in b.raw))[:600],
+            "opmode": b.opmode, "mycall": b.mycall,
+        })
+    return rows
 
 
 # ----------------------------------------------------------------------------
@@ -895,6 +1340,9 @@ def apply_to_matrix(entries: dict, rows: list, release: str, date: str, device: 
     * gleiche Aussage  -> bleibt, samt ihrem Beleg
     * expert <-> yes   -> KEIN Widerspruch (der Scan entsperrt EXPERT zuerst)
     * sonst            -> Widerspruch; dann wird NICHTS gefuellt (die alte Matrix kommt zurueck)
+    Zeilen riskanter Befehle (P89) tragen ``fx`` (Wirkung + Rueckweg): die fx-Zelle wird nur
+    gefuellt, wenn sie leer ist und die fw-Zelle gemessen ist; ein anderer Text ist ein Widerspruch.
+    Gezaehlt werden Zellen (fw und fx).
     """
     if release not in cm.RELEASES:
         raise ValueError(f"release {release!r} is not a column of the matrix {cm.RELEASES}")
@@ -912,11 +1360,20 @@ def apply_to_matrix(entries: dict, rows: list, release: str, date: str, device: 
         if cell == "?":
             fw, ev = dict(e.fw), dict(e.ev)
             fw[release], ev[release] = value, evidence
-            new[e.name] = dataclasses.replace(e, fw=fw, ev=ev)
+            new[e.name] = e = dataclasses.replace(e, fw=fw, ev=ev)
             filled += 1
         elif cell != value and {cell, value} != {"yes", "expert"}:
             conflicts.append(f"{e.name} {release}: matrix says {cell} ({e.ev[release][:70]}), "
                              f"this scan says {value}")
+            continue
+        effect = row.get("fx") or (fx_text(row["effect"], row.get("recovery", ""))
+                                   if row.get("effect") and value != "no" else "")
+        have = e.fx.get(release, "")
+        if effect and not have:
+            new[e.name] = dataclasses.replace(e, fx={**e.fx, release: effect})
+            filled += 1
+        elif effect and have != effect:
+            conflicts.append(f"{e.name} {release}: effect cell says {have!r}, this scan says {effect!r}")
     if conflicts:
         return dict(entries), 0, conflicts
     return new, filled, []
@@ -958,7 +1415,8 @@ def print_report(rep: Report) -> None:
         print(rep.banner)
 
 
-CSV_FIELDS = ["release", "device", "date", "name", "group", "kind", "result", "matrix", "note"]
+CSV_FIELDS = ["release", "device", "date", "name", "group", "kind", "result", "matrix", "note",
+              "effect", "recovery", "raw"]
 
 
 def write_csv(rep: Report, path: str) -> None:
@@ -966,7 +1424,8 @@ def write_csv(rep: Report, path: str) -> None:
         w = csv.DictWriter(fh, fieldnames=CSV_FIELDS)
         w.writeheader()
         for r in rep.rows:
-            w.writerow({"release": rep.release or "", "device": rep.device, "date": rep.date, **r})
+            w.writerow({"release": rep.release or "", "device": rep.device, "date": rep.date,
+                        **{k: r.get(k, "") for k in CSV_FIELDS[3:]}})
 
 
 def write_json(rep: Report, path: str) -> None:
@@ -977,8 +1436,10 @@ def write_json(rep: Report, path: str) -> None:
         json.dump(payload, fh, indent=2, ensure_ascii=False)
 
 
-def print_plan(immediate: bool = False) -> None:
+def print_plan(immediate: bool = False, all_commands: bool = False) -> None:
     """Was dieses Werkzeug abfragen wuerde und was es NIE sendet (kein Geraet noetig)."""
+    if all_commands:
+        immediate = True
     todo = plan(immediate=immediate)
     print(f"# Would probe {len(todo)} commands"
           f"{' (incl. immediate commands)' if immediate else ' (parameters only; --immediate adds the immediate ones)'}")
@@ -987,6 +1448,13 @@ def print_plan(immediate: bool = False) -> None:
         if names:
             mode = MODE_ENTRY.get(group)
             print(f"\n[{group}]{' after ' + mode if mode else ''}: {' '.join(names)}")
+    if all_commands:
+        risky = risky_plan()
+        print(f"\n# --all: {len(risky)} risky commands, one by one after the queries above, "
+              f"from the harmless to the most delicate (way back in brackets)")
+        print(' '.join(f"{c.name}[{'/'.join(st.label for st in RECOVERY[recovery_kind(c.name, c.kind)])}]"
+                       for c in risky))
+        return
     never = never_probed()
     print(f"\n# Never sent ({len(never)}): kind danger / action_tx / mode, and NEVER_AUTO = "
           f"{', '.join(sorted(NEVER_AUTO))}")
@@ -1009,6 +1477,13 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--immediate", action="store_true",
                     help="also probe the commands of kind 'immediate' (CSTATUS, LOCK, NUMS, ...); "
                          "danger / action_tx / mode commands are never sent")
+    ap.add_argument("--all", action="store_true",
+                    help="P89: probe EVERY command, also mode / action_tx / danger ones (TRANS, CALIBRATE, "
+                         "RESTART, XMIT ...), one by one after the normal queries, with the way back and the "
+                         "effect noted. ONLY at a TNC with no radio connected, with you at it: two "
+                         "confirmations are required (exit code 5 without them)")
+    ap.add_argument("--mycall", help="callsign to set again after a restart / power cycle during --all "
+                                      "(default: the configuration's MYCALL)")
     ap.add_argument("--update-matrix", action="store_true",
                     help="fill the ? cells of src/pk232py/data/command_matrix.csv for the scanned "
                          "release; an existing cell and its evidence are never changed, a "
@@ -1022,7 +1497,7 @@ def main(argv: Optional[list] = None) -> int:
     args = ap.parse_args(argv)
 
     if args.plan:
-        print_plan(args.immediate)
+        print_plan(args.immediate, args.all)
         return 0
     if args.update_matrix and args.selftest:
         print("--update-matrix is refused with --selftest: the mock's answers are invented and "
@@ -1040,12 +1515,34 @@ def main(argv: Optional[list] = None) -> int:
             _status(f"[*] Debug-Log geschrieben: {dbg.path}")
 
 
+def _config_mycall() -> Optional[str]:
+    """MYCALL of the configuration (what the app uploads), None if there is none."""
+    try:
+        from pk232py.config import ConfigManager
+        mgr = ConfigManager()
+        mgr.load()
+        return mgr.app.hf_packet.mycall
+    except Exception:
+        return None
+
+
 def _run(args, ap, dbg) -> int:
+    global _clock, _sleep
+    if args.all and not args.selftest and not operator_checks():
+        # before anything is opened or sent: P89 Teil A, not switchable
+        print("--all needs both confirmations (no radio connected to the TNC; you are at the TNC and can "
+              "power-cycle it). Nothing was sent.", file=sys.stderr)
+        return 5
+    saved_hooks = (_clock, _sleep)
+    confirm = None
     if args.selftest:
         if args.selftest not in _SELFTEST_RELEASE:
             print("selftest year must be one of 1988 / 1991 / 1995", file=sys.stderr)
             return 2
-        t = MockTransport(_SELFTEST_RELEASE[args.selftest], debug=dbg)
+        sim = SimulatedClock()                      # the mock needs no real 65 s
+        _clock, _sleep = sim, sim.advance
+        t = MockTransport(_SELFTEST_RELEASE[args.selftest], debug=dbg, clock=sim, risky=args.all)
+        confirm = t.power_cycle
         port = f"MOCK:{args.selftest}"
     else:
         if not args.port:
@@ -1056,12 +1553,15 @@ def _run(args, ap, dbg) -> int:
         _status(f"[*] {args.port} offen. Starte Scan (Abbruch mit Strg-C) ...")
 
     try:
-        rep = run_scan(t, port, only_group=args.group, immediate=args.immediate)
+        rep = run_scan(t, port, only_group=args.group, immediate=args.immediate or args.all,
+                       risky=args.all, mycall=args.mycall or _config_mycall(),
+                       confirm_power_cycle=confirm)
     except ScanError as exc:
         print(f"[!] {exc}", file=sys.stderr)
         return 4
     finally:
         t.close()
+        _clock, _sleep = saved_hooks
 
     print_report(rep)
     if args.csv:
