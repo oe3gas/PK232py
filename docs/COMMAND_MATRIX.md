@@ -10,8 +10,8 @@
 
 | Release | Device | yes | no | expert | ? |
 |---|---|---|---|---|---|
-| 01.AUG.91 | B | 69 | 7 | 0 | 184 |
-| 13.SEP.95 | A | 193 | 0 | 3 | 64 |
+| 01.AUG.91 | B | 69 | 15 | 0 | 176 |
+| 13.SEP.95 | A | 193 | 8 | 3 | 56 |
 | 30.12.1988 | C | 0 | 1 | 0 | 259 |
 
 260 commands.
@@ -210,14 +210,14 @@
 | PTSUM |  |  | param | ? | ? | ? |  |  (named in PK232PY (PACTOR mask, config); not in the Timewave list) |  |
 | PTTRIES |  |  | param | ? | ? | ? |  |  (named in PK232PY (PACTOR mask, config); not in the Timewave list) |  |
 | PTUP |  |  | param | ? | ? | ? |  |  (named in PK232PY (PACTOR mask, config); not in the Timewave list) |  |
-| QHPACKET |  |  | param | ? | ? | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) |  |
-| QMORSE |  |  | param | ? | ? | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) |  |
-| QPTOR |  |  | param | ? | ? | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) |  |
-| QRTTY |  |  | param | ? | ? | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) |  |
-| QTDM |  |  | param | ? | ? | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) |  |
-| QTOR |  |  | param | ? | ? | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) |  |
-| QVPACKET |  |  | param | ? | ? | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) |  |
-| QWIDE |  |  | param | ? | ? | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) |  |
+| QHPACKET |  |  | param | no | no | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) | B: operator 2026-10-06 terminal (?What?); A: operator 2026-10-06 terminal (?What?) |
+| QMORSE |  |  | param | no | no | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) | B: operator 2026-10-06 terminal (?What?); A: operator 2026-10-06 terminal (?What?) |
+| QPTOR |  |  | param | no | no | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) | B: operator 2026-10-06 terminal (?What?); A: operator 2026-10-06 terminal (?What?) |
+| QRTTY |  |  | param | no | no | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) | B: operator 2026-10-06 terminal (?What?); A: operator 2026-10-06 terminal (?What?) |
+| QTDM |  |  | param | no | no | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) | B: operator 2026-10-06 terminal (?What?); A: operator 2026-10-06 terminal (?What?) |
+| QTOR |  |  | param | no | no | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) | B: operator 2026-10-06 terminal (?What?); A: operator 2026-10-06 terminal (?What?) |
+| QVPACKET |  |  | param | no | no | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) | B: operator 2026-10-06 terminal (?What?); A: operator 2026-10-06 terminal (?What?) |
+| QWIDE |  |  | param | no | no | ? |  |  (read-only field of a PK232PY mask; whether a command of this name exists is unmeasured) | B: operator 2026-10-06 terminal (?What?); A: operator 2026-10-06 terminal (?What?) |
 | RADIO | RA |  | param | ? | ? | ? | 1 | ??? (source gives only '???' as the function) |  |
 | RAWHDLC | RAW |  | param | ? | yes | ? | OFF | Starts Raw HDLC mode | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
 | RBAUD | RB | RB | param | yes | yes | ? | 45 bauds (60 WPM) | Sets the Baudot RTTY baud rate selection | B: T166 (query = verbose value; query only, not verified for setting) (Host Mode, mnemonic RB) [hw_logs/20261003_213830_mnemonic_probe.log]; A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) \| T167 (query = verbose value; query only, not verified for setting) (Host Mode, mnemonic RB) [hw_logs/20261003_214801_mnemonic_probe.log] |
