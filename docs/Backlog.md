@@ -178,7 +178,7 @@ lines typed in the verbose terminal); static test with an allow list. `_NEVER_LI
 ### Command / firmware matrix (P88) — ✅ done, T179-T181 open (2026-10-06)
 
 `src/pk232py/data/command_matrix.csv` is the ONE truth about which command exists on which firmware 260 commands;
-01.AUG.91: 164 yes, 33 no; 13.SEP.95: 193 yes, 8 no, 3 expert; 30.12.1988: 1 no; the rest `?` - after T179, Q values. Reader `comm/command_matrix.py`
+01.AUG.91: 193 yes, 39 no; 13.SEP.95: 193 yes, 8 no, 3 expert; 30.12.1988: 1 no; the rest `?` - after T179 (runs 1-3 and --immediate), Q values. Reader `comm/command_matrix.py`
 (validates while loading: evidence for every cell that is not `?`), view `docs/COMMAND_MATRIX.md` (generated, a test fails when
 stale), raw data in `docs/reference/` (Timewave list, fw_scan of 28.07.2026 with its known defects). Seeded only from
 evidence: Timewave list (names, abbreviations, defaults, functions), fw_scan 20260728 (device A), and the code that already
@@ -205,12 +205,10 @@ steps 1 to 4 incl. Ctrl-C / recovery) reliably reaches the verbose command mode 
 (analogous to T168 variant B, restart_probe). Open: the late replies and the interleaved analysis text against the 1.5 s step timeout
 and the `cmd:` search; a variant C-like `hw_check.py restart_probe` run with SIGNAL as the left-over mode.
 
-### fw_scan: third run on device B for the remaining ? cells — open (2026-10-06)
+### fw_scan: third run on device B for the remaining ? cells — ✅ done (2026-10-06)
 
-After T179 (runs 1 and 2, see Testplan): 21 parameters and 14 immediate commands of 01.AUG.91 are still `?` (list in the Testplan);
-28 more `?` are mode / action_tx / danger commands that are never sent and stay `?` until a human measures them. The scanner
-now probes the modeless groups in PACKET and rates only an answer that begins with its own echo and reaches the prompt.
-Open question the third run answers: do the 24 former ERROR commands answer cleanly now?
+Run 3 and the `--immediate` run (T179): 35 cells filled, 0 ERROR, matrix 01.AUG.91: 193 yes, 39 no, 28 `?` (mode / action_tx / danger, never sent).
+The scanner fix (modeless groups in PACKET, own echo + prompt) cleared the 24 ERROR per run.
 
 ### FULLDUP back into the Packet mask? — open (2026-10-06)
 

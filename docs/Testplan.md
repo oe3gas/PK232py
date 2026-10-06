@@ -3589,7 +3589,7 @@ Per device:
 
 | # | Device | Expected | Result |
 |---|---|---|---|
-| T179 | B (01.AUG.91) | no contradiction; the `?` cells of 01.AUG.91 filled | ✅ runs 1 and 2 PASS (see below); third run for the rest ⬜ |
+| T179 | B (01.AUG.91) | no contradiction; the `?` cells of 01.AUG.91 filled | ✅ PASS (runs 1, 2, 3 and the `--immediate` run, see below) |
 | T180 | C (30.12.1988) | first contact of device C with this software - **ask the operator first**; the matrix has one cell for C (MAILDROP no) | ⬜ |
 | T181 | A (13.SEP.95), optional | confirms the 176 yes of the 28.07.2026 run; fills the Q values etc. | ⬜ |
 
@@ -3607,7 +3607,18 @@ never helped. Fixed in `pk232_fw_scan.py`: modeless groups run in PACKET, a resu
 (21 parameters: AUTOBAUD AWLEN BKONDEL CMSG CTEXT DELETE ECHO ESCAPE MDMON MDPROMPT PARITY PRCON PROUT PTROUND PTSUM PTTRIES PTUP TBAUD TIME
 TMPROMPT TRFLOW, and 14 immediate commands); the other 28 `?` cells are mode / action_tx / danger commands that are never sent.
 
-**Status:** ⬜ PARTLY — T179 runs 1 and 2 done (PASS), third run, T180, T181 pending.
+**Run 3 and the `--immediate` run (`hw_logs/20261006_fw_scan_B_run3.*`, `..._B_imm.*`):** run 3: 172 SUPPORTED, 37 UNSUPPORTED, 0 ERROR (209 probes),
+no difference to the matrix. `..._B_imm.*`: 223 probes (the 209 and the 14 immediate commands), 184 SUPPORTED, 39 UNSUPPORTED, 0 ERROR. Every cell
+they wrote is backed by an answer that starts with its own echo and reaches the prompt (checked with `answer_to()` against both logs). Together
+they filled the 35 cells that were still open: 21 parameters (AUTOBAUD AWLEN BKONDEL CMSG CTEXT DELETE ECHO ESCAPE MDMON MDPROMPT PARITY PRCON
+PROUT PTROUND PTSUM PTTRIES PTUP TBAUD TIME TMPROMPT TRFLOW: 17 yes, 4 no) and 14 immediate commands (12 yes, 2 no). **Matrix 01.AUG.91 now: 193 yes,
+39 no, 28 `?`** - the 28 are mode / action_tx / danger commands that are never sent.
+**"0 cells filled" in the run 3 report:** not a counter bug. The surviving run 3 started with the 21 parameter cells already set (its MATRIX column
+shows yes/no for all 209 rows): an earlier call with the same `--csv` path had written them (the evidence names `..._run3.csv`; its files were
+overwritten by the repeat). Applying the surviving run 3 CSV to the previous matrix fills exactly these 21 cells with exactly this evidence;
+a repeated call counts 0 (`TestFilledCounter`).
+
+**Status:** ✅ PASS for device B (T179). T180 (device C, ask the operator first) and the optional T181 (device A) pending.
 
 ---
 
