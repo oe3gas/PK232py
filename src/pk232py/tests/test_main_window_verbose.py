@@ -76,10 +76,10 @@ class TestVerboseTerminalBareEnter:
 
         assert serial.writes == [b"\r"]
 
-    def test_nonempty_enter_still_sends_the_command_with_crlf(self, wired_window):
+    def test_nonempty_enter_still_sends_the_command_with_cr_only(self, wired_window):
         w, serial = wired_window
         w._vt_input.setPlainText("MYCALL")
 
         w._on_vt_send()
 
-        assert serial.writes == [b"MYCALL\r\n"]
+        assert serial.writes == [b"MYCALL\r"]

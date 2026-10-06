@@ -136,13 +136,6 @@ class TestHostMode:
         ParamApplier(t).apply(before, after)
         assert not [e for e in t.log if e[0] in ("vset", "vquery", "escape")]
 
-    def test_ilfpack_is_never_set_live(self):
-        t = FakeTransport()
-        before, after = _cfg_pair(lambda b, a: setattr(a.hf_packet, "ilfpack", False))
-        (r,) = ParamApplier(t).apply(before, after)
-        assert t.log == [] and not r.ok
-        assert r.reason == "ILFPACK is applied at the next initialisation (see P75)"
-
     def test_rejected_answer_reports_the_code_and_what_the_tnc_has(self):
         t = FakeTransport(host_answers={
             (b"MX", b"7"): b"MX\x07", (b"MX", b""): b"MX4"})

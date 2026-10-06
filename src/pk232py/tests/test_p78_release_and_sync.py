@@ -71,7 +71,7 @@ class TestVerboseFingerprint:
         sm.probe_release_verbose()
         assert sm.tnc_release == "01.AUG.91"
         assert sm.tnc_release_source == "inferred"
-        assert sent == [b"EXPERT\r\n"]                 # exactly ONE query
+        assert sent == [b"EXPERT\r"]                 # exactly ONE query
 
     def test_a_value_gives_13_sep_95(self, monkeypatch):
         sm, _ = self._manager(monkeypatch, b"EXPERT\r\nEXPert    OFF\r\ncmd:")

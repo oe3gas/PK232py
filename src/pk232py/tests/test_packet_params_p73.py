@@ -211,10 +211,10 @@ class TestMonitorFlags:
             setattr(app.hf_packet, attr, True)
         cmds = ParamsUploader(None, app)._build_commands(has_pactor=True)
         for name in NEW_FLAGS:
-            assert f"{name} ON\r\n".encode() in cmds
+            assert f"{name} ON\r".encode() in cmds
         off = ParamsUploader(None, AppConfig())._build_commands(has_pactor=True)
         for name in NEW_FLAGS:
-            assert f"{name} OFF\r\n".encode() in off
+            assert f"{name} OFF\r".encode() in off
 
     def test_flags_survive_the_ini(self, tmp_path):
         mgr = ConfigManager(tmp_path / "pk232py.ini")

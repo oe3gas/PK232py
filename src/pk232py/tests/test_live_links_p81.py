@@ -72,7 +72,7 @@ class TestSerialManagerQuery:
         sm = SerialManager()
         monkeypatch.setattr(SerialManager, "is_connected", property(lambda s: True))
         asked = []
-        answers = {b"CSTATUS\r\n": CSTATUS, b"OPMODE\r\n": OPMODE, b"VHF\r\n": VHF_ON}
+        answers = {b"CSTATUS\r": CSTATUS, b"OPMODE\r": OPMODE, b"VHF\r": VHF_ON}
 
         def fake(data, timeout=5.0):
             asked.append(data)
@@ -80,7 +80,7 @@ class TestSerialManagerQuery:
 
         monkeypatch.setattr(sm, "_write_verbose_wait_text", fake)
         links = sm.query_live_links()
-        assert asked == [b"CSTATUS\r\n", b"OPMODE\r\n", b"VHF\r\n"]
+        assert asked == [b"CSTATUS\r", b"OPMODE\r", b"VHF\r"]
         assert links.mode_name == "VHF Packet"
 
     def test_banner_flag_is_public(self):

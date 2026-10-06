@@ -75,12 +75,13 @@ class TestTableCoversTheUploader:
         on_a = {p.name for p in HOST_PARAMS if "13.SEP.95" in p.verified_releases}
         # + the six Packet monitor flags (T160 device B / T161 device A, P73) and
         # the eight switches/ASPECT of T166 / T167 (P80b).
-        assert len(on_b) == 54 and {"UNPROTO", "CFROM", "USERS", "UBIT", "PASSALL"} <= on_b
+        # + ILFPACK on device B (T175, P75).
+        assert len(on_b) == 55 and {"UNPROTO", "CFROM", "USERS", "UBIT", "PASSALL"} <= on_b
         # Device A: the 37 of T151 (22:07 log) + PTHUFF, PT200 + UBIT (T156);
         # UNPROTO/CFROM only on B.
         assert len(on_a) == 54 and {"PTHUFF", "PT200", "UBIT", "USERS", "PASSALL"} <= on_a
         assert not {"UNPROTO", "CFROM", "ILFPACK"} & on_a
-        assert "ILFPACK" not in on_b       # T155 / B.3: only verified_query
+        assert "ILFPACK" in on_b           # T175 (device B only; A has no verbose cross-check)
         assert all(p.mnemonic for p in HOST_PARAMS if p.verified_releases)
 
     def test_every_mnemonic_occurs_at_most_once(self):

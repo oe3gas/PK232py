@@ -20,14 +20,14 @@ class TestUsersUploaded:
         config.hf_packet.users = 4
         uploader = ParamsUploader(serial=None, config=config)
         commands = uploader._build_commands(has_pactor=True)
-        assert b"USERS 4\r\n" in commands
+        assert b"USERS 4\r" in commands
 
     def test_users_default_is_ten(self):
         # P70 E2 (operator decision 30.09.2026): a fresh config uploads USERS 10.
         config = AppConfig()
         uploader = ParamsUploader(serial=None, config=config)
         commands = uploader._build_commands(has_pactor=True)
-        assert b"USERS 10\r\n" in commands
+        assert b"USERS 10\r" in commands
 
     def test_saved_users_one_is_kept(self, tmp_path):
         # P70 E2: no migration - a stored users = 1 may be a deliberate choice.

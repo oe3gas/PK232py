@@ -1166,7 +1166,7 @@ class TestVerboseQueryReadPath:
 
     def test_query_verbose_value_no_longer_depends_on_the_signal_at_all(self):
         def responder(data):
-            if data == b"MYCALL\r\n":
+            if data == b"MYCALL\r":
                 return [(0.05, b"MYCALL\r\nMYcall    OE3GAS\r\ncmd:")]
             return []
 
@@ -1198,7 +1198,7 @@ class TestVerboseQueryReadPath:
 
     def test_detect_maildrop_no_longer_depends_on_the_signal_at_all(self):
         def responder(data):
-            if data == b"MAILDROP\r\n":
+            if data == b"MAILDROP\r":
                 return [(0.05, b"MAILDROP\r\nMAildrop  ON\r\ncmd:")]
             return []
 
@@ -1283,11 +1283,11 @@ class TestConverseModeDetection:
         # actually see 'MYcall    OE3GAS' via the fixed read path
         # (P53.A), not just the terminal - full verified (3/3).
         def responder(data):
-            if data == b"MYCALL\r\n":
+            if data == b"MYCALL\r":
                 return b"MYCALL\r\nMYcall    OE3GAS\r\ncmd:"
-            if data == b"PACLEN\r\n":
+            if data == b"PACLEN\r":
                 return b"PACLEN\r\nPAclen    128\r\ncmd:"
-            if data == b"MAXFRAME\r\n":
+            if data == b"MAXFRAME\r":
                 return b"MAXFRAME\r\nMAXframe  1\r\ncmd:"
             return b""
 

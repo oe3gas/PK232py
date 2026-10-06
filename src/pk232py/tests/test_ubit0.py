@@ -52,12 +52,12 @@ class TestUpload:
         return ParamsUploader(serial=None, config=cfg)._build_commands(has_pactor=True)
 
     def test_default_uploads_ubit0_off(self):
-        assert b"UBIT 0 OFF\r\n" in self._cmds()
+        assert b"UBIT 0 OFF\r" in self._cmds()
 
     def test_ubit0_true_uploads_on(self):
         cmds = self._cmds(ubit0=True)
-        assert b"UBIT 0 ON\r\n" in cmds
-        assert b"UBIT 0 OFF\r\n" not in cmds
+        assert b"UBIT 0 ON\r" in cmds
+        assert b"UBIT 0 OFF\r" not in cmds
 
 
 class TestHostParamsRow:

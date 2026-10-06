@@ -783,7 +783,7 @@ class TestLinkTableHostModeCarryOver:
         assert w._link_table.io_channel == 1
         # was_converse was True and the channel is connected -> CONVERSE
         # is sent to return to it.
-        assert ("write_verbose", b"CONVERSE\r\n") in w._serial.calls
+        assert ("write_verbose", b"CONVERSE\r") in w._serial.calls
 
     def test_exit_with_free_channel_never_sends_converse(self, window):
         w = window
