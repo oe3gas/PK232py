@@ -187,3 +187,82 @@ class TestParameterMasks:
         dlg.apply_firmware_limits(RELEASE_A)
         for w in (dlg._le_myptcall, dlg._chk_pt200, dlg._hx_ptover):
             assert w.isEnabled()
+
+
+# ------------------------------------------- P85a: has_pactor, plural
+
+class TestHasPactorWithoutBanner:
+    """No banner: the permissive True of has_pactor made the upload send the
+    PACTOR commands to device B (T168 ran without a banner). An INFERRED
+    release now decides through KNOWN_DEVICES; unknown stays permissive."""
+
+    def _manager(self, release=None, banner=b""):
+        from pk232py.comm.serial_manager import SerialManager
+        sm = SerialManager()
+        sm._tnc_banner = banner
+        if release:
+            sm.set_inferred_release(release)
+        return sm
+
+    def test_devices_table_answers_has_pactor(self):
+        assert devices.has_pactor(RELEASE_B) is False
+        assert devices.has_pactor(RELEASE_A) is True
+        assert devices.has_pactor(None) is None
+        assert devices.has_pactor("99.XXX.99") is None
+
+    def test_inferred_b_has_no_pactor(self):
+        assert self._manager(RELEASE_B).has_pactor is False
+
+    def test_inferred_a_has_pactor(self):
+        assert self._manager(RELEASE_A).has_pactor is True
+
+    def test_nothing_known_stays_permissive(self):
+        assert self._manager().has_pactor is True
+
+    def test_banner_still_wins_over_the_table(self):
+        sm = self._manager(RELEASE_A, banner=b"AEA PK-232MBX  Release 01.AUG.91")
+        assert sm.has_pactor is False          # the banner has no "PACTOR"
+
+
+class TestSkippedLinePlural:
+
+    def _line(self, unknown_hit_count):
+        # 01.AUG.91 with has_pactor False: only EXPERT ON is left to skip
+        # (EXPERT OFF is only built for PACTOR firmware) -> exactly 1 command.
+        serial = _Serial(RELEASE_B)
+        serial.has_pactor = (unknown_hit_count != 1)
+        echoed: list[str] = []
+        ParamsUploader(serial, _config(), echo_callback=lambda t, c: echoed.append(t)).upload()
+        return [t for t in echoed if "skipped" in t]
+
+    def test_one_command_is_singular(self):
+        lines = self._line(1)
+        assert len(lines) == 1
+        assert lines[0].startswith("[SYS] 1 command skipped - not supported by 01.AUG.91 (EXPERT)")
+
+    def test_eight_commands_stay_plural(self):
+        assert self._line(8)[0].startswith("[SYS] 8 commands skipped")
+
+
+class TestProbeBeforeHasPactor:
+    """The release probe runs INSIDE upload(); has_pactor must be read after
+    it, or the first upload without a banner still sends the PACTOR commands."""
+
+    def test_upload_reads_has_pactor_after_the_probe(self, monkeypatch):
+        class _Probing(_Serial):
+            has_pactor = True               # permissive until the probe ran
+
+            def probe_release_verbose(self):
+                self.tnc_release = RELEASE_B
+                self.has_pactor = False
+
+        seen = []
+        real = ParamsUploader._build_commands
+
+        def spy(self, has_pactor=True, has_maildrop=True):
+            seen.append(has_pactor)
+            return real(self, has_pactor=has_pactor, has_maildrop=has_maildrop)
+
+        monkeypatch.setattr(ParamsUploader, "_build_commands", spy)
+        ParamsUploader(_Probing(None), _config()).upload()
+        assert seen == [False]
