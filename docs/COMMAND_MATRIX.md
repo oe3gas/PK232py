@@ -12,7 +12,7 @@
 |---|---|---|---|---|---|
 | 01.AUG.91 | B | 69 | 7 | 0 | 184 |
 | 13.SEP.95 | A | 193 | 0 | 3 | 64 |
-| 30.12.1988 | C | 0 | 0 | 0 | 260 |
+| 30.12.1988 | C | 0 | 1 | 0 | 259 |
 
 260 commands.
 
@@ -136,7 +136,7 @@
 | LEFTRITE | LE |  | param | ? | yes | ? | ON | Sets left-to-right Scan direction for FAX | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
 | LITE | LI |  | param | ? | yes | ? | OFF | Enables Timewave's Packet Lite HP protocol | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
 | LOCK | L |  | immediate | ? | yes | ? | Immediate Command | Locks Morse speed/ forces lower case in RTTY | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
-| MAILDROP | MA | MV | param | yes | yes | ? | OFF | Enables the Packet MailDrop for remote users | B: T151 (Host Mode, mnemonic MV) [hw_logs/20261001_205535_host_params_probe.log]; A: T151 (Host Mode, mnemonic MV) [hw_logs/20261001_220703_host_params_probe.log] |
+| MAILDROP | MA | MV | param | yes | yes | no | OFF | Enables the Packet MailDrop for remote users | B: T151 (Host Mode, mnemonic MV) [hw_logs/20261001_205535_host_params_probe.log]; A: T151 (Host Mode, mnemonic MV) [hw_logs/20261001_220703_host_params_probe.log]; C: operator 2026-09-23 terminal program (PuTTY): the 1988 firmware has no MailDrop (docs/DEVICES.md device C; P37: MAILDROP answers ?What?) |
 | MARK |  |  | param | ? | ? | ? |  |  (named in PK232PY (Misc mask, tone frequency); not in the Timewave list) |  |
 | MARSDISP | MAR |  | param | ? | yes | ? | OFF | Translates received LTRS & FIGS characters | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
 | MAXFRAME | MA | MX | param | yes | yes | ? | 4 | Sets a maximum of un-ACK'd packet frames | B: T151 (Host Mode, mnemonic MX) [hw_logs/20261001_205535_host_params_probe.log]; A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) \| T151, T152 (Host Mode, mnemonic MX) [hw_logs/20261001_220703_host_params_probe.log; hw_logs/20261002_172135_host_params_probe.log] |
