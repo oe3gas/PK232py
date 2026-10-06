@@ -1,0 +1,182 @@
+mnem,name,group,gen_hyp,conf,probe,expected,result,anomaly,note
+CA,CALIBRATE,danger,1,M,S,yes,NOT_PROBED,,keys TX tones -- never auto
+AN,ACKPRIOR,packet,1,M,Q,yes,SUPPORTED,,
+AK,ACRPACK,packet,1,M,Q,yes,SUPPORTED,,
+AP,ALFPACK,packet,1,M,Q,yes,SUPPORTED,,
+AV,AX25L2V2,packet,1,M,Q,yes,SUPPORTED,,
+AX,AXDELAY,packet,1,M,Q,yes,SUPPORTED,,
+AH,AXHANG,packet,1,M,Q,yes,SUPPORTED,,
+BE,BEACON,packet,1,M,Q,yes,SUPPORTED,,
+BT,BTEXT,packet,1,M,Q,yes,SUPPORTED,,
+CP,CANPAC,packet,1,M,S,yes,SUPPORTED,,direct
+CX,CASEDISP,packet,1,M,Q,yes,SUPPORTED,,
+CF,CFROM,packet,1,M,Q,yes,SUPPORTED,,
+CB,CHCALL,packet,1,M,Q,yes,SUPPORTED,,
+CD,CHDOUBLE,packet,1,M,Q,yes,SUPPORTED,,
+CK,CHECK,packet,1,M,Q,yes,SUPPORTED,,
+CH,CHSWITCH,packet,1,M,Q,yes,SUPPORTED,,
+CE,CONMODE,packet,1,M,Q,yes,SUPPORTED,,
+CO,CONNECT,packet,1,M,S,yes,SUPPORTED,,direct
+CON,CONOK,packet,1,H,Q,yes,SUPPORTED,,legacy TAPR; use CFROM instead
+CY,CONPERM,packet,1,M,Q,yes,SUPPORTED,,
+CG,CONSTAMP,packet,1,M,Q,yes,SUPPORTED,,
+CI,CPACTIME,packet,1,M,Q,yes,SUPPORTED,,
+CS,CSTATUS,packet,1,M,S,yes,SUPPORTED,,read-only link status
+DF,DFROM,packet,1,M,Q,yes,SUPPORTED,,
+DG,DIGIPEAT,packet,1,H,Q,yes,SUPPORTED,,TAPR-compat digipeat toggle
+DI,DISCONNECT,packet,1,M,S,yes,SUPPORTED,,direct
+DW,DWAIT,packet,1,M,Q,yes,SUPPORTED,,
+FR,FRACK,packet,1,M,Q,yes,SUPPORTED,,
+FU,FULLDUP,packet,1,M,Q,yes,SUPPORTED,,
+HB,HBAUD,packet,1,M,Q,yes,SUPPORTED,,
+HD,HEADERLN,packet,1,M,Q,yes,SUPPORTED,,
+HI,HID,packet,1,M,Q,yes,SUPPORTED,,
+HP,HPOLL,packet,1,M,Q,yes,SUPPORTED,,
+IL,ILFPACK,packet,1,M,Q,yes,SUPPORTED,,
+KI,KISS,packet,1,H,Q,yes,SUPPORTED,,param; KISS ON enters KISS
+KA,KISSADDR,packet,1,M,Q,yes,SUPPORTED,,
+MX,MAXFRAME,packet,1,M,Q,yes,SUPPORTED,,
+MC,MCON,packet,1,M,Q,yes,SUPPORTED,,
+MF,MFROM,packet,1,M,Q,yes,SUPPORTED,,
+MH,MHEARD,packet,1,M,S,yes,SUPPORTED,,read-only list
+MN,MONITOR,packet,1,M,Q,yes,SUPPORTED,,
+MR,MRPT,packet,1,M,Q,yes,SUPPORTED,,
+MT,MTO,packet,1,M,Q,yes,SUPPORTED,,
+ML,MYCALL,packet,1,M,Q,yes,SUPPORTED,,
+PL,PACLEN,packet,1,M,Q,yes,SUPPORTED,,
+PT,PACTIME,packet,1,M,Q,yes,SUPPORTED,,
+PX,PASSALL,packet,1,M,Q,yes,SUPPORTED,,
+PE,PERSIST,packet,1,M,Q,yes,SUPPORTED,,
+PP,PPERSIST,packet,1,M,Q,yes,SUPPORTED,,
+RW,RAWHDLC,packet,1,M,Q,yes,SUPPORTED,,
+RL,RELINK,packet,1,M,Q,yes,SUPPORTED,,
+RP,RESPTIME,packet,1,M,Q,yes,SUPPORTED,,
+RY,RETRY,packet,1,M,Q,yes,SUPPORTED,,
+RR,RFRAME,packet,2,H,Q,yes,SUPPORTED,,receive-frame toggle
+SP,SENDPAC,packet,1,M,Q,yes,SUPPORTED,,
+SL,SLOTTIME,packet,1,M,Q,yes,SUPPORTED,,
+SQ,SQUELCH,packet,1,M,Q,yes,SUPPORTED,,
+71,TRIES,packet,1,M,Q,yes,SUPPORTED,,
+TF,TXFLOW,packet,1,M,Q,yes,SUPPORTED,,
+UN,UNPROTO,packet,1,M,Q,yes,SUPPORTED,,
+VH,VHF,packet,1,M,Q,yes,SUPPORTED,,
+WN,WHYNOT,packet,1,M,Q,yes,SUPPORTED,,
+8B,8BITCONV,rtty,1,M,Q,yes,SUPPORTED,,
+AB,ABAUD,rtty,1,M,Q,yes,SUPPORTED,,
+AT,ACRRTTY,rtty,1,M,Q,yes,SUPPORTED,,
+AR,ALFRTTY,rtty,1,M,Q,yes,SUPPORTED,,
+BI,BITINV,rtty,1,M,Q,yes,SUPPORTED,,
+CC,CCITT,rtty,1,M,Q,yes,SUPPORTED,,
+CR,CRADD,rtty,1,M,Q,yes,SUPPORTED,,
+DD,DIDDLE,rtty,1,M,Q,yes,SUPPORTED,,
+PS,PASS,rtty,1,M,Q,yes,SUPPORTED,,
+RB,RBAUD,rtty,1,M,Q,yes,SUPPORTED,,
+TD,TXDELAY,rtty,1,M,Q,yes,SUPPORTED,,
+US,USOS,rtty,1,M,Q,yes,SUPPORTED,,
+WI,WIDESHFT,rtty,1,H,Q,yes,SUPPORTED,,
+WR,WRU,rtty,1,M,Q,yes,SUPPORTED,,
+XB,XBAUD,rtty,1,M,Q,yes,SUPPORTED,,
+AU,AAB,amtor,1,M,Q,yes,SUPPORTED,,
+AG,ACHG,amtor,1,M,S,yes,SUPPORTED,,direct
+AD,ADELAY,amtor,1,M,Q,yes,SUPPORTED,,
+AL,ALIST,amtor,1,M,S,yes,SUPPORTED,,read-only list
+AM,AMOTR,amtor,1,L,Q,yes,UNSUPPORTED,unexpected-absent,
+AC,ARQ,amtor,1,M,S,yes,SUPPORTED,,direct
+AO,ARQTMO,amtor,1,M,Q,yes,SUPPORTED,,
+AO,ARQTOL,amtor,1,M,Q,yes,SUPPORTED,,
+ARX,ARXTOR,amtor,2,H,Q,yes,SUPPORTED,,AMTOR auto-RX
+ATX,ATXRTTY,amtor,2,H,Q,yes,SUPPORTED,,AMTOR-to-RTTY TX delay
+CU,CBELL,amtor,1,M,Q,yes,SUPPORTED,,
+DC,DCDCONN,amtor,1,M,Q,yes,SUPPORTED,,
+EA,EAS,amtor,1,M,Q,yes,SUPPORTED,,
+FE,FEC,amtor,1,M,S,yes,SUPPORTED,,direct
+ID,ID,amtor,1,M,S,yes,SUPPORTED,,direct
+MW,MARSDISP,amtor,1,M,Q,yes,SUPPORTED,,
+MK,MYALTCAL,amtor,1,M,Q,yes,SUPPORTED,,
+MG,MYSELCAL,amtor,1,M,Q,yes,SUPPORTED,,
+OV,OVER,amtor,1,M,S,yes,SUPPORTED,,AMTOR/PACTOR changeover
+RF,RFEC,amtor,1,M,Q,yes,SUPPORTED,,
+RX,RXREV,amtor,1,M,Q,yes,SUPPORTED,,
+SE,SELFEC,amtor,1,M,S,yes,SUPPORTED,,direct
+SR,SRXALL,amtor,1,M,Q,yes,SUPPORTED,,
+TX,TXREV,amtor,1,M,Q,yes,SUPPORTED,,
+WO,WORDOUT,amtor,1,M,Q,yes,SUPPORTED,,
+MP,MSPEED,morse,1,M,Q,yes,SUPPORTED,,
+WE,MWEIGHT,morse,2,H,Q,yes,SUPPORTED,,CW keying weight
+AY,ASPECT,fax,1,M,Q,yes,SUPPORTED,,
+AQ,AUDELAY,fax,1,M,Q,yes,SUPPORTED,,
+CW,CWID,fax,1,M,Q,yes,SUPPORTED,,
+FN,FAXNEG,fax,1,M,Q,yes,SUPPORTED,,
+FS,FSPEED,fax,1,M,Q,yes,SUPPORTED,,
+GR,GRAPHICS,fax,1,M,Q,yes,SUPPORTED,,
+JU,JUSTIFY,fax,1,M,S,yes,SUPPORTED,,direct
+LR,LEFTRITE,fax,1,M,Q,yes,SUPPORTED,,
+LO,LOCK,fax,1,M,S,yes,SUPPORTED,,direct
+PF,PRFAX,fax,1,M,Q,yes,SUPPORTED,,
+PY,PRTYPE,fax,1,M,Q,yes,SUPPORTED,,
+RC,RCVE,fax,1,M,S,yes,SUPPORTED,,direct
+TR,TRACE,fax,1,M,Q,yes,SUPPORTED,,
+XM,XMIT,fax,1,M,S,yes,SUPPORTED,,direct
+ER,ERRCHAR,navtex,2,L,Q,yes,SUPPORTED,,
+NM,NAVMSG,navtex,2,L,Q,yes,SUPPORTED,,
+NS,NAVSTN,navtex,2,L,Q,yes,SUPPORTED,,
+NA,NAVTEX,navtex,2,L,S,yes,SUPPORTED,,direct
+LT,ALTMODEM,signal,2,H,Q,yes,SUPPORTED,,alternate modem select
+CI,CODE,signal,1,M,Q,yes,SUPPORTED,,
+CUS,CUSTOM,signal,2,H,Q,yes,SUPPORTED,,custom modem value
+NX,NUMS,signal,2,L,S,yes,SUPPORTED,,direct
+OK,OK,signal,1,M,S,yes,SUPPORTED,,direct
+TU,TDBAUD,signal,2,L,Q,yes,SUPPORTED,,
+TN,TDCHAN,signal,2,L,Q,yes,SUPPORTED,,
+TV,TDM,signal,2,L,S,yes,SUPPORTED,,direct
+5B,5BIT,global,1,M,S,yes,SUPPORTED,,direct
+6B,6BIT,global,1,M,S,yes,SUPPORTED,,direct
+AA,ACRDISP,global,1,M,Q,yes,SUPPORTED,,
+AE,ADDRESS,global,1,M,Q,yes,SUPPORTED,,
+AZ,AFILTER,global,1,M,Q,yes,SUPPORTED,,
+AI,ALFDISP,global,1,M,Q,yes,SUPPORTED,,
+AM,AMTOR,global,1,M,S,yes,SUPPORTED,,direct
+AS,ASCII,global,1,M,S,yes,SUPPORTED,,direct
+UT,AUTOBAUD,global,2,H,Q,yes,SUPPORTED,,terminal autobaud
+AW,AWLEN,global,1,M,Q,yes,SUPPORTED,,
+BA,BAUDOT,global,1,M,S,yes,SUPPORTED,,direct
+BK,BKONDEL,global,1,M,Q,yes,SUPPORTED,,
+CL,CANLINE,global,1,M,Q,yes,SUPPORTED,,
+CQ,CMDTIME,global,1,M,Q,yes,SUPPORTED,,
+CN,COMMAND,global,1,M,Q,yes,SUPPORTED,,
+K,CONVERSE,global,1,M,S,yes,SUPPORTED,,enters converse mode
+DS,DAYSTAMP,global,1,M,Q,yes,SUPPORTED,,
+DA,DAYTIME,global,1,M,Q,yes,SUPPORTED,,
+DI,DISPLAY,global,1,M,S,yes,SUPPORTED,,dumps all params (direct)
+EC,ECHO,global,1,M,Q,yes,SUPPORTED,,
+ES,ESCAPE,global,1,M,Q,yes,SUPPORTED,,
+EX,EXPERT,global,2,L,Q,yes,SUPPORTED,,unlocks expert cmds; verbose-only
+FA,FAX,global,1,M,S,yes,SUPPORTED,,direct
+FL,FLOW,global,1,M,Q,yes,SUPPORTED,,
+FI,FRICK,global,2,H,Q,yes,SUPPORTED,,keying/timing delay
+HE,HELP,global,1,H,S,yes,SUPPORTED,,displays important commands (direct)
+HO,HOST,global,1,M,Q,yes,SUPPORTED,,
+HY,HOSTKEY,global,3,H,Q,yes,SUPPORTED,,hex value $0000; host-mode key; live-confirmed (not in disp gps)
+IO,IO,global,1,M,Q,yes,SUPPORTED,,
+LI,LITE,global,2,H,Q,yes,SUPPORTED,,lite mode
+MOP,MOPTT,global,2,H,Q,yes,SUPPORTED,,modem PTT option
+MO,MORSE,global,1,M,S,yes,SUPPORTED,,direct
+NR,NUCR,global,1,M,Q,yes,SUPPORTED,,
+NF,NULF,global,1,M,Q,yes,SUPPORTED,,
+NU,NULLS,global,1,M,Q,yes,SUPPORTED,,
+OP,OPMODE,global,3,M,Q,yes,SUPPORTED,,safe: queries opmode
+PA,PACKET,global,1,M,S,yes,SUPPORTED,,direct
+PR,PARITY,global,1,M,Q,yes,SUPPORTED,,
+PC,PRCON,global,1,M,Q,yes,SUPPORTED,,
+PO,PROUT,global,1,M,Q,yes,SUPPORTED,,
+RD,REDISPLAY,global,1,M,Q,yes,SUPPORTED,,
+SA,SAMPLE,global,1,M,S,yes,SUPPORTED,,direct
+SI,SIGNAL,global,1,M,S,yes,SUPPORTED,,direct
+ST,START,global,1,M,Q,yes,SUPPORTED,,
+SO,STOP,global,1,M,Q,yes,SUPPORTED,,
+TB,TBAUD,global,1,M,Q,yes,SUPPORTED,,
+TC,TCLEAR,global,1,M,S,yes,SUPPORTED,,direct
+TM,TIME,global,1,M,Q,yes,SUPPORTED,,
+T,TRANS,global,1,M,S,yes,SUPPORTED,,enters transparent mode
+TW,TRFLOW,global,1,M,Q,yes,ERROR,,
+XW,XFLOW,global,1,M,Q,yes,ERROR,,
