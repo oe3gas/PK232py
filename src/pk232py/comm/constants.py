@@ -245,3 +245,21 @@ def ctl_type_range(ctl: int) -> int:
         Upper nibble as integer (0x20, 0x30, 0x40, or 0x50).
     """
     return ctl & 0xF0
+
+
+# ---------------------------------------------------------------------------
+# Verbose command terminator (P75)
+# ---------------------------------------------------------------------------
+# A verbose COMMAND ends with CR only. With ILFPACK OFF the TNC does not ignore
+# the LF of "CR LF": it stays in the line buffer and becomes the first character
+# of the NEXT command ("<LF>USERS" -> ?What?, T155). CR alone works with ILFPACK
+# ON and OFF on both devices (T175, 06.10.2026). The TNC's own ANSWERS still end
+# with CR LF - parsers and read_until() keep that. Data lines that go out on the
+# air (RTTY TX, Packet) are not commands and are not built here.
+
+VERBOSE_EOL = b"\r"
+
+
+def verbose_line(text: str) -> bytes:
+    """One verbose-mode command line: *text* + CR (ASCII)."""
+    return text.encode("ascii", errors="replace") + VERBOSE_EOL

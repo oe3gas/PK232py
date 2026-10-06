@@ -45,6 +45,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from .constants import (
     SerialDefaults,
+    verbose_line,
     FRAME_POLL,
     FRAME_RECOVERY,
     FRAME_HOST_OFF,
@@ -119,10 +120,10 @@ _WORKER_FLUSH_DELAY = 0.5
 
 # Byte sequences
 _WAKEUP       = b"*"                               # no CR — autobaud trigger
-_CMD_AWLEN    = b"AWLEN 8\r\n"
-_CMD_PARITY   = b"PARITY 0\r\n"
-_CMD_8BITCONV = b"8BITCONV ON\r\n"
-_CMD_RESTART  = b"RESTART\r\n"
+_CMD_AWLEN    = verbose_line("AWLEN 8")
+_CMD_PARITY   = verbose_line("PARITY 0")
+_CMD_8BITCONV = verbose_line("8BITCONV ON")
+_CMD_RESTART  = verbose_line("RESTART")
 # PCPackRatt-verified. HOST is a bit field (TRM ch.12), not a plain on/off
 # toggle: bit 0 = Host Mode on/off, bit 1 = local MailDrop login (moves the
 # MailDrop data channel from $2x/$2F to $60/$70), bit 2 = extended Host
@@ -705,7 +706,7 @@ class SerialManager(QObject):
                 or not self.is_connected):
             return self.tnc_release
         self.release_probe_attempted = True
-        _found, raw = self._write_verbose_wait_text(b"EXPERT\r\n", timeout=timeout)
+        _found, raw = self._write_verbose_wait_text(verbose_line("EXPERT"), timeout=timeout)
         found = infer_release(raw.decode("ascii", errors="replace"))
         if found:
             self.set_inferred_release(*found)
@@ -758,7 +759,7 @@ class SerialManager(QObject):
         part empty - LiveLinks never guesses a link or a band."""
         def ask(command: str) -> str:
             _found, raw = self._write_verbose_wait_text(
-                f"{command}\r\n".encode("ascii"), timeout=timeout)
+                verbose_line(command), timeout=timeout)
             return raw.decode("ascii", errors="replace")
 
         cstatus = ask("CSTATUS")
@@ -797,7 +798,7 @@ class SerialManager(QObject):
         """
         if not self.is_connected:
             return self._has_maildrop
-        _found, raw = self._write_verbose_wait_text(b"MAILDROP\r\n", timeout=timeout)
+        _found, raw = self._write_verbose_wait_text(verbose_line("MAILDROP"), timeout=timeout)
         text = raw.decode("ascii", errors="replace")
         self._has_maildrop = _classify_maildrop_response(text)
         return self._has_maildrop
@@ -828,7 +829,7 @@ class SerialManager(QObject):
         if not self.is_connected:
             return None
         _found, raw = self._write_verbose_wait_text(
-            f"{name}\r\n".encode("ascii"), timeout=timeout
+            verbose_line(name), timeout=timeout
         )
         text = raw.decode("ascii", errors="replace")
         return _parse_verbose_query_value(name, text)

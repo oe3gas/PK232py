@@ -33,6 +33,7 @@ from typing import Optional, Protocol
 
 from pk232py.comm.devices import infer_release
 from pk232py.comm.frame import FrameKind
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.host_params import (
     HostParam, host_error_code, host_query_args, host_set_args, norm_value,
     param_by_name, parse_host_answer,
@@ -365,14 +366,14 @@ class SerialParamTransport:
 
     # -- verbose -----------------------------------------------------------
     def verbose_set(self, name: str, value: str) -> str:
-        _found, raw = self._sm.send_verbose_command(f"{name} {value}\r\n".encode("ascii"))
+        _found, raw = self._sm.send_verbose_command(verbose_line(f"{name} {value}"))
         return raw.decode("ascii", errors="replace")
 
     def verbose_query(self, name: str) -> Optional[str]:
         return self._sm.query_verbose_value(name)
 
     def verbose_query_text(self, command: str) -> str:
-        _found, raw = self._sm.send_verbose_command(f"{command}\r\n".encode("ascii"))
+        _found, raw = self._sm.send_verbose_command(verbose_line(command))
         return raw.decode("ascii", errors="replace")
 
     def escape_converse(self) -> bool:
@@ -382,4 +383,4 @@ class SerialParamTransport:
         return found
 
     def return_to_converse(self) -> None:
-        self._sm.write_verbose(b"CONVERSE\r\n")
+        self._sm.write_verbose(verbose_line("CONVERSE"))

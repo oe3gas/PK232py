@@ -26,6 +26,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Iterable, Optional
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.devices import unknown_commands
 from pk232py.comm.host_params import BAND_HF, BAND_PARAMS, BAND_VHF, band_value, norm_value
 
@@ -649,13 +650,13 @@ class ParamsUploader:
 
     @staticmethod
     def _cmd(name: str, value: str) -> bytes:
-        """Build a verbose-mode command: b'NAME value\\r\\n'"""
-        return f"{name} {value}\r\n".encode('ascii', errors='replace')
+        """Build a verbose-mode command: b'NAME value\\r' (CR only, P75)"""
+        return verbose_line(f"{name} {value}")
 
     @staticmethod
     def _bool(name: str, value: bool) -> bytes:
-        """Build a verbose-mode boolean command: b'NAME ON\\r\\n'"""
-        return f"{name} {'ON' if value else 'OFF'}\r\n".encode('ascii')
+        """Build a verbose-mode boolean command: b'NAME ON\\r' (CR only, P75)"""
+        return verbose_line(f"{name} {'ON' if value else 'OFF'}")
 
     def _access_filter_cmds(self, name: str, mode: str, calls: str) -> list[bytes]:
         """Build the command(s) for one access filter (CFROM/DFROM/MFROM/MTO,
