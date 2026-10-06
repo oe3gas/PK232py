@@ -70,6 +70,21 @@ def render(entries: dict) -> str:
             + " | ".join(e.fw[r] for r in cm.RELEASES)
             + f" | {_cell(e.default)} | {_cell(e.function)}{_cell(note)} | {_cell(evidence)} |"
         )
+    effects = [(n, entries[n]) for n in sorted(entries) if any(entries[n].fx.get(r) for r in cm.RELEASES)]
+    if effects:
+        lines += [
+            "",
+            "## Effect and way back of risky commands (P89)",
+            "",
+            "> What the command did on the device and how the command mode was reached again "
+            "(`tools/pk232_fw_scan.py --all`, no radio connected).",
+            "",
+            "| Name | Kind | " + " | ".join(cm.RELEASES) + " |",
+            "|---|---|---|---|---|",
+        ]
+        for name, e in effects:
+            lines.append(f"| {_cell(name)} | {e.kind} | "
+                         + " | ".join(_cell(e.fx.get(r, "")) for r in cm.RELEASES) + " |")
     return "\n".join(lines) + "\n"
 
 
