@@ -43,6 +43,9 @@ Windows 11 + PowerShell, venv im Repo-Root (`.venv`), Git-Branch `main`.
 - Dateien in PowerShell nur mit `UTF8Encoding($false)` (UTF-8 ohne BOM) schreiben, nie per PowerShell-Copy deployen.
   `main_window.py` kennt ein Append-Artefakt (No-op-String mit Mojibake, §10) — Details: `docs/claude/GOTCHAS_UI_AND_TOOLING.md`, „Dead Code“.
 - Git: Datei heißt `CLAUDE.md` (Großschreibung; Rename 2026-09-29).
+- Spec als Scratch-Datei: Liegt in `docs/` eine nicht versionierte Datei `Textdokument (neu).txt` (oder ähnlich), deren
+  erste Zeile mit `# Claude Code Prompt — P` beginnt, ist das eine Spec. Zielnamen aus der Zeile `Ablage: docs/…`
+  übernehmen, die Datei dorthin umbenennen und das im Bericht erwähnen. Keine anderen Dateien so behandeln.
 
 ## Repository-Struktur (Kurzform; vollständiger Baum: Anhang in `docs/claude/PROTOCOL_AND_ARCHITECTURE.md`)
 
