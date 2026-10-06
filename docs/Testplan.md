@@ -3622,6 +3622,29 @@ a repeated call counts 0 (`TestFilledCounter`).
 
 ---
 
+### T182 / T183 / T184 — scan of ALL commands with `--all` (P89 Teil F)
+
+Software: `test_pk232_fw_scan_risky.py` (mock TNCs: the transparent mode only a paced 3 x Ctrl-C leaves, CALIBRATE that returns on `Q` or after
+60 s, a command after which the TNC stays silent until it is power-cycled). **Operator at the TNC, NO RADIO connected (or a dummy load).**
+The tool asks for both confirmations (exit code 5 without them) before it opens the port. It runs the normal queries first, then every command that
+was never sent (37), one by one from the harmless to the most delicate: baseline `cmd:`, send, 3 s of raw recording, way back from the table `RECOVERY`
+(each step logged with its result), `OPMODE` and `MYCALL` afterwards; if no way back works it asks you to power-cycle the TNC (`needs_power_cycle`)
+and wakes it like the app (`*` first), then sets MYCALL again. RESTART / RESET / REINIT wait for the banner.
+
+`.venv\Scripts\python.exe tools\pk232_fw_scan.py --port COMx --all --csv hw_logs\<date>_fw_scan_all_<device>.csv --debug hw_logs\<date>_fw_scan_all_<device>.log`
+(`--plan --all` lists the order and the ways back; add `--update-matrix` only after reading "DIFFERENT FROM THE MATRIX" - it fills the `fw_` cells and, if
+empty, the new `fx_` cells with effect and way back, e.g. `enters transparent mode; exit 3xCtrl-C/CMDTIME`.)
+
+| # | Device | Expected | Result |
+|---|---|---|---|
+| T182 | A (13.SEP.95) | every risky command measured with its effect and way back; the July finding (TRANS / CALIBRATE not left with a hurried Ctrl-C) explained by the paced 3 x Ctrl-C / `Q` / 60 s | ⬜ |
+| T183 | B (01.AUG.91) | same | ⬜ |
+| T184 | C (30.DEC.88) | same (wakes only on a first `*`; RESTART may need a `*` again) | ⬜ |
+
+**Status:** ⬜ OPEN — tool done, runs pending.
+
+---
+
 ### T174 — Macros in Packet; crashes in the log file (P86)
 
 Any device (macros are only inserted, nothing is sent). Software: `test_macros_packet_p86.py`,

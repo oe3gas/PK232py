@@ -197,6 +197,16 @@ Settled by the evidence, not by the spec text (see the P88 report):
 the parameter masks (show a field only where the command is `yes`/`expert`) from the matrix. Until then
 `test_command_matrix_agreement.py` fails if they contradict it.
 
+### Scanner probes ALL commands (P89) — ✅ done, T182-T184 open (2026-10-06)
+
+Operator decision: the scanner always runs at a TNC that cannot transmit (no radio), so `--all` sends every command, also the 37 of kind mode / action_tx / danger
+and TRANS / CALIBRATE, and records what they DO. Two operator confirmations are required and not switchable (exit code 5). Each risky command alone, from the harmless to the
+most delicate, with a 3 s raw recording, the way back from ONE table (`RECOVERY`: modes `PACKET` / Ctrl-C; transmitting ones Ctrl-C / `RCVE` / `DISCONNE` / `PACKET`; TRANS paced
+3 x Ctrl-C within CMDTIME per STABO ch. 4; CALIBRATE `Q` / Ctrl-C / 65 s; RESTART / RESET / REINIT banner then `*`), then OPMODE and MYCALL; `needs_power_cycle` instead of
+hanging (the operator power-cycles, the scanner wakes the TNC with `*` first and sets MYCALL again). The matrix has `fx_<release>` columns for effect and way back
+(`--update-matrix` fills them only when empty, a different text aborts with a list). The table is the thing being measured: which way back worked per command and firmware is the result.
+Not tested on a device yet (T182-T184). The mock models the documented behaviour (CMDTIME 1 s, 60 s calibration), the real devices may differ - that is what the runs are for.
+
 ### Device C: release key and the EXPERT fingerprint (T180) — ✅ done, matrix update for 30.DEC.88 open (2026-10-06)
 
 The banner of device C prints `Release 30.DEC.88`; every release key is now the banner text (a test checks `DD.MMM.YY`). `infer_release()` asks a
