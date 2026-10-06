@@ -696,10 +696,13 @@ class SerialManager(QObject):
 
     def probe_release_verbose(self, timeout: float = 3.0) -> Optional[str]:
         """No banner release known: ONE verbose ``EXPERT`` query and the
-        fingerprint of its answer (P78 A). Must be called at the cmd: prompt
-        - the same discipline as detect_maildrop(), which it runs next to
-        (ParamsUploader.upload()). The Host Mode variant (``EX``) needs the
-        frame exchange of SerialParamTransport, which is where it lives.
+        fingerprint of its answer (P78 A). Device B and device C both answer it
+        with ``?What?`` (T180): only then a SECOND bare query follows, of the
+        command the command matrix names as the one that tells them apart
+        (MAILDROP, comm/devices.py discriminating_command()). Must be called
+        at the cmd: prompt - the same discipline as detect_maildrop(), which it
+        runs next to (ParamsUploader.upload()). The Host Mode variant (``EX``)
+        needs the frame exchange of SerialParamTransport, which is where it lives.
 
         Returns the release afterwards (None if still unknown)."""
         if (self.tnc_release is not None or self.release_probe_attempted
@@ -707,7 +710,12 @@ class SerialManager(QObject):
             return self.tnc_release
         self.release_probe_attempted = True
         _found, raw = self._write_verbose_wait_text(verbose_line("EXPERT"), timeout=timeout)
-        found = infer_release(raw.decode("ascii", errors="replace"))
+
+        def second(command: str) -> str:
+            _f, answer = self._write_verbose_wait_text(verbose_line(command), timeout=timeout)
+            return answer.decode("ascii", errors="replace")
+
+        found = infer_release(raw.decode("ascii", errors="replace"), second=second)
         if found:
             self.set_inferred_release(*found)
         return self.tnc_release

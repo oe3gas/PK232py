@@ -31,6 +31,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
+from pk232py.comm import command_matrix
 from pk232py.comm.devices import infer_release
 from pk232py.comm.frame import FrameKind
 from pk232py.comm.constants import verbose_line
@@ -324,20 +325,26 @@ class SerialParamTransport:
         """The TNC release: from the banner, else inferred (P78 A).
 
         An INFERRED release counts exactly like a banner one. That is only
-        sound while docs/DEVICES.md lists one unit per firmware generation
-        (comm/devices.py): a second unit of the same generation would make the
-        EXPERT fingerprint ambiguous, and infer_release() then answers None.
+        sound while the command matrix can tell the candidates apart
+        (comm/devices.py): an ambiguous fingerprint answers None.
 
         With no release known in Host Mode, ONE ``EX`` query is made here
         (once per connection) and its answer fingerprinted - without it
         nothing could be set in Host Mode on a TNC that was already awake
-        when the app connected (T162).
+        when the app connected (T162). Device B and device C answer ``EX``
+        alike ($07, T180): then ONE more query of the command the matrix names
+        as the discriminating one (its measured Host Mode mnemonic, MV for
+        MAILDROP) decides.
         """
         sm = self._sm
         if (sm.tnc_release is None and not getattr(sm, "release_probe_attempted", False)
                 and self.mode() == "host"):
             sm.release_probe_attempted = True
-            found = infer_release(self.host_exchange(b"EX", b""))
+            def second(command: str):
+                mnemonic = command_matrix.host(command)
+                return self.host_exchange(mnemonic.encode("ascii"), b"") if mnemonic else None
+
+            found = infer_release(self.host_exchange(b"EX", b""), second=second)
             if found:
                 sm.set_inferred_release(*found)
         return sm.tnc_release

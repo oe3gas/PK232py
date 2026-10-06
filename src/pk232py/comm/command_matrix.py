@@ -33,7 +33,7 @@ from typing import Optional
 DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "command_matrix.csv"
 
 # The firmware releases exactly as the boot banner prints them (docs/DEVICES.md).
-RELEASES = ("01.AUG.91", "13.SEP.95", "30.12.1988")
+RELEASES = ("01.AUG.91", "13.SEP.95", "30.DEC.88")
 CELL_VALUES = ("yes", "no", "expert", "?")
 KINDS = ("param", "immediate", "mode", "action_tx", "danger")
 

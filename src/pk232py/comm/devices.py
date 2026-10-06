@@ -13,12 +13,17 @@ one measured difference between the firmware generations:
     EXPERT   verbose              Host (EX query)
     B  01.AUG.91   ?What?          error code $07      (T151, T155)
     A  13.SEP.95   ON / OFF        EXY / EXN           (T151 22:07, T152, T158)
-    C  30.12.1988  not measured    not measured
+    C  30.DEC.88   ?What?          error code $07?     (T180, verbose measured)
 
-The inference holds ONLY as long as KNOWN_DEVICES lists exactly one unit per
-behaviour (docs/DEVICES.md): a second unit of the same generation makes the
-fingerprint ambiguous - infer_release() then answers None, never a guess.
-Device C is deliberately unmeasured, so it can never be inferred.
+EXPERT alone separates A from the other two, but B and C answer it the same way (T180, device C,
+06.10.2026, hw_logs/20261006_fw_scan_C.log): with that answer the release is ambiguous. A SECOND
+question tells them apart, and it is DERIVED from the command matrix, not coded here: a command
+whose cell is known on every candidate and differs between them (MAILDROP: yes on 01.AUG.91, no on
+30.DEC.88; ``discriminating_command()``). It is asked only when EXPERT does not decide.
+
+The inference holds ONLY as long as the matrix has a differing, measured command for the candidates:
+no such command, an unusable answer, or two candidates that still match -> infer_release() answers
+None, never a guess.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional, Union
 
+from pk232py.comm import command_matrix as cm
 from pk232py.comm.host_params import host_error_code
 
 SOURCE_BANNER = "banner"
@@ -38,7 +44,7 @@ class KnownDevice:
     label: str                  # "A" / "B" / "C" (docs/DEVICES.md)
     generation: str             # PACTOR / MBX / BASE
     release: str                # exactly as the banner prints it
-    expert: Optional[str]       # "present" / "absent" / None = not measured
+    expert: Optional[str]       # "present" / "absent" / None = not measured (agrees with the matrix cell)
     # P85: verbose command names the firmware answers with ?What? (the upload
     # leaves them out). frozenset() = measured, none; None = not measured.
     unknown_verbose: Optional[frozenset] = None
@@ -57,7 +63,8 @@ KNOWN_DEVICES: tuple = (
                            "ARQTOL", "MOPT"}),
                 "T155, T160, T168"),
     # C: never connected through the app - unmeasured (None), so everything is sent.
-    KnownDevice("C", "BASE", "30.12.1988", None, None, ""),
+    # C: banner `Release 30.DEC.88`; EXPERT answers ?What? like B (T180); everything else unmeasured.
+    KnownDevice("C", "BASE", "30.DEC.88", "absent", None, ""),
 )
 
 _VALUE_RE = re.compile(r"\b(ON|OFF)\b", re.IGNORECASE)
@@ -83,17 +90,90 @@ def expert_behaviour(answer: Union[str, bytes, None]) -> Optional[str]:
     return None
 
 
-def infer_release(expert_answer: Union[str, bytes, None]) -> Optional[tuple]:
-    """(release, "inferred") for the one known device whose EXPERT behaviour
-    matches *expert_answer*, else None (unusable answer, several devices
-    match, or none does)."""
+def candidate_releases(expert_answer: Union[str, bytes, None]) -> list:
+    """The releases whose EXPERT behaviour matches *expert_answer*: [] (unusable answer),
+    one release (decided) or several (ambiguous - ask the second question)."""
     behaviour = expert_behaviour(expert_answer)
     if behaviour is None:
+        return []
+    return [d.release for d in KNOWN_DEVICES if d.expert == behaviour]
+
+
+def _same(cell: str) -> str:
+    return "yes" if cell == "expert" else cell        # present is present, EXPERT or not
+
+
+def discriminating_command(releases: list, preferred: tuple = ("MAILDROP",)) -> Optional[str]:
+    """A command to ask that tells *releases* apart, DERIVED from the command matrix: its cell is
+    measured (not ?) on every one of them and differs between them, and it is a plain parameter
+    (a bare query changes nothing). *preferred* only orders the choices - MAILDROP is what the
+    app already asks for its capability check (detect_maildrop); the matrix still has to say that it
+    discriminates. None if no command does."""
+    entries = cm.all_entries()
+
+    def discriminates(name: str) -> bool:
+        e = entries.get(name)
+        if e is None or e.kind != "param":
+            return False
+        cells = [e.fw.get(r, "?") for r in releases]
+        return "?" not in cells and len({_same(c) for c in cells}) > 1
+
+    for name in preferred:
+        if discriminates(name):
+            return name
+    return next((n for n in sorted(entries) if discriminates(n)), None)
+
+
+def answer_behaviour(command: str, answer: Union[str, bytes, None]) -> Optional[str]:
+    """What the answer to a bare query of *command* says: "no" (unknown command: verbose ?What?,
+    Host error $07), "yes" (a value, or ?EXPERT command = present but gated) or None (nothing
+    usable - silence, only an echo, another error)."""
+    if not answer:
         return None
-    matches = [d for d in KNOWN_DEVICES if d.expert == behaviour]
-    if len(matches) != 1:
+    if isinstance(answer, bytes):
+        code = host_error_code(answer)
+        if code is not None:
+            return "no" if code == 0x07 else None
+        mnemonic = (cm.host(command) or "").encode("ascii")
+        return "yes" if mnemonic and answer.startswith(mnemonic) and len(answer) > len(mnemonic) else None
+    # the answer must START with the echo of this very command (a late answer of another command or
+    # stray text is nobody's answer); stale prompts in front of it are skipped
+    text = answer.replace("\x11", "").lstrip(" \n\r\x00")
+    while text.lower().startswith("cmd:"):
+        text = text[4:].lstrip(" \n\r\x00")
+    if not text.upper().startswith(command.upper()):
         return None
-    return matches[0].release, SOURCE_INFERRED
+    rest = text[len(command):].split("cmd:", 1)[0]
+    low = rest.lower()
+    if "?what?" in low:
+        return "no"
+    if "?expert" in low:
+        return "yes"
+    return "yes" if rest.strip() else None
+
+
+def infer_release(expert_answer: Union[str, bytes, None], second=None) -> Optional[tuple]:
+    """(release, "inferred") for the one known device that fits, else None.
+
+    *expert_answer* is the answer to a bare EXPERT query. When it decides (one candidate) that is
+    the result. When it does not (B and C both answer ?What?), *second* - a callable
+    ``second(command_name) -> answer`` that asks the TNC (verbose or Host Mode, the caller knows how)
+    - is called ONCE with the command ``discriminating_command()`` derives from the matrix, and the
+    candidate whose matrix cell fits the answer wins. Without *second*, an unusable answer, no
+    discriminating command or more than one fitting candidate: None - never a guess."""
+    candidates = candidate_releases(expert_answer)
+    if len(candidates) == 1:
+        return candidates[0], SOURCE_INFERRED
+    if len(candidates) < 2 or second is None:
+        return None
+    command = discriminating_command(candidates)
+    if command is None:
+        return None
+    behaviour = answer_behaviour(command, second(command))
+    if behaviour is None:
+        return None
+    fitting = [r for r in candidates if _same(cm.exists(command, r)) == behaviour]
+    return (fitting[0], SOURCE_INFERRED) if len(fitting) == 1 else None
 
 
 def _device_for(release: Optional[str]) -> Optional[KnownDevice]:

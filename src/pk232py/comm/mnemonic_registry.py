@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pk232py.comm.host_params import HOST_PARAMS, verified_sources
 
 # The columns of docs/MNEMONIC_AUDIT.md, as printed in the boot banner.
-RELEASES = ("01.AUG.91", "13.SEP.95", "30.12.1988")
+RELEASES = ("01.AUG.91", "13.SEP.95", "30.DEC.88")
 
 
 @dataclass(frozen=True)
