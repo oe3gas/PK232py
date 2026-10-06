@@ -1323,6 +1323,11 @@ never retyped; everything else names the Testplan entry, or stays `{}`
     `main_window.py` for CR LF literals; every exception is on a named allow list
     (file, function). `IL` is verified on 01.AUG.91 only (T175: Host `IL N`, verbose
     `ILFPACK` OFF, back with `IL Y`); ParamApplier sets ILFPACK live again.
+  - **A device with a RAM battery has settings of its own - a scanner must leave them as found (P90).** `ECHO OFF` is the dangerous one: the TNC no longer echoes
+    what is typed, so "the answer starts with the echo of my command" (the rule since T179) fails for EVERY command. The scanner reads `ECHO`, `OPMODE` and `DISPLAY` first, switches
+    `ECHO ON` for the scan (and `EXPERT ON`, as always), and puts operating mode, EXPERT and ECHO back; `DISPLAY` before and after is compared and a difference is reported.
+    `OPMODE` answers `Opmode    PAcket` on ONE line - parse `Opmode[ \t]+(\w+)`, not `\s+` (that matches the echo's line break and returns the word "Opmode"). The devices of
+    external operators also carry other interface settings (baud rate, 7 bits): the scan kit tells them to try `--baud`, and to power-cycle for the autobaud `*`.
   - **Release keys are the banner text, `DD.MMM.YY` (T180).** Device C prints `Release 30.DEC.88` (not the transcription
     `30.12.1988`, which stays in older entries). A key that is not the banner's own text silently matches no device
     (`devices.has_pactor()` / `unknown_commands()` answer "unknown", the scanner says "device ?"); a test checks every key.

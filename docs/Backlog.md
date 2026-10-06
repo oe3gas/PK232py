@@ -197,6 +197,19 @@ Settled by the evidence, not by the spec text (see the P88 report):
 the parameter masks (show a field only where the command is `yes`/`expert`) from the matrix. Until then
 `test_command_matrix_agreement.py` fails if they contradict it.
 
+### Scan kit for external radio amateurs and import of their results (P90) — ✅ done, T185 open (2026-10-06)
+
+An operator with 12 PK-232 of different firmware offered to run the scanner. `tools/build_scan_kit.py` builds `dist/pk232_scan_kit_<date>.zip` (reproducible for the same sources and date):
+a STAND-ALONE `pk232_fw_scan.py` generated from the tool (the import block is replaced by copies of what it needs: wake-up byte, banner markers, `escape_converse()`, `verbose_line()`,
+the command matrix reader and the matrix as an embedded table; `_KIT = True`, no `--update-matrix`), requirements (`pyserial`), README DE/EN, `run_scan.bat` / `.sh`, `device_info.txt`.
+The safe run is the default; `--all` only with the P89 confirmations. Per device a folder `scan_<release>_<serial|n#>/` (banner verbatim, scan.csv, debug.log, DISPLAY before/after,
+device_info form) and `results_<call>_<date>.zip`. **The device is left as found**: operating mode, EXPERT, ECHO read before and restored (a device with a battery may have ECHO OFF, which the
+scan switches on and back; DISPLAY before/after compared and a difference reported); no MYCALL, no RESET / REINIT in the safe run. `tools/import_external_scan.py <zip>`: a new release becomes
+new `fw_/ev_/fx_` columns (the matrix releases are now the header of the data file), only `?` cells are filled with `ext <call> <date> <folder>/scan.csv`, the SAME release with another result
+writes NOTHING and lists it, raw files go unchanged to `docs/reference/external/<call>/` (commit them only after the operator's consent) and the device_info form becomes a line in
+`docs/reference/external/devices.md` (not in `docs/DEVICES.md`).
+Open: the German README promises consent by e-mail reply - the wording is ours, read it before sending the kit; the kit was never run on a real device without the repo (T185).
+
 ### Scanner probes ALL commands (P89) — ✅ done, T182-T184 open (2026-10-06)
 
 Operator decision: the scanner always runs at a TNC that cannot transmit (no radio), so `--all` sends every command, also the 37 of kind mode / action_tx / danger

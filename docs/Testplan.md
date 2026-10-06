@@ -3645,6 +3645,30 @@ empty, the new `fx_` cells with effect and way back, e.g. `enters transparent mo
 
 ---
 
+### T185 — scan kit rehearsal at device B with our own setup (P90)
+
+Software: `test_scan_kit_p90.py` (builds the kit, runs the embedded scanner in an empty interpreter), `test_pk232_fw_scan_kit.py`,
+`test_import_external_scan_p90.py`. **Operator at the TNC, no radio connected.** Rehearse exactly what an external operator will do:
+
+1. `.venv\Scripts\python.exe tools\build_scan_kit.py` -> `dist\pk232_scan_kit_<date>.zip`; unpack it into an EMPTY folder (not the repo) and use a Python
+   that has only `pyserial` (a fresh venv).
+2. Run `run_scan.bat` (port, 9600, your callsign): the safe run. Before it, put device B into a state of its own to test the restore: for instance
+   `EXPERT ON`, `ECHO OFF` and another operating mode (BAUDOT).
+3. At the end the report must say `Device state : restored (DISPLAY before = after)`; check `settings_before.txt` against `settings_after.txt` and that
+   `EXPERT`, `ECHO` and the operating mode are as you left them. `scan_results\scan_01.AUG.91_n1\` holds banner.txt (verbatim), scan.csv, debug.log,
+   settings_before/after.txt, device_info.txt; `scan_results\results_<call>_<date>.zip` holds the folder.
+4. Fill in `device_info.txt`, then on our side `.venv\Scripts\python.exe tools\import_external_scan.py <zip> --dry-run`: no contradiction with our own
+   measurements of device B (T179); a real import would change nothing (all cells are known).
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | steps 1-3 with ECHO OFF / EXPERT ON / BAUDOT beforehand | scan without ERROR, device state restored | ⬜ |
+| 2 | step 4 `--dry-run` | 0 cells filled, no contradiction | ⬜ |
+
+**Status:** ⬜ OPEN — kit, restore and import done, rehearsal pending.
+
+---
+
 ### T174 — Macros in Packet; crashes in the log file (P86)
 
 Any device (macros are only inserted, nothing is sent). Software: `test_macros_packet_p86.py`,
