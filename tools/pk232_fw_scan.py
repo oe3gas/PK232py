@@ -79,12 +79,37 @@ import datetime as _dt
 import json
 import os
 import re
+import shutil
 import sys
 import time
+import zipfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+
+# True in der vom Kit-Bauer (tools/build_scan_kit.py) erzeugten, eigenstaendigen Fassung fuer externe
+# Funkamateure: dort gibt es keine Matrix zum Fuellen (--update-matrix entfaellt), die Ergebnisse gehen
+# immer in einen Ergebnisordner (scan_results) und ein ZIP.
+_KIT = False
+
+DEVICE_INFO_TEMPLATE = """# PK-232 scan - device information. Please fill in what you know and send this file back with the results.
+# Model: PK-232 / PK-232MBX / with DSP
+Model:
+# EPROM label as printed on the chip
+EPROM label:
+# Board options: PACTOR, mailbox, 2400-baud modem
+Board options:
+# Battery backup (RAM battery): yes / no
+Battery backup:
+Remarks:
+
+# Filled in by the scanner:
+Release: {release}
+Callsign: {call}
+Date: {date}
+Serial: {serial}
+"""
 
 # Zeit und Eingabe als Haken: die Tests ersetzen sie durch eine simulierte Uhr (kein echtes Warten
 # von 65 s) und vorgegebene Antworten.
@@ -385,6 +410,10 @@ class MockTransport:
       * ``banner_late_reads`` -- das Banner kommt erst im n-ten Lesefenster
       * ``ignores_star`` / ``in_converse`` / ``deaf`` -- die Schritte der Erkennungskette
 
+    Geraet eines externen Betreibers (P90): ``opmode``, ``expert_on``, ``echo_on`` sind der Zustand, in
+    dem es steht (Pufferbatterie); bei ``echo_on=False`` kommt kein Echo; ``sticky={"EXPERT OFF"}`` --
+    diese Befehle werden angenommen, aendern aber nichts (der Zustand bleibt anders als vorher).
+
     Riskante Befehle (P89, ``risky=True``, Zeit aus ``clock`` bzw. scan._clock):
       * TRANS -> Transparentmodus: nur drei Ctrl-C innerhalb von CMDTIME (1 s) nach mindestens 1 s
         Ruhe verlassen ihn (STABO Kap. 4); hastiges Ctrl-C bewirkt nichts (der Juli-Lauf)
@@ -405,15 +434,19 @@ class MockTransport:
                  banner_late_reads: int = 0, ignores_star: bool = False,
                  in_converse: bool = False, deaf: bool = False,
                  clock=None, risky: bool = False, calibrate_ignores_q: bool = False,
-                 stuck: Optional[dict] = None, dead_after: Optional[set] = None):
+                 stuck: Optional[dict] = None, dead_after: Optional[set] = None,
+                 opmode: str = "PACKET", expert_on: bool = False, echo_on: bool = True,
+                 sticky: Optional[set] = None):
         self.release = release
         self.entries = cm.all_entries() if entries is None else entries
         self.debug = debug
         self.sent: list = []
         self._pending = ""
         self._late_reads = 0          # so many read_idle() calls return '' before the reply
-        self.expert_on = False
-        self.opmode = "PACKET"
+        self.expert_on = expert_on
+        self.echo_on = echo_on
+        self.sticky = {x.upper() for x in (sticky or ())}
+        self.opmode = opmode
         self.mycall = self.FACTORY_MYCALL
         self.slow_in_signal = slow_in_signal
         self.late = set(late or ())
@@ -457,6 +490,7 @@ class MockTransport:
         self.mycall = self.FACTORY_MYCALL
         self.opmode = "PACKET"
         self.expert_on = False
+        self.echo_on = True
         self.transparent = self.calibrating = self.in_converse = False
         self._stuck_until = None
         self.dead_after = set()
@@ -472,6 +506,8 @@ class MockTransport:
         """Queue *text*; an undelivered earlier reply stays in front of it (the pipeline shift)."""
         if name in self.silent:
             return
+        if not self.echo_on and name and text.upper().startswith(name.upper() + "\r\n"):
+            text = text[len(name) + 2:]               # ECHO OFF: the typed characters are not echoed
         slow = self.slow_in_signal and self.opmode == "SIGNAL" and name not in self._MODES
         if slow:
             text += "noise\r\n"
@@ -551,6 +587,9 @@ class MockTransport:
             return
         line = data.decode("latin-1").strip()
         name = line.upper()
+        if name in self.sticky:                     # accepted, but nothing changes
+            self._reply(f"{name}\r\ncmd:", name)
+            return
         if name == "RESTART":
             self._pending = ""
             self._late_reads = 0
@@ -562,6 +601,23 @@ class MockTransport:
             return                                  # (the opmode survives)
         if name == "OPMODE":
             self._reply(f"OPMODE\r\nOPMODE   {self.opmode}\r\ncmd:", name)
+            return
+        if name == "ECHO":
+            self._reply(f"ECHO\r\nECHo      {'ON' if self.echo_on else 'OFF'}\r\ncmd:", name)
+            return
+        if name in ("ECHO ON", "ECHO OFF"):
+            new = name.endswith("ON")
+            old = "ON" if self.echo_on else "OFF"
+            self._reply(f"{name}\r\nECHo      was {old}\r\nECHo      now {'ON' if new else 'OFF'}\r\ncmd:", name)
+            self.echo_on = new                      # the echo of THIS line was decided by the old state
+            return
+        if name == "DISPLAY":
+            self._reply("DISPLAY\r\n(See also DISPLAY A,B,C,F,I,L,M,R,T,Z)\r\n"
+                        "Connect   Link state is: DISCONNECTED\r\n"
+                        f"Opmode    {self.opmode}\r\n"
+                        f"ECHo      {'ON' if self.echo_on else 'OFF'}\r\n"
+                        f"EXPert    {'ON' if self.expert_on else 'OFF'}\r\n"
+                        f"MYcall    {self.mycall}\r\ncmd:", name)
             return
         if name.startswith("MYCALL"):
             arg = line[6:].strip()
@@ -673,6 +729,12 @@ class Report:
     release: Optional[str]
     banner: str
     expert_prior: Optional[str] = None   # Zustand von EXPERT vor dem Scan ('ON'/'OFF'/None=nicht vorhanden)
+    echo_prior: Optional[str] = None     # ECHO vor dem Scan ('ON'/'OFF'); bei OFF wird es fuer den Scan eingeschaltet
+    opmode_before: Optional[str] = None  # der Betriebsmodus, in dem das Geraet stand
+    banner_raw: str = ""                 # das Einschaltbanner WOERTLICH (nichts normalisiert)
+    settings_before: str = ""            # Ausgabe von DISPLAY vor dem Scan
+    settings_after: str = ""             # ... und nachdem der Zustand wiederhergestellt wurde
+    state_diff: list = field(default_factory=list)   # Zeilen, die nachher anders sind (leer = wie vorher)
     rows: list = field(default_factory=list)
     ts: str = field(default_factory=lambda: _dt.datetime.now().isoformat(timespec="seconds"))
 
@@ -955,6 +1017,77 @@ def hard_resync(t) -> bool:
     return "cmd:" in resp.lower()
 
 
+# ----------------------------------------------------------------------------
+# 4a. Das Geraet so zuruecklassen, wie es war (P90): Geraete externer Betreiber haben eine Pufferbatterie
+# und damit eigene Einstellungen (EXPERT ON, ECHO OFF, ein anderer Betriebsmodus ...)
+# ----------------------------------------------------------------------------
+MODE_COMMANDS = ("PACKET", "BAUDOT", "ASCII", "AMTOR", "MORSE", "FAX", "NAVTEX", "SIGNAL", "TDM", "PACTOR")
+_OPMODE_RE = re.compile(r"Opmode[ \t]+(\w+)", re.IGNORECASE)       # 'Opmode    PAcket' (same line!)
+_ECHO_RE = re.compile(r"\bECHo?[ \t]+(ON|OFF)\b", re.IGNORECASE)    # 'ECHo      ON'
+
+
+@dataclass
+class DeviceState:
+    opmode: Optional[str] = None
+    echo: Optional[str] = None
+    display: str = ""
+
+
+def query_text(t, name: str, reads: int = _STEP_READS) -> str:
+    """Eine Abfrage; die Antwort OHNE Echo und Prompt. Auch bei ECHO OFF (dann gibt es kein Echo)."""
+    t.write(verbose_line(name))
+    resp = read_until(t, ("cmd:",), reads=reads)
+    got = answer_to(name, resp)
+    return got[0] if got else resp.split("cmd:", 1)[0]
+
+
+def read_opmode(t) -> Optional[str]:
+    m = _OPMODE_RE.search(query_text(t, "OPMODE"))
+    return m.group(1).upper() if m else None
+
+
+def read_echo(t) -> Optional[str]:
+    m = _ECHO_RE.search(query_text(t, "ECHO"))
+    return m.group(1).upper() if m else None
+
+
+def read_display(t) -> str:
+    """Die Ausgabe von DISPLAY roh (alle Parameter, die der TNC zeigt)."""
+    t.write(verbose_line("DISPLAY"))
+    return read_until(t, ("cmd:",), reads=3 * _STEP_READS)
+
+
+def display_lines(text: str) -> list:
+    lines = (ln.strip() for ln in re.split(r"[\r\n]+", text.replace("cmd:", "\n")))
+    return [ln for ln in lines if ln and ln.upper() != "DISPLAY"]
+
+
+def settings_diff(before: str, after: str) -> list:
+    """Die Zeilen, die vorher da waren und nachher fehlen ('- ...'), und umgekehrt ('+ ...')."""
+    b, a = set(display_lines(before)), set(display_lines(after))
+    return sorted(f"- {ln}" for ln in b - a) + sorted(f"+ {ln}" for ln in a - b)
+
+
+def capture_state(t) -> DeviceState:
+    """Vor dem Scan lesen, was der Scan beruehrt (ECHO, Betriebsmodus) und alle Einstellungen (DISPLAY)."""
+    state = DeviceState()
+    state.echo = read_echo(t)
+    state.opmode = read_opmode(t)
+    state.display = read_display(t)
+    return state
+
+
+def restore_state(t, state: DeviceState, rep: "Report") -> None:
+    """Betriebsmodus, EXPERT und ECHO wie vorher; danach DISPLAY noch einmal und der Vergleich."""
+    enter_mode(t, state.opmode if state.opmode in MODE_COMMANDS else "PACKET")
+    restore_expert(t, rep.expert_prior)
+    if rep.echo_prior == "OFF":
+        t.write(verbose_line("ECHO OFF"))
+        read_until(t, ("cmd:",))
+    rep.settings_after = read_display(t)
+    rep.state_diff = settings_diff(rep.settings_before, rep.settings_after)
+
+
 def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = True,
              immediate: bool = False, entries: Optional[dict] = None, risky: bool = False,
              mycall: Optional[str] = None, confirm_power_cycle=None) -> Report:
@@ -967,7 +1100,17 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
         else:
             _status("[!] Keine Release im Banner gefunden (Scan laeuft trotzdem weiter, "
                     "ohne Bezug zur Matrix).")
-    rep = Report(port=port, release=release, banner=banner.strip())
+    rep = Report(port=port, release=release, banner=banner.strip(), banner_raw=banner)
+
+    # P90: what the device had before - settings of a device with a battery stay as they were
+    state = capture_state(t)
+    rep.settings_before, rep.opmode_before, rep.echo_prior = state.display, state.opmode, state.echo
+    if progress:
+        _status(f"[*] Zustand vorher: Opmode {state.opmode}, ECHO {state.echo} (DISPLAY gesichert)")
+    if state.echo == "OFF":
+        _dbg_note(t, "ECHO is OFF: switched ON for the scan (every answer is read after its echo), restored at the end")
+        t.write(verbose_line("ECHO ON"))
+        read_until(t, ("cmd:",))
 
     if _dbg(t):
         _dbg(t).note(f"BANNER geparst: release={release}")
@@ -1043,9 +1186,8 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
     finally:
         if progress:
             _status("")                       # Zeilenumbruch nach der \r-Laufzeile
-            _status("[*] Abfrage fertig. Stelle Betriebsmodus (PACKET) und EXPERT wieder her ...")
-        enter_mode(t, "PACKET")
-        restore_expert(t, rep.expert_prior)
+            _status("[*] Abfrage fertig. Stelle Betriebsmodus, EXPERT und ECHO wieder her ...")
+        restore_state(t, state, rep)
     if progress:
         _status("[*] Scan abgeschlossen.\n")
     return rep
@@ -1333,7 +1475,7 @@ def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=No
 # 5. Die Matrix aktualisieren: nur ?-Zellen, vorhandene Belege nie anfassen
 # ----------------------------------------------------------------------------
 def apply_to_matrix(entries: dict, rows: list, release: str, date: str, device: str,
-                    source: str) -> tuple:
+                    source: str, evidence: Optional[str] = None) -> tuple:
     """(neue Matrix, Zahl der gefuellten Zellen, Widersprueche).
 
     * Zelle ``?``      -> wird mit dem Ergebnis und einem Beleg gefuellt
@@ -1346,8 +1488,8 @@ def apply_to_matrix(entries: dict, rows: list, release: str, date: str, device: 
     """
     if release not in cm.RELEASES:
         raise ValueError(f"release {release!r} is not a column of the matrix {cm.RELEASES}")
-    evidence = (f"fw_scan {date.replace('-', '')} (device {device}, banner Release {release}; "
-                f"{source})")
+    evidence = evidence or (f"fw_scan {date.replace('-', '')} (device {device}, banner Release {release}; "
+                            f"{source})")
     new = dict(entries)
     filled = 0
     conflicts = []
@@ -1392,6 +1534,16 @@ def print_report(rep: Report) -> None:
         print("EXPERT       : not present in this firmware (no expert gating)")
     else:
         print(f"EXPERT       : was {rep.expert_prior}; set ON for scan, restored afterwards")
+    print(f"State before : Opmode {rep.opmode_before}, ECHO {rep.echo_prior}")
+    if rep.settings_after:
+        if rep.state_diff:
+            print("!" * 74)
+            print("DEVICE STATE DIFFERS from before the scan (DISPLAY before / after):")
+            for line in rep.state_diff:
+                print(f"  {line}")
+            print("!" * 74)
+        else:
+            print("Device state : restored (DISPLAY before = after)")
     print("-" * 74)
     counts: dict = {}
     for r in rep.rows:
@@ -1434,6 +1586,60 @@ def write_json(rep: Report, path: str) -> None:
                "banner": rep.banner, "rows": rep.rows}
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2, ensure_ascii=False)
+
+
+# ----------------------------------------------------------------------------
+# 6a. Ergebnisordner je Geraet und ZIP zum Zurueckschicken (P90)
+# ----------------------------------------------------------------------------
+_SERIAL_RE = re.compile(r"(?:s/n|serial(?:\s+number)?)\W{0,3}([A-Za-z0-9][A-Za-z0-9-]{2,})", re.IGNORECASE)
+
+
+def folder_name(results_dir: Path, release: Optional[str], banner_raw: str) -> str:
+    """scan_<release>_<seriennr> - ohne Seriennummer im Banner scan_<release>_n<k> (k = naechste freie Zahl)."""
+    rel = release or "unknown"
+    m = _SERIAL_RE.search(banner_raw or "")
+    if m:
+        name, k = f"scan_{rel}_{m.group(1)}", 2
+        while (results_dir / name).exists():
+            name, k = f"scan_{rel}_{m.group(1)}-{k}", k + 1
+        return name
+    k = 1
+    while (results_dir / f"scan_{rel}_n{k}").exists():
+        k += 1
+    return f"scan_{rel}_n{k}"
+
+
+def write_results(rep: "Report", results_dir: Path, call: str, debug_path: Optional[str],
+                  copy_debug: bool = False) -> Path:
+    """Den Ergebnisordner dieses Geraets schreiben: banner.txt (woertlich), scan.csv, debug.log,
+    settings_before.txt / settings_after.txt (DISPLAY) und device_info.txt (Formular)."""
+    results_dir.mkdir(parents=True, exist_ok=True)
+    name = folder_name(results_dir, rep.release, rep.banner_raw)
+    folder = results_dir / name
+    folder.mkdir()
+    (folder / "banner.txt").write_bytes(rep.banner_raw.encode("latin-1", errors="replace"))
+    write_csv(rep, str(folder / "scan.csv"))
+    (folder / "settings_before.txt").write_text(rep.settings_before, encoding="latin-1", errors="replace", newline="")
+    (folder / "settings_after.txt").write_text(rep.settings_after, encoding="latin-1", errors="replace", newline="")
+    if rep.state_diff:
+        (folder / "settings_diff.txt").write_text("\n".join(rep.state_diff) + "\n", encoding="utf-8")
+    serial = name.split("_", 2)[2]
+    (folder / "device_info.txt").write_text(
+        DEVICE_INFO_TEMPLATE.format(release=rep.release or "?", call=call, date=rep.date, serial=serial),
+        encoding="utf-8")
+    if debug_path and Path(debug_path).exists():
+        (shutil.copyfile if copy_debug else shutil.move)(str(debug_path), str(folder / "debug.log"))
+    return folder
+
+
+def build_results_zip(results_dir: Path, call: str, date: str) -> Path:
+    """results_<call>_<date>.zip mit ALLEN scan_*-Ordnern des Ergebnisverzeichnisses."""
+    zpath = results_dir / f"results_{call}_{date}.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+        for folder in sorted(p for p in results_dir.iterdir() if p.is_dir() and p.name.startswith("scan_")):
+            for f in sorted(folder.iterdir()):
+                z.write(f, f"{folder.name}/{f.name}")
+    return zpath
 
 
 def print_plan(immediate: bool = False, all_commands: bool = False) -> None:
@@ -1484,6 +1690,11 @@ def main(argv: Optional[list] = None) -> int:
                          "confirmations are required (exit code 5 without them)")
     ap.add_argument("--mycall", help="callsign to set again after a restart / power cycle during --all "
                                       "(default: the configuration's MYCALL)")
+    ap.add_argument("--results", metavar="DIR",
+                    help="P90: one result folder per device (banner, csv, debug log, DISPLAY before/after, "
+                         "device_info form) in DIR and results_<call>_<date>.zip; needs --call "
+                         "(the scan kit always writes to ./scan_results)")
+    ap.add_argument("--call", help="your callsign (named in the results zip and as the source of the data)")
     ap.add_argument("--update-matrix", action="store_true",
                     help="fill the ? cells of src/pk232py/data/command_matrix.csv for the scanned "
                          "release; an existing cell and its evidence are never changed, a "
@@ -1499,20 +1710,43 @@ def main(argv: Optional[list] = None) -> int:
     if args.plan:
         print_plan(args.immediate, args.all)
         return 0
+    if args.update_matrix and _KIT:
+        print("--update-matrix does not exist in the scan kit: send the results zip back instead.",
+              file=sys.stderr)
+        return 2
     if args.update_matrix and args.selftest:
         print("--update-matrix is refused with --selftest: the mock's answers are invented and "
               "must never enter the matrix.", file=sys.stderr)
         return 2
+    results_dir = Path(args.results or ("scan_results" if _KIT else "")) if (args.results or _KIT) else None
+    if results_dir is not None and not args.call:
+        print("--call CALLSIGN is required with --results (it names the results zip and the source "
+              "of the data).", file=sys.stderr)
+        return 2
 
-    dbg = DebugLog(args.debug) if args.debug else None
+    debug_path = args.debug
+    temp_log = None
+    if results_dir is not None and not debug_path:
+        results_dir.mkdir(parents=True, exist_ok=True)
+        debug_path = temp_log = str(results_dir / f"_running_{os.getpid()}.log")
+    dbg = DebugLog(debug_path) if debug_path else None
     if dbg:
         _status(f"[*] Debug-Log: {dbg.path}")
+    reports: list = []
     try:
-        return _run(args, ap, dbg)
+        rc = _run(args, ap, dbg, reports)
     finally:
         if dbg:
             dbg.close()             # vollstaendig schreiben, auch bei Fehler / Strg-C (T179)
             _status(f"[*] Debug-Log geschrieben: {dbg.path}")
+    if results_dir is not None:
+        if reports:
+            folder = write_results(reports[0], results_dir, args.call, debug_path, copy_debug=temp_log is None)
+            zpath = build_results_zip(results_dir, args.call, reports[0].date)
+            print(f"[+] results: {folder}\n[+] zip: {zpath}  (send this file back)")
+        elif temp_log and Path(temp_log).exists():
+            Path(temp_log).unlink()          # nothing was scanned: no half-written log is left behind
+    return rc
 
 
 def _config_mycall() -> Optional[str]:
@@ -1526,7 +1760,7 @@ def _config_mycall() -> Optional[str]:
         return None
 
 
-def _run(args, ap, dbg) -> int:
+def _run(args, ap, dbg, reports: Optional[list] = None) -> int:
     global _clock, _sleep
     if args.all and not args.selftest and not operator_checks():
         # before anything is opened or sent: P89 Teil A, not switchable
@@ -1563,6 +1797,8 @@ def _run(args, ap, dbg) -> int:
         t.close()
         _clock, _sleep = saved_hooks
 
+    if reports is not None:
+        reports.append(rep)
     print_report(rep)
     if args.csv:
         write_csv(rep, args.csv)
