@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget,
 )
 
+from pk232py.ui.dialogs.param_order import add_form_rows
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,16 +97,24 @@ class MiscParamsDialog(QDialog):
         form = QFormLayout(ctrl_group)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self._hx_bitinv   = HexSpinBox(); form.addRow("BITINV:",   self._hx_bitinv)
-        self._hx_canline  = HexSpinBox(); form.addRow("CANLINE:",  self._hx_canline)
-        self._hx_canpac   = HexSpinBox(); form.addRow("CANPAC:",   self._hx_canpac)
-        self._hx_command  = HexSpinBox(); form.addRow("COMMAND:",  self._hx_command)
-        self._hx_cwid     = HexSpinBox(); form.addRow("CWID:",     self._hx_cwid)
-        self._hx_hereis   = HexSpinBox(); form.addRow("HEREIS:",   self._hx_hereis)
-        self._hx_receive  = HexSpinBox(); form.addRow("RECEIVE:",  self._hx_receive)
-        self._hx_redispla = HexSpinBox(); form.addRow("REDISPLA:", self._hx_redispla)
-        self._hx_sendpac  = HexSpinBox(); form.addRow("SENDPAC:",  self._hx_sendpac)
-        self._hx_time     = HexSpinBox(); form.addRow("TIME:",     self._hx_time)
+        # P87: placed by add_form_rows() (alphabetical, param_order.py)
+        self._hx_bitinv   = HexSpinBox()
+        self._hx_canline  = HexSpinBox()
+        self._hx_canpac   = HexSpinBox()
+        self._hx_command  = HexSpinBox()
+        self._hx_cwid     = HexSpinBox()
+        self._hx_hereis   = HexSpinBox()
+        self._hx_receive  = HexSpinBox()
+        self._hx_redispla = HexSpinBox()
+        self._hx_sendpac  = HexSpinBox()
+        self._hx_time     = HexSpinBox()
+        add_form_rows(form, [
+            ("BITINV:", self._hx_bitinv), ("CANLINE:", self._hx_canline),
+            ("CANPAC:", self._hx_canpac), ("COMMAND:", self._hx_command),
+            ("CWID:", self._hx_cwid), ("HEREIS:", self._hx_hereis),
+            ("RECEIVE:", self._hx_receive), ("REDISPLA:", self._hx_redispla),
+            ("SENDPAC:", self._hx_sendpac), ("TIME:", self._hx_time),
+        ])
         root.addWidget(ctrl_group)
 
         # ── Tone frequencies ──────────────────────────────────────────
@@ -115,12 +125,11 @@ class MiscParamsDialog(QDialog):
         self._sb_mark = QSpinBox()
         self._sb_mark.setRange(100, 3000)
         self._sb_mark.setSuffix(" Hz")
-        tone_form.addRow("MARK:", self._sb_mark)
 
         self._sb_space = QSpinBox()
         self._sb_space.setRange(100, 3000)
         self._sb_space.setSuffix(" Hz")
-        tone_form.addRow("SPACE:", self._sb_space)
+        add_form_rows(tone_form, [("MARK:", self._sb_mark), ("SPACE:", self._sb_space)])
         root.addWidget(tone_group)
 
         # ── Read-only hardware values ─────────────────────────────────
@@ -130,15 +139,15 @@ class MiscParamsDialog(QDialog):
 
         self._sb_bright    = QSpinBox(); self._sb_bright.setRange(0, 100)
         self._sb_bright.setEnabled(False); self._sb_bright.setValue(50)
-        hw_form.addRow("BRIGHT:", self._sb_bright)
 
         self._sb_bargraph  = QSpinBox(); self._sb_bargraph.setRange(0, 10)
         self._sb_bargraph.setEnabled(False); self._sb_bargraph.setValue(0)
-        hw_form.addRow("BARGRAPH:", self._sb_bargraph)
 
         self._sb_threshold = QSpinBox(); self._sb_threshold.setRange(0, 100)
         self._sb_threshold.setEnabled(False); self._sb_threshold.setValue(50)
-        hw_form.addRow("THRESHOLD:", self._sb_threshold)
+        add_form_rows(hw_form, [("BRIGHT:", self._sb_bright),
+                                ("BARGRAPH:", self._sb_bargraph),
+                                ("THRESHOLD:", self._sb_threshold)])
         root.addWidget(hw_group)
 
         # ── Modem ─────────────────────────────────────────────────────
