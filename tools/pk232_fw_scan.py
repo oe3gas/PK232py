@@ -37,7 +37,9 @@ ABLAUF
 ======
   1. RESTART -> Banner -> Release (genau wie gedruckt, z.B. 13.SEP.95)
   2. EXPERT entsperren (merken, am Ende zuruecksetzen); '?EXPERT command' -> EXPERT_GATED
-  3. nach Betriebsart gruppiert abfragen (MODE_ENTRY), danach PACKET und EXPERT wie vorher
+  3. nach Betriebsart gruppiert abfragen (MODE_ENTRY); die Gruppen ohne eigene Betriebsart
+     (global, maildrop, pactor, ...) in PACKET, NIE im Kontext der letzten Gruppe (SIGNAL gibt
+     laufend Analysedaten aus und antwortet verspaetet, T179); danach PACKET und EXPERT wie vorher
   4. Report + optional CSV (Spalten release, device, date, ...) + optional --update-matrix
 
 BEDIENUNG
@@ -59,6 +61,7 @@ import csv
 import dataclasses
 import datetime as _dt
 import json
+import os
 import re
 import sys
 import time
@@ -131,6 +134,14 @@ MODE_ENTRY: dict[str, str] = {
     "navtex": "NAVTEX",
     "signal": "SIGNAL",
 }
+
+def mode_for(group: str) -> str:
+    """Der Betriebskontext, in dem eine Gruppe abgefragt wird. Gruppen ohne eigenen Eintrag
+    (global, maildrop, pactor, gps, misc, other) laufen in PACKET: T179 (Geraet B, 06.10.2026)
+    zeigte, dass ALLE 24 ERROR in der SIGNAL-Phase auftraten - dort antwortet der TNC spaeter als
+    das Lesefenster, und SIGNAL ueberlebt einen RESTART (der Opmode bleibt), die Resync half nie."""
+    return MODE_ENTRY.get(group, "PACKET")
+
 
 # Nie automatisch gesendet, egal was die Matrix als kind sagt (siehe Moduldoku).
 NEVER_AUTO = {"CALIBRATE", "TRANS"}
@@ -237,6 +248,15 @@ class DebugLog:
         self.fh.flush()
 
     def close(self) -> None:
+        """Schliesst das Log VOLLSTAENDIG: Endemarke, flush, fsync. Mehrfaches Schliessen ist ok."""
+        if self.fh.closed:
+            return
+        try:
+            self.fh.write(f"\n# end of log -- {_dt.datetime.now().isoformat(timespec='seconds')}\n")
+            self.fh.flush()
+            os.fsync(self.fh.fileno())
+        except Exception:
+            pass
         try:
             self.fh.close()
         except Exception:
@@ -313,16 +333,30 @@ class MockTransport:
     unterstuetzter Befehl mit Wert-Echo. ``sent`` merkt jedes geschriebene Byte-Paket -- so
     pruefen die Tests, dass nie etwas Gefaehrliches abgesetzt wird. Seine Antworten sind
     ERFUNDEN und duerfen nie in die Matrix.
+
+    Verhalten, das T179 am echten Geraet gezeigt hat (Optionen):
+      * ``slow_in_signal`` -- im Opmode SIGNAL kommt die Antwort erst nach dem ersten Lesefenster
+        und hinter dem Prompt steht Analysetext ("noise"); der Opmode ueberlebt RESTART.
+      * ``late``   -- diese Befehle werden erst im naechsten Lesefenster beantwortet
+      * ``silent`` -- diese Befehle werden nie beantwortet
     """
 
+    _MODES = ("PACKET", "BAUDOT", "AMTOR", "MORSE", "FAX", "NAVTEX", "SIGNAL")
+
     def __init__(self, release: str, entries: Optional[dict] = None,
-                 debug: Optional["DebugLog"] = None):
+                 debug: Optional["DebugLog"] = None, slow_in_signal: bool = False,
+                 late: Optional[set] = None, silent: Optional[set] = None):
         self.release = release
         self.entries = cm.all_entries() if entries is None else entries
         self.debug = debug
         self.sent: list = []
         self._pending = ""
+        self._late_reads = 0          # so many read_idle() calls return '' before the reply
         self.expert_on = False
+        self.opmode = "PACKET"
+        self.slow_in_signal = slow_in_signal
+        self.late = set(late or ())
+        self.silent = set(silent or ())
         expert = self.entries.get("EXPERT")
         self.has_expert = expert is None or expert.fw.get(release) != "no"
 
@@ -330,47 +364,69 @@ class MockTransport:
         e = self.entries.get(name)
         return e.fw.get(self.release, "?") if e else "?"
 
+    def _reply(self, text: str, name: str = "") -> None:
+        """Queue *text*; an undelivered earlier reply stays in front of it (the pipeline shift)."""
+        if name in self.silent:
+            return
+        slow = self.slow_in_signal and self.opmode == "SIGNAL" and name not in self._MODES
+        if slow:
+            text += "noise\r\n"
+        self._pending += text
+        self._late_reads = 1 if (slow or name in self.late) else 0
+
     def write(self, data: bytes) -> None:
         self.sent.append(bytes(data))
         if self.debug:
             self.debug.tx(data)
         if data == CTRL_C:
-            self._pending = "cmd:"
+            self._pending = ""                      # Ctrl-C clears whatever was still on its way
+            self._late_reads = 0
+            self._reply("cmd:")
             return
         if data == STAR:
             return
         name = data.decode("latin-1").strip().upper()
         if name == "RESTART":
             day, mon, yy = self.release.split(".")
-            self._pending = (
+            self._pending = ""
+            self._late_reads = 0
+            self._reply(
                 "\r\nPK-232M is using default values.\r\n"
                 "AEA PK-232M Data Controller\r\n"
-                f"Release {day}.{mon}.{yy}\r\ncmd:")
+                f"Release {day}.{mon}.{yy}\r\ncmd:")      # the opmode survives (bbRAM)
+            return
+        if name in self._MODES:
+            old, self.opmode = self.opmode, name
+            self._reply(f"{name}\r\nOpmode   was {old}\r\nOpmode   now {name}\r\ncmd:", name)
             return
         if name.startswith("EXPERT"):
             if not self.has_expert:
-                self._pending = "?What?\r\ncmd:"
+                self._reply(f"{name}\r\n?What?\r\ncmd:", name)
                 return
             arg = name[6:].strip()
             if arg == "ON":
                 self.expert_on = True
-                self._pending = "EXPert was OFF\r\nEXPert now ON\r\ncmd:"
+                self._reply("EXPERT ON\r\nEXPert was OFF\r\nEXPert now ON\r\ncmd:", name)
             elif arg == "OFF":
                 self.expert_on = False
-                self._pending = "EXPert was ON\r\nEXPert now OFF\r\ncmd:"
+                self._reply("EXPERT OFF\r\nEXPert was ON\r\nEXPert now OFF\r\ncmd:", name)
             else:
-                self._pending = f"EXPert {'ON' if self.expert_on else 'OFF'}\r\ncmd:"
+                self._reply(f"EXPERT\r\nEXPert {'ON' if self.expert_on else 'OFF'}\r\ncmd:", name)
             return
         cell = self._cell(name)
         if cell == "no":
-            self._pending = "?What?\r\ncmd:"
+            self._reply(f"{name}\r\n?What?\r\ncmd:", name)
         elif cell == "expert" and not self.expert_on:
-            self._pending = "?EXPERT command\r\ncmd:"
+            self._reply(f"{name}\r\n?EXPERT command\r\ncmd:", name)
         else:
-            self._pending = f"{name} 0\r\ncmd:"
+            self._reply(f"{name}\r\n{name} 0\r\ncmd:", name)
 
     def read_idle(self, idle_s: float = 0.25, max_s: float = 3.0) -> str:
-        out, self._pending = self._pending, ""
+        if self._late_reads > 0:
+            self._late_reads -= 1
+            out = ""
+        else:
+            out, self._pending = self._pending, ""
         if self.debug:
             self.debug.rx(out, 0.0)
         return out
@@ -484,13 +540,81 @@ def restore_expert(t, prior: Optional[str]) -> None:
         t.read_idle(0.2, 2.0)
 
 
+_SIAM_LINE = re.compile(r"^(?:noise|\d+\.\d+:.*)$", re.IGNORECASE)
+
+
+def answer_to(name: str, resp: str):
+    """(text after the echo of *name*, prompt reached) - or None if *resp* does not START with the
+    TNC's echo of exactly this command.
+
+    Der PK-232 echot den Befehl und antwortet dann; im Modus SIGNAL kommen verspaetete Antworten
+    des VORHERIGEN Befehls und Analysezeilen dazwischen (T179). Vor dem eigenen Echo duerfen nur
+    uebrig gebliebene Prompts und Analysezeilen stehen - alles andere gehoert einem anderen
+    Befehl, und dessen '?What?' darf nie als Antwort dieses Befehls gelten."""
+    text = resp.replace("\x11", "")
+    while True:
+        head = text.lstrip(" \r\n\x00")
+        if head.lower().startswith("cmd:"):
+            text = head[4:]
+            continue
+        line, sep, tail = head.partition("\n")
+        if sep and _SIAM_LINE.match(line.strip()):
+            text = tail
+            continue
+        text = head
+        break
+    if not text.upper().startswith(name.upper()):
+        return None
+    rest = text[len(name):]
+    if not rest.startswith(("\r", "\n")):
+        return None
+    reached = "cmd:" in rest
+    return rest.split("cmd:", 1)[0], reached
+
+
+def classify_answer(answer: str) -> str:
+    """Die Antwort NACH dem Echo -> Result-Name (der Prompt wurde erreicht)."""
+    if WHAT_RE.search(answer):
+        return Result.UNSUPPORTED.value
+    if EXPERT_RE.search(answer):
+        return Result.EXPERT_GATED.value
+    return Result.SUPPORTED.value
+
+
+def drain(t) -> None:
+    """Ctrl-C und lesen, bis Ruhe ist: raeumt Antworten weg, die noch unterwegs sind."""
+    t.write(CTRL_C)
+    t.read_idle(0.5, 2.0)
+    t.read_idle(0.5, 1.0)
+
+
+def ask(t, name: str, attempts: int = 2) -> str:
+    """Einen Befehl nackt absetzen; Result-Name. Gewertet wird NUR die Antwort, die mit dem
+    eigenen Echo beginnt UND den Prompt erreicht hat. Kommt zu frueh (leer/unvollstaendig)
+    zurueck, wird einmal laenger gewartet (TNC ist beschaeftigt); gehoert die Antwort einem
+    anderen Befehl, wird weggeraeumt und wiederholt; bleibt es unklar -> ERROR (nie
+    UNSUPPORTED aus einer fremden Antwort)."""
+    for _ in range(attempts):
+        t.write(verbose_line(name))
+        resp = t.read_idle(0.2, 2.0)
+        got = answer_to(name, resp)
+        if got is None and not resp.strip():
+            resp += t.read_idle(0.5, 3.0)              # nur zu frueh gelesen
+            got = answer_to(name, resp)
+        elif got is not None and not got[1]:
+            resp += t.read_idle(0.5, 3.0)              # Antwort angefangen, Prompt fehlt noch
+            got = answer_to(name, resp)
+        if got is not None and got[1]:
+            return classify_answer(got[0])
+        drain(t)
+    return Result.ERROR.value
+
+
 def probe(t, cmd: Cmd) -> Result:
     """Einen Befehl nackt abfragen und die Antwort klassifizieren. Nur fuer kind param /
     immediate (siehe plan()); der Aufrufer sorgt dafuer, dass nichts anderes hier ankommt."""
     assert cmd.name not in NEVER_AUTO and cmd.kind in PROBED_KINDS, cmd
-    t.write(verbose_line(cmd.name))
-    resp = t.read_idle(0.2, 2.0)
-    result = Result(classify(resp))
+    result = Result(ask(t, cmd.name))
     if _dbg(t):
         _dbg(t).note(f"DECIDE {cmd.name} ({cmd.kind}) = {result.value}")
     if cmd.kind == "immediate":
@@ -574,16 +698,18 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
     STALL_THRESHOLD = 3          # komplett leere Antworten in Folge -> harte Resync
     stall_count = 0
     current_group = None
+    current_mode = None          # unbekannt: das Geraet kann aus einem frueheren Lauf in SIGNAL stehen
 
     try:
         for i, cmd in enumerate(todo, 1):
             if cmd.group != current_group:
                 current_group = cmd.group
-                mode_cmd = MODE_ENTRY.get(cmd.group)
-                if mode_cmd:
+                mode_cmd = mode_for(cmd.group)
+                if mode_cmd != current_mode:
                     if progress:
                         _status(f"\n[*] Wechsle in Modus {mode_cmd} (Gruppe {cmd.group}) ...")
                     enter_mode(t, mode_cmd)
+                    current_mode = mode_cmd
             if _dbg(t):
                 _dbg(t).note(f"=== [{i}/{len(todo)}] {cmd.name}  (kind={cmd.kind}) ===")
             result = probe(t, cmd)
@@ -598,7 +724,8 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
                 if progress:
                     _status(f"[{'*' if ok else '!'}] Resync {'erfolgreich' if ok else 'FEHLGESCHLAGEN'}.")
                 rep.expert_prior = unlock_expert(t)
-                current_group = None               # Modus nach Resync neu setzen
+                current_group = None               # Modus nach Resync neu setzen (RESTART
+                current_mode = None                # laesst den Opmode stehen, T179)
                 stall_count = 0
                 if not ok:
                     if progress:
@@ -777,7 +904,15 @@ def main(argv: Optional[list] = None) -> int:
     dbg = DebugLog(args.debug) if args.debug else None
     if dbg:
         _status(f"[*] Debug-Log: {dbg.path}")
+    try:
+        return _run(args, ap, dbg)
+    finally:
+        if dbg:
+            dbg.close()             # vollstaendig schreiben, auch bei Fehler / Strg-C (T179)
+            _status(f"[*] Debug-Log geschrieben: {dbg.path}")
 
+
+def _run(args, ap, dbg) -> int:
     if args.selftest:
         if args.selftest not in _SELFTEST_RELEASE:
             print("selftest year must be one of 1988 / 1991 / 1995", file=sys.stderr)
@@ -796,9 +931,6 @@ def main(argv: Optional[list] = None) -> int:
         rep = run_scan(t, port, only_group=args.group, immediate=args.immediate)
     finally:
         t.close()
-        if dbg:
-            dbg.close()
-            _status(f"[*] Debug-Log geschrieben: {dbg.path}")
 
     print_report(rep)
     if args.csv:
