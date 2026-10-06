@@ -3497,7 +3497,9 @@ Any device (macros are only inserted, nothing is sent). Software: `test_macros_p
 
 | # | Do | Expected | Result |
 |---|---|---|---|
-| 1 | HF Packet, MON chip: press each of the six macro buttons | text appears in the input field (end, TX colour), nothing is sent, no crash | ⬜ |
+| 1 | HF Packet, MON chip: press each of the six macro buttons | text appears in the input field (end, TX colour), nothing is sent, no crash | ✅ |
+
+**Status:** ✅ PASS (device B, 06.10.2026, operator observation).
 | 2 | Same on a free and on a connected channel; switch channel and back | the text belongs to that channel's input only | ⬜ |
 | 3 | Same in VHF Packet; a macro containing `[^D]` or `[^T:5]` | markers removed, one `[SYS]` note in the monitor and one line in the log file | ⬜ |
 | 4 | Baudot / ASCII RTTY / Morse / AMTOR: macro buttons | unchanged (`[^D]` and `[^T:n]` still work) | ⬜ |

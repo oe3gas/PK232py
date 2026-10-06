@@ -20,7 +20,7 @@ tries to execute it, expecting it to describe current work.
 
 ## Priority 1 — Next implementation sprint
 
-### Macros in Packet, crashes into the log file (P86) — ✅ done, T174 open (2026-10-05)
+### Macros in Packet, crashes into the log file (P86) — ✅ done, T174 PASS (2026-10-06)
 
 `MainWindow._on_macro_clicked()` called `tx.char_typed.emit()` in every screen; the Packet screens'
 (and PACTOR's) `tx_input` is a plain `QTextEdit` without that signal -> `AttributeError` in the slot ->
