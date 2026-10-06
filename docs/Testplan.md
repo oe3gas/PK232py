@@ -3497,12 +3497,13 @@ Refused on 01.AUG.91: EXPERT, MYPTCALL, PTHUFF, PT200, PTOVER, ARQTOL, MOPT (8 c
 
 | # | Do | Expected | Result |
 |---|---|---|---|
-| 1 | Device B, start WITH banner | terminal: `[SYS] 8 commands skipped - not supported by 01.AUG.91 (EXPERT, MYPTCALL, ...)`; NO `?What?` in the upload part of `pk232py.log` | ⬜ |
-| 2 | Device B, restart WITHOUT banner (release `inferred`) | same as 1 | ⬜ |
-| 3 | Device A, start with banner | no command skipped, no `?What?` | ⬜ |
-| 4 | Device B: Parameters -> AMTOR and Baudot | ARQTOL / MOPT greyed, tooltip `Not supported by firmware 01.AUG.91 (T155, T160, T168)`, values kept | ⬜ |
+| 1 | Device B, start WITH banner | terminal: `[SYS] 1 commands skipped ... (EXPERT)` (banner says pactor=no, so the PACTOR commands are not even built); NO `?What?` in the upload part of `pk232py.log` | ✅ |
+| 2 | Device B, restart WITHOUT banner (release `inferred`) | `8 commands skipped`, no `?What?` | ✅ |
+| 3 | Device A, start with banner | no command skipped, no `?What?` | ✅ |
+| 4 | Device B: Parameters -> AMTOR and Baudot | ARQTOL / MOPT greyed, tooltip `Not supported by firmware 01.AUG.91 (T155, T160, T168)`, values kept | ✅ |
 
-**Status:** ⬜ OPEN — software done, hardware run pending.
+**Status:** ✅ PASS (device B with and without banner, device A; 06.10.2026, operator observation). Without banner `has_pactor` was assumed True (the 8 skipped) - P85a now takes it from `KNOWN_DEVICES` for an inferred release, so a re-run should show fewer commands built; not yet re-measured.
+
 
 ---
 

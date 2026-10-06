@@ -152,7 +152,7 @@ the same classification as `host_params_probe`.
 T167 showed `PT` is PACTIME (query `PTA 10`, OPMODE stays `PA`), not the PACTOR standby the app assumed. The Host Mode command for PACTOR standby
 (and how a connected/listening PACTOR state is left again) is unknown. Part of the planned PACTOR/AMTOR package; see the P80b report for what still works.
 
-### Init upload sends commands the firmware does not know (P85) — ✅ done, T173 open (2026-10-06)
+### Init upload sends commands the firmware does not know (P85) — ✅ done, T173 PASS (2026-10-06)
 
 The init upload (`ParamsUploader`) sends commands the firmware does not know, e.g.
 ARQTOL on 01.AUG.91 (T151: `?What?`). Later: filter the upload per firmware, based on
@@ -165,12 +165,15 @@ a `?What?` for a command outside the table stays a visible finding. The AMTOR/Ba
 dialogs grey the matching fields (`apply_firmware_limits()`, value kept). Not covered: the P72
 apply-now path (`changed_with_old`) still builds from `has_pactor` only.
 
-### Upload sends PACTOR commands although the banner says pactor=no — open (2026-10-06)
+### Upload sends PACTOR commands although the banner says pactor=no — ✅ closed, explained (2026-10-06)
 
-Upload sends PACTOR commands even when the banner reports `pactor=no` (T168, device B). Establish where
-`has_pactor` comes from for the upload (`SerialManager.has_pactor` is `b"PACTOR" in banner`, permissive
-True without a banner - check which of the two cases T168 was, and what the banner of device B really
-contains). P85 only covers this for devices in the `comm/devices.py` table.
+Explanation: WITH a banner `SerialManager.has_pactor` is correct (`b"PACTOR" in banner`; T173: device B with banner
+builds no PACTOR commands at all, only `EXPERT` is skipped). WITHOUT a banner it was assumed True (permissive), and
+T168 ran the no-banner path. P85a: for an INFERRED release `has_pactor` now comes from `comm/devices.py`
+(`has_pactor(release)`, generation PACTOR only); unknown stays permissive. `ParamsUploader.upload()` reads it AFTER the
+release probe (it used to read it before, so the first no-banner upload still saw True). The skip line says
+`1 command` / `N commands`. Open: the PACTOR combo entry / menu gating in `_on_verbose_mode_ready()` runs before the
+probe, so with an inferred B it may stay enabled until the next evaluation - check at the next run.
 
 ### P81c / P82a (T169 round 3) — ✅ done, T169 PASS (2026-10-04)
 
