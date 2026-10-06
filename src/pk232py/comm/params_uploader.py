@@ -26,6 +26,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Iterable, Optional
 
+from pk232py.comm.devices import unknown_commands
 from pk232py.comm.host_params import BAND_HF, BAND_PARAMS, BAND_VHF, band_value, norm_value
 
 if TYPE_CHECKING:
@@ -158,6 +159,7 @@ class ParamsUploader:
         commands = self._build_commands(
             has_pactor=has_pactor, has_maildrop=(has_maildrop is not False),
         )
+        commands = self._drop_unknown(commands)
         hold = {name.upper() for name in defer}
         self.deferred_names = []
         if hold:
@@ -205,6 +207,33 @@ class ParamsUploader:
                 consecutive_silent = 0
         logger.info("ParamsUploader: upload complete (%d commands)", sent)
         return sent
+
+    def _drop_unknown(self, commands: list[bytes]) -> list[bytes]:
+        """P85: leave out the commands this firmware answers with ?What?
+        (comm/devices.py). The release is the banner's or the inferred one;
+        None (unknown or unmeasured firmware) sends everything, as before.
+        A ?What? for a command NOT in the table is not hidden: it stays a
+        new finding."""
+        release = getattr(self._serial, 'tnc_release', None)
+        unknown = unknown_commands(release)
+        if not unknown:
+            return commands
+        kept: list[bytes] = []
+        skipped: list[str] = []
+        for cmd in commands:
+            name = cmd.decode("ascii", errors="replace").split()[0].upper()
+            if name in unknown:
+                skipped.append(name)
+            else:
+                kept.append(cmd)
+        if skipped:
+            names = ", ".join(dict.fromkeys(skipped))
+            text = (f"{len(skipped)} commands skipped - not supported by "
+                    f"{release} ({names})")
+            logger.info("ParamsUploader: %s", text)
+            if self._echo:
+                self._echo(f"[SYS] {text}\n", "#f4a742")
+        return kept
 
     # Three parameters confirmed (24.09.2026) to reliably answer a bare
     # verbose-mode query - see verify().
