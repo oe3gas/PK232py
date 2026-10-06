@@ -152,11 +152,18 @@ the same classification as `host_params_probe`.
 T167 showed `PT` is PACTIME (query `PTA 10`, OPMODE stays `PA`), not the PACTOR standby the app assumed. The Host Mode command for PACTOR standby
 (and how a connected/listening PACTOR state is left again) is unknown. Part of the planned PACTOR/AMTOR package; see the P80b report for what still works.
 
-### Init upload sends commands the firmware does not know — open (2026-10-03)
+### Init upload sends commands the firmware does not know (P85) — ✅ done, T173 open (2026-10-06)
 
 The init upload (`ParamsUploader`) sends commands the firmware does not know, e.g.
 ARQTOL on 01.AUG.91 (T151: `?What?`). Later: filter the upload per firmware, based on
 the mnemonic registry (`comm/mnemonic_registry.py`) and T151/T160/T161.
+
+P85: `comm/devices.py` holds ONE table (`KnownDevice.unknown_verbose`, evidence per entry): B refuses
+EXPERT, MYPTCALL, PTHUFF, PT200, PTOVER, ARQTOL, MOPT; A none; C unmeasured (None = send everything).
+`ParamsUploader._drop_unknown()` leaves them out and prints one `[SYS] 8 commands skipped ...` line;
+a `?What?` for a command outside the table stays a visible finding. The AMTOR/Baudot/PACTOR parameter
+dialogs grey the matching fields (`apply_firmware_limits()`, value kept). Not covered: the P72
+apply-now path (`changed_with_old`) still builds from `has_pactor` only.
 
 ### P81c / P82a (T169 round 3) — ✅ done, T169 PASS (2026-10-04)
 

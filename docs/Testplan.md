@@ -3490,10 +3490,26 @@ Any device. Software: `test_chip_text_p84.py`, `test_logging_p84.py`.
 
 ---
 
+### T173 — Upload only sends commands the firmware knows (P85)
+
+Software: `test_p85_upload_firmware_filter.py`. Needs devices B and A (hardware pending).
+Refused on 01.AUG.91: EXPERT, MYPTCALL, PTHUFF, PT200, PTOVER, ARQTOL, MOPT (8 commands with EXPERT ON and OFF).
+
+| # | Do | Expected | Result |
+|---|---|---|---|
+| 1 | Device B, start WITH banner | terminal: `[SYS] 8 commands skipped - not supported by 01.AUG.91 (EXPERT, MYPTCALL, ...)`; NO `?What?` in the upload part of `pk232py.log` | ⬜ |
+| 2 | Device B, restart WITHOUT banner (release `inferred`) | same as 1 | ⬜ |
+| 3 | Device A, start with banner | no command skipped, no `?What?` | ⬜ |
+| 4 | Device B: Parameters -> AMTOR and Baudot | ARQTOL / MOPT greyed, tooltip `Not supported by firmware 01.AUG.91 (T155, T160, T168)`, values kept | ⬜ |
+
+**Status:** ⬜ OPEN — software done, hardware run pending.
+
+---
+
 ### T174 — Macros in Packet; crashes in the log file (P86)
 
 Any device (macros are only inserted, nothing is sent). Software: `test_macros_packet_p86.py`,
-`test_crash_log_p86.py`. (T173 is reserved for P85.)
+`test_crash_log_p86.py`. (T173 is P85.)
 
 | # | Do | Expected | Result |
 |---|---|---|---|
