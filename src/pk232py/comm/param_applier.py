@@ -41,12 +41,11 @@ from pk232py.comm.host_params import (
 from pk232py.comm.params_uploader import ParamsUploader
 from pk232py.comm.pk232_hostmode_sub import escape_converse
 
-# ILFPACK OFF makes the TNC treat the LF of the app's CR LF as the first
-# character of the NEXT verbose command (T155 / P72 B.3): the Host Mode set
-# works, but the verbose operation of the app breaks. Not set live until P75.
-_NEVER_LIVE = {
-    "ILFPACK": "ILFPACK is applied at the next initialisation (see P75)",
-}
+# The one answer that means "this command needs EXPERT ON" (device A, 13.SEP.95,
+# EXPERT is OFF after power-on; T175, hw_logs/20261006_145938_eol_probe.log:
+# verbose ILFPACK -> "?EXPERT command"). Only this exact line triggers the
+# EXPERT ON / repeat / read back / EXPERT OFF sequence - never as a precaution.
+_EXPERT_ANSWER = "?EXPERT command"
 
 
 @dataclass
@@ -90,7 +89,7 @@ def format_result(r: ApplyResult) -> str:
         return f"{r.name}  {r.wanted}  already set in the TNC"
     if r.ok:
         arrow = f"{r.was} -> {r.wanted}" if r.was is not None else f"-> {r.wanted}"
-        return f"{r.name}  {arrow}  ok"
+        return f"{r.name}  {arrow}  {r.reason}"
     if not r.sent:
         return f"{r.name}  {r.reason} - saved, TNC unchanged"
     arrow = f"{r.was} -> {r.wanted}" if r.was is not None else f"-> {r.wanted}"
@@ -162,16 +161,10 @@ class ParamApplier:
                 changes, "TNC state not confirmed (no cmd: prompt seen this session)"
             ) + deferred
         results: list[ApplyResult] = list(deferred)
-        live = []
-        for name, value, old in changes:
-            if name in _NEVER_LIVE:
-                results.append(ApplyResult(name, value, None, False, _NEVER_LIVE[name], old))
-            else:
-                live.append((name, value, old))
         if mode == "host":
-            results += [self._apply_host(n, v, o) for n, v, o in live]
+            results += [self._apply_host(n, v, o) for n, v, o in changes]
         else:
-            results += self._apply_verbose(live, needs_expert)
+            results += self._apply_verbose(changes, needs_expert)
         return results
 
     # ------------------------------------------------------------------
@@ -232,7 +225,7 @@ class ParamApplier:
             if needs_expert:
                 self._t.verbose_set("EXPERT", "ON")
             for name, value, old in live:
-                results.append(self._apply_verbose_one(name, value, old))
+                results.append(self._apply_verbose_one(name, value, old, needs_expert))
             if needs_expert:
                 self._t.verbose_set("EXPERT", "OFF")
         finally:
@@ -249,7 +242,8 @@ class ParamApplier:
             return m[-1].upper() if m else None
         return self._t.verbose_query(name)
 
-    def _apply_verbose_one(self, name: str, value: str, old: Optional[str]) -> ApplyResult:
+    def _apply_verbose_one(self, name: str, value: str, old: Optional[str],
+                           expert_on: bool = False) -> ApplyResult:
         p = param_by_name(name)
         kind = p.kind if p is not None else "text"
         # P82a: read the TNC's value FIRST (see _apply_host).
@@ -261,18 +255,39 @@ class ParamApplier:
             old = before
         reply = self._t.verbose_set(name, value)
         err = _first_error_line(reply)
+        if err == _EXPERT_ANSWER and not expert_on:
+            return self._apply_with_expert(name, value, old, p, kind)
         now = self._read_verbose(name, p)
+        return self._judge_verbose(name, value, old, kind, p, err, now, "")
+
+    def _judge_verbose(self, name, value, old, kind, p, err, now, note: str) -> ApplyResult:
+        """The ApplyResult of one verbose set: *err* is the TNC's error line (or
+        None), *now* the read-back, *note* the suffix of the reason ("ok" + note)."""
         same = now is not None and norm_value(now, kind) == norm_value(
             _compare_value(p, value), kind)
         if err is not None:
-            return ApplyResult(name, value, now, False, f"rejected by TNC: {err}", old,
+            return ApplyResult(name, value, now, False, f"rejected by TNC: {err}{note}", old,
                                sent=True, busy="not while connected" in err.lower())
         if now is None:
             return ApplyResult(name, value, None, False,
-                               "no readable answer to the read-back", old, sent=True)
+                               f"no readable answer to the read-back{note}", old, sent=True)
         if not same:
-            return ApplyResult(name, value, now, False, "read-back differs", old, sent=True)
-        return ApplyResult(name, value, now, True, "ok", old, sent=True)
+            return ApplyResult(name, value, now, False, f"read-back differs{note}", old,
+                               sent=True)
+        return ApplyResult(name, value, now, True, f"ok{note}", old, sent=True)
+
+    def _apply_with_expert(self, name, value, old, p, kind) -> ApplyResult:
+        """The TNC answered "?EXPERT command": EXPERT ON, repeat the command,
+        read it back, EXPERT OFF again - once. The read-back happens while EXPERT
+        is ON (the query needs it too); EXPERT OFF is sent in every case."""
+        self._t.verbose_set("EXPERT", "ON")
+        try:
+            err = _first_error_line(self._t.verbose_set(name, value))
+            now = self._read_verbose(name, p)
+        finally:
+            self._t.verbose_set("EXPERT", "OFF")
+        return self._judge_verbose(name, value, old, kind, p, err, now,
+                                   " (needed EXPERT ON, set back to OFF)")
 
 
 # ---------------------------------------------------------------------------
