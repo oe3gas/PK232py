@@ -87,6 +87,10 @@ docs/claude/  Aus CLAUDE.md ausgelagerte Details (siehe unten)
    AMTOR-Zustand nie daraus ableiten (AMTOR hat keinen SEND-Button).
 10. **Keine Umbenennung interner Bezeichner** (Attribute, Config-Keys, Mnemonics, Signale) — nur sichtbare UI-Texte ändern.
 11. **Messbefunde gelten für das Gerät, an dem gemessen wurde** (A/B/C, `docs/DEVICES.md`) — Gerät/Firmware zuerst prüfen.
+16. **Firmware-Wissen nur über die Befehls-/Firmware-Matrix** (`src/pk232py/data/command_matrix.csv`, Lesemodul
+    `comm/command_matrix.py`, Ansicht `docs/COMMAND_MATRIX.md`): ob ein Befehl auf einer Firmware existiert, steht nur dort.
+    `?` = ungemessen; nie aus einer Hypothese `yes`/`no` setzen; jede Zelle außer `?` braucht ihren Beleg und ändert sich nur
+    mit neuem Beleg. Neue Messungen gehören in die Matrix (`tools/pk232_fw_scan.py --update-matrix`), nicht in verstreute Tabellen.
 12. **Jeder `set_mode(...)`-Aufruf in `main_window.py` geht über `MainWindow._build_mode_instance()`**, sonst gehen
     Konfigurationswerte verloren.
 13. **Keine Erfolgsmeldung ohne Beweis** (kein „connected“/„verified“ ohne aktive Bestätigung).

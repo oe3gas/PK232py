@@ -1323,6 +1323,16 @@ never retyped; everything else names the Testplan entry, or stays `{}`
     `main_window.py` for CR LF literals; every exception is on a named allow list
     (file, function). `IL` is verified on 01.AUG.91 only (T175: Host `IL N`, verbose
     `ILFPACK` OFF, back with `IL Y`); ParamApplier sets ILFPACK live again.
+  - **Which command exists on which firmware: ONLY the matrix (P88).** `src/pk232py/data/command_matrix.csv`, read through
+    `comm/command_matrix.py` (`exists(name, release)` -> `yes`/`no`/`expert`/`?`, `host(name)`, `evidence(name, release)`,
+    `kind(name)`); generated view `docs/COMMAND_MATRIX.md`. `?` is the normal case and means "not measured" - **never** set
+    `yes`/`no` from a hypothesis, a manual or a description; a cell that is not `?` has its evidence (test number + log,
+    `fw_scan YYYYMMDD`, `operator YYYY-MM-DD ...`) and changes only with a new one. `tools/pk232_fw_scan.py --update-matrix`
+    fills `?` cells only. Traps found while seeding it: the app's `MOPT` is an abbreviation of **MOPTT**; `FULLDP` was a
+    misspelling of FULLDUP (so `?What?` says nothing about the firmware); the Timewave list cuts three names at 8 characters
+    (CALibrat, Disconne, REDispla) and has OCR errors (`Ax2512v2`, `racket`, `PAX`, `S14`) - all noted in the matrix rows;
+    the 28.07.2026 scan could not say whether EXPERT was needed (it unlocked it) and it probed TRANS, which made TRFLOW/XFLOW
+    answer ERROR.
   - **`?EXPERT command` on 13.SEP.95 (T175, device A):** with EXPERT OFF (the state
     after power-on) verbose `ILFPACK` answers exactly `?EXPERT command` - the
     parameter is an expert command there, which is also why T175 has no verbose

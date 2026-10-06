@@ -175,6 +175,27 @@ lines typed in the verbose terminal); static test with an allow list. `_NEVER_LI
 `Session.verbose()` still ends with CR LF (the tool is not part of the app); the ILFPACK tooltip follows the manual
 (STABO ch. 12, operator's wording) and the measurements T155/T175 - comparison with the TRM done.
 
+### Command / firmware matrix (P88) — ✅ done, T179-T181 open (2026-10-06)
+
+`src/pk232py/data/command_matrix.csv` is the ONE truth about which command exists on which firmware (260 commands;
+01.AUG.91: 69 yes, 7 no; 13.SEP.95: 193 yes, 3 expert; 30.12.1988: 1 no; the rest `?`). Reader `comm/command_matrix.py`
+(validates while loading: evidence for every cell that is not `?`), view `docs/COMMAND_MATRIX.md` (generated, a test fails when
+stale), raw data in `docs/reference/` (Timewave list, fw_scan of 28.07.2026 with its known defects). Seeded only from
+evidence: Timewave list (names, abbreviations, defaults, functions), fw_scan 20260728 (device A), and the code that already
+held measurements (mnemonic registry / host_params / devices). `tools/pk232_fw_scan.py` plans from the matrix, never sends
+`danger` / `action_tx` / `mode` or CALIBRATE/TRANS, and `--update-matrix` fills only `?` cells.
+
+Settled by the evidence, not by the spec text (see the P88 report):
+- **FULLDP** is not a row: it is the app's misspelling of FULLDUP (T161: `?What?` on both devices). FULLDUP is `yes` on A (fw_scan).
+- **MOPT**: the app sends the abbreviation `MOPT`; the command is **MOPTT** (cell `no` on 01.AUG.91, T155/T160/T168).
+- **XL, EE** (T166/T167, Host `$07`) are mnemonics without a command name - not in the matrix.
+- **Q values** (QHPACKET, QVPACKET, QMORSE, QRTTY, QWIDE, QTOR, QPTOR, QTDM): no evidence in the repository, all `?` until the
+  operator names the devices ("operator 2026-10-06 terminal") or T179-T181 measure them.
+
+**Follow-up (Teil E, after T179):** derive `devices.unknown_verbose`, `host_params.verified_releases`, the mnemonic registry and
+the parameter masks (show a field only where the command is `yes`/`expert`) from the matrix. Until then
+`test_command_matrix_agreement.py` fails if they contradict it.
+
 ### Parameter masks alphabetical (P87) — ✅ done, T177 open (2026-10-06)
 
 `ui/dialogs/param_order.py` is the ONE place: `sort_key()` (digits before letters, case and a trailing colon ignored),

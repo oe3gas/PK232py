@@ -3572,6 +3572,31 @@ Software: `TestInputFollowsTheTncPrompt` in `test_main_window_verbose.py`.
 
 ---
 
+### T179 / T180 / T181 — firmware scan with the command matrix (P88 Teil D)
+
+Software: `test_pk232_fw_scan.py`, `test_command_matrix*.py`. PC 1, **no radio connected**, no connection on the TNC,
+verbose command mode. The tool sends only `param` commands (and, with `--immediate`, the `immediate` ones); `mode`, `action_tx`,
+`danger` and CALIBRATE/TRANS are never sent (`python tools\pk232_fw_scan.py --plan` lists them). It ends every line with CR.
+It starts with RESTART (banner) - the TNC drops live links, so run it with none.
+
+Per device:
+1. `.venv\Scripts\python.exe tools\pk232_fw_scan.py --port COMx --csv hw_logs\<date>_fw_scan_<device>.csv --debug hw_logs\<date>_fw_scan_<device>.log`
+2. Read "DIFFERENT FROM THE MATRIX" in the report: it must be empty (else: a contradiction to settle, nothing is written).
+3. Only then add `--update-matrix` (same command) - it fills the `?` cells for the banner release; then
+   `.venv\Scripts\python.exe tools\gen_command_matrix.py --update`.
+4. Optional second run with `--immediate`.
+5. Afterwards: `ILFPACK`, `EXPERT` and the packet mode as before (the tool restores EXPERT and PACKET).
+
+| # | Device | Expected | Result |
+|---|---|---|---|
+| T179 | B (01.AUG.91) | no contradiction; the `?` cells of 01.AUG.91 filled (about 184 unknown today) | ⬜ |
+| T180 | C (30.12.1988) | first contact of device C with this software - **ask the operator first**; the matrix has one cell for C (MAILDROP no) | ⬜ |
+| T181 | A (13.SEP.95), optional | confirms the 176 yes of the 28.07.2026 run; fills the Q values etc. | ⬜ |
+
+**Status:** ⬜ OPEN — tool done, runs pending.
+
+---
+
 ### T174 — Macros in Packet; crashes in the log file (P86)
 
 Any device (macros are only inserted, nothing is sent). Software: `test_macros_packet_p86.py`,
