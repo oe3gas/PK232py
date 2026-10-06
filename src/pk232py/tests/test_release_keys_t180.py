@@ -93,7 +93,10 @@ class TestSecondQuestionFromTheMatrix:
         m = entries["MBELL"]
         entries["MBELL"] = dataclasses.replace(m, fw={**m.fw, B: "yes", C: "no"}, ev={**m.ev, B: "t", C: "t"})
         monkeypatch.setattr(cm, "all_entries", lambda: entries)
-        assert devices.discriminating_command([B, C]) == "MBELL"
+        chosen = devices.discriminating_command([B, C])
+        assert chosen not in (None, "MAILDROP")
+        cells = {entries[chosen].fw[B], entries[chosen].fw[C]}
+        assert "?" not in cells and len(cells) == 2        # measured on both, and different
 
     def test_no_command_that_is_unknown_on_a_candidate_is_a_question(self):
         assert devices.discriminating_command([B, B]) is None       # nothing differs

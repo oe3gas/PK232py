@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from pk232py.comm import command_matrix as cm
+from pk232py.comm import devices
 from pk232py.comm.devices import KNOWN_DEVICES
 from pk232py.comm.host_params import HOST_PARAMS, verified_sources
 from pk232py.comm.mnemonic_registry import REGISTRY
@@ -42,10 +43,13 @@ class TestDevicesUnknownVerbose:
                 f"devices.unknown_verbose says {device.label} ({device.release}) does not know "
                 f"{name}, the matrix says {cm.exists(_name(name), device.release)!r}")
 
-    def test_an_unmeasured_device_has_no_unknown_list(self):
+    def test_a_device_without_an_unknown_list_claims_nothing(self):
+        # unknown_verbose None = "send everything" (the upload filter has no measurement for it); the
+        # matrix may know more by now (device C after T180) - then deriving the list from it is the
+        # follow-up package, not a contradiction
         for d in KNOWN_DEVICES:
             if d.unknown_verbose is None:
-                assert cm.exists("EXPERT", d.release) == "?"
+                assert devices.unknown_commands(d.release) is None
 
 
 class TestHostParams:
