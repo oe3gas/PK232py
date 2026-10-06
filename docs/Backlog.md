@@ -177,8 +177,8 @@ lines typed in the verbose terminal); static test with an allow list. `_NEVER_LI
 
 ### Command / firmware matrix (P88) — ✅ done, T179-T181 open (2026-10-06)
 
-`src/pk232py/data/command_matrix.csv` is the ONE truth about which command exists on which firmware (260 commands;
-01.AUG.91: 69 yes, 7 no; 13.SEP.95: 193 yes, 3 expert; 30.12.1988: 1 no; the rest `?`). Reader `comm/command_matrix.py`
+`src/pk232py/data/command_matrix.csv` is the ONE truth about which command exists on which firmware 260 commands;
+01.AUG.91: 164 yes, 33 no; 13.SEP.95: 193 yes, 8 no, 3 expert; 30.12.1988: 1 no; the rest `?` - after T179, Q values. Reader `comm/command_matrix.py`
 (validates while loading: evidence for every cell that is not `?`), view `docs/COMMAND_MATRIX.md` (generated, a test fails when
 stale), raw data in `docs/reference/` (Timewave list, fw_scan of 28.07.2026 with its known defects). Seeded only from
 evidence: Timewave list (names, abbreviations, defaults, functions), fw_scan 20260728 (device A), and the code that already
@@ -196,6 +196,13 @@ Settled by the evidence, not by the spec text (see the P88 report):
 **Follow-up (Teil E, after T179):** derive `devices.unknown_verbose`, `host_params.verified_releases`, the mnemonic registry and
 the parameter masks (show a field only where the command is `yes`/`expert`) from the matrix. Until then
 `test_command_matrix_agreement.py` fails if they contradict it.
+
+### fw_scan: third run on device B for the remaining ? cells — open (2026-10-06)
+
+After T179 (runs 1 and 2, see Testplan): 21 parameters and 14 immediate commands of 01.AUG.91 are still `?` (list in the Testplan);
+28 more `?` are mode / action_tx / danger commands that are never sent and stay `?` until a human measures them. The scanner
+now probes the modeless groups in PACKET and rates only an answer that begins with its own echo and reaches the prompt.
+Open question the third run answers: do the 24 former ERROR commands answer cleanly now?
 
 ### FULLDUP back into the Packet mask? — open (2026-10-06)
 

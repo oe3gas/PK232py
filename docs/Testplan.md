@@ -3589,11 +3589,25 @@ Per device:
 
 | # | Device | Expected | Result |
 |---|---|---|---|
-| T179 | B (01.AUG.91) | no contradiction; the `?` cells of 01.AUG.91 filled (about 184 unknown today) | ⬜ |
+| T179 | B (01.AUG.91) | no contradiction; the `?` cells of 01.AUG.91 filled | ✅ runs 1 and 2 PASS (see below); third run for the rest ⬜ |
 | T180 | C (30.12.1988) | first contact of device C with this software - **ask the operator first**; the matrix has one cell for C (MAILDROP no) | ⬜ |
 | T181 | A (13.SEP.95), optional | confirms the 176 yes of the 28.07.2026 run; fills the Q values etc. | ⬜ |
 
-**Status:** ⬜ OPEN — tool done, runs pending.
+**T179 result (device B, 06.10.2026, `hw_logs/20261006_fw_scan_B.*` without and `..._B_update.*` with `--update-matrix`):**
+no contradiction with the matrix, no SUPPORTED/UNSUPPORTED flip between the runs (151/34/24 and 155/30/24 SUPPORTED/UNSUPPORTED/ERROR).
+`--update-matrix` wrote 116 cells, every one `?` -> `yes` (97, from SUPPORTED) or `?` -> `no` (19, from UNSUPPORTED); none from an
+ERROR row (the 24 ERROR rows are untouched), no other release changed. Three of them (DELETE, PTUP, TRFLOW) were taken back to `?`:
+their answers came in one batch with the neighbours'. Matrix 01.AUG.91 now: 164 yes, 33 no, 63 `?`.
+**The 24 ERROR per run:** all of them from the SIGNAL phase on (0 ERROR in the 104 probes of packet, rtty, amtor, morse, fax, navtex;
+first ERROR AFILTER / AUTOBAUD, the first modeless command after the signal group). Cause (log): the TNC answers later than the read
+window (0.4 s), the reply lands in the next command's read (`AUTOBAUD` got the echoes and answers of AFILTER, ALFDISP, AUTOBAUD);
+SIGNAL survives RESTART (analysis lines keep coming after the resync; the final `PACKET` answers `Opmode was SIgnal`), so the resync
+never helped. Fixed in `pk232_fw_scan.py`: modeless groups run in PACKET, a result needs the command's own echo and the prompt.
+**Third run (device B), only what is still `?`:** `... pk232_fw_scan.py --port COMx --immediate --csv hw_logs...C.csv --debug ...`
+(21 parameters: AUTOBAUD AWLEN BKONDEL CMSG CTEXT DELETE ECHO ESCAPE MDMON MDPROMPT PARITY PRCON PROUT PTROUND PTSUM PTTRIES PTUP TBAUD TIME
+TMPROMPT TRFLOW, and 14 immediate commands); the other 28 `?` cells are mode / action_tx / danger commands that are never sent.
+
+**Status:** ⬜ PARTLY — T179 runs 1 and 2 done (PASS), third run, T180, T181 pending.
 
 ---
 

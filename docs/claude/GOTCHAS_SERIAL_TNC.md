@@ -1323,6 +1323,15 @@ never retyped; everything else names the Testplan entry, or stays `{}`
     `main_window.py` for CR LF literals; every exception is on a named allow list
     (file, function). `IL` is verified on 01.AUG.91 only (T175: Host `IL N`, verbose
     `ILFPACK` OFF, back with `IL Y`); ParamApplier sets ILFPACK live again.
+  - **SIGNAL survives RESTART, answers late and interleaves analysis text (T179, device B, 06.10.2026,
+    `hw_logs/20261006_fw_scan_B.log`).** In SIGNAL the opmode stays across `RESTART` (analysis lines `noise`,
+    `0.42: 193 baud, ` keep coming after it; a later `PACKET` answers `Opmode was SIgnal`), the TNC often answers
+    later than a 0.4 s read window, the late reply is then read as part of the NEXT command (one probe got the echoes and
+    answers of three commands) and analysis lines sit between echo and answer. Rules for any scan / probe: (1) leave SIGNAL
+    (`PACKET`) before asking anything that does not belong to SIGNAL; (2) rate an answer only if it begins with the command's own
+    echo and reaches the `cmd:` prompt (`pk232_fw_scan.answer_to()`); (3) wait once longer when nothing came, drain with Ctrl-C and
+    retry when the answer belongs to another command; (4) an unclear answer is ERROR, **never** UNSUPPORTED - a neighbour's `?What?`
+    must not become a matrix cell. 0 of the 104 probes in packet / rtty / amtor / morse / fax / navtex failed, 24 of ~100 after SIGNAL.
   - **Which command exists on which firmware: ONLY the matrix (P88).** `src/pk232py/data/command_matrix.csv`, read through
     `comm/command_matrix.py` (`exists(name, release)` -> `yes`/`no`/`expert`/`?`, `host(name)`, `evidence(name, release)`,
     `kind(name)`); generated view `docs/COMMAND_MATRIX.md`. `?` is the normal case and means "not measured" - **never** set
