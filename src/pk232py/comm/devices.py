@@ -100,6 +100,13 @@ def _device_for(release: Optional[str]) -> Optional[KnownDevice]:
     return next((d for d in KNOWN_DEVICES if d.release == release), None)
 
 
+def has_pactor(release: Optional[str]) -> Optional[bool]:
+    """P85a: does the firmware generation of *release* have PACTOR? None for
+    an unknown release (the caller keeps its permissive default)."""
+    device = _device_for(release)
+    return device.generation == "PACTOR" if device else None
+
+
 def unknown_commands(release: Optional[str]) -> Optional[frozenset]:
     """P85: verbose command names *release* does not know, or None when the
     release is unknown or unmeasured (the caller then sends everything)."""
