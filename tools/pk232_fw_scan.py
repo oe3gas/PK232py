@@ -216,14 +216,17 @@ class Cmd:
 
 
 def plan(entries: Optional[dict] = None, only_group: Optional[str] = None,
-         immediate: bool = False) -> list:
+         immediate: bool = False, only: Optional[set] = None) -> list:
     """Die abzufragenden Befehle aus der Matrix, nach Betriebsart gruppiert und alphabetisch.
-    kind danger / action_tx / mode und NEVER_AUTO sind nie dabei; 'immediate' nur auf Wunsch."""
+    kind danger / action_tx / mode und NEVER_AUTO sind nie dabei; 'immediate' nur auf Wunsch.
+    *only* (P89a, --only): genau diese Namen (jede param/immediate-Art), sonst nichts."""
     entries = cm.all_entries() if entries is None else entries
-    kinds = ("param", "immediate") if immediate else ("param",)
+    kinds = ("param", "immediate") if (immediate or only) else ("param",)
     out = []
     for name, e in entries.items():
         if name in NEVER_AUTO or e.kind not in kinds:
+            continue
+        if only is not None and name not in only:
             continue
         group = GROUP_OF.get(name, "other")
         if only_group and group != only_group:
@@ -434,6 +437,10 @@ class MockTransport:
     _MODES = ("PACKET", "BAUDOT", "AMTOR", "MORSE", "FAX", "NAVTEX", "SIGNAL")
     FACTORY_MYCALL = "PK232"
     CMDTIME = 1.0
+    _NEEDS_MYCALL = {"CONVERSE", "K", "ID", "TRANS", "ALIST", "AMTOR", "FEC", "ARQ", "SELFEC"}
+    _NEEDS_SELCAL = {"ALIST", "AMTOR", "FEC", "ARQ", "SELFEC", "ACHG", "OVER"}
+    _MODE_RULES = {"XMIT": "BAUDOT", "RCVE": "BAUDOT", "ACHG": "AMTOR", "OVER": "AMTOR"}
+    MAILBOX_PROMPT = "(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >"
 
     def __init__(self, release: str, entries: Optional[dict] = None,
                  debug: Optional["DebugLog"] = None, slow_in_signal: bool = False,
@@ -444,8 +451,14 @@ class MockTransport:
                  clock=None, risky: bool = False, calibrate_ignores_q: bool = False,
                  stuck: Optional[dict] = None, dead_after: Optional[set] = None,
                  opmode: str = "PACKET", expert_on: bool = False, echo_on: bool = True,
-                 sticky: Optional[set] = None):
+                 sticky: Optional[set] = None, needs_mycall: bool = False, needs_selcal: bool = False,
+                 memory_needs_expert: bool = False, mode_rules: bool = False, over_needs_link: bool = False):
         self.release = release
+        self.needs_mycall, self.needs_selcal = needs_mycall, needs_selcal
+        self.memory_needs_expert, self.mode_rules = memory_needs_expert, mode_rules
+        self.over_needs_link = over_needs_link
+        self.myselcal = "none"
+        self.mailbox = False
         self.entries = cm.all_entries() if entries is None else entries
         self.debug = debug
         self.sent: list = []
@@ -496,6 +509,8 @@ class MockTransport:
         self.deaf = False
         self._autobaud = self._needs_star_first
         self.mycall = self.FACTORY_MYCALL
+        self.myselcal = "none"
+        self.mailbox = False
         self.opmode = "PACKET"
         self.expert_on = False
         self.echo_on = True
@@ -533,6 +548,11 @@ class MockTransport:
         if self.calibrating and now - self._calibrate_since >= 60.0:
             self.calibrating = False                  # CALIBRATE ends by itself after 60 s
             self._reply("cmd:")
+        if self.mailbox:                              # only the mailbox's Bye leaves it (T182/T183)
+            if data.strip().upper() == b"B":
+                self.mailbox = False
+                self._reply("B\r\ncmd:")
+            return True
         if self.transparent:
             if data == CTRL_C:
                 self._ctrl_times.append(now)
@@ -602,6 +622,7 @@ class MockTransport:
             self._pending = ""
             self._late_reads = 0
             self.mycall = self.FACTORY_MYCALL
+            self.myselcal = "none"
             if self.restart_needs_star:
                 self._autobaud = True               # autobaud again, the banner comes after '*'
                 return
@@ -625,7 +646,16 @@ class MockTransport:
                         f"Opmode    {self.opmode}\r\n"
                         f"ECHo      {'ON' if self.echo_on else 'OFF'}\r\n"
                         f"EXPert    {'ON' if self.expert_on else 'OFF'}\r\n"
-                        f"MYcall    {self.mycall}\r\ncmd:", name)
+                        f"MYcall    {self.mycall}\r\n"
+                        f"MYSelcal  {self.myselcal}\r\ncmd:", name)
+            return
+        if name.startswith("MYSELCAL"):
+            arg = line[8:].strip()
+            if arg:
+                old, self.myselcal = self.myselcal, ("none" if arg.upper() == "NONE" else arg.upper())
+                self._reply(f"MYSELCAL {arg}\r\nMYSelcal  was {old}\r\nMYSelcal  now {self.myselcal}\r\ncmd:", name)
+            else:
+                self._reply(f"MYSELCAL\r\nMYSelcal  {self.myselcal}\r\ncmd:", name)
             return
         if name.startswith("MYCALL"):
             arg = line[6:].strip()
@@ -656,6 +686,26 @@ class MockTransport:
         cell = self._cell(name)
         if cell == "no":
             self._reply(f"{name}\r\n?What?\r\ncmd:", name)
+            return
+        if self.needs_mycall and self.mycall == self.FACTORY_MYCALL and name in self._NEEDS_MYCALL:
+            self._reply(f"{name}\r\n?need MYcall\r\ncmd:", name)
+            return
+        if self.needs_selcal and self.myselcal == "none" and name in self._NEEDS_SELCAL:
+            self._reply(f"{name}\r\n?need MYSELCAL\r\ncmd:", name)
+            return
+        if self.memory_needs_expert and name == "MEMORY" and not self.expert_on:
+            self._reply(f"{name}\r\n?EXPERT command\r\ncmd:", name)
+            return
+        if self.mode_rules and name in self._MODE_RULES:
+            if self.opmode != self._MODE_RULES[name] or (name == "OVER" and self.over_needs_link):
+                self._reply(f"{name}\r\n?not while in {self.opmode[:2]}{self.opmode[2:].lower()}\r\ncmd:", name)
+                return
+            if name == "XMIT":
+                self._reply("XMIT\r\n", name)         # keys the transmitter: no prompt
+                return
+        if self.risky and name == "MDCHECK":
+            self.mailbox = True
+            self._reply(f"MDCHECK\r\n{self.MAILBOX_PROMPT}", name)
             return
         if self.risky and name == "TRANS":
             self.transparent, self._last_other, self._ctrl_times = True, now, []
@@ -1098,7 +1148,8 @@ def restore_state(t, state: DeviceState, rep: "Report") -> None:
 
 def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = True,
              immediate: bool = False, entries: Optional[dict] = None, risky: bool = False,
-             mycall: Optional[str] = None, confirm_power_cycle=None) -> Report:
+             mycall: Optional[str] = None, confirm_power_cycle=None, myselcal: Optional[str] = None,
+             only: Optional[set] = None) -> Report:
     entries = cm.all_entries() if entries is None else entries
     banner = capture_banner(t)
     release = banner_release(banner)
@@ -1127,7 +1178,7 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
     if progress:
         _status(f"[*] EXPERT: {rep.expert_prior or 'in dieser Firmware nicht vorhanden'}")
 
-    todo = plan(entries, only_group=only_group, immediate=immediate)
+    todo = plan(entries, only_group=only_group, immediate=immediate, only=only)
     skipped = never_probed(entries)
     if progress:
         _status(f"[*] Frage {len(todo)} Befehle ab; {len(skipped)} Befehle (danger / action_tx / "
@@ -1186,7 +1237,8 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
         if risky:
             # P89: every command that is otherwise never sent, one by one, after all normal queries
             risky_rows = run_risky(t, entries, mycall=mycall, confirm_power_cycle=confirm_power_cycle,
-                                   progress=progress)
+                                   progress=progress, myselcal=myselcal,
+                                   expert=rep.expert_prior is not None, only=only)
             for row in risky_rows:
                 e = entries.get(row["name"])
                 row["matrix"] = e.fw.get(release, "?") if (e and release) else "?"
@@ -1266,7 +1318,14 @@ RECOVERY: dict = {
     "RESTART": (Step("banner/*", (("banner",),)),),            # RESTART, RESET, REINIT
     "HOST": (_tx("HOST OFF", FRAME_HOST_OFF),),                # wie die App (HOST OFF-Frame)
     "danger": (_tx("Ctrl-C", CTRL_C), _tx("CR", b"\r")),
+    # MDCHECK opens the MailDrop mailbox (T182/T183: '(AEA PK-232M)  18536 free  (B,E,K,L,R,S) >'); Ctrl-C does
+    # NOT leave it - the Bye of the mailbox does, as in the app (MailDropSession): 'B' returns straight to cmd:
+    "MDCHECK": (_tx("B", b"B\r"), _tx("Ctrl-C", CTRL_C)),
 }
+
+# P89a: the operating mode a command only works in (T182-T184: ?not while in PACKET). ONE place, next to
+# RECOVERY; the command is tried there and the scan goes back to PACKET afterwards.
+NEEDS_MODE: dict = {"XMIT": "BAUDOT", "RCVE": "BAUDOT", "ACHG": "AMTOR", "OVER": "AMTOR"}
 
 
 def recovery_kind(name: str, kind: str) -> str:
@@ -1277,7 +1336,22 @@ def recovery_kind(name: str, kind: str) -> str:
         return "CONVERSE"
     if name in ("RESTART", "RESET", "REINIT"):
         return "RESTART"
+    if name == "MDCHECK":
+        return "MDCHECK"
     return kind if kind in ("mode", "action_tx") else "danger"
+
+
+def usable_call(call: Optional[str]) -> Optional[str]:
+    """A callsign the TNC accepts as 'set': the factory MYCALL (PK232) and NOCALL are not (T182: the TNC answers
+    ?need MYcall while MYCALL is still PK232)."""
+    call = (call or "").strip().upper()
+    return None if call in ("", "NOCALL", "PK232") else call
+
+
+def derive_selcal(call: Optional[str]) -> Optional[str]:
+    """A 4-letter AMTOR SELCAL from a callsign: the first two and the last two letters (OE3GAS -> OEAS)."""
+    letters = re.sub(r"[^A-Z]", "", (call or "").upper())
+    return letters[:2] + letters[-2:] if len(letters) >= 4 and call and usable_call(call) else None
 
 
 # Vom harmlosen zum heikelsten: erst die Moduswechsel, dann die tastenden Befehle, dann der Rest; ganz
@@ -1286,11 +1360,14 @@ _RISK_TAIL = ["MEMORY", "TRANS", "CALIBRATE", "RESTART", "RESET", "REINIT"]
 _KIND_RANK = {"mode": 0, "action_tx": 1, "danger": 2}
 
 
-def risky_plan(entries: Optional[dict] = None) -> list:
-    """Alle Befehle, die ohne --all nie gesendet werden, vom harmlosen zum heikelsten."""
+def risky_plan(entries: Optional[dict] = None, only: Optional[set] = None) -> list:
+    """Alle Befehle, die ohne --all nie gesendet werden, vom harmlosen zum heikelsten
+    (mit *only*: nur die genannten)."""
     entries = cm.all_entries() if entries is None else entries
     out = []
     for name, _why in never_probed(entries):
+        if only is not None and name not in only:
+            continue
         e = entries[name]
         out.append(Cmd(name, GROUP_OF.get(name, "other"), e.kind, e.abbrev))
 
@@ -1315,6 +1392,8 @@ class Behaviour:
     recorded_s: float = 0.0
     opmode: str = ""
     mycall: str = ""
+    precondition: str = ""                # P89a: the refusal for a missing precondition (NOT an effect)
+    mode: str = ""                        # the operating mode the command was tried in (NEEDS_MODE)
 
 
 _EFFECT_NO_PROMPT = {
@@ -1328,28 +1407,46 @@ _EFFECT_NO_PROMPT = {
     "K": "enters converse mode",
 }
 _OPMODE_NOW = re.compile(r"Opmode\s+now\s+(\w+)", re.IGNORECASE)
+_BANNER_TEXT = re.compile(r"Release\s+\S+|is using default values", re.IGNORECASE)
+_MAILBOX_PROMPT = re.compile(r"[(\[]\s*AEA\s+PK-232\w*\s*[)\]]\s+\d+\s+free", re.IGNORECASE)
+
+
+def precondition_of(text: str) -> str:
+    """The TNC's refusal for a missing precondition - ?need MYcall, ?need MYSELCAL, ?not while in ...,
+    ?EXPERT command, ?callsign - or '' (T182-T184). ?What? is not one: that is 'unknown command'."""
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if ln.startswith(("?", "***")) and not WHAT_RE.search(ln):
+            return ln
+    return ""
 
 
 def describe_effect(name: str, text: str) -> str:
-    """Was der Befehl laut seiner Antwort bewirkt hat - in einem kurzen, zeitfreien Satz."""
+    """Was der Befehl laut seiner Antwort bewirkt hat - in einem kurzen, zeitfreien Satz. Eine Ablehnung wegen
+    fehlender Voraussetzung ist KEINE Wirkung: dann ''; sie steht in precondition_of()."""
     if WHAT_RE.search(text):
         return "unknown command"
-    if any(m in text for m in _BANNER_STR):
+    if _MAILBOX_PROMPT.search(text):
+        return "enters the MailDrop mailbox session"
+    if _BANNER_TEXT.search(text):
         return "prints banner (restart)"
     m = _OPMODE_NOW.search(text)
     if m:
         return f"changes OPMODE to {m.group(1).upper()}"
-    refused = next((ln.strip() for ln in text.splitlines() if ln.strip().startswith(("?", "***"))), "")
-    if refused:
-        return f"refused: {refused}"
+    if precondition_of(text):
+        return ""
     if "cmd:" not in text:
         return _EFFECT_NO_PROMPT.get(name, "no prompt returned")
     answer = answer_to(name, text)
     return "no output" if answer is None or not answer[0].strip() else "prints a value"
 
 
-def fx_text(effect: str, recovery: str) -> str:
-    """Wirkung und Rueckweg in Kurzform fuer die Matrix (fx_<release>)."""
+def fx_text(effect: str, recovery: str, mode: str = "") -> str:
+    """Wirkung und Rueckweg in Kurzform fuer die Matrix (fx_<release>); ohne Wirkung gibt es keinen Text."""
+    if not effect:
+        return ""
+    if mode:
+        effect = f"in {mode}: {effect}"
     if recovery == "needs_power_cycle":
         return f"{effect}; power-cycle needed"
     return f"{effect}; exit {recovery}" if recovery else effect
@@ -1402,12 +1499,36 @@ def _value(t, name: str) -> str:
     return " ".join(got[0].split()) if got else ""
 
 
-def probe_risky(t, cmd: Cmd, *, mycall: Optional[str], confirm_power_cycle, record_s: float = 3.0) -> Behaviour:
+@dataclass
+class RiskyContext:
+    """What the risky part sets before it starts and sets again after every reset (P89a)."""
+    mycall: Optional[str] = None
+    myselcal: Optional[str] = None
+    expert: bool = False
+
+
+def reestablish(t, ctx: RiskyContext) -> None:
+    """After a restart / power cycle the preconditions are gone: EXPERT ON, MYCALL, MYSELCAL again."""
+    if ctx.expert:
+        t.write(verbose_line("EXPERT ON"))
+        read_until(t, ("cmd:",))
+    for name, value in (("MYCALL", ctx.mycall), ("MYSELCAL", ctx.myselcal)):
+        if value:
+            t.write(verbose_line(f"{name} {value}"))
+            read_until(t, ("cmd:",))
+
+
+def probe_risky(t, cmd: Cmd, *, mycall: Optional[str], confirm_power_cycle, record_s: float = 3.0,
+                ctx: Optional[RiskyContext] = None) -> Behaviour:
     """Einen riskanten Befehl einzeln absetzen (P89 Teil B): Ausgangszustand pruefen, senden, 3 s
     alles mitschreiben, zurueck in den Befehlsmodus nach der Tabelle RECOVERY (jeder Schritt mit
     Ergebnis im Log), bei Misserfolg Aus-/Einschalten durch den Betreiber, danach OPMODE und MYCALL."""
-    b = Behaviour(cmd.name, cmd.kind)
-    _dbg_note(t, f"RISKY {cmd.name} (kind={cmd.kind}): baseline, send, record {record_s:.0f} s")
+    ctx = ctx or RiskyContext(mycall=usable_call(mycall))
+    b = Behaviour(cmd.name, cmd.kind, mode=NEEDS_MODE.get(cmd.name, ""))
+    _dbg_note(t, f"RISKY {cmd.name} (kind={cmd.kind}): baseline, send, record {record_s:.0f} s"
+                 f"{' in ' + b.mode if b.mode else ''}")
+    if b.mode:
+        enter_mode(t, b.mode)                 # P89a: this command only works in its own mode
     ensure_prompt(t)
     t0 = _clock()
     t.write(verbose_line(cmd.name))
@@ -1417,6 +1538,7 @@ def probe_risky(t, cmd: Cmd, *, mycall: Optional[str], confirm_power_cycle, reco
     got = answer_to(cmd.name, text)
     b.exists = None if got is None else ("no" if WHAT_RE.search(got[0]) else "yes")
     b.effect = describe_effect(cmd.name, text)
+    b.precondition = precondition_of(text)
 
     reset = recovery_kind(cmd.name, cmd.kind) == "RESTART"
     if b.exists == "no":
@@ -1440,9 +1562,10 @@ def probe_risky(t, cmd: Cmd, *, mycall: Optional[str], confirm_power_cycle, reco
             confirm_power_cycle()
             wake(t)
             reset = True
-    if reset and mycall and mycall.upper() != "NOCALL":
-        t.write(verbose_line(f"MYCALL {mycall}"))       # the factory MYCALL came back: set it again
-        read_until(t, ("cmd:",))
+    if reset:
+        reestablish(t, ctx)                              # the factory values came back: set them again
+    if b.mode:
+        enter_mode(t, "PACKET")
     b.opmode = _value(t, "OPMODE")
     b.mycall = _value(t, "MYCALL")
     _dbg_note(t, f"RISKY {cmd.name}: exists={b.exists} effect={b.effect!r} recovery={b.recovery} "
@@ -1454,28 +1577,53 @@ def _operator_power_cycle() -> None:
     _ask("")                                              # ENTER
 
 
+def value_of(text: str) -> str:
+    """The value of a one-line answer: 'MYcall    PK232' -> 'PK232'."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return lines[0].split()[-1] if lines else ""
+
+
 def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=None,
-              progress: bool = True) -> list:
-    """Alle riskanten Befehle einzeln, vom harmlosen zum heikelsten. Rueckgabe: Report-Zeilen."""
+              progress: bool = True, myselcal: Optional[str] = None, expert: bool = False,
+              only: Optional[set] = None) -> list:
+    """Alle riskanten Befehle einzeln, vom harmlosen zum heikelsten. Rueckgabe: Report-Zeilen.
+
+    P89a: vorher MYCALL (echtes Rufzeichen), MYSELCAL und - wenn das Geraet EXPERT kennt - EXPERT ON setzen,
+    nach jedem Reset neu setzen, am Ende MYCALL und MYSELCAL auf ihre alten Werte zurueck (EXPERT, ECHO und
+    Betriebsmodus stellt run_scan wieder her)."""
     confirm = confirm_power_cycle or _operator_power_cycle
+    call = usable_call(mycall)
+    ctx = RiskyContext(mycall=call, myselcal=usable_call(myselcal) or derive_selcal(call), expert=expert)
+    if not call and progress:
+        _status("[!] no usable callsign (--mycall or the configuration): the commands that need MYCALL will be "
+                "refused and recorded as preconditions")
+    before = {"MYCALL": value_of(query_text(t, "MYCALL")), "MYSELCAL": value_of(query_text(t, "MYSELCAL"))}
+    reestablish(t, ctx)
     rows = []
-    todo = risky_plan(entries)
-    for i, cmd in enumerate(todo, 1):
-        if progress:
-            _status(f"\n[*] riskant [{i}/{len(todo)}] {cmd.name} ({cmd.kind}) ...")
-        b = probe_risky(t, cmd, mycall=mycall, confirm_power_cycle=confirm)
-        result = {"yes": Result.SUPPORTED, "no": Result.UNSUPPORTED}.get(b.exists, Result.ERROR).value
-        if progress:
-            _status(f"    -> {result}; {b.effect}; way back: {b.recovery}")
-        e = entries.get(cmd.name)
-        rows.append({
-            "name": cmd.name, "group": cmd.group, "kind": cmd.kind, "result": result,
-            "matrix": "?", "note": "",
-            "effect": b.effect, "recovery": b.recovery,
-            "fx": fx_text(b.effect, b.recovery) if result == Result.SUPPORTED.value else "",
-            "raw": repr("".join(chunk for _ts, chunk in b.raw))[:600],
-            "opmode": b.opmode, "mycall": b.mycall,
-        })
+    todo = risky_plan(entries, only=only)
+    try:
+        for i, cmd in enumerate(todo, 1):
+            if progress:
+                _status(f"\n[*] riskant [{i}/{len(todo)}] {cmd.name} ({cmd.kind}) ...")
+            b = probe_risky(t, cmd, mycall=mycall, confirm_power_cycle=confirm, ctx=ctx)
+            result = {"yes": Result.SUPPORTED, "no": Result.UNSUPPORTED}.get(b.exists, Result.ERROR).value
+            if progress:
+                what = b.effect or (f"precondition {b.precondition}" if b.precondition else "")
+                _status(f"    -> {result}; {what}; way back: {b.recovery}")
+            rows.append({
+                "name": cmd.name, "group": cmd.group, "kind": cmd.kind, "result": result,
+                "matrix": "?", "note": "",
+                "effect": b.effect, "recovery": b.recovery, "precondition": b.precondition, "mode": b.mode,
+                "fx": fx_text(b.effect, b.recovery, b.mode) if result == Result.SUPPORTED.value else "",
+                "raw": repr("".join(chunk for _ts, chunk in b.raw))[:600],
+                "opmode": b.opmode, "mycall": b.mycall,
+            })
+    finally:
+        ensure_prompt(t)
+        for name, used in (("MYCALL", ctx.mycall), ("MYSELCAL", ctx.myselcal)):
+            if used and before[name]:
+                t.write(verbose_line(f"{name} {before[name]}"))        # back to what the device had
+                read_until(t, ("cmd:",))
     return rows
 
 
@@ -1510,7 +1658,8 @@ def apply_to_matrix(entries: dict, rows: list, release: str, date: str, device: 
         cell = e.fw[release]
         if cell == "?":
             fw, ev = dict(e.fw), dict(e.ev)
-            fw[release], ev[release] = value, evidence
+            fw[release] = value
+            ev[release] = evidence + (f"; precondition: {row['precondition']}" if row.get("precondition") else "")
             new[e.name] = e = dataclasses.replace(e, fw=fw, ev=ev)
             filled += 1
         elif cell != value and {cell, value} != {"yes", "expert"}:
@@ -1577,7 +1726,7 @@ def print_report(rep: Report) -> None:
 
 
 CSV_FIELDS = ["release", "device", "date", "name", "group", "kind", "result", "matrix", "note",
-              "effect", "recovery", "raw"]
+              "effect", "recovery", "precondition", "mode", "raw"]
 
 
 def write_csv(rep: Report, path: str) -> None:
@@ -1697,8 +1846,13 @@ def main(argv: Optional[list] = None) -> int:
                          "RESTART, XMIT ...), one by one after the normal queries, with the way back and the "
                          "effect noted. ONLY at a TNC with no radio connected, with you at it: two "
                          "confirmations are required (exit code 5 without them)")
-    ap.add_argument("--mycall", help="callsign to set again after a restart / power cycle during --all "
-                                      "(default: the configuration's MYCALL)")
+    ap.add_argument("--mycall", help="callsign MYCALL is set to during the risky part of --all (the factory MYCALL "
+                                      "PK232 counts as 'not set': the TNC refuses CONVERSE, ID, TRANS ...); "
+                                      "default: the configuration's MYCALL. Put back afterwards")
+    ap.add_argument("--myselcal", help="4-letter AMTOR SELCAL for the risky part (default: derived from the "
+                                        "callsign, OE3GAS -> OEAS). Put back afterwards")
+    ap.add_argument("--only", metavar="NAME,...",
+                    help="probe just these commands (a risky one needs --all); everything else is skipped")
     ap.add_argument("--results", metavar="DIR",
                     help="P90: one result folder per device (banner, csv, debug log, DISPLAY before/after, "
                          "device_info form) in DIR and results_<call>_<date>.zip; needs --call "
@@ -1727,6 +1881,19 @@ def main(argv: Optional[list] = None) -> int:
         print("--update-matrix is refused with --selftest: the mock's answers are invented and "
               "must never enter the matrix.", file=sys.stderr)
         return 2
+    only = None
+    if args.only:
+        only = {n.strip().upper() for n in args.only.split(",") if n.strip()}
+        known = cm.all_entries()
+        unknown = sorted(n for n in only if n not in known)
+        if unknown:
+            print(f"--only: not a command of the matrix: {', '.join(unknown)}", file=sys.stderr)
+            return 2
+        risky_names = sorted(only & {n for n, _why in never_probed()})
+        if risky_names and not args.all:
+            print(f"--only names risky commands ({', '.join(risky_names)}): that needs --all", file=sys.stderr)
+            return 2
+    args.only_set = only
     results_dir = Path(args.results or ("scan_results" if _KIT else "")) if (args.results or _KIT) else None
     if results_dir is not None and not args.call:
         print("--call CALLSIGN is required with --results (it names the results zip and the source "
@@ -1798,7 +1965,7 @@ def _run(args, ap, dbg, reports: Optional[list] = None) -> int:
     try:
         rep = run_scan(t, port, only_group=args.group, immediate=args.immediate or args.all,
                        risky=args.all, mycall=args.mycall or _config_mycall(),
-                       confirm_power_cycle=confirm)
+                       confirm_power_cycle=confirm, myselcal=args.myselcal, only=args.only_set)
     except ScanError as exc:
         print(f"[!] {exc}", file=sys.stderr)
         return 4

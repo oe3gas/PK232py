@@ -162,7 +162,7 @@ class TestRecoveryTable:
             assert scan.recovery_kind(n, "danger") == "RESTART"
         assert scan.recovery_kind("BAUDOT", "mode") == "mode"
         assert scan.recovery_kind("XMIT", "action_tx") == "action_tx"
-        assert scan.recovery_kind("MDCHECK", "danger") == "danger"
+        assert scan.recovery_kind("MDCHECK", "danger") == "MDCHECK"   # P89a: the mailbox is left with B
 
 
 # ---------------------------------------------------------------- Teil B / E: the probing
