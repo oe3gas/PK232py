@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional, TYPE_CHECKING
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command, build_data, FrameKind
 from pk232py.modes.base_mode import BaseMode
 
@@ -70,7 +71,7 @@ class ASCIIRTTYMode(BaseMode):
 
     name         = "ASCII RTTY"
     host_command = b'AS'
-    verbose_command = b"ASCII\r\n"
+    verbose_command = verbose_line("ASCII")
 
     def __init__(
         self,

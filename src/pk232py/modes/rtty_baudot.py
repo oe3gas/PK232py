@@ -64,6 +64,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command, build_data, FrameKind
 from pk232py.modes.base_mode import BaseMode
 
@@ -106,7 +107,7 @@ class BaudotRTTYMode(BaseMode):
 
     name         = "Baudot RTTY"
     host_command = b'BA'
-    verbose_command = b"BAUDOT\r\n"
+    verbose_command = verbose_line("BAUDOT")
  
 
     def __init__(

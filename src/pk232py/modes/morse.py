@@ -52,6 +52,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional, TYPE_CHECKING
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command, build_data, FrameKind
 from pk232py.modes.base_mode import BaseMode
 
@@ -93,7 +94,7 @@ class MorseMode(BaseMode):
 
     name         = "CW / Morse"
     host_command = b'MO'
-    verbose_command = b"MORSE\r\n"
+    verbose_command = verbose_line("MORSE")
 
     def __init__(
         self,

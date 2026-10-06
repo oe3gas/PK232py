@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command
 from pk232py.config import HFPacketConfig
 from pk232py.modes.packet_hf import HFPacketMode
@@ -60,7 +61,7 @@ class VHFPacketMode(HFPacketMode):
 
     name         = "VHF Packet"
     host_command = b'PA'   # same mnemonic as HF Packet
-    verbose_command = b"VHF\r\n"
+    verbose_command = verbose_line("VHF")
 
     def __init__(
         self,

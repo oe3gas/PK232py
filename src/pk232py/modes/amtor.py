@@ -76,6 +76,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional, TYPE_CHECKING
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command, build_data, FrameKind
 from pk232py.modes.base_mode import BaseMode
 
@@ -127,7 +128,7 @@ class AMTORMode(BaseMode):
 
     name         = "AMTOR ARQ"
     host_command = b'AM'
-    verbose_command = b"AMTOR\r\n"
+    verbose_command = verbose_line("AMTOR")
 
     def __init__(
         self,
@@ -434,7 +435,7 @@ class AMTORFECMode(AMTORMode):
 
     name         = "AMTOR FEC"
     host_command = b'AM'          # same as ARQ — FEC is a sub-mode
-    verbose_command = b"AMTOR\r\n"   # gleicher Verbose-Befehl
+    verbose_command = verbose_line("AMTOR")   # gleicher Verbose-Befehl
 
     def __init__(self, **kwargs) -> None:
         kwargs.setdefault("srxall", True)

@@ -53,6 +53,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command, build_data, FrameKind
 from pk232py.comm.host_params import verified_mnemonic
 from pk232py.modes.base_mode import BaseMode
@@ -101,7 +102,7 @@ class PACTORMode(BaseMode):
 
     name            = "PACTOR"
     host_command    = b''              # kein Host Mode Mnemonic auf PK-232MBX v7.1
-    verbose_command = b"PACTOR\r\n"   # Aktivierung nur im Verbose Mode
+    verbose_command = verbose_line("PACTOR")   # Aktivierung nur im Verbose Mode
 
     def __init__(self, myptcall: str = "") -> None:
         """
@@ -126,7 +127,7 @@ class PACTORMode(BaseMode):
     def get_activate_frames(self) -> list[bytes]:
         """PACTOR has no Host Mode mnemonic on PK-232MBX v7.1.
  
-        Activation via verbose_command = b"PACTOR\\r\\n".
+        Activation via verbose_command = verbose_line("PACTOR").
         ModeManager handles verbose activation separately.
         """
         return []

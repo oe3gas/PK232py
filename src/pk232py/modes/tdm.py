@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional, TYPE_CHECKING
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command, FrameKind
 from pk232py.modes.base_mode import BaseMode
 
@@ -70,7 +71,7 @@ class TDMMode(BaseMode):
 
     name         = "TDM"
     host_command = b'TV'
-    verbose_command = b"TDM\r\n"
+    verbose_command = verbose_line("TDM")
 
     def __init__(
         self,

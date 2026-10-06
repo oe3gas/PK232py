@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command, build_ch_cmd, build_data, FrameKind
 from pk232py.comm.link_status import extract_partner as _extract_partner
 from pk232py.config import HFPacketConfig
@@ -102,7 +103,7 @@ class HFPacketMode(BaseMode):
     handles_link_frames = True      # P81d: feeds the LinkTable itself (MainWindow wiring)
     name         = "HF Packet"
     host_command = b'PA'
-    verbose_command = b"PACKET\r\n"
+    verbose_command = verbose_line("PACKET")
 
     def __init__(
         self,

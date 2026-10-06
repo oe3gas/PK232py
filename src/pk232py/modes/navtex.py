@@ -62,6 +62,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional, TYPE_CHECKING
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command, FrameKind
 from pk232py.modes.base_mode import BaseMode
 
@@ -103,7 +104,7 @@ class NAVTEXMode(BaseMode):
 
     name         = "NAVTEX"
     host_command = b'NA'    # NAVTEX direct command per TRM mnemonic table
-    verbose_command = b"NAVTEX\r\n"
+    verbose_command = verbose_line("NAVTEX")
 
     def __init__(
         self,

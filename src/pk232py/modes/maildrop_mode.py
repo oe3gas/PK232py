@@ -10,6 +10,7 @@ the built-in personal mailbox.  Selecting this mode:
 """
 
 from __future__ import annotations
+from pk232py.comm.constants import verbose_line
 from .base_mode import BaseMode
 from .packet_hf import HFPacketMode
 
@@ -23,7 +24,7 @@ class MailDropMode(HFPacketMode):
 
     name         = "MailDrop"
     host_command = b'PA'          # underlying transport is HF Packet
-    verbose_command = b"PACKET\r\n"
+    verbose_command = verbose_line("PACKET")
 
     def __init__(
         self,

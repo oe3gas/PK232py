@@ -63,6 +63,7 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Optional, TYPE_CHECKING
 
+from pk232py.comm.constants import verbose_line
 from pk232py.comm.frame import build_command, FrameKind
 from pk232py.modes.base_mode import BaseMode
 
@@ -144,7 +145,7 @@ class SignalMode(BaseMode):
 
     name         = "Signal (SIAM)"
     host_command = b'SI'
-    verbose_command = b"SIGNAL\r\n"
+    verbose_command = verbose_line("SIGNAL")
 
     def __init__(self, sample: int = 0) -> None:  # 0 = TNC default
         """
