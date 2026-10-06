@@ -1,4 +1,4 @@
-name,abbrev,host,kind,default,function,src_desc,fw_01.AUG.91,fw_13.SEP.95,fw_30.12.1988,ev_01.AUG.91,ev_13.SEP.95,ev_30.12.1988,note
+name,abbrev,host,kind,default,function,src_desc,fw_01.AUG.91,fw_13.SEP.95,fw_30.DEC.88,ev_01.AUG.91,ev_13.SEP.95,ev_30.DEC.88,note
 3RDPARTY,3R,3R,param,OFF,Enables 3rd party MailDrop messages,timewave,yes,yes,?,"T151 (Host Mode, mnemonic 3R) [hw_logs/20261001_205535_host_params_probe.log]","T151 (Host Mode, mnemonic 3R) [hw_logs/20261001_220703_host_params_probe.log]",,
 5BIT,5B,,mode,Immediate Command,Starts copying special 5 bit stations,timewave,?,yes,?,,"fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95)",,
 6BIT,6B,,mode,Immediate Command,Starts copying special 6 bit stations,timewave,?,yes,?,,"fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95)",,

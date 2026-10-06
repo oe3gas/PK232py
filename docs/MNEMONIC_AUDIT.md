@@ -4,7 +4,7 @@
 Generated from `src/pk232py/comm/mnemonic_registry.py`. A cell shows the
 evidence for that release (`-` = none). `TX` = keys the transmitter.
 
-| Mnemonic | Meaning | Kind | TX | 01.AUG.91 | 13.SEP.95 | 30.12.1988 |
+| Mnemonic | Meaning | Kind | TX | 01.AUG.91 | 13.SEP.95 | 30.DEC.88 |
 |---|---|---|---|---|---|---|
 | `3R` | 3RDPARTY (maildrop); matrix line 260, confidence L | param |  | T151 | T151 | - |
 | `8B` | 8BITCONV (rtty); matrix line 353, confidence M | param |  | T151 | T151 | - |

@@ -4,7 +4,7 @@
 > do not edit. The CSV is the ONE truth about which command exists on which firmware (P88).
 > `yes` present, `no` answers `?What?`, `expert` present but needs EXPERT ON, `?` not measured.
 > A cell that is not `?` has its evidence in the last column (`A` = 13.SEP.95, `B` = 01.AUG.91,
-> `C` = 30.12.1988, docs/DEVICES.md).
+> `C` = 30.DEC.88, docs/DEVICES.md).
 
 ## Cells per firmware
 
@@ -12,13 +12,13 @@
 |---|---|---|---|---|---|
 | 01.AUG.91 | B | 193 | 39 | 0 | 28 |
 | 13.SEP.95 | A | 193 | 8 | 3 | 56 |
-| 30.12.1988 | C | 0 | 1 | 0 | 259 |
+| 30.DEC.88 | C | 0 | 1 | 0 | 259 |
 
 260 commands.
 
 ## Commands
 
-| Name | Abbrev | Host | Kind | 01.AUG.91 | 13.SEP.95 | 30.12.1988 | Default | Function | Evidence |
+| Name | Abbrev | Host | Kind | 01.AUG.91 | 13.SEP.95 | 30.DEC.88 | Default | Function | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
 | 3RDPARTY | 3R | 3R | param | yes | yes | ? | OFF | Enables 3rd party MailDrop messages | B: T151 (Host Mode, mnemonic 3R) [hw_logs/20261001_205535_host_params_probe.log]; A: T151 (Host Mode, mnemonic 3R) [hw_logs/20261001_220703_host_params_probe.log] |
 | 5BIT | 5B |  | mode | ? | yes | ? | Immediate Command | Starts copying special 5 bit stations | A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) |
