@@ -172,8 +172,13 @@ Spec: `docs/P75_Verbose_CR_Only_Spec.md`. T175: CR alone works with ILFPACK ON a
 lines typed in the verbose terminal); static test with an allow list. `_NEVER_LIVE` is gone: `IL` is released for
 01.AUG.91 with T175 (`host_params._VERIFIED_B_T175`). `?EXPERT command` (exactly that line) in the verbose path of
 `ParamApplier` -> EXPERT ON, repeat, read back, EXPERT OFF, reported in the result. Not changed: `tools/hw_check.py`
-`Session.verbose()` still ends with CR LF (the tool is not part of the app); the ILFPACK tooltip is worded from the
-T155/T175 measurements - the TRM text is not in the repo, compare it with the manual.
+`Session.verbose()` still ends with CR LF (the tool is not part of the app); the ILFPACK tooltip follows the manual
+(STABO ch. 12, operator's wording) and the measurements T155/T175 - comparison with the TRM done.
+
+### hw_check Session.verbose() still ends commands with CR LF — open (2026-10-06)
+
+`tools/hw_check.py` (`Session.verbose()`) ends verbose commands with `\r\n`; with ILFPACK OFF a measurement run fails from
+the second command on (T155). Switch it to `verbose_line()` when convenient (the app itself is done, P75).
 
 ### ILFPACK on 13.SEP.95: verbose cross-check with EXPERT ON — open (2026-10-06)
 
