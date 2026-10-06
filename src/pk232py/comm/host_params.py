@@ -154,7 +154,7 @@ _ROWS: tuple = (
 # `host_params_probe --part A --exclude IL`; the log has no banner - the device
 # is the operator's statement; `--reevaluate` of that log gives exactly these 37
 # as `verified`: set, ACK `<mn> $00`, read back, verbose cross-check with the
-# test value). ILFPACK is NOT in the list (only `verified_query`, T155/B.3).
+# test value). ILFPACK is NOT in the list: it is released by T175 (below).
 _VERIFIED_B_T151 = frozenset({
     "PACLEN", "TXDELAY", "MAXFRAME", "FRACK", "RETRY", "PERSIST", "SLOTTIME",
     "DWAIT", "CHECK", "MONITOR", "RESPTIME", "USERS", "AX25L2V2", "HEADERLN",
@@ -169,7 +169,7 @@ _VERIFIED_B_T138 = frozenset({"UNPROTO", "CFROM"})
 # T151 on device A (01.10.2026 22:07, hw_logs/20261001_220703_host_params_probe.log,
 # banner `release=13.SEP.95 pactor=yes`; `--reevaluate` gives verified=39): the same
 # 37 as on device B plus PTHUFF and PT200 (PACTOR firmware). UNPROTO/CFROM were
-# measured on B only (T138); ILFPACK stays verified_query.
+# measured on B only (T138); ILFPACK: see T175 (device B only).
 _VERIFIED_A_T151 = _VERIFIED_B_T151 | frozenset({"PTHUFF", "PT200"})
 # T152 (device A, 02.10.2026, hw_logs/20261002_172135_host_params_probe.log):
 # set, ACK, read back = test value, WHILE CONNECTED, link unchanged afterwards.
@@ -202,6 +202,13 @@ _MNEMONIC_PROBE_SET = frozenset({
     "EAS", "WIDESHFT", "SRXALL", "USOS", "WORDOUT", "FAXNEG", "SQUELCH", "ASPECT",
 })
 _VERIFIED_B_T166 = _MNEMONIC_PROBE_SET
+# T175 (device B, 06.10.2026, hw_logs/20261006_144428_eol_probe.log, banner
+# `release=01.AUG.91`): Host `IL N` set, `IL` read back N, verbose `ILFPACK` showed
+# OFF; restored with `IL Y`, verbose ILFPACK ON. Device A (13.SEP.95,
+# 20261006_145938_eol_probe.log) set `IL` and read it back via Host Mode too, but
+# verbose ILFPACK answered `?EXPERT command` - no verbose cross-check, so A is NOT
+# released (Backlog: redo with EXPERT ON).
+_VERIFIED_B_T175 = frozenset({"ILFPACK"})
 _VERIFIED_A_T167 = _MNEMONIC_PROBE_SET
 
 
@@ -217,6 +224,7 @@ _VERIFIED_SETS = (
     (RELEASE_A, "T156", _VERIFIED_A_T156),
     (RELEASE_A, "T161", _VERIFIED_A_T161),
     (RELEASE_B, "T166", _VERIFIED_B_T166),
+    (RELEASE_B, "T175", _VERIFIED_B_T175),
     (RELEASE_A, "T167", _VERIFIED_A_T167),
 )
 
