@@ -572,7 +572,7 @@ def wake(t) -> str:
       2b. COMMAND-Zeichen + CR   -> 'cmd:'              (Converse), bis zu 3x, gemeinsame escape_converse()
       2c. XON, CR, CR            -> 'cmd:'              (vom Flow-Control gestoppt)
 
-    Das ERSTE Byte ist immer das '*': Geraet C (30.12.1988) wartet nach dem Einschalten darauf
+    Das ERSTE Byte ist immer das '*': Geraet C (30.DEC.88) wartet nach dem Einschalten darauf
     und bleibt bei jedem anderen ersten Zeichen stumm (T180, 06.10.2026: der alte Scanner begann
     mit Ctrl-C und bekam nie einen Sync). Der Host-Mode-Schritt 3 der App entfaellt: der Scanner
     arbeitet nur im Verbose-Modus. Rueckgabe: der empfangene Text; ScanError, wenn nichts antwortet."""
@@ -996,7 +996,7 @@ def print_plan(immediate: bool = False) -> None:
 # ----------------------------------------------------------------------------
 # 7. main
 # ----------------------------------------------------------------------------
-_SELFTEST_RELEASE = {"1988": "30.12.1988", "1991": "01.AUG.91", "1995": "13.SEP.95"}
+_SELFTEST_RELEASE = {"1988": "30.DEC.88", "1991": "01.AUG.91", "1995": "13.SEP.95"}
 
 
 def main(argv: Optional[list] = None) -> int:
