@@ -197,6 +197,20 @@ Settled by the evidence, not by the spec text (see the P88 report):
 the parameter masks (show a field only where the command is `yes`/`expert`) from the matrix. Until then
 `test_command_matrix_agreement.py` fails if they contradict it.
 
+### Scanner preconditions for the risky part (P89a) - done, T186 open (2026-10-06)
+
+T182-T184 showed that many `fx_` entries were only refusals (`?need MYcall`, `?need MYSELCAL`, `?not while in ...`, `?EXPERT command`). `--all` now sets a real MYCALL
+(`--mycall`, else the PK232PY configuration; the factory `PK232` and NOCALL count as "not set"), MYSELCAL (`--myselcal`, else the first two + last two letters of the callsign) and, on devices
+that have EXPERT, EXPERT ON; after every RESTART / RESET / power cycle they are set again, afterwards MYCALL and MYSELCAL go back to their old values. `NEEDS_MODE` (next to `RECOVERY`) names the
+mode a command needs (XMIT, RCVE: BAUDOT; ACHG, OVER: AMTOR); the effect is stored as `in <MODE>: ...`. MDCHECK is left with `B` (MailDrop Bye), then Ctrl-C; the MailDrop prompt is no longer taken for the
+banner. A refusal is recorded as `precondition: ...` (CSV columns `precondition`, `mode`), never as an effect. `--only NAME,...` probes just these commands (a risky one needs `--all`). 33 `fx_` cells
+that were only refusals (and the MDCHECK misreading) were cleared, with a note in `ev_`.
+Open: measure again `--all --only ACHG,ALIST,AMTOR,ARQ,CONVERSE,FEC,ID,K,MDCHECK,MEMORY,OVER,PTCONN,RCVE,SAMPLE,SELFEC,TRANS,XMIT` per device (T186).
+
+### Extend the detection chain by the measured ways back
+
+Erkennungskette um die gemessenen Rückwege ergänzen: TRANS (3×Ctrl-C mit CMDTIME-Pausen), CALIBRATE (Q), MDCHECK-Sitzung (B); Belege T182–T184.
+
 ### Scan kit for external radio amateurs and import of their results (P90) — ✅ done, T185 open (2026-10-06)
 
 An operator with 12 PK-232 of different firmware offered to run the scanner. `tools/build_scan_kit.py` builds `dist/pk232_scan_kit_<date>.zip` (reproducible for the same sources and date):

@@ -3645,6 +3645,23 @@ empty, the new `fx_` cells with effect and way back, e.g. `enters transparent mo
 
 ---
 
+### T186 — the risky part again with preconditions, only the affected commands (P89a)
+
+Software: `test_pk232_fw_scan_p89a.py`. **Operator at the TNC, no radio connected**, once per device (A, B, C):
+`.venv\Scripts\python.exe tools\pk232_fw_scan.py COMx --all --only ACHG,ALIST,AMTOR,ARQ,CONVERSE,FEC,ID,K,MDCHECK,MEMORY,OVER,PTCONN,RCVE,SAMPLE,SELFEC,TRANS,XMIT --mycall <your call> --results hw_logs\<date>_fw_only_<dev>`
+(add `--update-matrix` after a run that looks right). Expected: MYCALL/MYSELCAL set, XMIT/RCVE tried in BAUDOT, ACHG/OVER in AMTOR, MDCHECK left with `B`, no `fx_` that is only a refusal,
+MYCALL/MYSELCAL back to the old values at the end.
+
+| # | Device | Expected | Result |
+|---|---|---|---|
+| 1 | A | see above; MEMORY with EXPERT ON answers a value | ⬜ |
+| 2 | B | see above | ⬜ |
+| 3 | C | see above (no MDCHECK, no OVER) | ⬜ |
+
+**Status:** ⬜ OPEN.
+
+---
+
 ### T185 — scan kit rehearsal at device B with our own setup (P90)
 
 Software: `test_scan_kit_p90.py` (builds the kit, runs the embedded scanner in an empty interpreter), `test_pk232_fw_scan_kit.py`,
