@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
     QSpinBox, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from pk232py.ui.dialogs.param_order import add_form_rows, sorted_flags, split_columns
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,20 +51,17 @@ class MailDropParamsDialog(QDialog):
         form = QFormLayout(params_group)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
+        # P87: placed by add_form_rows() (alphabetical, param_order.py)
         self._le_homebbs  = QLineEdit(); self._le_homebbs.setMaximumWidth(120)
-        form.addRow("HOMEBBS:",  self._le_homebbs)
-
         self._le_mymail   = QLineEdit(); self._le_mymail.setMaximumWidth(120)
-        form.addRow("MYMAIL:",   self._le_mymail)
-
         self._sb_lastmsg  = QSpinBox(); self._sb_lastmsg.setRange(0, 9999)
-        form.addRow("LASTMSG:",  self._sb_lastmsg)
-
         self._le_mdprompt = QLineEdit()
-        form.addRow("MDPROMPT:", self._le_mdprompt)
-
         self._le_tmprompt = QLineEdit()
-        form.addRow("TMPROMPT:", self._le_tmprompt)
+        add_form_rows(form, [
+            ("HOMEBBS:", self._le_homebbs), ("MYMAIL:", self._le_mymail),
+            ("LASTMSG:", self._sb_lastmsg), ("MDPROMPT:", self._le_mdprompt),
+            ("TMPROMPT:", self._le_tmprompt),
+        ])
 
         root.addWidget(params_group)
 
@@ -80,19 +79,20 @@ class MailDropParamsDialog(QDialog):
         fl = QVBoxLayout(flags_group)
         row = QHBoxLayout()
 
-        col1 = QVBoxLayout()
+        # P87: the six switches sorted (param_order.py), two columns top to bottom
         self._chk_third_party = QCheckBox("3RDPARTY")
         self._chk_kilonfwd    = QCheckBox("KILONFWD")
         self._chk_maildrop    = QCheckBox("MAILDROP")
-        for w in [self._chk_third_party, self._chk_kilonfwd, self._chk_maildrop]:
-            col1.addWidget(w)
-
-        col2 = QVBoxLayout()
         self._chk_mdmon  = QCheckBox("MDMON")
         self._chk_mmsg   = QCheckBox("MMSG")
         self._chk_tmail  = QCheckBox("TMAIL")
-        for w in [self._chk_mdmon, self._chk_mmsg, self._chk_tmail]:
-            col2.addWidget(w)
+        col1 = QVBoxLayout()
+        col2 = QVBoxLayout()
+        for layout, boxes in zip((col1, col2), split_columns(sorted_flags([
+                self._chk_third_party, self._chk_kilonfwd, self._chk_maildrop,
+                self._chk_mdmon, self._chk_mmsg, self._chk_tmail]), 2)):
+            for box in boxes:
+                layout.addWidget(box)
 
         row.addLayout(col1)
         row.addLayout(col2)
