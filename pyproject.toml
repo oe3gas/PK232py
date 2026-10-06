@@ -68,7 +68,7 @@ pk232py = "pk232py.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-pk232py = ["*.ini", "resources/*"]
+pk232py = ["*.ini", "resources/*", "data/*.csv"]
 
 [tool.pytest.ini_options]
 testpaths = ["src/pk232py/tests"]
