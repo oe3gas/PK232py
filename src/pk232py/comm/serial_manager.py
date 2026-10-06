@@ -52,6 +52,7 @@ from .constants import (
     ctl_channel,
 )
 from .devices import SOURCE_BANNER, SOURCE_INFERRED, infer_release
+from .devices import has_pactor as device_has_pactor
 from .link_status import LiveLinks, build_live_links
 from .pk232_hostmode_sub import HostModeWorker as _HostModeWorker
 from .pk232_hostmode_sub import escape_converse as _escape_converse
@@ -652,11 +653,14 @@ class SerialManager(QObject):
         PACTOR hardware/firmware option.  The boot banner reliably
         identifies which variant is connected.
 
-        Returns True (permissive default) when no banner was captured,
-        e.g. when the TNC was already in Host Mode at connect time.
+        Without a banner (the TNC was already awake) the INFERRED release
+        decides through KNOWN_DEVICES (P85a) - T168 ran this way on device B
+        and got PACTOR commands. Only when nothing is known either, True
+        (permissive default).
         """
         if not self._tnc_banner:
-            return True   # no banner captured — assume PACTOR capable
+            known = device_has_pactor(self._inferred_release)
+            return True if known is None else known
         return b"PACTOR" in self._tnc_banner
 
     @property
