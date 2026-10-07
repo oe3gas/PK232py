@@ -1,0 +1,16 @@
+release,device,date,name,group,kind,result,matrix,note,effect,recovery,precondition,mode,raw
+01.AUG.91,B,2026-10-07,ALIST,other,mode,SUPPORTED,yes,,changes OPMODE to ALIST,PACKET,,,'ALIST\r\nOpmode   was PAcket    \r\nOpmode   now AList     \r\ncmd:'
+01.AUG.91,B,2026-10-07,AMTOR,other,mode,SUPPORTED,yes,,changes OPMODE to AMTOR,PACKET,,,'AMTOR\r\nOpmode   was PAcket    \r\nOpmode   now AMtor     \r\ncmd:'
+01.AUG.91,B,2026-10-07,CONVERSE,other,mode,SUPPORTED,yes,,enters converse mode,Ctrl-C,,,'CONVERSE\r\n'
+01.AUG.91,B,2026-10-07,K,other,mode,SUPPORTED,yes,,enters converse mode,Ctrl-C,,,'K\r\n'
+01.AUG.91,B,2026-10-07,RCVE,other,mode,SUPPORTED,yes,,no output,PACKET,,BAUDOT,'RCVE\r\ncmd:'
+01.AUG.91,B,2026-10-07,SAMPLE,other,mode,SUPPORTED,yes,,,PACKET,?not enough,,'SAMPLE\r\n?not enough\r\ncmd:'
+01.AUG.91,B,2026-10-07,ACHG,other,action_tx,SUPPORTED,yes,,,Ctrl-C,?not while in AMtor,AMTOR,'ACHG\r\n?not while in AMtor     \r\ncmd:'
+01.AUG.91,B,2026-10-07,ARQ,other,action_tx,SUPPORTED,yes,,,Ctrl-C,?callsign,,'ARQ\r\n?callsign\r\ncmd:'
+01.AUG.91,B,2026-10-07,FEC,other,action_tx,SUPPORTED,yes,,changes OPMODE to FEC,Ctrl-C,,,'FEC\r\nOpmode   was PAcket    \r\nOpmode   now FEc       \r\n'
+01.AUG.91,B,2026-10-07,ID,other,action_tx,SUPPORTED,yes,,no output,Ctrl-C,,,'ID\r\ncmd:\r\n'
+01.AUG.91,B,2026-10-07,SELFEC,other,action_tx,SUPPORTED,yes,,,Ctrl-C,?callsign,,'SELFEC\r\n?callsign\r\ncmd:\r\n'
+01.AUG.91,B,2026-10-07,XMIT,other,action_tx,SUPPORTED,yes,,starts the transmission,Ctrl-C,,BAUDOT,'XMIT\r\n'
+01.AUG.91,B,2026-10-07,MDCHECK,other,danger,SUPPORTED,yes,,enters the MailDrop mailbox session,B,,,"'MDCHECK\r\n[AEA PK-232M]  18340 free  (B,E,K,L,R,S) >\r\n'"
+01.AUG.91,B,2026-10-07,MEMORY,other,danger,SUPPORTED,yes,,prints a value,Ctrl-C,,,'MEMORY\r\nMEmory    $00\r\ncmd:'
+01.AUG.91,B,2026-10-07,TRANS,other,danger,SUPPORTED,yes,,enters transparent mode,3xCtrl-C/CMDTIME,,,'TRANS\r\n'

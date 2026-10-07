@@ -106,7 +106,7 @@
 | EXPERT | EXP |  | param | no | yes | no | OFF | ON/OFF verbose mode controller commands | B: T155, T160, T168: verbose EXPERT answers ?What? with the banner (T155 hw_logs/20261001_202242_host_params_probe.log; T160 hw_logs/20261003_144153_host_params_probe.log; T168 hw_logs/20261003_220612, 20261004_124240, 20261004_122301); A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95); C: fw_scan 20261006 (device C, banner Release 30.DEC.88; hw_logs/20261006_fw_scan_C_update2.csv) |
 | FAX | FA | FA | mode | yes | yes | yes | Immediate command | Enters the facsimile mode | B: T166 (ACK $00, OPFA0R, back to PA) (Host Mode, mnemonic FA) [hw_logs/20261003_213830_mnemonic_probe.log]; A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) \| T167 (ACK $00, OP OPFA0R, back to PA) (Host Mode, mnemonic FA) [hw_logs/20261003_214801_mnemonic_probe.log]; C: fw_scan 20261006 (device C, banner Release 30.DEC.88; hw_logs/20261006_fw_all_C.csv) |
 | FAXNEG | FAXN | FN | param | yes | yes | yes | OFF | Reverses the black/white FAX sense | B: T166 (Host Mode, mnemonic FN) [hw_logs/20261003_213830_mnemonic_probe.log]; A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) \| T167 (Host Mode, mnemonic FN) [hw_logs/20261003_214801_mnemonic_probe.log]; C: fw_scan 20261006 (device C, banner Release 30.DEC.88; hw_logs/20261006_fw_scan_C_update2.csv) |
-| FEC | FE |  | action_tx | yes | yes | yes | Immediate command | Starts an AMTOR FEC transmission | B: fw_scan 20261006 (device B, banner Release 01.AUG.91; hw_logs/20261006_fw_all_B.csv); A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95); C: fw_scan 20261006 (device C, banner Release 30.DEC.88; hw_logs/20261006_fw_all_C.csv); fx cleared 2026-10-06: refused: ?need MYSELCAL; exit Ctrl-C (only a refusal for a missing precondition: ?need MYSELCAL) |
+| FEC | FE |  | action_tx | yes | yes | yes | Immediate command | Starts an AMTOR FEC transmission | B: fw_scan 20261006 (device B, banner Release 01.AUG.91; hw_logs/20261006_fw_all_B.csv); A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95); C: fw_scan 20261006 (device C, banner Release 30.DEC.88; hw_logs/20261006_fw_all_C.csv); fx cleared 2026-10-06: refused: ?need MYSELCAL; exit Ctrl-C (only a refusal for a missing precondition: ?need MYSELCAL); fx cleared 2026-10-07: changes OPMODE to FEC; exit Ctrl-C (T186: the prompt came back but OPMODE stayed FEC, ID and XMIT were then refused '?not while in FEC'; hw_logs/20261007_fw_only_C.log; measure again with --all --only FEC) |
 | FLOW | F |  | param | yes | yes | yes | ON | stops displaying received data while typing | B: fw_scan 20261006 (device B, banner Release 01.AUG.91; hw_logs/20261006_fw_scan_B_update.csv); A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95); C: fw_scan 20261006 (device C, banner Release 30.DEC.88; hw_logs/20261006_fw_scan_C_update2.csv) |
 | FRACK | FR | FR | param | yes | yes | yes | 5 | Sets time (×1 Sec) to wait for packet ACK | B: T151 (Host Mode, mnemonic FR) [hw_logs/20261001_205535_host_params_probe.log]; A: fw_scan 20260728 (docs/reference/fw_scan/20260728_deviceA_13SEP95.csv; device A per operator, banner Release 13.SEP.95) \| T151, T152 (Host Mode, mnemonic FR) [hw_logs/20261001_220703_host_params_probe.log; hw_logs/20261002_172135_host_params_probe.log]; C: fw_scan 20261006 (device C, banner Release 30.DEC.88; hw_logs/20261006_fw_scan_C_update2.csv) |
 | FREE | FRE |  | immediate | yes | yes | no | Immediate Command | Displays available memory for MailDrop | B: fw_scan 20261006 (device B, banner Release 01.AUG.91; hw_logs/20261006_fw_scan_B_imm.csv); A: fw_scan 20261006 (device A, banner Release 13.SEP.95; hw_logs/20261006_fw_all_A.csv); C: fw_scan 20261006 (device C, banner Release 30.DEC.88; hw_logs/20261006_fw_all_C.csv) |
@@ -289,27 +289,32 @@
 |---|---|---|---|---|
 | 5BIT | mode | changes OPMODE to BAUDOT; exit PACKET | changes OPMODE to BAUDOT; exit PACKET |  |
 | 6BIT | mode | changes OPMODE to BAUDOT; exit PACKET | changes OPMODE to BAUDOT; exit PACKET |  |
-| ALIST | mode | changes OPMODE to ALIST; exit PACKET | changes OPMODE to ALIST; exit PACKET |  |
-| AMTOR | mode | changes OPMODE to AMTOR; exit PACKET | changes OPMODE to AMTOR; exit PACKET |  |
+| ALIST | mode | changes OPMODE to ALIST; exit PACKET | changes OPMODE to ALIST; exit PACKET | changes OPMODE to ALIST; exit PACKET |
+| AMTOR | mode | changes OPMODE to AMTOR; exit PACKET | changes OPMODE to AMTOR; exit PACKET | changes OPMODE to AMTOR; exit PACKET |
 | ARQE | mode | changes OPMODE to TDM; exit PACKET | changes OPMODE to TDM; exit PACKET |  |
 | ASCII | mode | changes OPMODE to ASCII; exit PACKET | changes OPMODE to ASCII; exit PACKET | changes OPMODE to ASCII; exit PACKET |
 | BAUDOT | mode | changes OPMODE to BAUDOT; exit PACKET | changes OPMODE to BAUDOT; exit PACKET | changes OPMODE to BAUDOT; exit PACKET |
 | CALIBRATE | danger | starts the AFSK calibration (keys the tones); exit Q | starts the AFSK calibration (keys the tones); exit Q | starts the AFSK calibration (keys the tones); exit Q |
 | CONNECT | action_tx | prints a value; exit Ctrl-C | prints a value; exit Ctrl-C | prints a value; exit Ctrl-C |
+| CONVERSE | mode | enters converse mode; exit Ctrl-C | enters converse mode; exit Ctrl-C | enters converse mode; exit Ctrl-C |
 | DISCONNECT | action_tx | prints a value; exit Ctrl-C | prints a value; exit Ctrl-C | prints a value; exit Ctrl-C |
 | FAX | mode | changes OPMODE to FAX; exit PACKET | changes OPMODE to FAX; exit PACKET | changes OPMODE to FAX; exit PACKET |
 | FEC | action_tx | changes OPMODE to FEC; exit Ctrl-C | changes OPMODE to FEC; exit Ctrl-C |  |
 | ID | action_tx | no output; exit Ctrl-C | no output; exit Ctrl-C |  |
-| MEMORY | danger | prints a value; exit Ctrl-C |  | prints a value; exit Ctrl-C |
+| K | mode | enters converse mode; exit Ctrl-C | enters converse mode; exit Ctrl-C | enters converse mode; exit Ctrl-C |
+| MDCHECK | danger | enters the MailDrop mailbox session; exit B | enters the MailDrop mailbox session; exit B |  |
+| MEMORY | danger | prints a value; exit Ctrl-C | prints a value; exit Ctrl-C | prints a value; exit Ctrl-C |
 | MORSE | mode | changes OPMODE to MORSE; exit PACKET | changes OPMODE to MORSE; exit PACKET | changes OPMODE to MORSE; exit PACKET |
 | NAVTEX | mode | changes OPMODE to NAVTEX; exit PACKET | changes OPMODE to NAVTEX; exit PACKET | changes OPMODE to NAVTEX; exit PACKET |
 | PACKET | mode | changes OPMODE to PACKET; exit PACKET | changes OPMODE to PACKET; exit PACKET | changes OPMODE to PACKET; exit PACKET |
 | PACTOR | mode |  | changes OPMODE to PACTOR; exit PACKET |  |
 | PTLIST | mode |  | changes OPMODE to PTLIST; exit PACKET |  |
 | PTSEND | action_tx |  | changes OPMODE to PTSEND; exit Ctrl-C |  |
+| RCVE | mode | in BAUDOT: no output; exit PACKET | in BAUDOT: no output; exit PACKET | in BAUDOT: no output; exit PACKET |
 | REINIT | danger |  | prints banner (restart); exit banner/* |  |
 | RESET | danger | no prompt returned; exit banner/* | no prompt returned; exit banner/* | no prompt returned; exit banner/* |
 | RESTART | danger | prints banner (restart); exit banner/* | prints banner (restart); exit banner/* | prints banner (restart); exit banner/* |
 | SIGNAL | mode | changes OPMODE to SIGNAL; exit PACKET | changes OPMODE to SIGNAL; exit PACKET | changes OPMODE to SIGNAL; exit PACKET |
 | TDM | mode | changes OPMODE to TDM; exit PACKET | changes OPMODE to TDM; exit PACKET |  |
-| TRANS | danger | enters transparent mode; exit 3xCtrl-C/CMDTIME | enters transparent mode; exit 3xCtrl-C/CMDTIME |  |
+| TRANS | danger | enters transparent mode; exit 3xCtrl-C/CMDTIME | enters transparent mode; exit 3xCtrl-C/CMDTIME | enters transparent mode; exit 3xCtrl-C/CMDTIME |
+| XMIT | action_tx | in BAUDOT: starts the transmission; exit Ctrl-C | in BAUDOT: starts the transmission; exit Ctrl-C |  |
