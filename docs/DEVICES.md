@@ -26,6 +26,15 @@ before assuming the code changed or the earlier run was wrong.
 
 **Gerät C, Release (T180, 06.10.2026):** Das Banner druckt `Release 30.DEC.88` (`hw_logs/20261006_fw_scan_C.log`, `AEA PK-232 Data Controller`, `Checksum $80`) - nicht die frühere Abschrift `30.12.1988`. Wie bei Gerät A (11.09.1995 -> 13.SEP.95) gilt ab jetzt überall der Bannerwert (Matrix-Spalten, `comm/devices.py`, Register, Tests; ein Test prüft, dass jeder Release-Schlüssel das Bannerformat `DD.MMM.YY` hat). Ältere Einträge (`PK232_firmware_matrix.md`, P37/P78/P80/P85/P88-Specs, historische Testplan-/Backlog-/Gotcha-Einträge) nennen weiterhin `30.12.1988` und sind bewusst nicht umgeschrieben.
 
+**Aus- und Einschalten, Werkszustand (P89b, Handtest Gerät A, 07.10.2026):** Kein Gerät hat eine
+Pufferbatterie (richtig), aber ein Aus-/Einschalten stellt **nicht immer** den Werkszustand her: nach kurzer
+Pause kam das Banner ohne Zusatzzeile und `MYSELCAL` blieb `NONE`; nach längerer Pause kam zuerst
+`PK-232M is using default values.`, danach war `MYSELCAL` `none`. Werkszustand gilt nur, wenn diese Zeile vor dem
+Banner kam (`constants.is_factory_banner()`): Geräte A und B drucken `PK-232M is using default values.`, Gerät C
+`PK-232 is using default values.` (ohne M, `hw_logs/20261006_fw_scan_C.log`); ein RESTART-Banner hat sie nie. Wie lange
+die Pause sein muss, ist nicht gemessen (der Scanner verlangt 10 s als Startwert). `MYSELCAL` lässt sich an A und B
+mit keinem Befehl löschen (`%`/`OFF` -> `?callsign`, `NONE` -> `now NONE`), nur durch einen Werkszustands-Start.
+
 **Release-Spalte, Genauigkeit:** Gerät B ist die einzige Zeile mit einer
 byte-genauen Banner-Erfassung (P30/P37, `hw_logs/20260924_181446_maildrop_session.log`)
 — der Wert steht hier exakt wie im Banner (`Release 01.AUG.91`), unverändert,

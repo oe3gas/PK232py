@@ -207,9 +207,20 @@ banner. A refusal is recorded as `precondition: ...` (CSV columns `precondition`
 that were only refusals (and the MDCHECK misreading) were cleared, with a note in `ev_`.
 T186 (2026-10-07, 18 `fx_` cells filled) found three more things, fixed in the scanner: (1) after FEC the prompt came back but the TNC stayed in FEC (C: ID / XMIT `?not while in FEC`) - FEC ends
 `Ctrl-C+PACKET`, a command with `NEEDS_MODE` is only sent when OPMODE shows the mode, the report warns when a way back leaves PACKET; (2) ARQ / SELFEC / PTCONN answered `?callsign` - dummy target `--target`
-(default NOCALL), way back `Ctrl-C+DISCONNE+PACKET`; (3) the restore `MYSELCAL none` set the valid selcal `NONE` at A and B - an unset MYSELCAL (`none`) is now cleared with `MYSELCAL %` and read back
-case-sensitive.
-Open: **how the firmware clears MYSELCAL is not proven** (`%` is the AEA convention, unmeasured; A and B hold `NONE` until set by hand); measure FEC, ID, XMIT, ARQ, SELFEC, PTCONN again per device (T187).
+(default NOCALL), way back `Ctrl-C+DISCONNE+PACKET`; (3) the restore `MYSELCAL none` set the valid selcal `NONE` at A and B - no command clears it (hand test, see P89b).
+Open: measure FEC, ID, XMIT, ARQ, SELFEC, PTCONN again per device (T187).
+
+### Power cycle is not the factory state (P89b) - done, T188 open (2026-10-07)
+
+Hand test at device A: off and on after a short pause kept the settings (banner without an extra line, `MYSELCAL` still `NONE`); after a longer pause `PK-232M is using default values.` came first and
+`MYSELCAL` was `none`. No command clears MYSELCAL at A and B (`%`/`OFF` -> `?callsign`, `NONE` -> `now NONE`; matrix `fx_` of MYSELCAL at A and B: `cannot be cleared; power-cycle`). So:
+`comm/constants.is_factory_banner()` is the ONE place that says "factory state" - the banner line as a line of its own, exactly as observed (`PK-232M ...` at A, B; **`PK-232 ...` without M at device C**, so two
+spellings). The app's `_parse_defaults_flag` (-> `tnc_defaults`, `fresh_boot_defaults`, archive restore P59/P60) and the scanner use it; the kit builder embeds it. The scanner's `power_cycle_and_check()` shows
+`Switch the TNC off, wait at least 10 seconds, switch it on.` (**the 10 s is a starting value, not measured**), reads the banner and, without the line, says `TNC kept its settings - switch off longer and
+repeat` and shows the step again (3 tries); an unset MYSELCAL is given back at the end of `--all` by that step (MYCALL after it), a set one by entering it. App checked: `fresh_boot_defaults` / archive restore
+need the line already (tests), `banner_seen_this_init` (P81 live-link check) means only "the TNC restarted" and is unchanged; nothing resets the link table or restores a session from a banner without the line.
+Open: how long the pause must be (T188); `config.py` / `params_uploader.py` / `comm/autobaud.py` comments still say "no battery, starts at factory values on every power-on" (comments only, the app uploads on
+every init and does not rely on it).
 
 ### Extend the detection chain by the measured ways back
 

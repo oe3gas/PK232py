@@ -23,7 +23,9 @@ Firmwarestände erweitern, ohne dass wir die Geräte selbst haben.
 - Die Geräte des Betreibers sind **nicht** in unserem Testaufbau: Sie können
   an Funkgeräten hängen, eine Pufferbatterie haben (eigene Einstellungen,
   evtl. andere Baudrate, 7 Bit, EXPERT ON, ECHO OFF …) und sind sein
-  Eigentum.
+  Eigentum. (P89b: auch ohne Batterie behält ein TNC seine Einstellungen über eine kurze Pause; „Werkszustand“
+  entscheidet nur die Banner-Zeile `… is using default values.` - `constants.is_factory_banner()`, im Kit
+  eingebettet wie `verbose_line()`.)
 
 ---
 

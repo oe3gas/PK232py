@@ -267,10 +267,10 @@ Grows over time.
   on** → ask (`_ask_fast_init_upload_choice()`), since Fast Init already
   deliberately skipped it once and switching silently would commit to
   whatever the TNC is currently running on with no way back. **Fast Init
-  skips the upload — the TNC then runs on its stored values, which on a
-  TNC with no RAM buffer battery (see that gotcha below) means whatever
-  it had at power-on, i.e. its factory defaults**, not necessarily
-  anything the operator configured.
+  skips the upload — the TNC then runs on its stored values: its factory
+  defaults only if the banner had the factory line (see the P89b gotcha
+  below - a short power-off kept the settings), otherwise whatever it
+  still held**, not necessarily anything the operator configured.
 - **`is_host_mode` is the SOFTWARE's belief, not the device's real state
   — never trust it without evidence from THIS session (P43, 2026-09-25,
   same rule P34 already established for `tools/hw_check.py`, now also in
@@ -960,7 +960,8 @@ never retyped; everything else names the Testplan entry, or stays `{}`
 - **An EVENT ("the TNC was just powered on") must be its own flag, never
   derived from a STATE that never resets (P59, 2026-09-26).**
   `SerialManager.fresh_boot_defaults` is true only if THIS init/recovery
-  run's own boot banner said "is using default values" —
+  run's own boot banner said "is using default values" (since P89b: had the
+  factory LINE as a line of its own, `constants.is_factory_banner()`) —
   `self._banner_this_init` is reset to `False` at the start of every
   `_init_tnc_thread()`/`_recovery_thread()` run (`_recovery_thread()`
   calls `_init_tnc_thread()` directly, so one reset covers both) and
@@ -1216,17 +1217,23 @@ never retyped; everything else names the Testplan entry, or stays `{}`
   `ParamsUploader._build_commands()` sends. `ACRPack was ON` / `ACRPack
   now ON` confirms the P13 `AERPACK`→`ACRPACK` rename was correct.
 - **The TNC has no RAM buffer battery at all (confirmed by the operator,
-  22.09.2026)** — it resets to factory defaults (`MYCALL PK232`,
+  22.09.2026)** — it came up at factory defaults (`MYCALL PK232`,
   `EXPERT OFF`, `PACLEN 128`, `MAXFRAME 4`, `FRACK 4`, the stock AEA
-  `MTEXT`, an empty MailDrop mailbox) on **every** power-off, not just
-  occasionally. This confirms and closes the "likely cause" guess from
-  the 21.09.2026 hardware run (`MYCALL` reading back `PK232` after a
-  power cycle was the tell). Consequences: the app's own init sequence
-  (`ParamsUploader` + each mode's `get_activate_frames()`/
-  `get_init_frames()`) is the **only** source of TNC configuration —
-  nothing the operator sets by hand on the TNC survives a power-off, and
-  MailDrop content is lost every time too (Backlog.md: saving/reloading
-  the mailbox is a required feature, not a nice-to-have, because of this).
+  `MTEXT`, an empty MailDrop mailbox) after the power-offs of the 21./22.09.2026
+  runs (`MYCALL` reading back `PK232` after a power cycle was the tell). **CORRECTED
+  07.10.2026 (P89b): "no battery" stays right, "every power-off gives the
+  factory state" is WRONG** - after a short pause the memory survived (device A:
+  banner without the factory line, `MYSELCAL` still `NONE`); only a longer pause
+  gave `PK-232M is using default values.` and `MYSELCAL none`. How long "longer"
+  is has NOT been measured (the scanner asks for 10 s as a starting value).
+  Consequences: the app's own init sequence (`ParamsUploader` + each mode's
+  `get_activate_frames()`/`get_init_frames()`) is still the **only** source of TNC
+  configuration - it uploads on every init and never assumes the factory state - and
+  "the TNC is at the factory state" is decided ONLY by the banner line
+  (`constants.is_factory_banner()`, see the P89b gotcha), never by the fact that
+  the TNC was switched off. MailDrop content is lost on a real factory power-on
+  (Backlog.md: saving/reloading the mailbox is a required feature); whether a short
+  pause keeps the mailbox has not been looked at.
 - **Host Mode parameter answers on device B (01.AUG.91), T151, 01.10.2026**
   (rule 11: device B only):
   - Query `$4F <mn>` -> answer `<mn><value>`; set `<mn><value>` -> `<mn> $00`
@@ -1269,7 +1276,8 @@ never retyped; everything else names the Testplan entry, or stays `{}`
   to **all** modes; Host mnemonic **`UB`**. The manual describes only the
   receive side - whether `UBIT 0` leaves TX channel-busy detection alone is
   not stated (T156 notes what it can). The TNC has no backup battery, so it
-  starts with ON every time: the app uploads `UBIT 0 ON|OFF` on every init
+  starts with ON after a power-on at the factory state (P89b: not after every
+  power-off - see the gotcha below): the app uploads `UBIT 0 ON|OFF` on every init
   (`HFPacketConfig.ubit0`, default OFF, checkbox "UBIT 0 (DCD gate)" in the
   Packet dialog). **Unmeasured until T156** (`hw_check.py ubit_probe`): the
   Host Mode argument form (`0 N`, `0N`, `0 OFF`, `0OFF`?), the query answer,
@@ -1330,8 +1338,16 @@ never retyped; everything else names the Testplan entry, or stays `{}`
     external operators also carry other interface settings (baud rate, 7 bits): the scan kit tells them to try `--baud`, and to power-cycle for the autobaud `*`.
   - **`none` (lower case) is how an UNSET `MYSELCAL` is displayed - typing it sets the VALID selcal `NONE` (T186, devices A and B).** `MYSELCAL none` answered
     `MYSelcal  was OEAS` / `MYSelcal  now NONE`; the display of an unset value is `MYSelcal  none`. So a value read back as `none` must never be written back as a word, and every before/after comparison of
-    such a value is case-sensitive. How the firmware empties MYSELCAL is **not proven**: the TRM text is not in the repo, the Timewave list says only "default: Empty"; the scanner tries `MYSELCAL %`
-    (`MYSELCAL_CLEAR`, the AEA convention for emptying a text parameter), reads back and reports a mismatch - the T187 result belongs here. Device C showed `MYSELCAL OEAS` (no `MYSelcal` spelling) before its run.
+    such a value is case-sensitive. **No command clears MYSELCAL at A and B** (hand test at A, 07.10.2026: `MYSELCAL %` (reported as `&`) and `MYSELCAL OFF` answer `?callsign`, `MYSELCAL NONE` answers `now NONE`;
+    the operator reports the same at B). It is given back by a power cycle (see the next entry); matrix cell `fx_` of MYSELCAL at A and B: `cannot be cleared; power-cycle`. Device C showed `MYSELCAL OEAS`
+    (no `MYSelcal` spelling) before its run; nothing is measured at C about clearing it.
+  - **Switching the TNC off and on does NOT always give the factory state (P89b, hand test at device A, 07.10.2026).** After a short pause the banner came WITHOUT an extra line and `MYSELCAL` stayed `NONE`; after a
+    longer pause the line `PK-232M is using default values.` came first and `MYSELCAL` was `none`. "At the factory state" is therefore decided in ONE place, `comm/constants.is_factory_banner()`: one of
+    `FACTORY_BANNER_LINES` as a line of its own, exactly as observed - `PK-232M is using default values.` (A, B) and `PK-232 is using default values.` (device C prints NO M, hw_logs/20261006_fw_scan_C.log);
+    NUL / XON bytes around it do not matter, a RESTART banner has no such line (hw_logs/20261007_fw_only_*.log line 9). The app (`_parse_defaults_flag` -> `tnc_defaults`, `fresh_boot_defaults`, so the
+    archive restore of P59/P60) and the scanner (`power_cycle_and_check()`) call that function; the scanner shows `Switch the TNC off, wait at least 10 seconds, switch it on.` (**10 s is a starting value, NOT
+    measured**), and without the line says `TNC kept its settings - switch off longer and repeat` and shows the step again (3 tries). P81 asks a different question: `banner_seen_this_init` (any banner = the TNC
+    restarted, so no connection is left, the live-link check is skipped) is no claim about settings and stays; nothing in the app resets the link table or restores a session from a banner without the line.
   - **A way back that reaches `cmd:` is not a way back to PACKET (T186).** After `FEC` Ctrl-C returned the prompt but `OPMODE` stayed `FEC IDLE SEND`; ID and XMIT were then refused `?not while in FEC` (C),
     and A / B stayed in `FEc` / `AMtor STBY RCVE`. Check `OPMODE` after a recovery, not only the prompt; FEC ends `Ctrl-C+PACKET`, the calling commands (ARQ, SELFEC, PTCONN, with a dummy target -
     without one they answer `?callsign`) `Ctrl-C+DISCONNE+PACKET`.

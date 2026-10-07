@@ -29,9 +29,12 @@
 - Handbuch (STABO, Kap. 3): `CALIBRATE` — `K` tastet, Leertaste wechselt
   Mark/Space, nach **60 s** automatisch zurück auf Empfang. Wie man den
   Modus verlässt, steht dort nicht; zu messen.
-- Kein Gerät hat eine Pufferbatterie: Aus- und Einschalten stellt immer den
-  Werkszustand her. `RESET` ist also an diesen Geräten nicht folgenreicher
-  als ein Aus-/Einschalten.
+- Kein Gerät hat eine Pufferbatterie - aber **Aus- und Einschalten stellt NICHT immer den Werkszustand her**
+  (korrigiert 07.10.2026, P89b: nach kurzer Pause blieb der Speicher erhalten, Banner ohne Zusatzzeile,
+  `MYSELCAL` blieb `NONE`; erst nach längerer Pause kam zuerst `PK-232M is using default values.` und
+  `MYSELCAL` war `none`). Werkszustand gilt nur, wenn diese Zeile vor dem Banner kam
+  (`constants.is_factory_banner()`, Geräte A/B: `PK-232M …`, Gerät C: `PK-232 …` ohne M). `RESET` bleibt der
+  sichere Weg zum Werkszustand.
 
 ---
 
@@ -59,8 +62,11 @@ jeweils:
 3. **Zurück in den Befehlsmodus** nach dem für diese Art hinterlegten
    **Rückweg** (Teil C), Schritt für Schritt, jeder Schritt mit Ergebnis
    im Log.
-4. **Klappt kein Rückweg**: `operator_step` „Power-cycle the TNC now, then
-   press ENTER", danach Wecken wie die App; Ergebnis `needs_power_cycle`.
+4. **Klappt kein Rückweg**: `operator_step` „Switch the TNC off, wait at least 10 seconds, switch it on."
+   (P89b; die **10 s sind ein Startwert, nicht gemessen**), danach Wecken wie die App und Banner lesen
+   (`power_cycle_and_check()`); fehlt die Zeile `PK-232M is using default values.` im Banner, meldet der
+   Scanner „TNC kept its settings - switch off longer and repeat" und zeigt den Schritt erneut (3 Versuche);
+   Ergebnis `needs_power_cycle`.
 5. Nach jedem riskanten Befehl: `OPMODE` und `MYCALL` abfragen und
    protokollieren (hat der Befehl Modus oder Einstellungen verändert?).
    War ein Aus-/Einschalten nötig: MYCALL aus der Konfiguration neu setzen.

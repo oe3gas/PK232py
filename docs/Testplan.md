@@ -3665,10 +3665,12 @@ Run 2026-10-07, no power cycle needed (`hw_logs/20261007_fw_only_{A,B,C}.csv/.lo
    for FEC was cleared (note in `ev_`). Way back now `Ctrl-C+PACKET`; every command with `NEEDS_MODE` is only sent when OPMODE shows the mode (`mode not reached`, not sent, no cell); the report
    warns when the TNC is not in PACKET after a way back.
 2. **ARQ / SELFEC** answered `?callsign` (C): they get a dummy target (`--target`, default `NOCALL`), way back `Ctrl-C+DISCONNE+PACKET`; PTCONN is treated the same.
-3. **MYSELCAL** (A, B): the restore sent `MYSELCAL none`, the firmware took it as the VALID selcal: `MYSelcal  was OEAS` / `MYSelcal  now NONE`. **A and B still hold `NONE`** until set by hand. The
-   restore now clears an unset (`none`, lower case) MYSELCAL with `MYSELCAL %` and reads back case-sensitive. **`%` is not yet proven** (the TRM is not in the repo; the Timewave list only says
-   the default is `Empty`) - T187 is the measurement. Device C showed `OEAS` before the run (origin unknown), so it was restored to `OEAS`.
-4. `--update-matrix`: C filled 7 `fx_` cells (ALIST, AMTOR, CONVERSE, FEC, K, RCVE, TRANS; TRANS is the first effect ever measured at C), A 6, B 5 - 18 cells, no `fw_` cell (all were known). A second
+3. **MYSELCAL** (A, B): the restore sent `MYSELCAL none`, the firmware took it as the VALID selcal: `MYSelcal  was OEAS` / `MYSelcal  now NONE`. **A and B still hold `NONE`** until a power cycle with
+   the factory banner line. Hand test at A (07.10.2026): `%` (reported as `&`) and `OFF` answer `?callsign`, `NONE` answers `now NONE` - **no command clears it at A and B** (an earlier plan with `MYSELCAL %`
+   is dead). The scanner now gives an unset MYSELCAL back by a power cycle (P89b, T188). Device C showed `OEAS` before the run (origin unknown), so it was restored to `OEAS`.
+4. **Power cycle** (hand test at A, 07.10.2026): off and on after a short pause kept the settings (banner without an extra line, `MYSELCAL` still `NONE`); after a longer pause the line
+   `PK-232M is using default values.` came first and `MYSELCAL` was `none`. "Switching off gives the factory state" is wrong; the factory state is the banner line (P89b, T188).
+5. `--update-matrix`: C filled 7 `fx_` cells (ALIST, AMTOR, CONVERSE, FEC, K, RCVE, TRANS; TRANS is the first effect ever measured at C), A 6, B 5 - 18 cells, no `fw_` cell (all were known). A second
    `--update-matrix` on the same CSV fills 0 (the cells exist, same text, no conflict) - that is the "0 cells filled for 30.DEC.88".
 
 **Status:** ✅ A, B PASS; C PASS with the open point FEC / XMIT -> T187.
@@ -3677,17 +3679,35 @@ Run 2026-10-07, no power cycle needed (`hw_logs/20261007_fw_only_{A,B,C}.csv/.lo
 
 ### T187 — FEC, ID, XMIT, ARQ, SELFEC, PTCONN again, and the way to clear MYSELCAL (T186 findings)
 
-Software: `test_pk232_fw_scan_t186.py`. **Operator at the TNC, no radio connected**, per device. First by hand at the terminal of A and B, whose MYSELCAL is now `NONE`: `MYSELCAL %`, then `MYSELCAL`:
-write down the answer verbatim (a `?` or `now %` means `%` is wrong - then do not run the scan, report it). Then:
+Software: `test_pk232_fw_scan_t186.py`, `test_factory_banner_p89b.py`. **Operator at the TNC, no radio connected**, per device. A and B hold `NONE` in MYSELCAL: switch the TNC off for longer
+(see T188 - the scanner asks for it at the end when MYSELCAL was unset) before or after the run.
 `.venv\Scripts\python.exe tools\pk232_fw_scan.py --port COMx --all --only FEC,ID,XMIT,ARQ,SELFEC,PTCONN --mycall <your call> --target NOCALL --csv hw_logs\<date>_fw_only2_<dev>.csv --debug hw_logs\<date>_fw_only2_<dev>.log`
 
 | # | Device | Expected | Result |
 |---|---|---|---|
-| 1 | A | FEC way back `Ctrl-C+PACKET`, OPMODE PACKET after it; ID / XMIT no `?not while in FEC`; ARQ / SELFEC / PTCONN no `?callsign`; at the end `MYSELCAL` shows `none` | ⬜ |
+| 1 | A | FEC way back `Ctrl-C+PACKET`, OPMODE PACKET after it; ID / XMIT no `?not while in FEC`; ARQ / SELFEC / PTCONN no `?callsign`; at the end the scanner asks for the power cycle (T188) and `MYSELCAL` shows `none` | ⬜ |
 | 2 | B | same | ⬜ |
-| 3 | C | same (C showed `OEAS` before T186 - a set value is put back by setting it) | ⬜ |
+| 3 | C | same (C showed `OEAS` before T186 - a set value is put back by setting it, no power cycle) | ⬜ |
 
 **Status:** ⬜ OPEN (add `--update-matrix` only after a run that looks right; the cleared FEC cell of C is filled again then).
+
+---
+
+### T188 — power cycle: factory state only with the banner line, and how long "off" must be (P89b)
+
+Software: `test_factory_banner_p89b.py` (banners copied from the logs). **Operator at the TNC.** What the scanner does now: at every power cycle it shows
+`Switch the TNC off, wait at least 10 seconds, switch it on.` (**10 s = starting value, NOT measured**), wakes the TNC, reads the banner; without the line `PK-232M is using default values.`
+(device C: `PK-232 is using ...`) it says `TNC kept its settings - switch off longer and repeat` and shows the step again (3 tries). At the end of a `--all` run with an unset MYSELCAL it asks for exactly that.
+
+| # | Device | Do | Expected | Result |
+|---|---|---|---|---|
+| 1 | A | run T187 (MYSELCAL is `NONE` now); at the end do the step as shown; note the seconds you really waited and what the banner looked like | banner with the line, `MYSELCAL` `none`; if not: the message and the step again | ⬜ |
+| 2 | B | same | same | ⬜ |
+| 3 | C | a power cycle (e.g. `--all --only MEMORY` with the TNC hung, or by hand) - device C needs the `*` first | its banner has `PK-232 is using default values.` (no M) and the scanner takes it as the factory state | ⬜ |
+| 4 | A or B | at the step of row 1 first wait only about 2 s, press ENTER | the banner has NO line: `TNC kept its settings - switch off longer and repeat`, the step is shown again (the hand test, now in the tool) | ⬜ |
+| 5 | A or B | find the shortest pause that gives the line (try 3, 5, 10 s) | the measured value replaces the starting value 10 s in `POWER_OFF_SECONDS` | ⬜ |
+
+**Status:** ⬜ OPEN.
 
 ---
 
