@@ -7,8 +7,8 @@
 * ARQ and SELFEC answered '?callsign' -> a dummy target (--target, default NOCALL), way back
   Ctrl-C, DISCONNE, PACKET;
 * a command with NEEDS_MODE is only sent when OPMODE says the mode was reached;
-* A and B: 'MYSELCAL none' made the VALID selcal NONE ('MYSelcal  was OEAS / now NONE') - the lower-case 'none' only
-  means 'not set' -> an unset MYSELCAL is cleared, never set to the word, and read back case-sensitive.
+* A and B: 'MYSELCAL none' made the VALID selcal NONE - the restore of an unset MYSELCAL moved to P89b (no command
+  clears it, a power cycle does: test_factory_banner_p89b.py).
 
 tools/ is not a package - see test_hw_check.py."""
 
@@ -185,37 +185,3 @@ class TestTheCallingCommandsGetADummyTarget:
     def test_main_accepts_target(self, clock, capsys):
         assert scan.main(["--selftest", "1991", "--all", "--only", "ARQ", "--target", "DL1ABC"]) == 0
         assert "ARQ" in capsys.readouterr().out
-
-
-class TestMyselcalIsRestoredTheWayTheFirmwareTakesIt:
-
-    def test_an_unset_myselcal_is_not_restored_by_typing_none(self, clock):
-        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True, selcal_clear=scan.MYSELCAL_CLEAR)
-        _risky(t)
-        sent = [d.decode("latin-1").strip() for d in t.sent]
-        assert "MYSELCAL none" not in sent and "MYSELCAL NONE" not in sent
-        assert f"MYSELCAL {scan.MYSELCAL_CLEAR}" in sent
-        assert t.myselcal == "none"                             # case-sensitive: unset, not the selcal NONE
-
-    def test_the_mock_takes_none_as_the_selcal_like_the_firmware(self, clock):
-        t = scan.MockTransport(B, clock=clock, risky=True)
-        t.write(scan.verbose_line("MYSELCAL none"))
-        assert "now NONE" in t.read_idle() and t.myselcal == "NONE"
-
-    def test_a_set_myselcal_is_put_back_by_setting_it(self, clock):
-        t = scan.MockTransport(C, clock=clock, risky=True, needs_selcal=True)
-        t.myselcal = "OEAS"                                     # device C answered OEAS before the run
-        _risky(t, myselcal="DLBC")
-        assert t.myselcal == "OEAS"
-
-    def test_a_clear_that_does_not_work_is_reported_not_hidden(self, clock, capsys):
-        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True, selcal_clear=None)
-        _risky(t)
-        assert t.myselcal != "none"
-        assert "MYSELCAL" in capsys.readouterr().err
-
-    def test_the_comparison_is_case_sensitive(self, clock):
-        t = scan.MockTransport(B, clock=clock, risky=True)
-        t.myselcal = "NONE"
-        assert scan.restore_value(t, "MYSELCAL", "NONE") is True
-        assert scan.restore_value(t, "MYSELCAL", "none") is False   # NONE is not none

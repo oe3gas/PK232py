@@ -129,8 +129,7 @@ class TestPreconditionsAreSetAndGivenBack:
             assert not _row(rows, name)["precondition"], name
 
     def test_everything_is_given_back_afterwards(self, clock):
-        t = scan.MockTransport(C, clock=clock, risky=True, needs_mycall=True, needs_selcal=True,
-                               selcal_clear=scan.MYSELCAL_CLEAR)
+        t = scan.MockTransport(C, clock=clock, risky=True, needs_mycall=True, needs_selcal=True)
         before = (t.mycall, t.myselcal)
         assert before == ("PK232", "none")
         _risky(t)
