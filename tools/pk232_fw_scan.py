@@ -131,6 +131,8 @@ if str(_SRC) not in sys.path:
 from pk232py.comm import command_matrix as cm  # noqa: E402
 from pk232py.comm.constants import verbose_line  # noqa: E402
 from pk232py.comm.constants import FRAME_HOST_OFF  # noqa: E402
+# P89b: the ONE function that says "factory state" (the banner line as observed) - the app's too
+from pk232py.comm.constants import FACTORY_BANNER_LINES, is_factory_banner  # noqa: E402
 from pk232py.comm.devices import KNOWN_DEVICES  # noqa: E402
 from pk232py.comm.pk232_hostmode_sub import escape_converse  # noqa: E402
 # the SAME wake-up byte and banner markers as the app's detection chain (SerialManager)
@@ -456,12 +458,16 @@ class MockTransport:
                  opmode: str = "PACKET", expert_on: bool = False, echo_on: bool = True,
                  sticky: Optional[set] = None, needs_mycall: bool = False, needs_selcal: bool = False,
                  memory_needs_expert: bool = False, mode_rules: bool = False, over_needs_link: bool = False,
-                 selcal_clear: Optional[str] = None, needs_target: bool = False, fec_sticks: bool = False):
+                 needs_target: bool = False, fec_sticks: bool = False, keeps_settings_cycles: int = 0):
         self.release = release
-        # T186, as measured: MYSELCAL <word> sets that word (also 'none' -> 'NONE'); *selcal_clear* is the one
-        # argument that empties it again (None = no way known); ARQ / SELFEC / PTCONN answer ?callsign without
-        # a target; FEC leaves OPMODE at FEC after Ctrl-C and refuses every other mode but PACKET (device C)
-        self.selcal_clear, self.needs_target, self.fec_sticks = selcal_clear, needs_target, fec_sticks
+        # T186/P89b, as measured: MYSELCAL takes a 4-letter word (also 'none' -> 'NONE'), anything else ('%', 'OFF')
+        # answers ?callsign - nothing clears it (A, B); ARQ / SELFEC / PTCONN answer ?callsign without a target;
+        # FEC leaves OPMODE at FEC after Ctrl-C and refuses every other mode but PACKET (device C); the first
+        # *keeps_settings_cycles* power cycles keep the settings and print the banner WITHOUT the factory line
+        self.needs_target, self.fec_sticks = needs_target, fec_sticks
+        self.keeps_settings_cycles = keeps_settings_cycles
+        self._factory_banner = True           # does the next power-on banner carry the factory line?
+        self._boot_banner_pending = False     # a device that keeps its baud rate prints the banner at power-on
         self.needs_mycall, self.needs_selcal = needs_mycall, needs_selcal
         self.memory_needs_expert, self.mode_rules = memory_needs_expert, mode_rules
         self.over_needs_link = over_needs_link
@@ -513,11 +519,18 @@ class MockTransport:
 
     def power_cycle(self) -> None:
         """The operator switches the TNC off and on: factory state, awake only for a first '*' when
-        the device needs it (device C)."""
+        the device needs it (device C). The first *keeps_settings_cycles* cycles keep MYCALL / MYSELCAL and the
+        banner has no factory line (P89b: a short pause kept the settings at device A)."""
         self.deaf = False
         self._autobaud = self._needs_star_first
-        self.mycall = self.FACTORY_MYCALL
-        self.myselcal = "none"
+        kept = self.keeps_settings_cycles > 0
+        if kept:
+            self.keeps_settings_cycles -= 1
+        else:
+            self.mycall = self.FACTORY_MYCALL
+            self.myselcal = "none"
+        self._factory_banner = not kept
+        self._boot_banner_pending = not self._needs_star_first
         self.mailbox = False
         self.opmode = "PACKET"
         self.expert_on = False
@@ -545,9 +558,12 @@ class MockTransport:
         self._pending += text
         self._late_reads = 1 if (slow or name in self.late) else 0
 
-    def _banner(self) -> str:
+    def _banner(self, factory: Optional[bool] = None) -> str:
+        """The sign-on banner; the factory line only after a power-on at the factory state (RESTART keeps the
+        settings and prints none - hw_logs/20261007_fw_only_*.log line 9)."""
         day, mon, yy = self.release.split(".")
-        return ("\r\nPK-232M is using default values.\r\n"
+        line = "PK-232M is using default values.\r\n" if (self._factory_banner if factory is None else factory) else ""
+        return (f"\r\n{line}"
                 "AEA PK-232M Data Controller\r\n"
                 f"Release {day}.{mon}.{yy}\r\ncmd:")
 
@@ -615,6 +631,10 @@ class MockTransport:
             self._reply("cmd:")
             return
         if data == STAR:
+            if self._boot_banner_pending:           # the banner a device that keeps its baud rate prints at power-on
+                self._boot_banner_pending = False
+                self._pending, self._late_reads = self._banner(), self.banner_late_reads
+                return
             if not self.ignores_star and not self.in_converse:
                 self._reply("*\\\r\ncmd:")           # a TNC at the prompt answers '*' with a prompt
             return
@@ -634,6 +654,7 @@ class MockTransport:
             if self.restart_needs_star:
                 self._autobaud = True               # autobaud again, the banner comes after '*'
                 return
+            self._factory_banner = False            # RESTART keeps the settings: its banner has no factory line
             self._pending, self._late_reads = "RESTART\r\n" + self._banner(), self.banner_late_reads
             return                                  # (the opmode survives)
         if name == "OPMODE":
@@ -661,7 +682,10 @@ class MockTransport:
             arg = line[8:].strip()
             if arg:
                 old = self.myselcal
-                self.myselcal = "none" if arg == self.selcal_clear else arg.upper()
+                if not (len(arg) == 4 and arg.isalpha()):
+                    self._reply(f"MYSELCAL {arg}\r\n?callsign\r\ncmd:", name)
+                    return
+                self.myselcal = arg.upper()
                 self._reply(f"MYSELCAL {arg}\r\nMYSelcal  was {old}\r\nMYSelcal  now {self.myselcal}\r\ncmd:", name)
             else:
                 self._reply(f"MYSELCAL\r\nMYSelcal  {self.myselcal}\r\ncmd:", name)
@@ -1298,6 +1322,37 @@ def operator_step(title: str, do: list, then: str) -> None:
     print("=" * 62)
 
 
+# P89b: switching off and on again does NOT always give the factory state (hand test at device A, 07.10.2026:
+# after a short pause the banner came without an extra line and MYSELCAL stayed NONE; after a longer one the line
+# 'PK-232M is using default values.' came first and MYSELCAL was 'none'). The factory state is what
+# is_factory_banner() says about the banner - not the fact that the operator switched the TNC off.
+POWER_OFF_SECONDS = 10
+POWER_OFF_NOTE = (f"the {POWER_OFF_SECONDS} s is a starting value, NOT measured (P89b): a short pause kept the settings "
+                  "at device A, a longer one gave the factory state - how long is needed is open")
+POWER_CYCLE_INSTRUCTION = f"Switch the TNC off, wait at least {POWER_OFF_SECONDS} seconds, switch it on."
+POWER_CYCLE_TRIES = 3
+KEPT_SETTINGS_TEXT = "TNC kept its settings - switch off longer and repeat"
+
+
+def power_cycle_and_check(t, title: str, confirm, tries: int = POWER_CYCLE_TRIES) -> bool:
+    """The ONE operator step for a power cycle: show it, let the operator do it (*confirm*), wake the TNC like the
+    app and read the banner to the prompt. True once the banner has the factory line (is_factory_banner); without
+    it the TNC kept its settings: say so and show the step again, up to *tries* times, then False (the caller
+    goes on - it sets what it needs anyway - and the report says it)."""
+    for attempt in range(1, tries + 1):
+        operator_step(title, [POWER_CYCLE_INSTRUCTION], "press ENTER here when it is on again")
+        confirm()
+        banner = wake(t)
+        if "cmd:" not in banner:
+            banner += read_until(t, ("cmd:",))
+        factory = is_factory_banner(banner)
+        _dbg_note(t, f"power cycle {attempt}/{tries}: banner has the factory line: {factory}")
+        if factory:
+            return True
+        _status(f"[!] {KEPT_SETTINGS_TEXT} (attempt {attempt} of {tries})")
+    return False
+
+
 def operator_checks(ask=None) -> bool:
     """Vorbedingung von --all, nicht abschaltbar: der Betreiber bestaetigt EINZELN, dass kein Funkgeraet
     angeschlossen ist und dass er am TNC ist und ihn aus- und einschalten kann. Nur das Wort ``yes``
@@ -1628,10 +1683,7 @@ def probe_risky(t, cmd: Cmd, *, mycall: Optional[str], confirm_power_cycle, reco
         else:
             b.recovery = "needs_power_cycle"
             _dbg_note(t, f"no way back for {cmd.name}: the operator power-cycles the TNC")
-            operator_step(f"{cmd.name}: the TNC does not come back", ["Power-cycle the TNC now"],
-                          "press ENTER here when it is on again")
-            confirm_power_cycle()
-            wake(t)
+            power_cycle_and_check(t, f"{cmd.name}: the TNC does not come back", confirm_power_cycle)
             reset = True
     if reset:
         reestablish(t, ctx)                              # the factory values came back: set them again
@@ -1654,28 +1706,47 @@ def value_of(text: str) -> str:
     return lines[0].split()[-1] if lines else ""
 
 
-# T186: on A and B the old restore sent 'MYSELCAL none' and the firmware took it as the VALID selcal NONE
-# ('MYSelcal  was OEAS / now NONE'). 'none' in lower case is how an UNSET MYSELCAL is DISPLAYED, it is not a value
-# to enter. The way to clear it is NOT yet proven (no manual text in the repo; the Timewave list only says the
-# default is 'Empty'). '%' is the AEA convention for emptying a text parameter - it is only a candidate here:
-# restore_value() reads the value back and reports a mismatch, so a wrong guess shows in the log and the
-# report. After the first measurement (T186 repeat) the result belongs in docs/claude/GOTCHAS_SERIAL_TNC.md.
-MYSELCAL_CLEAR = "%"
+# T186/P89b: 'none' in lower case is how an UNSET MYSELCAL is DISPLAYED, it is not a value to enter - the firmware
+# takes 'MYSELCAL none' as the VALID selcal NONE ('MYSelcal  was OEAS / now NONE', T186 at A and B). Hand test at
+# A (07.10.2026): '%' and 'OFF' answer '?callsign', NONE -> 'now NONE': NO command clears MYSELCAL at A and B.
+# An unset MYSELCAL is therefore given back by a power cycle (the factory state, checked by the banner line).
 UNSET_DISPLAY = "none"          # exactly this spelling, case-sensitive ("NONE" is a selcal)
 
 
 def restore_value(t, name: str, before: str) -> bool:
-    """Put *name* back to what the device showed before the risky part and read it back, case-sensitive.
-    An unset MYSELCAL (shown as 'none') is cleared, not set to the word. True if the device shows *before* again."""
-    clear = name == "MYSELCAL" and before == UNSET_DISPLAY
-    t.write(verbose_line(f"{name} {MYSELCAL_CLEAR}" if clear else f"{name} {before}"))
+    """Set *name* back to what the device showed before the risky part and read it back, case-sensitive.
+    True if the device shows *before* again. (An unset MYSELCAL cannot be set - see give_back_myselcal.)"""
+    t.write(verbose_line(f"{name} {before}"))
     read_until(t, ("cmd:",))
     now = value_of(query_text(t, name))
     ok = now == before
-    _dbg_note(t, f"restore {name}: {'clear with ' + repr(MYSELCAL_CLEAR) if clear else 'set ' + repr(before)}; "
-                 f"device shows {now!r}, wanted {before!r}: {'ok' if ok else 'MISMATCH'}")
+    _dbg_note(t, f"restore {name}: set {before!r}; device shows {now!r}, wanted {before!r}: {'ok' if ok else 'MISMATCH'}")
     if not ok:
         _status(f"[!] {name}: the device shows {now!r}, it showed {before!r} before the scan - set it by hand")
+    return ok
+
+
+def give_back_myselcal(t, before: str, confirm) -> bool:
+    """Put MYSELCAL back to *before*. A set value is entered; an unset one ('none') needs a power cycle, because no
+    command clears it (P89b) - so the factory state is checked by the banner line and the step repeated if the TNC
+    kept its settings. A power cycle also loses MYCALL: the caller sets that AFTER this."""
+    if before != UNSET_DISPLAY:
+        return restore_value(t, "MYSELCAL", before)
+    now = value_of(query_text(t, "MYSELCAL"))
+    if now == before:
+        return True
+    _status(f"    MYSELCAL shows {now!r}, it was unset ('none') before; no command clears it - power cycle")
+    if confirm is None:
+        _status("[!] MYSELCAL: not given back (the run was aborted) - switch the TNC off for a while and on again "
+                "to get 'none'")
+        return False
+    got_factory = power_cycle_and_check(t, "MYSELCAL cannot be cleared by a command - back to 'not set'", confirm)
+    now = value_of(query_text(t, "MYSELCAL"))
+    ok = now == before
+    _dbg_note(t, f"give back MYSELCAL by power cycle: factory banner {got_factory}; device shows {now!r}, wanted {before!r}")
+    if not ok:
+        _status(f"[!] MYSELCAL: the device shows {now!r}, it showed {before!r} before the scan - set it by hand "
+                f"(no command clears it; switch off for longer)")
     return ok
 
 
@@ -1720,9 +1791,12 @@ def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=No
             })
     finally:
         ensure_prompt(t)
-        for name, used in (("MYCALL", ctx.mycall), ("MYSELCAL", ctx.myselcal)):
-            if used and before[name]:
-                restore_value(t, name, before[name])                   # back to what the device had
+        # MYSELCAL first: giving back an unset one is a power cycle, which also loses MYCALL (P89b)
+        if ctx.myselcal and before["MYSELCAL"]:
+            # a run that is being aborted does not ask the operator for a power cycle (it only says so)
+            give_back_myselcal(t, before["MYSELCAL"], None if sys.exc_info()[0] else confirm)
+        if ctx.mycall and before["MYCALL"]:
+            restore_value(t, "MYCALL", before["MYCALL"])               # back to what the device had
     return rows
 
 
