@@ -1,0 +1,11 @@
+release,device,date,name,group,kind,result,matrix,note,effect,recovery,precondition,mode,raw
+13.SEP.95,A,2026-10-07,ALIST,other,mode,SUPPORTED,yes,,changes OPMODE to ALIST,PACKET,,,'ALIST\r\nOpmode   was PAcket    \r\nOpmode   now AList     \r\ncmd:'
+13.SEP.95,A,2026-10-07,AMTOR,other,mode,SUPPORTED,yes,,changes OPMODE to AMTOR,PACKET,,,'AMTOR\r\nOpmode   was PAcket    \r\nOpmode   now AMtor     \r\ncmd:'
+13.SEP.95,A,2026-10-07,ACHG,other,action_tx,SUPPORTED,yes,,,Ctrl-C,?not while in AMtor,AMTOR,'ACHG\r\n?not while in AMtor     \r\ncmd:'
+13.SEP.95,A,2026-10-07,ARQ,other,action_tx,SUPPORTED,yes,,,Ctrl-C+DISCONNE+PACKET,?callsign,,'ARQ NOCALL\r\n?callsign\r\ncmd:'
+13.SEP.95,A,2026-10-07,FEC,other,action_tx,SUPPORTED,yes,,changes OPMODE to FEC,Ctrl-C+PACKET,,,'FEC\r\nOpmode   was PAcket    \r\nOpmode   now FEc       \r\n'
+13.SEP.95,A,2026-10-07,ID,other,action_tx,SUPPORTED,yes,,no output,Ctrl-C,,,'ID\r\ncmd:'
+13.SEP.95,A,2026-10-07,OVER,other,action_tx,SUPPORTED,yes,,,Ctrl-C,?not while in AMtor,AMTOR,'OVER\r\n?not while in AMtor     \r\ncmd:'
+13.SEP.95,A,2026-10-07,PTCONN,other,action_tx,SUPPORTED,yes,,changes OPMODE to PTCONN,Ctrl-C+DISCONNE+PACKET,,,'PTCONN NOCALL\r\nOpmode   was PAcket    \r\nOpmode   now PTConn    \r\n'
+13.SEP.95,A,2026-10-07,SELFEC,other,action_tx,SUPPORTED,yes,,,Ctrl-C+DISCONNE+PACKET,?callsign,,'SELFEC NOCALL\r\n?callsign\r\ncmd:'
+13.SEP.95,A,2026-10-07,XMIT,other,action_tx,SUPPORTED,yes,,starts the transmission,Ctrl-C,,BAUDOT,'XMIT\r\n'
