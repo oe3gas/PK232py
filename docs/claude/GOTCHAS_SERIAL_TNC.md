@@ -1338,15 +1338,18 @@ never retyped; everything else names the Testplan entry, or stays `{}`
     external operators also carry other interface settings (baud rate, 7 bits): the scan kit tells them to try `--baud`, and to power-cycle for the autobaud `*`.
   - **`none` (lower case) is how an UNSET `MYSELCAL` is displayed - typing it sets the VALID selcal `NONE` (T186, devices A and B).** `MYSELCAL none` answered
     `MYSelcal  was OEAS` / `MYSelcal  now NONE`; the display of an unset value is `MYSelcal  none`. So a value read back as `none` must never be written back as a word, and every before/after comparison of
-    such a value is case-sensitive. **No command clears MYSELCAL at A and B** (hand test at A, 07.10.2026: `MYSELCAL %` (reported as `&`) and `MYSELCAL OFF` answer `?callsign`, `MYSELCAL NONE` answers `now NONE`;
-    the operator reports the same at B). It is given back by a power cycle (see the next entry); matrix cell `fx_` of MYSELCAL at A and B: `cannot be cleared; power-cycle`. Device C showed `MYSELCAL OEAS`
-    (no `MYSelcal` spelling) before its run; nothing is measured at C about clearing it.
+    such a value is case-sensitive. **No command clears MYSELCAL at A and B** - hand tests of the operator, 07.10.2026, each line a separate test, at A (13.SEP.95) and at B (01.AUG.91):
+    `MYSELCAL %` -> `?callsign`; `MYSELCAL &` -> `?callsign`; `MYSELCAL OFF` -> `?callsign`; `MYSELCAL NONE` -> `now NONE` (a valid selcal). Matrix `fx_` of MYSELCAL at A and B: `cannot be cleared; power-cycle`.
+    **So an UNSET MYSELCAL is only queried, never set** (scanner: `MYSELCAL set/restore skipped: unset value cannot be restored (A, B)` in the log): there is no command to give it back, and a power cycle must not be the
+    way back either - a scan-kit device of someone else (P90) may have a RAM battery, the factory line never comes and switching off would clear the owner's settings. The commands that need a selcal then answer
+    `?need MYSELCAL` and are recorded as preconditions. A SET value (device C showed `MYSELCAL OEAS`, no `MYSelcal` spelling, before its run) is written back directly as before; nothing is measured at C about clearing it.
   - **Switching the TNC off and on does NOT always give the factory state (P89b, hand test at device A, 07.10.2026).** After a short pause the banner came WITHOUT an extra line and `MYSELCAL` stayed `NONE`; after a
     longer pause the line `PK-232M is using default values.` came first and `MYSELCAL` was `none`. "At the factory state" is therefore decided in ONE place, `comm/constants.is_factory_banner()`: one of
     `FACTORY_BANNER_LINES` as a line of its own, exactly as observed - `PK-232M is using default values.` (A, B) and `PK-232 is using default values.` (device C prints NO M, hw_logs/20261006_fw_scan_C.log);
     NUL / XON bytes around it do not matter, a RESTART banner has no such line (hw_logs/20261007_fw_only_*.log line 9). The app (`_parse_defaults_flag` -> `tnc_defaults`, `fresh_boot_defaults`, so the
     archive restore of P59/P60) and the scanner (`power_cycle_and_check()`) call that function; the scanner shows `Switch the TNC off, wait at least 10 seconds, switch it on.` (**10 s is a starting value, NOT
-    measured**), and without the line says `TNC kept its settings - switch off longer and repeat` and shows the step again (3 tries). P81 asks a different question: `banner_seen_this_init` (any banner = the TNC
+    measured**), and without the line says `TNC kept its settings - switch off longer and repeat` and shows the step again (3 tries; after the third: `TNC keeps its settings (RAM battery?) - factory state not reached`,
+    in the log too, NO fourth try, the run goes on). The step is only for a TNC that no longer answers (P89 part B.4), never to reach the factory state on purpose. P81 asks a different question: `banner_seen_this_init` (any banner = the TNC
     restarted, so no connection is left, the live-link check is skipped) is no claim about settings and stays; nothing in the app resets the link table or restores a session from a banner without the line.
   - **A way back that reaches `cmd:` is not a way back to PACKET (T186).** After `FEC` Ctrl-C returned the prompt but `OPMODE` stayed `FEC IDLE SEND`; ID and XMIT were then refused `?not while in FEC` (C),
     and A / B stayed in `FEc` / `AMtor STBY RCVE`. Check `OPMODE` after a recovery, not only the prompt; FEC ends `Ctrl-C+PACKET`, the calling commands (ARQ, SELFEC, PTCONN, with a dummy target -

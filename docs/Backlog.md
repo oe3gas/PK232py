@@ -213,11 +213,15 @@ Open: measure FEC, ID, XMIT, ARQ, SELFEC, PTCONN again per device (T187).
 ### Power cycle is not the factory state (P89b) - done, T188 open (2026-10-07)
 
 Hand test at device A: off and on after a short pause kept the settings (banner without an extra line, `MYSELCAL` still `NONE`); after a longer pause `PK-232M is using default values.` came first and
-`MYSELCAL` was `none`. No command clears MYSELCAL at A and B (`%`/`OFF` -> `?callsign`, `NONE` -> `now NONE`; matrix `fx_` of MYSELCAL at A and B: `cannot be cleared; power-cycle`). So:
+`MYSELCAL` was `none`. No command clears MYSELCAL at A and B (hand tests of the operator, one test per line, at both: `MYSELCAL %` -> `?callsign`, `MYSELCAL &` -> `?callsign`, `MYSELCAL OFF` -> `?callsign`,
+`MYSELCAL NONE` -> `now NONE`; matrix `fx_` of MYSELCAL at A and B: `cannot be cleared; power-cycle`). So:
 `comm/constants.is_factory_banner()` is the ONE place that says "factory state" - the banner line as a line of its own, exactly as observed (`PK-232M ...` at A, B; **`PK-232 ...` without M at device C**, so two
 spellings). The app's `_parse_defaults_flag` (-> `tnc_defaults`, `fresh_boot_defaults`, archive restore P59/P60) and the scanner use it; the kit builder embeds it. The scanner's `power_cycle_and_check()` shows
 `Switch the TNC off, wait at least 10 seconds, switch it on.` (**the 10 s is a starting value, not measured**), reads the banner and, without the line, says `TNC kept its settings - switch off longer and
-repeat` and shows the step again (3 tries); an unset MYSELCAL is given back at the end of `--all` by that step (MYCALL after it), a set one by entering it. App checked: `fresh_boot_defaults` / archive restore
+repeat` and shows the step again (3 tries; then `TNC keeps its settings (RAM battery?) - factory state not reached`, in the log, no fourth try, the run goes on); the step is only for a TNC that no longer
+answers (P89 part B.4). **An unset MYSELCAL (`none`) is only queried, never set** (log `MYSELCAL set/restore skipped: unset value cannot be restored (A, B)`), and there is no power cycle at the end of
+`--all` to give it back: a scan-kit device (P90) may have a RAM battery, the line never comes and switching off would clear the owner's settings. The commands that need a selcal then say `?need MYSELCAL`
+(recorded as preconditions); a set value is written back directly. App checked: `fresh_boot_defaults` / archive restore
 need the line already (tests), `banner_seen_this_init` (P81 live-link check) means only "the TNC restarted" and is unchanged; nothing resets the link table or restores a session from a banner without the line.
 Open: how long the pause must be (T188); `config.py` / `params_uploader.py` / `comm/autobaud.py` comments still say "no battery, starts at factory values on every power-on" (comments only, the app uploads on
 every init and does not rely on it).

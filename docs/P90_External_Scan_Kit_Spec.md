@@ -25,7 +25,11 @@ Firmwarestände erweitern, ohne dass wir die Geräte selbst haben.
   evtl. andere Baudrate, 7 Bit, EXPERT ON, ECHO OFF …) und sind sein
   Eigentum. (P89b: auch ohne Batterie behält ein TNC seine Einstellungen über eine kurze Pause; „Werkszustand“
   entscheidet nur die Banner-Zeile `… is using default values.` - `constants.is_factory_banner()`, im Kit
-  eingebettet wie `verbose_line()`.)
+  eingebettet wie `verbose_line()`.) **Folge für das Kit:** Ein Aus-/Einschalten darf dem Betreiber nur zugemutet
+  werden, wenn der TNC nicht mehr antwortet - nie, um etwas „zurückzusetzen“: Bei einer Pufferbatterie kommt die
+  Werkszustandszeile nie, und das Ausschalten würde seine Einstellungen löschen. Nach drei Versuchen ohne die Zeile
+  meldet der Scanner `TNC keeps its settings (RAM battery?) - factory state not reached`, schreibt es ins Log und macht
+  weiter. Ein nicht gesetztes `MYSELCAL` fasst er nicht an.
 
 ---
 

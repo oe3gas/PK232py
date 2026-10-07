@@ -33,7 +33,10 @@ Pause kam das Banner ohne Zusatzzeile und `MYSELCAL` blieb `NONE`; nach längere
 Banner kam (`constants.is_factory_banner()`): Geräte A und B drucken `PK-232M is using default values.`, Gerät C
 `PK-232 is using default values.` (ohne M, `hw_logs/20261006_fw_scan_C.log`); ein RESTART-Banner hat sie nie. Wie lange
 die Pause sein muss, ist nicht gemessen (der Scanner verlangt 10 s als Startwert). `MYSELCAL` lässt sich an A und B
-mit keinem Befehl löschen (`%`/`OFF` -> `?callsign`, `NONE` -> `now NONE`), nur durch einen Werkszustands-Start.
+mit keinem Befehl löschen (Handtests des Betreibers, 07.10.2026, je Zeile ein eigener Test an A und an B:
+`MYSELCAL %` -> `?callsign`, `MYSELCAL &` -> `?callsign`, `MYSELCAL OFF` -> `?callsign`, `MYSELCAL NONE` -> `now NONE`, ein
+gültiger Selcal), nur durch einen Werkszustands-Start. Der Scanner setzt ein nicht gesetztes MYSELCAL deshalb nie und schaltet das
+Gerät dafür nicht aus (ein Scan-Kit-Gerät kann eine Pufferbatterie haben).
 
 **Release-Spalte, Genauigkeit:** Gerät B ist die einzige Zeile mit einer
 byte-genauen Banner-Erfassung (P30/P37, `hw_logs/20260924_181446_maildrop_session.log`)

@@ -65,8 +65,11 @@ jeweils:
 4. **Klappt kein Rückweg**: `operator_step` „Switch the TNC off, wait at least 10 seconds, switch it on."
    (P89b; die **10 s sind ein Startwert, nicht gemessen**), danach Wecken wie die App und Banner lesen
    (`power_cycle_and_check()`); fehlt die Zeile `PK-232M is using default values.` im Banner, meldet der
-   Scanner „TNC kept its settings - switch off longer and repeat" und zeigt den Schritt erneut (3 Versuche);
-   Ergebnis `needs_power_cycle`.
+   Scanner „TNC kept its settings - switch off longer and repeat“ und zeigt den Schritt erneut (3 Versuche);
+   nach dem dritten: „TNC keeps its settings (RAM battery?) - factory state not reached“ (auch im Log), kein vierter
+   Versuch, der Lauf geht weiter. Ergebnis `needs_power_cycle`. Dieser Schritt ist **nur** für einen TNC, der nicht mehr
+   antwortet - nie, um den Werkszustand absichtlich herzustellen (Gerät mit RAM-Batterie, P90). Ein nicht gesetztes
+   `MYSELCAL` wird nur abgefragt und nie gesetzt (kein Befehl löscht es, A und B).
 5. Nach jedem riskanten Befehl: `OPMODE` und `MYCALL` abfragen und
    protokollieren (hat der Befehl Modus oder Einstellungen verändert?).
    War ein Aus-/Einschalten nötig: MYCALL aus der Konfiguration neu setzen.
