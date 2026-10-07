@@ -3687,11 +3687,25 @@ replaced and written back as `NONE`); at C a set `OEAS`. With an unset MYSELCAL 
 
 | # | Device | Expected | Result |
 |---|---|---|---|
-| 1 | A | FEC way back `Ctrl-C+PACKET`, OPMODE PACKET after it; ID / XMIT no `?not while in FEC`; ARQ / SELFEC / PTCONN no `?callsign`; at the end MYSELCAL is `NONE` again (it was `NONE` before; no power cycle) | ⬜ |
-| 2 | B | same | ⬜ |
-| 3 | C | same (C showed `OEAS` before T186 - a set value is put back by setting it, no power cycle) | ⬜ |
+| 1 | A | FEC way back `Ctrl-C+PACKET`, OPMODE PACKET after it; ID / XMIT no `?not while in FEC`; ARQ / SELFEC / PTCONN no `?callsign`; at the end MYSELCAL is `NONE` again (it was `NONE` before; no power cycle) | ⚠ run complete (`hw_logs/20261007_T187_A.log/.csv`), DISPLAY before = after (operator). FEC `Ctrl-C+PACKET`, `Opmode PAcket` after it (lines 152-175); ID `no output`, XMIT `starts the transmission`, PTCONN `changes OPMODE to PTCONN`, way back `Ctrl-C+DISCONNE+PACKET`, `Opmode PAcket`; MYSELCAL `NONE` before and after (below). **ARQ and SELFEC still `?callsign`** with `ARQ NOCALL` (line 131-132) - not met; ACHG / OVER `?not while in AMtor` |
+| 2 | B | same | ⚠ run complete (`hw_logs/20261007_T187_B.log/.csv`), DISPLAY before = after (operator). FEC `Ctrl-C+PACKET`, `Opmode PAcket` (lines 146-169); ID, XMIT as at A; **ARQ and SELFEC still `?callsign`**; OVER `unknown command` (B has none); no PTCONN at B |
+| 3 | C | same (C showed `OEAS` before T186 - a set value is put back by setting it, no power cycle) | ⬜ not run |
 
-**Status:** ⬜ OPEN (add `--update-matrix` only after a run that looks right; the cleared FEC cell of C is filled again then).
+**MYSELCAL after T187 (operator: `MYSelcal NONE` at A and B):** the scanner DID change it during the run and wrote it back - it did not leave it alone. A: before `MYSelcal  NONE` (line 33), `MYSELCAL OEAS` -> `was NONE / now OEAS`
+(line 41-42), at the end `MYSELCAL NONE` -> `was OEAS / now NONE` (line 333-334), query `MYSelcal  NONE` (line 336-337), log `restore MYSELCAL: set 'NONE'; device shows 'NONE', wanted 'NONE': ok` (line 339).
+B: lines 30, 35-36, 298-299, 301-302, 304 the same. So before = after = `NONE` at both; a SET value is replaced for the scan and written back, as designed (an unset one would not be touched).
+
+**Findings:**
+1. **FEC fx cells of A and B** - the scan (`exit Ctrl-C+PACKET`) contradicted the old cells (`exit Ctrl-C`, from T182/T183), `--update-matrix` wrote nothing. The logs: after Ctrl-C only `cmd:` came and OPMODE stayed
+   `Opmode FEc IDLE SEND` (`20261006_fw_all_A.log` 1510-1532, `_B.log` 1499-1521, `20261007_fw_only_A.log` 244-266, `_B.log` 238-260); in T187 `PACKET` answered `Opmode was FEc / now PAcket` and OPMODE showed
+   `Opmode PAcket`. The old cells were incomplete: both set by hand to `changes OPMODE to FEC; exit Ctrl-C+PACKET`, old value in the commit text and in `ev_`.
+2. **ECHO at A** - `State before : ... ECHO None` was a read error: at 13.SEP.95 `ECHO` answers `?EXPERT command` while EXPERT is OFF (`T187_A.log` line 8-9), the scanner read it before the unlock. Now read again after
+   `EXPERT ON`; `ECHO OFF` is restored before EXPERT goes back (it is gated the same way). Not yet seen at the device: the next run must say `ECHO ON` at A (B answers at once).
+3. **ARQ / SELFEC with `NOCALL`** still answer `?callsign` at A and B - the dummy target is not accepted (what the firmware wants after ARQ / SELFEC is not known; MYSELCAL also takes only a 4-letter word). Open, no guess.
+4. A re-run would not fill "nine" more `fx_` cells: against the corrected matrix the T187 CSVs fill exactly one (PTCONN at A: `changes OPMODE to PTCONN; exit Ctrl-C+DISCONNE+PACKET`), B none - the other rows are
+   preconditions (`?callsign`, `?not while in AMtor`) or cells that exist already.
+
+**Status:** ⚠ A, B run; FEC, ID, XMIT, PTCONN as expected; ARQ / SELFEC open (finding 3); C not run.
 
 ---
 

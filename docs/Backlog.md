@@ -208,7 +208,8 @@ that were only refusals (and the MDCHECK misreading) were cleared, with a note i
 T186 (2026-10-07, 18 `fx_` cells filled) found three more things, fixed in the scanner: (1) after FEC the prompt came back but the TNC stayed in FEC (C: ID / XMIT `?not while in FEC`) - FEC ends
 `Ctrl-C+PACKET`, a command with `NEEDS_MODE` is only sent when OPMODE shows the mode, the report warns when a way back leaves PACKET; (2) ARQ / SELFEC / PTCONN answered `?callsign` - dummy target `--target`
 (default NOCALL), way back `Ctrl-C+DISCONNE+PACKET`; (3) the restore `MYSELCAL none` set the valid selcal `NONE` at A and B - no command clears it (hand test, see P89b).
-Open: measure FEC, ID, XMIT, ARQ, SELFEC, PTCONN again per device (T187).
+T187 (A, B run 2026-10-07): FEC / ID / XMIT / PTCONN as expected; FEC fx cells of A and B corrected by hand to `exit Ctrl-C+PACKET`; ECHO at 13.SEP.95 is gated by EXPERT (read after the unlock now).
+Open: ARQ / SELFEC still `?callsign` with the dummy target `NOCALL` at A and B - what they want is not known; T187 at device C.
 
 ### Power cycle is not the factory state (P89b) - done, T188 open (2026-10-07)
 

@@ -1353,7 +1353,10 @@ never retyped; everything else names the Testplan entry, or stays `{}`
     restarted, so no connection is left, the live-link check is skipped) is no claim about settings and stays; nothing in the app resets the link table or restores a session from a banner without the line.
   - **A way back that reaches `cmd:` is not a way back to PACKET (T186).** After `FEC` Ctrl-C returned the prompt but `OPMODE` stayed `FEC IDLE SEND`; ID and XMIT were then refused `?not while in FEC` (C),
     and A / B stayed in `FEc` / `AMtor STBY RCVE`. Check `OPMODE` after a recovery, not only the prompt; FEC ends `Ctrl-C+PACKET`, the calling commands (ARQ, SELFEC, PTCONN, with a dummy target -
-    without one they answer `?callsign`) `Ctrl-C+DISCONNE+PACKET`.
+    without one they answer `?callsign`) `Ctrl-C+DISCONNE+PACKET`. T187: with `ARQ NOCALL` / `SELFEC NOCALL` they STILL answer `?callsign` at A and B - the dummy target is not accepted, what the
+    firmware wants is not known (`hw_logs/20261007_T187_A.log` line 131-132). The old FEC cells (`exit Ctrl-C`) of A and B stopped at the prompt and were corrected by hand to `exit Ctrl-C+PACKET`.
+  - **At 13.SEP.95 `ECHO` is gated by EXPERT (T187, device A).** `ECHO` -> `?EXPERT command` while EXPERT is OFF (`hw_logs/20261007_T187_A.log` line 8-9); device B answers at once. A scanner that reads
+    the ECHO state before the EXPERT unlock gets `None`: it reads it again after `EXPERT ON`, and puts `ECHO OFF` back BEFORE EXPERT goes back to OFF (`ECHO OFF` is gated the same way).
   - **Release keys are the banner text, `DD.MMM.YY` (T180).** Device C prints `Release 30.DEC.88` (not the transcription
     `30.12.1988`, which stays in older entries). A key that is not the banner's own text silently matches no device
     (`devices.has_pactor()` / `unknown_commands()` answer "unknown", the scanner says "device ?"); a test checks every key.
