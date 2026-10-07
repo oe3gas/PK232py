@@ -309,6 +309,7 @@
 | NAVTEX | mode | changes OPMODE to NAVTEX; exit PACKET | changes OPMODE to NAVTEX; exit PACKET | changes OPMODE to NAVTEX; exit PACKET |
 | PACKET | mode | changes OPMODE to PACKET; exit PACKET | changes OPMODE to PACKET; exit PACKET | changes OPMODE to PACKET; exit PACKET |
 | PACTOR | mode |  | changes OPMODE to PACTOR; exit PACKET |  |
+| PTCONN | action_tx |  | changes OPMODE to PTCONN; exit Ctrl-C+DISCONNE+PACKET |  |
 | PTLIST | mode |  | changes OPMODE to PTLIST; exit PACKET |  |
 | PTSEND | action_tx |  | changes OPMODE to PTSEND; exit Ctrl-C |  |
 | RCVE | mode | in BAUDOT: no output; exit PACKET | in BAUDOT: no output; exit PACKET | in BAUDOT: no output; exit PACKET |
