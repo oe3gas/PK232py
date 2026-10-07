@@ -458,8 +458,11 @@ class MockTransport:
                  opmode: str = "PACKET", expert_on: bool = False, echo_on: bool = True,
                  sticky: Optional[set] = None, needs_mycall: bool = False, needs_selcal: bool = False,
                  memory_needs_expert: bool = False, mode_rules: bool = False, over_needs_link: bool = False,
-                 needs_target: bool = False, fec_sticks: bool = False, keeps_settings_cycles: int = 0):
+                 needs_target: bool = False, fec_sticks: bool = False, keeps_settings_cycles: int = 0,
+                 echo_needs_expert: bool = False):
         self.release = release
+        # T187: 13.SEP.95 answers ECHO (and ECHO ON / OFF) with '?EXPERT command' while EXPERT is OFF
+        self.echo_needs_expert = echo_needs_expert
         # T186/P89b, as measured: MYSELCAL takes a 4-letter word (also 'none' -> 'NONE'), anything else ('%', 'OFF')
         # answers ?callsign - nothing clears it (A, B); ARQ / SELFEC / PTCONN answer ?callsign without a target;
         # FEC leaves OPMODE at FEC after Ctrl-C and refuses every other mode but PACKET (device C); the first
@@ -659,6 +662,9 @@ class MockTransport:
             return                                  # (the opmode survives)
         if name == "OPMODE":
             self._reply(f"OPMODE\r\nOPMODE   {self.opmode}\r\ncmd:", name)
+            return
+        if self.echo_needs_expert and not self.expert_on and name in ("ECHO", "ECHO ON", "ECHO OFF"):
+            self._reply(f"{name}\r\n?EXPERT command\r\ncmd:", name)
             return
         if name == "ECHO":
             self._reply(f"ECHO\r\nECHo      {'ON' if self.echo_on else 'OFF'}\r\ncmd:", name)
@@ -1186,12 +1192,20 @@ def capture_state(t) -> DeviceState:
 def restore_state(t, state: DeviceState, rep: "Report") -> None:
     """Betriebsmodus, EXPERT und ECHO wie vorher; danach DISPLAY noch einmal und der Vergleich."""
     enter_mode(t, state.opmode if state.opmode in MODE_COMMANDS else "PACKET")
-    restore_expert(t, rep.expert_prior)
-    if rep.echo_prior == "OFF":
+    if rep.echo_prior == "OFF":                  # BEFORE EXPERT goes back: at 13.SEP.95 'ECHO OFF' is gated by EXPERT
         t.write(verbose_line("ECHO OFF"))
         read_until(t, ("cmd:",))
+    restore_expert(t, rep.expert_prior)
     rep.settings_after = read_display(t)
     rep.state_diff = settings_diff(rep.settings_before, rep.settings_after)
+
+
+def echo_to_on(t, echo: Optional[str]) -> None:
+    """ECHO OFF is switched ON for the scan (every answer is read after its echo); restore_state puts it back."""
+    if echo == "OFF":
+        _dbg_note(t, "ECHO is OFF: switched ON for the scan (every answer is read after its echo), restored at the end")
+        t.write(verbose_line("ECHO ON"))
+        read_until(t, ("cmd:",))
 
 
 def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = True,
@@ -1214,10 +1228,7 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
     rep.settings_before, rep.opmode_before, rep.echo_prior = state.display, state.opmode, state.echo
     if progress:
         _status(f"[*] Zustand vorher: Opmode {state.opmode}, ECHO {state.echo} (DISPLAY gesichert)")
-    if state.echo == "OFF":
-        _dbg_note(t, "ECHO is OFF: switched ON for the scan (every answer is read after its echo), restored at the end")
-        t.write(verbose_line("ECHO ON"))
-        read_until(t, ("cmd:",))
+    echo_to_on(t, state.echo)
 
     if _dbg(t):
         _dbg(t).note(f"BANNER geparst: release={release}")
@@ -1225,6 +1236,14 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
     rep.expert_prior = unlock_expert(t)
     if progress:
         _status(f"[*] EXPERT: {rep.expert_prior or 'in dieser Firmware nicht vorhanden'}")
+    if state.echo is None and rep.expert_prior is not None:
+        # T187, device A (13.SEP.95): 'ECHO' -> '?EXPERT command' while EXPERT was OFF - the firmware gates ECHO
+        # behind EXPERT, so it could not be read before the unlock. Now it can.
+        state.echo = rep.echo_prior = read_echo(t)
+        _dbg_note(t, f"ECHO was gated by EXPERT before the unlock; read after it: {state.echo}")
+        if progress:
+            _status(f"[*] Zustand vorher (nach EXPERT ON gelesen): ECHO {state.echo}")
+        echo_to_on(t, state.echo)
 
     todo = plan(entries, only_group=only_group, immediate=immediate, only=only)
     skipped = never_probed(entries)
