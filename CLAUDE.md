@@ -96,6 +96,9 @@ docs/claude/  Aus CLAUDE.md ausgelagerte Details (siehe unten)
 13. **Keine Erfolgsmeldung ohne Beweis** (kein „connected“/„verified“ ohne aktive Bestätigung).
 14. **Layout-/Geometrie-Behauptungen mit echtem `show()/resize()/processEvents()`-Test messen**, nicht nur Properties prüfen.
 15. **`QTimer.singleShot(ms, cb)` mit Zugriff auf `self`-Widgets vermeiden** — geparenteten `QTimer(self)` verwenden.
+17. **„Werkszustand“ nur über `comm/constants.is_factory_banner()`** (Banner-Zeile `… is using default values.`, wörtlich wie
+    beobachtet): Aus-/Einschalten allein stellt ihn nicht her (07.10.2026, Gerät A: kurze Pause behielt die Einstellungen). Kein
+    Pufferbatterie-Schluss („jedes Power-off = Werkszustand“) in App oder Tools; Details `docs/claude/GOTCHAS_SERIAL_TNC.md`.
 
 ## UI-Konventionen
 
