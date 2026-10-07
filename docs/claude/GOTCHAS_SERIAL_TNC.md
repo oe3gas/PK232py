@@ -1328,6 +1328,13 @@ never retyped; everything else names the Testplan entry, or stays `{}`
     `ECHO ON` for the scan (and `EXPERT ON`, as always), and puts operating mode, EXPERT and ECHO back; `DISPLAY` before and after is compared and a difference is reported.
     `OPMODE` answers `Opmode    PAcket` on ONE line - parse `Opmode[ \t]+(\w+)`, not `\s+` (that matches the echo's line break and returns the word "Opmode"). The devices of
     external operators also carry other interface settings (baud rate, 7 bits): the scan kit tells them to try `--baud`, and to power-cycle for the autobaud `*`.
+  - **`none` (lower case) is how an UNSET `MYSELCAL` is displayed - typing it sets the VALID selcal `NONE` (T186, devices A and B).** `MYSELCAL none` answered
+    `MYSelcal  was OEAS` / `MYSelcal  now NONE`; the display of an unset value is `MYSelcal  none`. So a value read back as `none` must never be written back as a word, and every before/after comparison of
+    such a value is case-sensitive. How the firmware empties MYSELCAL is **not proven**: the TRM text is not in the repo, the Timewave list says only "default: Empty"; the scanner tries `MYSELCAL %`
+    (`MYSELCAL_CLEAR`, the AEA convention for emptying a text parameter), reads back and reports a mismatch - the T187 result belongs here. Device C showed `MYSELCAL OEAS` (no `MYSelcal` spelling) before its run.
+  - **A way back that reaches `cmd:` is not a way back to PACKET (T186).** After `FEC` Ctrl-C returned the prompt but `OPMODE` stayed `FEC IDLE SEND`; ID and XMIT were then refused `?not while in FEC` (C),
+    and A / B stayed in `FEc` / `AMtor STBY RCVE`. Check `OPMODE` after a recovery, not only the prompt; FEC ends `Ctrl-C+PACKET`, the calling commands (ARQ, SELFEC, PTCONN, with a dummy target -
+    without one they answer `?callsign`) `Ctrl-C+DISCONNE+PACKET`.
   - **Release keys are the banner text, `DD.MMM.YY` (T180).** Device C prints `Release 30.DEC.88` (not the transcription
     `30.12.1988`, which stays in older entries). A key that is not the banner's own text silently matches no device
     (`devices.has_pactor()` / `unknown_commands()` answer "unknown", the scanner says "device ?"); a test checks every key.

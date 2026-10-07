@@ -3648,17 +3648,46 @@ empty, the new `fx_` cells with effect and way back, e.g. `enters transparent mo
 ### T186 — the risky part again with preconditions, only the affected commands (P89a)
 
 Software: `test_pk232_fw_scan_p89a.py`. **Operator at the TNC, no radio connected**, once per device (A, B, C):
-`.venv\Scripts\python.exe tools\pk232_fw_scan.py COMx --all --only ACHG,ALIST,AMTOR,ARQ,CONVERSE,FEC,ID,K,MDCHECK,MEMORY,OVER,PTCONN,RCVE,SAMPLE,SELFEC,TRANS,XMIT --mycall <your call> --results hw_logs\<date>_fw_only_<dev>`
-(add `--update-matrix` after a run that looks right). Expected: MYCALL/MYSELCAL set, XMIT/RCVE tried in BAUDOT, ACHG/OVER in AMTOR, MDCHECK left with `B`, no `fx_` that is only a refusal,
+`.venv\Scripts\python.exe tools\pk232_fw_scan.py --port COMx --all --only ACHG,ALIST,AMTOR,ARQ,CONVERSE,FEC,ID,K,MDCHECK,MEMORY,OVER,PTCONN,RCVE,SAMPLE,SELFEC,TRANS,XMIT --mycall <your call> --csv hw_logs\<date>_fw_only_<dev>.csv --debug hw_logs\<date>_fw_only_<dev>.log`
+(the port is `--port`, not positional; add `--update-matrix` after a run that looks right). Expected: MYCALL/MYSELCAL set, XMIT/RCVE tried in BAUDOT, ACHG/OVER in AMTOR, MDCHECK left with `B`, no `fx_` that is only a refusal,
 MYCALL/MYSELCAL back to the old values at the end.
+
+Run 2026-10-07, no power cycle needed (`hw_logs/20261007_fw_only_{A,B,C}.csv/.log`):
 
 | # | Device | Expected | Result |
 |---|---|---|---|
-| 1 | A | see above; MEMORY with EXPERT ON answers a value | ⬜ |
-| 2 | B | see above | ⬜ |
-| 3 | C | see above (no MDCHECK, no OVER) | ⬜ |
+| 1 | A | see above; MEMORY with EXPERT ON answers a value | ✅ PASS - MEMORY `prints a value`; but MYSELCAL was NOT given back (see findings) |
+| 2 | B | see above | ✅ PASS - same MYSELCAL finding; the TNC stayed in `FEc IDLE SEND` after FEC and in `AMtor STBY RCVE` after ID / SELFEC |
+| 3 | C | see above (no MDCHECK, no OVER) | ✅ PASS with an open point: FEC / XMIT (see findings) |
 
-**Status:** ⬜ OPEN.
+**Findings (all fixed in the scanner, to be measured again in T187):**
+1. **FEC** (C, and A / B): Ctrl-C brought `cmd:` back but OPMODE stayed `FEC IDLE SEND`; ID and XMIT afterwards answered `?not while in FEC` (C) - the `fx_30.DEC.88` cell `exit Ctrl-C`
+   for FEC was cleared (note in `ev_`). Way back now `Ctrl-C+PACKET`; every command with `NEEDS_MODE` is only sent when OPMODE shows the mode (`mode not reached`, not sent, no cell); the report
+   warns when the TNC is not in PACKET after a way back.
+2. **ARQ / SELFEC** answered `?callsign` (C): they get a dummy target (`--target`, default `NOCALL`), way back `Ctrl-C+DISCONNE+PACKET`; PTCONN is treated the same.
+3. **MYSELCAL** (A, B): the restore sent `MYSELCAL none`, the firmware took it as the VALID selcal: `MYSelcal  was OEAS` / `MYSelcal  now NONE`. **A and B still hold `NONE`** until set by hand. The
+   restore now clears an unset (`none`, lower case) MYSELCAL with `MYSELCAL %` and reads back case-sensitive. **`%` is not yet proven** (the TRM is not in the repo; the Timewave list only says
+   the default is `Empty`) - T187 is the measurement. Device C showed `OEAS` before the run (origin unknown), so it was restored to `OEAS`.
+4. `--update-matrix`: C filled 7 `fx_` cells (ALIST, AMTOR, CONVERSE, FEC, K, RCVE, TRANS; TRANS is the first effect ever measured at C), A 6, B 5 - 18 cells, no `fw_` cell (all were known). A second
+   `--update-matrix` on the same CSV fills 0 (the cells exist, same text, no conflict) - that is the "0 cells filled for 30.DEC.88".
+
+**Status:** ✅ A, B PASS; C PASS with the open point FEC / XMIT -> T187.
+
+---
+
+### T187 — FEC, ID, XMIT, ARQ, SELFEC, PTCONN again, and the way to clear MYSELCAL (T186 findings)
+
+Software: `test_pk232_fw_scan_t186.py`. **Operator at the TNC, no radio connected**, per device. First by hand at the terminal of A and B, whose MYSELCAL is now `NONE`: `MYSELCAL %`, then `MYSELCAL`:
+write down the answer verbatim (a `?` or `now %` means `%` is wrong - then do not run the scan, report it). Then:
+`.venv\Scripts\python.exe tools\pk232_fw_scan.py --port COMx --all --only FEC,ID,XMIT,ARQ,SELFEC,PTCONN --mycall <your call> --target NOCALL --csv hw_logs\<date>_fw_only2_<dev>.csv --debug hw_logs\<date>_fw_only2_<dev>.log`
+
+| # | Device | Expected | Result |
+|---|---|---|---|
+| 1 | A | FEC way back `Ctrl-C+PACKET`, OPMODE PACKET after it; ID / XMIT no `?not while in FEC`; ARQ / SELFEC / PTCONN no `?callsign`; at the end `MYSELCAL` shows `none` | ⬜ |
+| 2 | B | same | ⬜ |
+| 3 | C | same (C showed `OEAS` before T186 - a set value is put back by setting it) | ⬜ |
+
+**Status:** ⬜ OPEN (add `--update-matrix` only after a run that looks right; the cleared FEC cell of C is filled again then).
 
 ---
 

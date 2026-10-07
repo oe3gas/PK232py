@@ -197,7 +197,7 @@ Settled by the evidence, not by the spec text (see the P88 report):
 the parameter masks (show a field only where the command is `yes`/`expert`) from the matrix. Until then
 `test_command_matrix_agreement.py` fails if they contradict it.
 
-### Scanner preconditions for the risky part (P89a) - done, T186 open (2026-10-06)
+### Scanner preconditions for the risky part (P89a) - done, T186 run (A, B PASS, C PASS with FEC / XMIT open), T187 open (2026-10-07)
 
 T182-T184 showed that many `fx_` entries were only refusals (`?need MYcall`, `?need MYSELCAL`, `?not while in ...`, `?EXPERT command`). `--all` now sets a real MYCALL
 (`--mycall`, else the PK232PY configuration; the factory `PK232` and NOCALL count as "not set"), MYSELCAL (`--myselcal`, else the first two + last two letters of the callsign) and, on devices
@@ -205,7 +205,11 @@ that have EXPERT, EXPERT ON; after every RESTART / RESET / power cycle they are 
 mode a command needs (XMIT, RCVE: BAUDOT; ACHG, OVER: AMTOR); the effect is stored as `in <MODE>: ...`. MDCHECK is left with `B` (MailDrop Bye), then Ctrl-C; the MailDrop prompt is no longer taken for the
 banner. A refusal is recorded as `precondition: ...` (CSV columns `precondition`, `mode`), never as an effect. `--only NAME,...` probes just these commands (a risky one needs `--all`). 33 `fx_` cells
 that were only refusals (and the MDCHECK misreading) were cleared, with a note in `ev_`.
-Open: measure again `--all --only ACHG,ALIST,AMTOR,ARQ,CONVERSE,FEC,ID,K,MDCHECK,MEMORY,OVER,PTCONN,RCVE,SAMPLE,SELFEC,TRANS,XMIT` per device (T186).
+T186 (2026-10-07, 18 `fx_` cells filled) found three more things, fixed in the scanner: (1) after FEC the prompt came back but the TNC stayed in FEC (C: ID / XMIT `?not while in FEC`) - FEC ends
+`Ctrl-C+PACKET`, a command with `NEEDS_MODE` is only sent when OPMODE shows the mode, the report warns when a way back leaves PACKET; (2) ARQ / SELFEC / PTCONN answered `?callsign` - dummy target `--target`
+(default NOCALL), way back `Ctrl-C+DISCONNE+PACKET`; (3) the restore `MYSELCAL none` set the valid selcal `NONE` at A and B - an unset MYSELCAL (`none`) is now cleared with `MYSELCAL %` and read back
+case-sensitive.
+Open: **how the firmware clears MYSELCAL is not proven** (`%` is the AEA convention, unmeasured; A and B hold `NONE` until set by hand); measure FEC, ID, XMIT, ARQ, SELFEC, PTCONN again per device (T187).
 
 ### Extend the detection chain by the measured ways back
 
