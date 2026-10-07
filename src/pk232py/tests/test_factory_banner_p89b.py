@@ -7,10 +7,14 @@ finding at A and B, 07.10.2026):
   off for longer: first ``PK-232M is using default values.``, then MYSELCAL ``none``;
 * so "the TNC is at the factory state" is true only when that line came before the banner - ONE function
   (comm/constants.is_factory_banner) for the app and the scanner, the text exactly as observed;
-* the scanner asks the operator to switch off for a while and, when the banner comes without the line, says so
-  and repeats the step;
-* no command clears MYSELCAL at A and B (``%``/``OFF`` -> ``?callsign``, ``NONE`` -> ``now NONE``): an unset
-  MYSELCAL is given back by a power cycle, not by a command.
+* the scanner asks the operator to switch off for a while ONLY for a TNC that no longer answers (P89 part B.4)
+  and, when the banner comes without the line, says so and repeats the step - three tries, then it says
+  ``TNC keeps its settings (RAM battery?) - factory state not reached`` and the run goes on (a scan-kit device
+  of someone else may have a RAM battery: the line never comes, and switching off must not be demanded again);
+* no command clears MYSELCAL at A and B (hand tests, operator, 07.10.2026, each line a separate test at both:
+  ``MYSELCAL %`` -> ``?callsign``, ``MYSELCAL &`` -> ``?callsign``, ``MYSELCAL OFF`` -> ``?callsign``,
+  ``MYSELCAL NONE`` -> ``now NONE``). So an UNSET MYSELCAL (``none``) is only queried and never set, there is
+  no power cycle to give it back; a set value is written back as before.
 
 The banners below are copied from hw_logs/20261006_fw_scan_C.log and hw_logs/20261007_fw_only_{A,B,C}.log
 unchanged. tools/ is not a package - see test_hw_check.py."""
@@ -162,12 +166,24 @@ class TestPowerCycleAndCheck:
         assert out.out.count(scan.POWER_CYCLE_INSTRUCTION) == 2  # the step was shown again
         assert "TNC kept its settings - switch off longer and repeat" in out.err + out.out
 
-    def test_it_gives_up_after_a_few_attempts_and_says_it(self, clock, capsys):
+    def test_three_banners_without_the_line_end_with_a_message_and_no_fourth_try(self, clock, capsys):
         t = scan.MockTransport(B, clock=clock, risky=True, keeps_settings_cycles=99)
         cycles = []
         ok = scan.power_cycle_and_check(t, "t", lambda: (cycles.append(1), t.power_cycle()))
-        assert ok is False and len(cycles) == scan.POWER_CYCLE_TRIES
-        assert "TNC kept its settings" in capsys.readouterr().err + ""
+        out = capsys.readouterr()
+        assert scan.POWER_CYCLE_TRIES == 3
+        assert ok is False and len(cycles) == 3                  # no fourth attempt
+        assert out.out.count(scan.POWER_CYCLE_INSTRUCTION) == 3
+        assert out.err.count("TNC kept its settings - switch off longer and repeat") == 2   # tries 1 and 2 ask again
+        assert out.err.count("TNC keeps its settings (RAM battery?) - factory state not reached") == 1
+
+    def test_the_result_is_in_the_log(self, clock, tmp_path):
+        t = scan.MockTransport(B, clock=clock, risky=True, keeps_settings_cycles=99)
+        t.debug = scan.DebugLog(str(tmp_path / "d.log"))
+        scan.power_cycle_and_check(t, "t", t.power_cycle)
+        t.debug.fh.flush()
+        log = (tmp_path / "d.log").read_text(encoding="utf-8")
+        assert "factory state not reached" in log and "RAM battery" in log
 
     def test_the_mock_keeps_mycall_and_myselcal_when_the_cycle_keeps_the_settings(self, clock):
         t = scan.MockTransport(B, clock=clock, risky=True, keeps_settings_cycles=1)
@@ -189,10 +205,22 @@ class TestAHungTnCComesBackThroughTheSameStep:
         assert out.out.count("MEMORY: the TNC does not come back") == 2   # shown again: the first cycle kept the settings
         assert "TNC kept its settings" in out.err + out.out
 
+    def test_a_device_that_never_gets_the_line_does_not_stop_the_run(self, clock, capsys):
+        # a scan-kit device with a RAM battery: the factory line never comes - the scan goes on
+        t = scan.MockTransport(B, clock=clock, risky=True, dead_after={"MEMORY"}, keeps_settings_cycles=99)
+        rows = scan.run_risky(t, cm.all_entries(), mycall="OE3GAS", confirm_power_cycle=t.power_cycle,
+                              progress=False, only={"MEMORY", "RCVE"})
+        assert {r["name"] for r in rows} == {"MEMORY", "RCVE"}
+        out = capsys.readouterr()
+        assert out.out.count("MEMORY: the TNC does not come back") == 3                  # three tries, no fourth
+        assert "TNC keeps its settings (RAM battery?) - factory state not reached" in out.err + out.out
 
-# ---------------------------------------------------------------- MYSELCAL: given back by a power cycle
 
-class TestAnUnsetMyselcalIsGivenBackByAPowerCycle:
+# ---------------------------------------------------------------- MYSELCAL: an unset one is only queried
+
+class TestAnUnsetMyselcalIsLeftAlone:
+    """No command clears MYSELCAL at A and B and a power cycle must not be demanded of devices that are not ours
+    (a scan-kit device with a RAM battery keeps its settings): an unset value is queried, never set."""
 
     def _run(self, t, **kw):
         kw.setdefault("mycall", "OE3GAS")
@@ -200,40 +228,54 @@ class TestAnUnsetMyselcalIsGivenBackByAPowerCycle:
         kw.setdefault("progress", False)
         return scan.run_risky(t, cm.all_entries(), **kw)
 
-    def test_the_mock_takes_none_and_nothing_else_clears_it_like_a_and_b(self, clock):
+    @pytest.mark.parametrize("arg, expect", [("%", "?callsign"), ("&", "?callsign"), ("OFF", "?callsign"),
+                                             ("NONE", "now NONE")])
+    def test_the_mock_answers_like_a_and_b_to_each_hand_test(self, clock, arg, expect):
         t = scan.MockTransport(B, clock=clock, risky=True)
-        for arg, expect in (("%", "?callsign"), ("OFF", "?callsign"), ("NONE", "now NONE")):
-            t.write(scan.verbose_line(f"MYSELCAL {arg}"))
-            assert expect in t.read_idle(), arg
+        t.write(scan.verbose_line(f"MYSELCAL {arg}"))
+        assert expect in t.read_idle()
 
-    def test_no_command_is_sent_to_clear_it_and_the_power_cycle_does_it(self, clock, capsys):
-        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True)
+    @pytest.mark.parametrize("release", [A, B, C])
+    def test_an_unset_myselcal_is_not_set_and_not_restored(self, clock, capsys, release):
+        t = scan.MockTransport(release, clock=clock, risky=True, needs_selcal=True)
         assert t.myselcal == "none"
-        self._run(t, only={"ALIST", "FEC"})
+        self._run(t, only={"ALIST", "FEC", "RCVE"})
         sent = [d.decode("latin-1").strip() for d in t.sent]
-        assert not [s for s in sent if s in ("MYSELCAL %", "MYSELCAL none", "MYSELCAL NONE", "MYSELCAL OFF")]
-        assert t.myselcal == "none"                              # case-sensitive: the display of "not set"
-        assert scan.POWER_CYCLE_INSTRUCTION in capsys.readouterr().out
-
-    def test_mycall_comes_back_after_the_power_cycle_not_before(self, clock):
-        t = scan.MockTransport(B, clock=clock, risky=True, needs_mycall=True, needs_selcal=True)
-        t.mycall = "OE1ABC"                                      # the device had its own call
-        self._run(t, only={"ALIST"})
-        assert t.mycall == "OE1ABC" and t.myselcal == "none"
-
-    def test_a_cycle_that_keeps_the_settings_is_repeated_until_the_selcal_is_gone(self, clock, capsys):
-        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True, keeps_settings_cycles=1)
-        self._run(t, only={"ALIST"})
+        assert [s for s in sent if s.upper().startswith("MYSELCAL")] == ["MYSELCAL"]     # the query, nothing else
         assert t.myselcal == "none"
-        assert "TNC kept its settings" in "".join(capsys.readouterr())
+        assert scan.POWER_CYCLE_INSTRUCTION not in capsys.readouterr().out               # no power cycle at the end
 
-    def test_a_cycle_that_never_gets_the_line_is_reported_not_hidden(self, clock, capsys):
-        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True, keeps_settings_cycles=99)
+    def test_the_log_says_why(self, clock, tmp_path):
+        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True)
+        t.debug = scan.DebugLog(str(tmp_path / "d.log"))
         self._run(t, only={"ALIST"})
-        err = capsys.readouterr().err
-        assert t.myselcal != "none" and "MYSELCAL" in err and "set it by hand" in err
+        t.debug.fh.flush()
+        assert "MYSELCAL set/restore skipped: unset value cannot be restored" in (tmp_path / "d.log").read_text(encoding="utf-8")
 
-    def test_a_set_myselcal_is_put_back_by_setting_it_without_a_power_cycle(self, clock, capsys):
+    def test_the_commands_that_need_a_selcal_are_then_recorded_as_preconditions(self, clock):
+        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True)
+        row = next(r for r in self._run(t, only={"ALIST"}) if r["name"] == "ALIST")
+        assert row["precondition"] == "?need MYSELCAL" and row["effect"] == "" and row["fx"] == ""
+
+    def test_an_explicit_myselcal_option_does_not_change_that(self, clock):
+        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True)
+        self._run(t, only={"ALIST"}, myselcal="DLBC")
+        assert t.myselcal == "none"
+
+    def test_after_a_reset_inside_the_run_it_is_still_not_set(self, clock):
+        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True)
+        self._run(t, only={"RESTART"})
+        sent = [d.decode("latin-1").strip() for d in t.sent]
+        assert [s for s in sent if s.upper().startswith("MYSELCAL")] == ["MYSELCAL"]
+        assert t.myselcal == "none"
+
+    def test_mycall_is_still_set_and_put_back(self, clock):
+        t = scan.MockTransport(B, clock=clock, risky=True, needs_mycall=True, needs_selcal=True)
+        t.mycall = "OE1ABC"
+        self._run(t, only={"CONVERSE"})
+        assert t.mycall == "OE1ABC"
+
+    def test_a_set_myselcal_is_put_back_by_setting_it_as_before(self, clock, capsys):
         t = scan.MockTransport(C, clock=clock, risky=True, needs_selcal=True)
         t.myselcal = "OEAS"                                      # device C showed OEAS before the run
         self._run(t, only={"ALIST"}, myselcal="DLBC")
@@ -246,17 +288,29 @@ class TestAnUnsetMyselcalIsGivenBackByAPowerCycle:
         assert scan.restore_value(t, "MYSELCAL", "NONE") is True
         assert scan.restore_value(t, "MYSELCAL", "none") is False
 
+    def test_a_valid_selcal_that_reads_none_in_capitals_is_a_set_value(self, clock):
+        # A and B hold NONE after T186: that is a set value, so it IS put back (as NONE)
+        t = scan.MockTransport(B, clock=clock, risky=True, needs_selcal=True)
+        t.myselcal = "NONE"
+        self._run(t, only={"ALIST"})
+        assert t.myselcal == "NONE"
+
 
 # ---------------------------------------------------------------- the matrix
 
 class TestTheMatrixSaysItCannotBeCleared:
+    """The observation word for word, one line per hand test (operator, 07.10.2026, at A and at B)."""
+
+    LINES = ("MYSELCAL % -> ?callsign", "MYSELCAL & -> ?callsign", "MYSELCAL OFF -> ?callsign",
+             "MYSELCAL NONE -> now NONE (a valid selcal)")
 
     @pytest.mark.parametrize("release", [A, B])
     def test_myselcal_cannot_be_cleared_at_a_and_b(self, release):
         e = cm.entry("MYSELCAL")
         assert e.fx[release] == "cannot be cleared; power-cycle"
-        belegt = {A: "hand test 2026-10-07", B: "20261007_fw_only_B.log"}[release]
-        assert belegt in e.ev[release]
+        for line in self.LINES:
+            assert line in e.ev[release], (release, line)
+        assert "reported as" not in e.ev[release]
 
     def test_device_c_is_not_claimed(self):
         assert cm.entry("MYSELCAL").fx.get(C, "") == ""          # nothing measured at C: no cell

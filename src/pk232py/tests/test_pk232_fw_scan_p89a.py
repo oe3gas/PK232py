@@ -120,12 +120,12 @@ class TestDescribing:
 
 class TestPreconditionsAreSetAndGivenBack:
 
-    def test_mycall_and_myselcal_are_set_so_that_the_commands_that_need_them_work(self, clock):
+    def test_mycall_is_set_so_that_the_commands_that_need_it_work(self, clock):
+        # (MYSELCAL: an UNSET one is left alone since P89b - test_factory_banner_p89b.py; the commands that need
+        # a selcal then say ?need MYSELCAL and are recorded as preconditions)
         t = scan.MockTransport(C, clock=clock, risky=True, needs_mycall=True, needs_selcal=True)
         rows = _risky(t, myselcal=None)
         for name in ("CONVERSE", "K", "ID", "TRANS"):
-            assert not _row(rows, name)["precondition"], name
-        for name in ("ALIST", "AMTOR", "FEC"):
             assert not _row(rows, name)["precondition"], name
 
     def test_everything_is_given_back_afterwards(self, clock):
