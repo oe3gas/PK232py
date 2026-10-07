@@ -207,6 +207,9 @@ NEVER_AUTO = {"CALIBRATE", "TRANS"}
 PROBED_KINDS = ("param", "immediate")
 
 
+DEFAULT_TARGET = "NOCALL"      # T186: dummy station for ARQ / SELFEC / PTCONN (--target)
+
+
 @dataclass
 class Cmd:
     name: str
@@ -452,8 +455,13 @@ class MockTransport:
                  stuck: Optional[dict] = None, dead_after: Optional[set] = None,
                  opmode: str = "PACKET", expert_on: bool = False, echo_on: bool = True,
                  sticky: Optional[set] = None, needs_mycall: bool = False, needs_selcal: bool = False,
-                 memory_needs_expert: bool = False, mode_rules: bool = False, over_needs_link: bool = False):
+                 memory_needs_expert: bool = False, mode_rules: bool = False, over_needs_link: bool = False,
+                 selcal_clear: Optional[str] = None, needs_target: bool = False, fec_sticks: bool = False):
         self.release = release
+        # T186, as measured: MYSELCAL <word> sets that word (also 'none' -> 'NONE'); *selcal_clear* is the one
+        # argument that empties it again (None = no way known); ARQ / SELFEC / PTCONN answer ?callsign without
+        # a target; FEC leaves OPMODE at FEC after Ctrl-C and refuses every other mode but PACKET (device C)
+        self.selcal_clear, self.needs_target, self.fec_sticks = selcal_clear, needs_target, fec_sticks
         self.needs_mycall, self.needs_selcal = needs_mycall, needs_selcal
         self.memory_needs_expert, self.mode_rules = memory_needs_expert, mode_rules
         self.over_needs_link = over_needs_link
@@ -652,7 +660,8 @@ class MockTransport:
         if name.startswith("MYSELCAL"):
             arg = line[8:].strip()
             if arg:
-                old, self.myselcal = self.myselcal, ("none" if arg.upper() == "NONE" else arg.upper())
+                old = self.myselcal
+                self.myselcal = "none" if arg == self.selcal_clear else arg.upper()
                 self._reply(f"MYSELCAL {arg}\r\nMYSelcal  was {old}\r\nMYSelcal  now {self.myselcal}\r\ncmd:", name)
             else:
                 self._reply(f"MYSELCAL\r\nMYSelcal  {self.myselcal}\r\ncmd:", name)
@@ -664,6 +673,21 @@ class MockTransport:
                 self._reply(f"MYCALL {arg}\r\nMYcall    was {old}\r\nMYcall    now {self.mycall}\r\ncmd:", name)
             else:
                 self._reply(f"MYCALL\r\nMYcall    {self.mycall}\r\ncmd:", name)
+            return
+        head, _, target = line.partition(" ")
+        if self.needs_target and head.upper() in TARGET_CMDS:
+            if not target.strip():
+                self._reply(f"{head.upper()}\r\n?callsign\r\ncmd:", name)
+            else:
+                self._reply(f"{line}\r\n", name)     # calls the station: no prompt until Ctrl-C
+            return
+        if self.fec_sticks and self.opmode == "FEC" and name != "PACKET" and (
+                name in self._MODES or name in self._MODE_RULES or name == "ID"):
+            self._reply(f"{name}\r\n?not while in FEC      \r\ncmd:", name)
+            return
+        if self.fec_sticks and name == "FEC":
+            old, self.opmode = self.opmode, "FEC"
+            self._reply(f"FEC\r\nOPMODE   was {old}\r\nOPMODE   now FEC\r\n", name)
             return
         if name in self._MODES:
             old, self.opmode = self.opmode, name
@@ -1149,7 +1173,7 @@ def restore_state(t, state: DeviceState, rep: "Report") -> None:
 def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = True,
              immediate: bool = False, entries: Optional[dict] = None, risky: bool = False,
              mycall: Optional[str] = None, confirm_power_cycle=None, myselcal: Optional[str] = None,
-             only: Optional[set] = None) -> Report:
+             only: Optional[set] = None, target: str = DEFAULT_TARGET) -> Report:
     entries = cm.all_entries() if entries is None else entries
     banner = capture_banner(t)
     release = banner_release(banner)
@@ -1238,7 +1262,7 @@ def run_scan(t, port: str, only_group: Optional[str] = None, progress: bool = Tr
             # P89: every command that is otherwise never sent, one by one, after all normal queries
             risky_rows = run_risky(t, entries, mycall=mycall, confirm_power_cycle=confirm_power_cycle,
                                    progress=progress, myselcal=myselcal,
-                                   expert=rep.expert_prior is not None, only=only)
+                                   expert=rep.expert_prior is not None, only=only, target=target)
             for row in risky_rows:
                 e = entries.get(row["name"])
                 row["matrix"] = e.fw.get(release, "?") if (e and release) else "?"
@@ -1323,15 +1347,47 @@ RECOVERY: dict = {
     "MDCHECK": (_tx("B", b"B\r"), _tx("Ctrl-C", CTRL_C)),
 }
 
+
+def _seq(label: str, *parts) -> Step:
+    """One recovery step of several actions in a row (bytes = send, number = pause); nothing is read in
+    between, 'cmd:' is awaited after the last one (like every step)."""
+    actions = []
+    for i, part in enumerate(parts):
+        if i:
+            actions.append(("sleep", 0.5))
+        actions.append(("tx", part))
+    return Step(label, tuple(actions))
+
+
+# P89a/T186: Ctrl-C brought the prompt back but NOT the operating mode: device C stayed in FEC and refused ID and
+# XMIT afterwards ('?not while in FEC'), A and B stayed in FEC / AMTOR. So these two end with an explicit PACKET;
+# the older single steps stay behind them as fallbacks (a label in the matrix says which one worked).
+RECOVERY["FEC"] = (_seq("Ctrl-C+PACKET", CTRL_C, verbose_line("PACKET")),) + RECOVERY["action_tx"]
+# ARQ / SELFEC / PTCONN call a (dummy) station: break off, disconnect, back to PACKET
+RECOVERY["link"] = (_seq("Ctrl-C+DISCONNE+PACKET", CTRL_C, verbose_line("DISCONNE"), verbose_line("PACKET")),) \
+                   + RECOVERY["action_tx"]
+
 # P89a: the operating mode a command only works in (T182-T184: ?not while in PACKET). ONE place, next to
 # RECOVERY; the command is tried there and the scan goes back to PACKET afterwards.
 NEEDS_MODE: dict = {"XMIT": "BAUDOT", "RCVE": "BAUDOT", "ACHG": "AMTOR", "OVER": "AMTOR"}
 
+# T186: these answered '?callsign' without an argument; they get a dummy target (--target, default NOCALL).
+TARGET_CMDS = ("ARQ", "SELFEC", "PTCONN")        # DEFAULT_TARGET: top of the file (run_scan needs it earlier)
+
+
+def opmode_word(text: str) -> str:
+    """The operating mode in an OPMODE answer, upper case: 'OPMODE   FEC  IDLE SEND' -> 'FEC',
+    'Opmode AMtor STBY RCVE' -> 'AMTOR' ('' if there is none)."""
+    m = re.search(r"opmode\s+(\w+)", text, re.IGNORECASE)
+    return m.group(1).upper() if m else ""
+
 
 def recovery_kind(name: str, kind: str) -> str:
     """Welche Zeile der Tabelle RECOVERY fuer diesen Befehl gilt."""
-    if name in ("TRANS", "CALIBRATE", "HOST"):
+    if name in ("TRANS", "CALIBRATE", "HOST", "FEC"):
         return name
+    if name in TARGET_CMDS:
+        return "link"
     if name in ("CONVERSE", "K"):
         return "CONVERSE"
     if name in ("RESTART", "RESET", "REINIT"):
@@ -1519,23 +1575,38 @@ def reestablish(t, ctx: RiskyContext) -> None:
 
 
 def probe_risky(t, cmd: Cmd, *, mycall: Optional[str], confirm_power_cycle, record_s: float = 3.0,
-                ctx: Optional[RiskyContext] = None) -> Behaviour:
+                ctx: Optional[RiskyContext] = None, target: str = DEFAULT_TARGET) -> Behaviour:
     """Einen riskanten Befehl einzeln absetzen (P89 Teil B): Ausgangszustand pruefen, senden, 3 s
     alles mitschreiben, zurueck in den Befehlsmodus nach der Tabelle RECOVERY (jeder Schritt mit
-    Ergebnis im Log), bei Misserfolg Aus-/Einschalten durch den Betreiber, danach OPMODE und MYCALL."""
+    Ergebnis im Log), bei Misserfolg Aus-/Einschalten durch den Betreiber, danach OPMODE und MYCALL.
+
+    T186: a command with NEEDS_MODE is only sent when OPMODE says the mode was really reached - otherwise it is
+    not sent at all (precondition 'mode not reached', no effect, no matrix cell). ARQ / SELFEC / PTCONN get *target*."""
     ctx = ctx or RiskyContext(mycall=usable_call(mycall))
     b = Behaviour(cmd.name, cmd.kind, mode=NEEDS_MODE.get(cmd.name, ""))
-    _dbg_note(t, f"RISKY {cmd.name} (kind={cmd.kind}): baseline, send, record {record_s:.0f} s"
+    line = f"{cmd.name} {target}" if cmd.name in TARGET_CMDS else cmd.name
+    _dbg_note(t, f"RISKY {cmd.name} (kind={cmd.kind}): baseline, send {line!r}, record {record_s:.0f} s"
                  f"{' in ' + b.mode if b.mode else ''}")
     if b.mode:
         enter_mode(t, b.mode)                 # P89a: this command only works in its own mode
+        ensure_prompt(t)
+        reached = _value(t, "OPMODE")
+        if opmode_word(reached) != b.mode:
+            b.precondition = f"mode not reached: wanted {b.mode}, {reached or 'no OPMODE answer'}"
+            b.recovery = "not sent"
+            _dbg_note(t, f"RISKY {cmd.name}: {b.precondition} - not sent")
+            _status(f"    [!] {cmd.name}: {b.precondition} - the command is NOT sent")
+            enter_mode(t, "PACKET")
+            b.opmode = _value(t, "OPMODE")
+            b.mycall = _value(t, "MYCALL")
+            return b
     ensure_prompt(t)
     t0 = _clock()
-    t.write(verbose_line(cmd.name))
+    t.write(verbose_line(line))
     b.raw = record(t, record_s, t0)
     b.recorded_s = round(_clock() - t0, 3)
     text = "".join(chunk for _ts, chunk in b.raw)
-    got = answer_to(cmd.name, text)
+    got = answer_to(line, text)
     b.exists = None if got is None else ("no" if WHAT_RE.search(got[0]) else "yes")
     b.effect = describe_effect(cmd.name, text)
     b.precondition = precondition_of(text)
@@ -1583,9 +1654,34 @@ def value_of(text: str) -> str:
     return lines[0].split()[-1] if lines else ""
 
 
+# T186: on A and B the old restore sent 'MYSELCAL none' and the firmware took it as the VALID selcal NONE
+# ('MYSelcal  was OEAS / now NONE'). 'none' in lower case is how an UNSET MYSELCAL is DISPLAYED, it is not a value
+# to enter. The way to clear it is NOT yet proven (no manual text in the repo; the Timewave list only says the
+# default is 'Empty'). '%' is the AEA convention for emptying a text parameter - it is only a candidate here:
+# restore_value() reads the value back and reports a mismatch, so a wrong guess shows in the log and the
+# report. After the first measurement (T186 repeat) the result belongs in docs/claude/GOTCHAS_SERIAL_TNC.md.
+MYSELCAL_CLEAR = "%"
+UNSET_DISPLAY = "none"          # exactly this spelling, case-sensitive ("NONE" is a selcal)
+
+
+def restore_value(t, name: str, before: str) -> bool:
+    """Put *name* back to what the device showed before the risky part and read it back, case-sensitive.
+    An unset MYSELCAL (shown as 'none') is cleared, not set to the word. True if the device shows *before* again."""
+    clear = name == "MYSELCAL" and before == UNSET_DISPLAY
+    t.write(verbose_line(f"{name} {MYSELCAL_CLEAR}" if clear else f"{name} {before}"))
+    read_until(t, ("cmd:",))
+    now = value_of(query_text(t, name))
+    ok = now == before
+    _dbg_note(t, f"restore {name}: {'clear with ' + repr(MYSELCAL_CLEAR) if clear else 'set ' + repr(before)}; "
+                 f"device shows {now!r}, wanted {before!r}: {'ok' if ok else 'MISMATCH'}")
+    if not ok:
+        _status(f"[!] {name}: the device shows {now!r}, it showed {before!r} before the scan - set it by hand")
+    return ok
+
+
 def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=None,
               progress: bool = True, myselcal: Optional[str] = None, expert: bool = False,
-              only: Optional[set] = None) -> list:
+              only: Optional[set] = None, target: str = DEFAULT_TARGET) -> list:
     """Alle riskanten Befehle einzeln, vom harmlosen zum heikelsten. Rueckgabe: Report-Zeilen.
 
     P89a: vorher MYCALL (echtes Rufzeichen), MYSELCAL und - wenn das Geraet EXPERT kennt - EXPERT ON setzen,
@@ -1605,11 +1701,15 @@ def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=No
         for i, cmd in enumerate(todo, 1):
             if progress:
                 _status(f"\n[*] riskant [{i}/{len(todo)}] {cmd.name} ({cmd.kind}) ...")
-            b = probe_risky(t, cmd, mycall=mycall, confirm_power_cycle=confirm, ctx=ctx)
+            b = probe_risky(t, cmd, mycall=mycall, confirm_power_cycle=confirm, ctx=ctx, target=target)
             result = {"yes": Result.SUPPORTED, "no": Result.UNSUPPORTED}.get(b.exists, Result.ERROR).value
             if progress:
                 what = b.effect or (f"precondition {b.precondition}" if b.precondition else "")
                 _status(f"    -> {result}; {what}; way back: {b.recovery}")
+            if opmode_word(b.opmode) not in ("PACKET", ""):
+                # T186: a way back that reaches 'cmd:' but leaves the mode (FEC) spoils every command after it
+                _dbg_note(t, f"{cmd.name}: still in {b.opmode!r} after the way back")
+                _status(f"    [!] {cmd.name}: the TNC is still in {b.opmode!r} after the way back")
             rows.append({
                 "name": cmd.name, "group": cmd.group, "kind": cmd.kind, "result": result,
                 "matrix": "?", "note": "",
@@ -1622,8 +1722,7 @@ def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=No
         ensure_prompt(t)
         for name, used in (("MYCALL", ctx.mycall), ("MYSELCAL", ctx.myselcal)):
             if used and before[name]:
-                t.write(verbose_line(f"{name} {before[name]}"))        # back to what the device had
-                read_until(t, ("cmd:",))
+                restore_value(t, name, before[name])                   # back to what the device had
     return rows
 
 
@@ -1851,6 +1950,9 @@ def main(argv: Optional[list] = None) -> int:
                                       "default: the configuration's MYCALL. Put back afterwards")
     ap.add_argument("--myselcal", help="4-letter AMTOR SELCAL for the risky part (default: derived from the "
                                         "callsign, OE3GAS -> OEAS). Put back afterwards")
+    ap.add_argument("--target", default=DEFAULT_TARGET, metavar="CALL",
+                    help="dummy station for the calling commands of --all (ARQ, SELFEC, PTCONN answer ?callsign "
+                         f"without one); default {DEFAULT_TARGET}. Nothing answers - there is no radio")
     ap.add_argument("--only", metavar="NAME,...",
                     help="probe just these commands (a risky one needs --all); everything else is skipped")
     ap.add_argument("--results", metavar="DIR",
@@ -1965,7 +2067,8 @@ def _run(args, ap, dbg, reports: Optional[list] = None) -> int:
     try:
         rep = run_scan(t, port, only_group=args.group, immediate=args.immediate or args.all,
                        risky=args.all, mycall=args.mycall or _config_mycall(),
-                       confirm_power_cycle=confirm, myselcal=args.myselcal, only=args.only_set)
+                       confirm_power_cycle=confirm, myselcal=args.myselcal, only=args.only_set,
+                       target=args.target)
     except ScanError as exc:
         print(f"[!] {exc}", file=sys.stderr)
         return 4
