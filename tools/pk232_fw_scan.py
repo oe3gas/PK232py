@@ -1332,13 +1332,17 @@ POWER_OFF_NOTE = (f"the {POWER_OFF_SECONDS} s is a starting value, NOT measured 
 POWER_CYCLE_INSTRUCTION = f"Switch the TNC off, wait at least {POWER_OFF_SECONDS} seconds, switch it on."
 POWER_CYCLE_TRIES = 3
 KEPT_SETTINGS_TEXT = "TNC kept its settings - switch off longer and repeat"
+# after the last try: a device of someone else (scan kit, P90) may have a RAM battery - the line never comes there
+GIVE_UP_TEXT = "TNC keeps its settings (RAM battery?) - factory state not reached"
 
 
 def power_cycle_and_check(t, title: str, confirm, tries: int = POWER_CYCLE_TRIES) -> bool:
-    """The ONE operator step for a power cycle: show it, let the operator do it (*confirm*), wake the TNC like the
-    app and read the banner to the prompt. True once the banner has the factory line (is_factory_banner); without
-    it the TNC kept its settings: say so and show the step again, up to *tries* times, then False (the caller
-    goes on - it sets what it needs anyway - and the report says it)."""
+    """The ONE operator step for a power cycle - only for a TNC that no longer answers (P89 part B.4): show it, let
+    the operator do it (*confirm*), wake the TNC like the app and read the banner to the prompt. True once the
+    banner has the factory line (is_factory_banner); without it the TNC kept its settings: say so and show the step
+    again, up to *tries* times. After the last try NO further attempt: GIVE_UP_TEXT on screen and in the log, False
+    - the run goes on (the caller sets what it needs anyway). Never used to reach the factory state on purpose: a
+    device with a RAM battery would lose the owner's settings."""
     for attempt in range(1, tries + 1):
         operator_step(title, [POWER_CYCLE_INSTRUCTION], "press ENTER here when it is on again")
         confirm()
@@ -1349,7 +1353,10 @@ def power_cycle_and_check(t, title: str, confirm, tries: int = POWER_CYCLE_TRIES
         _dbg_note(t, f"power cycle {attempt}/{tries}: banner has the factory line: {factory}")
         if factory:
             return True
-        _status(f"[!] {KEPT_SETTINGS_TEXT} (attempt {attempt} of {tries})")
+        if attempt < tries:
+            _status(f"[!] {KEPT_SETTINGS_TEXT} (attempt {attempt} of {tries})")
+    _dbg_note(t, f"{GIVE_UP_TEXT} - {tries} tries, result: banner never had the factory line; the run goes on")
+    _status(f"[!] {GIVE_UP_TEXT}")
     return False
 
 
@@ -1708,14 +1715,17 @@ def value_of(text: str) -> str:
 
 # T186/P89b: 'none' in lower case is how an UNSET MYSELCAL is DISPLAYED, it is not a value to enter - the firmware
 # takes 'MYSELCAL none' as the VALID selcal NONE ('MYSelcal  was OEAS / now NONE', T186 at A and B). Hand test at
-# A (07.10.2026): '%' and 'OFF' answer '?callsign', NONE -> 'now NONE': NO command clears MYSELCAL at A and B.
-# An unset MYSELCAL is therefore given back by a power cycle (the factory state, checked by the banner line).
+# A and B (hand tests, 07.10.2026, each a separate test): 'MYSELCAL %', 'MYSELCAL &' and 'MYSELCAL OFF' answer
+# '?callsign', 'MYSELCAL NONE' -> 'now NONE': NO command clears MYSELCAL at A and B. And a power cycle is no way
+# back either: a device of someone else (scan kit, P90) may have a RAM battery - the factory line never comes and
+# switching off would clear the owner's settings. So an unset MYSELCAL is only queried and never set.
 UNSET_DISPLAY = "none"          # exactly this spelling, case-sensitive ("NONE" is a selcal)
+MYSELCAL_SKIPPED = "MYSELCAL set/restore skipped: unset value cannot be restored (A, B)"
 
 
 def restore_value(t, name: str, before: str) -> bool:
     """Set *name* back to what the device showed before the risky part and read it back, case-sensitive.
-    True if the device shows *before* again. (An unset MYSELCAL cannot be set - see give_back_myselcal.)"""
+    True if the device shows *before* again. (An unset MYSELCAL is never set - see MYSELCAL_SKIPPED.)"""
     t.write(verbose_line(f"{name} {before}"))
     read_until(t, ("cmd:",))
     now = value_of(query_text(t, name))
@@ -1726,30 +1736,6 @@ def restore_value(t, name: str, before: str) -> bool:
     return ok
 
 
-def give_back_myselcal(t, before: str, confirm) -> bool:
-    """Put MYSELCAL back to *before*. A set value is entered; an unset one ('none') needs a power cycle, because no
-    command clears it (P89b) - so the factory state is checked by the banner line and the step repeated if the TNC
-    kept its settings. A power cycle also loses MYCALL: the caller sets that AFTER this."""
-    if before != UNSET_DISPLAY:
-        return restore_value(t, "MYSELCAL", before)
-    now = value_of(query_text(t, "MYSELCAL"))
-    if now == before:
-        return True
-    _status(f"    MYSELCAL shows {now!r}, it was unset ('none') before; no command clears it - power cycle")
-    if confirm is None:
-        _status("[!] MYSELCAL: not given back (the run was aborted) - switch the TNC off for a while and on again "
-                "to get 'none'")
-        return False
-    got_factory = power_cycle_and_check(t, "MYSELCAL cannot be cleared by a command - back to 'not set'", confirm)
-    now = value_of(query_text(t, "MYSELCAL"))
-    ok = now == before
-    _dbg_note(t, f"give back MYSELCAL by power cycle: factory banner {got_factory}; device shows {now!r}, wanted {before!r}")
-    if not ok:
-        _status(f"[!] MYSELCAL: the device shows {now!r}, it showed {before!r} before the scan - set it by hand "
-                f"(no command clears it; switch off for longer)")
-    return ok
-
-
 def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=None,
               progress: bool = True, myselcal: Optional[str] = None, expert: bool = False,
               only: Optional[set] = None, target: str = DEFAULT_TARGET) -> list:
@@ -1757,7 +1743,12 @@ def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=No
 
     P89a: vorher MYCALL (echtes Rufzeichen), MYSELCAL und - wenn das Geraet EXPERT kennt - EXPERT ON setzen,
     nach jedem Reset neu setzen, am Ende MYCALL und MYSELCAL auf ihre alten Werte zurueck (EXPERT, ECHO und
-    Betriebsmodus stellt run_scan wieder her)."""
+    Betriebsmodus stellt run_scan wieder her).
+
+    P89b: steht MYSELCAL vorher auf ``none`` (nicht gesetzt), wird es nur abgefragt und nie gesetzt - kein Befehl
+    loescht es wieder (A, B), und ein Aus-/Einschalten als Rueckweg darf einem fremden Geraet (Scan-Kit, evtl. mit
+    RAM-Batterie) nicht zugemutet werden. Die Befehle, die ein SELCAL brauchen, melden dann ``?need MYSELCAL`` und
+    stehen als Vorbedingung im Ergebnis. Ein gesetzter Wert wird wie bisher direkt zurueckgeschrieben."""
     confirm = confirm_power_cycle or _operator_power_cycle
     call = usable_call(mycall)
     ctx = RiskyContext(mycall=call, myselcal=usable_call(myselcal) or derive_selcal(call), expert=expert)
@@ -1765,6 +1756,12 @@ def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=No
         _status("[!] no usable callsign (--mycall or the configuration): the commands that need MYCALL will be "
                 "refused and recorded as preconditions")
     before = {"MYCALL": value_of(query_text(t, "MYCALL")), "MYSELCAL": value_of(query_text(t, "MYSELCAL"))}
+    if ctx.myselcal and before["MYSELCAL"] in ("", UNSET_DISPLAY):
+        # a value that cannot be given back is not set (an unreadable one counts the same)
+        _dbg_note(t, MYSELCAL_SKIPPED if before["MYSELCAL"] else f"{MYSELCAL_SKIPPED} - the device gave no readable value")
+        if progress:
+            _status(f"    {MYSELCAL_SKIPPED}")
+        ctx.myselcal = None
     reestablish(t, ctx)
     rows = []
     todo = risky_plan(entries, only=only)
@@ -1791,12 +1788,9 @@ def run_risky(t, entries: dict, *, mycall: Optional[str], confirm_power_cycle=No
             })
     finally:
         ensure_prompt(t)
-        # MYSELCAL first: giving back an unset one is a power cycle, which also loses MYCALL (P89b)
-        if ctx.myselcal and before["MYSELCAL"]:
-            # a run that is being aborted does not ask the operator for a power cycle (it only says so)
-            give_back_myselcal(t, before["MYSELCAL"], None if sys.exc_info()[0] else confirm)
-        if ctx.mycall and before["MYCALL"]:
-            restore_value(t, "MYCALL", before["MYCALL"])               # back to what the device had
+        for name, used in (("MYCALL", ctx.mycall), ("MYSELCAL", ctx.myselcal)):
+            if used and before[name]:
+                restore_value(t, name, before[name])                   # back to what the device had (a set value)
     return rows
 
 
