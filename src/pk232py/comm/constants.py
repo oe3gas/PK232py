@@ -263,3 +263,21 @@ VERBOSE_EOL = b"\r"
 def verbose_line(text: str) -> bytes:
     """One verbose-mode command line: *text* + CR (ASCII)."""
     return text.encode("ascii", errors="replace") + VERBOSE_EOL
+
+
+# P89b: "the TNC is at the factory state" is true ONLY when this line came before the banner. Switching off and on
+# again does not always do it - a short pause kept the settings (MYSELCAL stayed NONE, banner without the line,
+# hand test at device A, 07.10.2026). The text exactly as observed: A and B print PK-232M, device C prints PK-232
+# (hw_logs/20261007_fw_only_A.log, 20261006_fw_scan_C.log). Nothing else counts - not a substring of some other line.
+FACTORY_BANNER_LINES = ("PK-232M is using default values.", "PK-232 is using default values.")
+
+
+def is_factory_banner(banner) -> bool:
+    """True if *banner* (text or bytes) holds one of FACTORY_BANNER_LINES as a line of its own.
+
+    The ONE place that decides this - the app (SerialManager.tnc_defaults / fresh_boot_defaults) and the scanner
+    (tools/pk232_fw_scan.py) both call it. NUL and XON bytes around a line (the banner arrives with them) do not
+    matter; a banner without the line (RESTART, or a power cycle that kept the settings) is False."""
+    if isinstance(banner, (bytes, bytearray)):
+        banner = bytes(banner).decode("latin-1")
+    return any(line.strip(" \t\x00\x11") in FACTORY_BANNER_LINES for line in banner.splitlines())
