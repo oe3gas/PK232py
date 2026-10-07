@@ -45,6 +45,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from .constants import (
     SerialDefaults,
+    is_factory_banner,
     verbose_line,
     FRAME_POLL,
     FRAME_RECOVERY,
@@ -152,7 +153,6 @@ _SOH_BYTE        = 0x01
 # hw_logs/20260924_181446_maildrop_session.log), so this is captured
 # verbatim and never normalised into a canonical date.
 _RELEASE_RE      = re.compile(rb"Release\s+(\S+)")
-_DEFAULTS_MARKER = b"is using default values"
 
 
 def _parse_release(banner: bytes) -> Optional[str]:
@@ -166,13 +166,14 @@ def _parse_release(banner: bytes) -> Optional[str]:
 
 
 def _parse_defaults_flag(banner: bytes) -> Optional[bool]:
-    """True if the boot banner said 'is using default values' (bbRAM
-    reset to factory config, CLAUDE.md - no RAM buffer battery), False if
-    a banner was captured without that phrase, None if no banner was
-    captured at all (P37 - see SerialManager.tnc_defaults)."""
+    """True if the boot banner had the factory line (constants.is_factory_banner -
+    P89b: the line as a line of its own, exactly as observed; switching off and
+    on again does NOT always bring the factory state), False if a banner was
+    captured without it, None if no banner was captured at all (P37 - see
+    SerialManager.tnc_defaults)."""
     if not banner:
         return None
-    return _DEFAULTS_MARKER in banner
+    return is_factory_banner(banner)
 
 
 def _classify_maildrop_response(text: str) -> Optional[bool]:
